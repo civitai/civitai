@@ -13,7 +13,7 @@ import { Form } from '~/libs/form';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useIsMutating } from '@tanstack/react-query';
-import { Button, Notification, Alert, Anchor, Input, Loader, Select, Text } from '@mantine/core';
+import { Button, Notification } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -23,12 +23,9 @@ import { trpc } from '~/utils/trpc';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { IconX } from '@tabler/icons-react';
 import { useVideoGenerationStore } from '~/components/Generation/Video/VideoGenerationProvider';
+import { ViduFormInput } from './ViduFormInput';
 
-export function VideoGenerationForm({
-  children,
-}: {
-  children: React.ReactNode | ((form: UseFormReturn) => React.ReactNode);
-}) {
+export function VideoGenerationForm() {
   const getState = useVideoGenerationStore((state) => state.getState);
   const engine = useVideoGenerationStore((state) => state.engine);
 
@@ -104,7 +101,7 @@ export function VideoGenerationForm({
       onSubmit={handleSubmit}
       className="relative flex h-full flex-1 flex-col justify-between gap-2"
     >
-      {typeof children === 'function' ? children(form) : children}
+      <VideoInputSwitch />
       <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
       <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
         <DailyBoostRewardClaim />
@@ -166,13 +163,14 @@ function SubmitButton2({ loading }: { loading: boolean }) {
   useEffect(() => {
     const subscription = watch(() => {
       const formData = getValues();
+      console.log({ formData });
       const whatIfData = config.whatIfProps.reduce<Record<string, unknown>>(
         (acc, prop) => ({ ...acc, [prop]: formData[prop] }),
         {}
       );
 
       try {
-        const result = config.validate({ ...whatIfData, priority: formData.priority });
+        const result = config.getWhatIfValues({ ...whatIfData, priority: formData.priority });
         setQuery(result);
         setError(null);
       } catch (e: any) {
@@ -191,6 +189,8 @@ function SubmitButton2({ loading }: { loading: boolean }) {
     // }
   }, [data]);
 
+  console.log({ query });
+
   return (
     <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
       <GenerateButton
@@ -205,4 +205,14 @@ function SubmitButton2({ loading }: { loading: boolean }) {
       <GenerationCostPopover width={300} workflowCost={data?.cost ?? {}} hideCreatorTip />
     </div>
   );
+}
+
+function VideoInputSwitch() {
+  const engine = useVideoGenerationStore((state) => state.engine);
+  switch (engine) {
+    case 'vidu':
+      return <ViduFormInput />;
+    default:
+      return <div className="flex items-center justify-center p-3">Form not implemented</div>;
+  }
 }

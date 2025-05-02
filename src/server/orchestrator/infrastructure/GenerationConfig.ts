@@ -1,5 +1,5 @@
 import { VideoGenInput } from '@civitai/client';
-import { z } from 'zod';
+import { RefinementCtx, ZodEffects, z } from 'zod';
 import {
   GenerationType,
   OrchestratorEngine,
@@ -40,10 +40,14 @@ export class VideoGenerationConfig<TSchema extends z.AnyZodObject = z.AnyZodObje
 // }
 
 export function VideoGenerationConfig2<
-  TSchema extends z.ZodTypeAny = z.ZodTypeAny,
-  TOutput extends VideoGenInput = VideoGenInput
+  TSchema extends z.AnyZodObject = z.AnyZodObject,
+  TOutput extends VideoGenInput = VideoGenInput,
+  SchemaOutput = z.infer<TSchema>,
+  SchemaInput = z.input<TSchema>,
+  RefinedOutput extends SchemaOutput = SchemaOutput
 >({
   defaultValues,
+  superRefine,
   ...args
 }: {
   label: string;
@@ -51,16 +55,24 @@ export function VideoGenerationConfig2<
   whatIfProps: string[];
   metadataDisplayProps: string[];
   schema: TSchema;
-  inputFn: (args: z.infer<TSchema>) => TOutput;
-  defaultValues?: z.input<TSchema>;
+  inputFn: (args: SchemaOutput) => TOutput;
+  defaultValues?: SchemaInput;
+  superRefine?: (arg: SchemaOutput, ctx: RefinementCtx) => void;
 }) {
   function validate(data: any) {
-    return args.schema.parse({ ...defaultValues, ...data });
+    const values = { ...defaultValues, ...data };
+    return superRefine
+      ? args.schema.superRefine(superRefine as any).parse(values)
+      : args.schema.parse(values);
   }
 
   function getDefaultValues() {
-    return validate(defaultValues);
+    return args.schema.parse(defaultValues);
   }
 
-  return { ...args, getDefaultValues, validate };
+  function getWhatIfValues(data: any) {
+    return args.schema.parse({ ...defaultValues, ...data });
+  }
+
+  return { ...args, getDefaultValues, validate, getWhatIfValues };
 }

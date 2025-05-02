@@ -1,42 +1,17 @@
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import {
-  videoGenerationConfig2,
-  OrchestratorEngine2,
-} from '~/server/orchestrator/generation/generation.config';
-import { useMemo, useState, useEffect } from 'react';
-import { hashify } from '~/utils/string-helpers';
-import { z } from 'zod';
-import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { numberWithCommas } from '~/utils/number-helpers';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
-import { Form } from '~/libs/form';
-import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
-import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
-import { useIsMutating } from '@tanstack/react-query';
-import { Button, Notification, Alert, Anchor, Input, Loader, Select, Text } from '@mantine/core';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { useFormContext, UseFormReturn } from 'react-hook-form';
-import { getQueryKey } from '@trpc/react-query';
-import { trpc } from '~/utils/trpc';
-import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
-import { IconX } from '@tabler/icons-react';
+import { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
+import { Button, Alert, Loader, Select, Text } from '@mantine/core';
 import {
   useVideoGenerationStore,
   useGenerationEngines,
 } from '~/components/Generation/Video/VideoGenerationProvider';
+import { uniqBy } from 'lodash-es';
+import { VideoGenerationForm } from '~/components/Generation/Video/VideoGenerationForm';
 
-export function VideoGenerationFormWrapper({ children }: { children: React.ReactNode }) {
+export function VideoGenerationFormWrapper() {
   const { data, isLoading } = useGenerationEngines();
   const setState = useVideoGenerationStore((state) => state.setState);
   const engine = useVideoGenerationStore((state) => state.engine);
-  const selected = data.find((x) => x.engine === engine);
-
-  const status = useGenerationStatus();
+  const selected = data.find((x) => x.engine === engine) ?? data[0];
 
   return (
     <div className="flex flex-1 flex-col gap-2">
@@ -75,7 +50,7 @@ export function VideoGenerationFormWrapper({ children }: { children: React.React
               {uniqBy(
                 data.filter((x) => !x.disabled),
                 'engine'
-              ).map(({ engine }) => (
+              ).map(({ engine, label }) => (
                 <Button
                   key={engine}
                   compact
@@ -84,7 +59,7 @@ export function VideoGenerationFormWrapper({ children }: { children: React.React
                   color="yellow"
                   className="capitalize"
                 >
-                  {getDisplayName(engine)}
+                  {label}
                 </Button>
               ))}
             </div>
@@ -92,13 +67,14 @@ export function VideoGenerationFormWrapper({ children }: { children: React.React
         ) : (
           <Select
             label="Tool"
-            value={selected}
+            value={engine}
             description={selected?.message && !selected?.disabled ? selected.message : undefined}
             onChange={(engine) => setState({ engine: engine as OrchestratorEngine2 })}
-            data={data?.map(({ key, label }) => ({ label, value: key }))}
+            data={data?.map(({ engine, label }) => ({ label, value: engine }))}
           />
         )}
       </div>
+      {engine && <VideoGenerationForm />}
     </div>
   );
 }

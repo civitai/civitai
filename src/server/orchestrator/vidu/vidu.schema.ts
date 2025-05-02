@@ -57,18 +57,32 @@ export function ViduInput({
   return { ...args, sourceImage, endSourceImage };
 }
 
-const viduSchema = z
-  .object({
-    engine: z.literal('vidu').catch('vidu'),
-    sourceImage: sourceImageSchema.optional(),
-    endSourceImage: sourceImageSchema.optional(),
-    prompt: promptSchema,
-    enablePromptEnhancer: z.boolean().default(true),
-    style: z.nativeEnum(ViduVideoGenStyle).catch(ViduVideoGenStyle.GENERAL),
-    duration: numberEnum(viduDuration).default(4).catch(4),
-    seed: seedSchema,
-  })
-  .superRefine((data, ctx) => {
+const viduSchema = z.object({
+  engine: z.literal('vidu').catch('vidu'),
+  sourceImage: sourceImageSchema.optional(),
+  endSourceImage: sourceImageSchema.optional(),
+  prompt: promptSchema,
+  enablePromptEnhancer: z.boolean().default(true),
+  style: z.nativeEnum(ViduVideoGenStyle).catch(ViduVideoGenStyle.GENERAL),
+  duration: numberEnum(viduDuration).default(4).catch(4),
+  seed: seedSchema,
+});
+// .superRefine((data, ctx) => {
+//   if (!data.sourceImage && !data.endSourceImage && !data.prompt?.length) {
+//     ctx.addIssue({
+//       code: z.ZodIssueCode.custom,
+//       message: 'Prompt is required',
+//       path: ['prompt'],
+//     });
+//   }
+// });
+
+export const viduGenerationConfig = VideoGenerationConfig2({
+  label: 'Vidu',
+  whatIfProps: ['duration'],
+  metadataDisplayProps: ['style', 'duration', 'seed'],
+  schema: viduSchema,
+  superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.endSourceImage && !data.prompt?.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -76,13 +90,7 @@ const viduSchema = z
         path: ['prompt'],
       });
     }
-  });
-
-export const viduGenerationConfig = VideoGenerationConfig2({
-  label: 'Vidu',
-  whatIfProps: ['duration'],
-  metadataDisplayProps: ['style', 'duration', 'seed'],
-  schema: viduSchema,
+  },
   defaultValues: {},
   inputFn: ({ sourceImage, endSourceImage, ...args }): ViduVideoGenInput => {
     return {

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useContext, createContext } from 'react';
+import { useMemo, useRef, useContext, createContext, useState, useEffect } from 'react';
 import { createStore, useStore } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -8,7 +8,7 @@ import {
 } from '~/server/orchestrator/generation/generation.config';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { Loader } from '@mantine/core';
+import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
 type StateData = {
   engine: OrchestratorEngine2;
@@ -45,23 +45,21 @@ export function useVideoGenerationStore<T>(selector: (state: State) => T) {
 
 export function VideoGenerationProvider({ children }: { children: React.ReactNode }) {
   const { data } = useGenerationEngines();
-  const storeRef = useRef<Store | null>(null);
-  if (!!data?.length && !storeRef.current) createDataStore({ engine: data[0].engine });
-
-  return (
-    <Context.Provider value={storeRef.current}>
-      {/* {isLoading ? (
-        <div className="flex items-center justify-center">
-          <Loader />
-        </div>
-      ) : !data.length ? (
-        <div className="flex items-center justify-center">Video generation not available</div>
-      ) : (
-        children
-      )} */}
-      {children}
-    </Context.Provider>
+  const [store] = useState(() =>
+    createDataStore({
+      engine: data[0]?.engine ?? (Object.keys(videoGenerationConfig2)[0] as OrchestratorEngine2),
+    })
   );
+  const status = useGenerationStatus();
+
+  useEffect(() => {
+    if (!!data.length) {
+      const engine = store.getState().engine;
+      if (!data.find((x) => x.engine === engine)) store.setState({ engine: data[0].engine });
+    }
+  }, [data, store]);
+
+  return <Context.Provider value={store}>{children}</Context.Provider>;
 }
 
 export function useGenerationEngines() {
