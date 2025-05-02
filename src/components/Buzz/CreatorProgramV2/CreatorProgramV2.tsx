@@ -306,7 +306,7 @@ export const CreatorProgramRequirement = ({
   );
 };
 
-const CompensationPoolCard = () => {
+export const CompensationPoolCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const isLoading = isLoadingCompensationPool;
   const date = formatDate(compensationPool?.phases.bank[0] ?? new Date(), 'MMMM YYYY', true);
@@ -322,13 +322,24 @@ const CompensationPoolCard = () => {
   return (
     <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
       <div className="flex h-full flex-col justify-between gap-12">
-        <h3 className="text-center text-xl font-bold">Compensation Pool</h3>
+        <div className="flex flex-col">
+          <h3 className="text-center text-xl font-bold">Compensation Pool</h3>
+          <p className="text-center">{date}</p>
+        </div>
 
         <div className="flex flex-col">
-          <p className="text-center">{date}</p>
           <p className="text-center text-2xl font-bold">
             ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
           </p>
+        </div>
+        <div className="flex flex-col">
+          <h3 className="text-center text-xl font-bold">Current Banked Buzz</h3>
+          <div className="flex justify-center gap-1">
+            <CurrencyIcon className="my-auto" currency={Currency.BUZZ} size={20} />
+            <span className="text-2xl font-bold">
+              {numberWithCommas(compensationPool?.size.current)}
+            </span>
+          </div>
         </div>
         <Anchor onClick={openCompensationPoolModal}>
           <div className="flex items-center justify-center gap-2">

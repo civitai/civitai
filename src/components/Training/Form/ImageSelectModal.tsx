@@ -162,6 +162,7 @@ export default function ImageSelectModal({
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   });
 
+  // TODO allow videos
   const generatedImages = useMemo(
     () =>
       steps.flatMap((step) =>
@@ -320,7 +321,7 @@ const ImageGrid = ({
   const { classes, cx } = useSearchLayoutStyles();
 
   if (!data || !data.length)
-    return <NoContent message={`No ${type === 'training' ? 'datasets' : 'images'} found`} />;
+    return <NoContent message={`No ${type === 'training' ? 'datasets' : 'files'} found`} />;
 
   const grouped =
     type === 'generation'
@@ -466,10 +467,10 @@ const ImageGridImage = ({
         value: type ?? '-',
       },
       {
-        label: 'Images',
+        label: 'Files',
         value: (
           <Group spacing="xs">
-            <IconBadge color="pink" icon={<IconHash size={14} />} tooltip="Number of images">
+            <IconBadge color="pink" icon={<IconHash size={14} />} tooltip="Number of files">
               {metadata?.numImages || 0}
             </IconBadge>
             <IconBadge color="violet" icon={<IconTags size={14} />} tooltip="Number of labels">
@@ -616,7 +617,7 @@ const ImageGridImage = ({
         />
       )}
       <EdgeMedia
-        alt={`Imported Image - ${img.id}`}
+        alt={`Imported Media - ${img.id}`}
         src={img.url}
         className={`cursor-pointer${isSelected ? ' shadow-[0_0_7px_3px] shadow-blue-8' : ''}`}
         style={{

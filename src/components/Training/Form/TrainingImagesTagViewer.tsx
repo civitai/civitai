@@ -399,7 +399,7 @@ export const TrainingImagesTagViewer = ({
                         title: 'Remove these tags?',
                         children: (
                           <Stack>
-                            <Text>The following tags will be removed from all images:</Text>
+                            <Text>The following tags will be removed from all files:</Text>
                             <Group>
                               {selectedTagsNonBlank.map((st) => (
                                 <Badge key={st}>{st}</Badge>

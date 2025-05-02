@@ -1,5 +1,3 @@
-include:
-  - docker-compose.base.yml
 services:
   signals-redis:
     image: redis:7-bookworm
@@ -20,7 +18,7 @@ services:
     depends_on:
       - signals-silo
     ports:
-      - "9050:8080"
+      - "8081:8080"
     environment:
       ConnectionStrings__Redis: signals-redis:6379,password=redis
       ConnectionStrings__Silo: signals-silo:5000
@@ -28,11 +26,20 @@ services:
   buzz:
     image: ghcr.io/civitai/civitai-buzz:latest
     ports:
-      - "9051:8080"
+      - "8082:8080"
     environment:
       ConnectionStrings__BuzzDbContext: Host=db;Port=5432;Database=buzz;Username=postgres;Password=postgres
       SignalApiClient__Endpoint: http://signals-api:8080
       ClickhouseTrackerApiClient__Endpoint: http://localhost:9911
+
+  civitai:
+    depends_on:
+      - signals-api
+      - buzz
+    environment:
+      SIGNALS_ENDPOINT: http://signals-api:8080
+      NEXT_PUBLIC_SIGNALS_ENDPOINT: http://localhost:8081
+      BUZZ_ENDPOINT: http://buzz:8080
 
 volumes:
   redis-signals:

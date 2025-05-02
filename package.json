@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.696",
+  "version": "5.0.701",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -44,7 +44,7 @@
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
     "test:reset": "make bootstrap-db",
-    "meilisearch:migrate": "NODE_ENV=development tsx scripts/meilisearch-migration.ts"
+    "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -57,7 +57,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "^0.1.9-beta.31",
+    "@civitai/client": "^0.1.9-beta.33",
     "@civitai/next-axiom": "^0.17.0",
     "@clickhouse/client": "^0.2.2",
     "@cloudamqp/amqp-client": "^2.1.1",

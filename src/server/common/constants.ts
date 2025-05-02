@@ -4,7 +4,7 @@ import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
 import {
   BountyType,
   Currency,
@@ -90,6 +90,7 @@ export const constants = {
     'NoobAI',
     'Wan Video',
     'HiDream',
+    'OpenAI',
     'Other',
     // 'Wan Video 1.3B T2V',
     // 'Wan Video 14B T2V',
@@ -108,6 +109,7 @@ export const constants = {
     'Playground v2',
     'Stable Cascade',
     'SDXL 1.0 LCM',
+    'OpenAI',
   ] as string[],
   modelFileTypes: [
     'Model',
@@ -551,6 +553,7 @@ export const baseModelSets = {
   NoobAI: new BaseModelSet({ name: 'NoobAI', baseModels: ['NoobAI'] }),
   WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
   HiDream: new BaseModelSet({ name: 'HiDream', baseModels: ['HiDream'] }),
+  OpenAI: new BaseModelSet({ name: 'OpenAI', baseModels: ['OpenAI'] }),
 };
 
 // the ecosystem in the air just needs to start with a corresponding orchestrator controller ecosystem
@@ -669,6 +672,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/mit.md',
     name: 'MIT',
   },
+  openai: {
+    url: 'https://openai.com/policies/',
+    name: 'OpenAI',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -716,6 +723,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   NoobAI: baseLicenses['noobAi'],
   'Wan Video': baseLicenses['apache 2.0'],
   HiDream: baseLicenses['mit'],
+  OpenAI: baseLicenses['openai'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -958,6 +966,31 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  OpenAI: {
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1536, height: 1024 },
+      { label: 'Portrait', width: 1024, height: 1536 },
+    ],
+    checkpoint: {
+      id: 1733399,
+      name: '4o Image Gen 1',
+      trainedWords: [],
+      baseModel: 'OpenAI',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      covered: true,
+      model: {
+        id: 1532032,
+        name: `OpenAI's GPT-image-1`,
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+
   Other: {
     aspectRatios: [] as { label: string; width: number; height: number }[],
     checkpoint: {
@@ -1006,6 +1039,8 @@ export const generation = {
     model: generationConfig.Flux1.checkpoint,
     priority: 'low',
     sourceImage: null,
+    openAIBackground: 'auto',
+    openAIQuality: 'auto',
   },
   maxValues: {
     seed: 4294967295,

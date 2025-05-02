@@ -90,6 +90,10 @@ First, make sure that you have the following installed on your machine:
             - Runs the server
         - If you see an error about an app not being found, make sure `node_modules/.bin` is added to your path:
             - `export PATH="$PATH:$(realpath node_modules/.bin)"`
+        - If you are an internal member, you can use the buzz and signals service
+            - Set this up once by creating a personal access token in github (with read package permissions)
+            - Set that to `CR_PAT` env
+            - Run `echo $CR_PAT | docker login ghcr.io -u USERNAME --password-stdin`
     - Please report any issues with these commands to us on [discord][discord-url]
 4. Edit the `.env.development` file
     - Most default values are configured to work out of the box, except the S3 upload key and secret. To generate those, navigate to

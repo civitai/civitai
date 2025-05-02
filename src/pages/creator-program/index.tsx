@@ -40,12 +40,18 @@ import {
   numberWithCommas,
 } from '../../utils/number-helpers';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
-import { CreatorProgramRequirement } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
+import {
+  CompensationPoolCard,
+  CreatorProgramRequirement,
+} from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { getDisplayName } from '~/utils/string-helpers';
 import { capitalize } from 'lodash-es';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import {
+  useCompensationPool,
+  useCreatorProgramRequirements,
+} from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import {
   CreatorProgramCapsInfo,
   openCreatorScoreModal,
@@ -80,6 +86,7 @@ function CreatorsClubV1() {
   const currentUser = useCurrentUser();
   const applyFormUrl = `/user/buzz-dashboard`;
   const availability = getCreatorProgramAvailability();
+  // const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
 
   return (
     <>
@@ -195,12 +202,12 @@ const HowItWorksSection = () => {
                   The Basics
                 </Title>
                 <Group noWrap w="100%">
-                  <IconUserPlus size={24} />
+                  <IconUserPlus size={24} className="flex-none" />
                   <Text>If you meet the program requirements, join!</Text>
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
-                  <IconPercentage10 size={24} />
+                  <IconPercentage10 size={24} className="flex-none" />
                   <Text>
                     Each month Civitai allocates a Creator Compensation Pool from a portion of our
                     revenue
@@ -208,7 +215,7 @@ const HowItWorksSection = () => {
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
-                  <IconPig size={24} />
+                  <IconPig size={24} className="flex-none" />
                   <Text>
                     During the Banking Phase, you Bank Buzz to secure your share of the Compensation
                     Pool
@@ -216,7 +223,7 @@ const HowItWorksSection = () => {
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
-                  <IconLogout size={24} />
+                  <IconLogout size={24} className="flex-none" />
                   <Text>
                     During the Extraction Phase, you can choose to keep Buzz in the Bank to get paid
                     or Extract it to save it for the future
@@ -224,7 +231,7 @@ const HowItWorksSection = () => {
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
-                  <IconMoneybag size={24} />
+                  <IconMoneybag size={24} className="flex-none" />
                   <Text fw={700}>Get paid!</Text>
                 </Group>
               </Stack>
@@ -259,7 +266,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
         </Title>
       </Stack>
       <Grid>
-        <Grid.Col xs={12} sm={6}>
+        <Grid.Col xs={12} sm={4}>
           <Paper withBorder className={cx(classes.card)} h="100%">
             <Stack spacing="sm" h="100%">
               <Text mb="lg" className={classes.highlightColor} size="lg">
@@ -343,7 +350,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
             </Stack>
           </Paper>
         </Grid.Col>
-        <Grid.Col xs={12} sm={6}>
+        <Grid.Col xs={12} sm={4}>
           <Paper withBorder className={cx(classes.card)} h="100%">
             <Stack spacing="sm">
               <Text mb="sm" className={classes.highlightColor} size="lg">
@@ -365,6 +372,9 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
               </Group>
             </Stack>
           </Paper>
+        </Grid.Col>
+        <Grid.Col xs={12} sm={4}>
+          <CompensationPoolCard />
         </Grid.Col>
       </Grid>
     </Stack>

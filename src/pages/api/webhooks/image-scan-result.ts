@@ -428,7 +428,7 @@ async function handleSuccess({
       !isValidAIGeneration({
         ...image,
         // Make it so that if we have NSFW tags we treat it as R+
-        nsfwLevel: Math.max(image.nsfwLevel, nsfw ? NsfwLevel.R : NsfwLevel.PG),
+        nsfwLevel: Math.max(image.nsfwLevel, nsfw ? NsfwLevel.X : NsfwLevel.PG),
         meta: image.meta as ImageMetadata | VideoMetadata,
         tools: image.tools,
         // Avoids blocking images that we know are AI generated with some resources.

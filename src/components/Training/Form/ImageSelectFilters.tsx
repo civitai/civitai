@@ -40,6 +40,7 @@ export function ImageSelectFiltersTrainingDropdown({
 
   const baseModelsList = uniq(Object.values(trainingModelInfo).map((v) => v.baseModel));
 
+  // TODO add image/video?
   const filterLength =
     (selectFilters.hasLabels === true ? 1 : 0) +
     (isDefined(selectFilters.labelType) ? 1 : 0) +
