@@ -2,13 +2,13 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
 import dayjs, { ManipulateType } from 'dayjs';
-import { chunk, lowerFirst, truncate } from 'lodash-es';
-import { SearchParams, SearchResponse } from 'meilisearch';
+import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
+import type { SearchParams, SearchResponse } from 'meilisearch';
 import { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
-import { VotableTagModel } from '~/libs/tags';
+import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL, constants, METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
@@ -22,11 +22,7 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
-  combineSqlWithParams,
-  getDbWithoutLag,
-  preventReplicationLag,
-} from '~/server/db/db-helpers';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -44,20 +40,26 @@ import {
   userContentOverviewCache,
 } from '~/server/redis/caches';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import type { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
   GetEntitiesCoverImage,
+  GetImageInput,
   GetInfiniteImagesOutput,
   ImageEntityType,
   ToggleImageFlagInput,
   imageMetaOutput,
+  ImageMetaProps,
+  ImageModerationSchema,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
   ImageSchema,
   ImageUploadProps,
+  IngestImageInput,
+  ingestImageSchema,
+  RemoveImageResourceSchema,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
   UpdateImageAcceptableMinorInput,
@@ -65,21 +67,21 @@ import {
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import {
   articlesSearchIndex,
   imagesMetricsSearchIndex,
   imagesSearchIndex,
 } from '~/server/search-index';
-import {
+import type {
   ImageMetricsSearchIndexRecord,
   MetricsImageFilterableAttribute,
   MetricsImageSortableAttribute,
 } from '~/server/search-index/metrics-images.search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
-import { ImageV2Model } from '~/server/selectors/imagev2.selector';
+import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -87,26 +89,28 @@ import { upsertImageFlag } from '~/server/services/image-flag.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
-import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
+import { bulkSetReportStatus } from '~/server/services/report.service';
 import {
   getBlockedTags,
   getModeratedTags,
   getTagsNeedingReview,
 } from '~/server/services/system-cache';
 import { getVotableTags2 } from '~/server/services/tag.service';
+import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   getBasicDataForUsers,
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { getPeriods } from '~/server/utils/enum-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
   nsfwBrowsingLevelsFlag,
@@ -116,7 +120,6 @@ import {
 import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
 import { Flags } from '~/shared/utils';
 import {
-  AppealStatus,
   Availability,
   BlockImageReason,
   CollectionMode,
@@ -130,7 +133,7 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import { ImageResourceNew } from '~/shared/utils/prisma/models';
+import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { promptWordReplace } from '~/utils/metadata/audit';
@@ -138,20 +141,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import {
-  GetImageInput,
-  ImageMetaProps,
-  ImageModerationSchema,
-  IngestImageInput,
-  ingestImageSchema,
-  RemoveImageResourceSchema,
-} from './../schema/image.schema';
-import { uniqBy } from 'lodash-es';
-import { withRetries } from '~/utils/errorHandling';
-import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
-import { RuleDefinition } from '~/server/utils/mod-rules';
-import { IconChevronsDownLeft } from '@tabler/icons-react';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -2070,6 +2059,7 @@ const getImageMetrics = async (ids: number[]) => {
   if (missing.length > 0) {
     if (clickhouse) {
       // - find the missing IDs' data in clickhouse
+      // TODO put retries
       clickData = await clickhouse.$query<DeepNonNullable<PgDataType>>(`
           SELECT entityId                                              as "imageId",
                  SUM(if(metricType = 'ReactionLike', metricValue, 0))  as "reactionLike",
@@ -2377,7 +2367,6 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
       irh."reviewDetails",
       irh."reviewCreatedAt",
       irh."name",
-      irh."hash",
       irh."modelVersionId",
       irh."modelVersionName",
       irh."modelVersionCreatedAt",
@@ -2395,7 +2384,7 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
     JOIN "Model" m ON m.id = irh."modelId" AND m."status" = 'Published'
     WHERE
       irh."imageId" = ${Prisma.sql`${id}`}
-    AND (irh."hash" IS NOT NULL OR irh."modelVersionId" IS NOT NULL)
+    AND irh."modelVersionId" IS NOT NULL
   `;
 
   return resources;
