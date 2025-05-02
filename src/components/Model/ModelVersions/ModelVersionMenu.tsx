@@ -9,6 +9,7 @@ import {
   IconFileSettings,
   IconCloudX,
   IconAi,
+  IconShieldHalf,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -50,6 +51,11 @@ export function ModelVersionMenu({
   const bustModelVersionCacheMutation = trpc.modelVersion.bustCache.useMutation();
   function handleBustCache() {
     bustModelVersionCacheMutation.mutate({ id: modelVersionId });
+  }
+
+  const enqueuNsfwLevelUpdateMutation = trpc.modelVersion.enqueueNsfwLevelUpdate.useMutation();
+  function handleEnqueueNsfwLevelUpdate() {
+    enqueuNsfwLevelUpdateMutation.mutate({ id: modelVersionId });
   }
 
   const { toggle, isLoading } = useToggleCheckpointCoverageMutation();
@@ -158,6 +164,19 @@ export function ModelVersionMenu({
         )}
         {currentUser?.isModerator && (
           <Menu.Item
+            icon={<IconShieldHalf size={14} stroke={1.5} />}
+            color="yellow"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              handleEnqueueNsfwLevelUpdate();
+            }}
+          >
+            Enqueue NsfwLevel Update
+          </Menu.Item>
+        )}
+        {currentUser?.isModerator && (
+          <Menu.Item
             icon={<IconCloudX size={14} stroke={1.5} />}
             color="yellow"
             onClick={(e) => {
@@ -194,7 +213,7 @@ export function ModelVersionMenu({
           href={`/models/${modelId}/model-versions/${modelVersionId}/edit`}
           icon={<IconEdit size={14} stroke={1.5} />}
           className={!features.canWrite ? 'pointer-events-none' : undefined}
-         >
+        >
           Edit details
         </Menu.Item>
         <Menu.Item
