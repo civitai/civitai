@@ -10,6 +10,7 @@ import {
   BaseModelSetType,
   constants,
   generation,
+  generationConfig,
   getGenerationConfig,
 } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
@@ -63,15 +64,13 @@ const baseSchema = textToImageParamsSchema
   });
 const partialSchema = baseSchema.partial();
 const formSchema = baseSchema
-  .transform(({ fluxUltraRaw, ...data }) => {
+  .transform(({ ...data }) => {
     const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
     const { height, width } = isFluxUltra
       ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
       : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
     if (data.model.id === fluxModelId && data.fluxMode !== fluxStandardAir) data.priority = 'low';
-    if (fluxUltraRaw) data.engine = 'flux-pro-raw';
-    else data.engine = undefined;
 
     return removeEmpty({
       ...data,
