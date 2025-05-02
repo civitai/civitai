@@ -224,7 +224,7 @@ export const useGenerationFormStore = create<{
   sourceImage?: SourceImageProps | null;
   width?: number;
   height?: number;
-  originalPrompt?: string;
+  // originalPrompt?: string;
 }>()(persist((set) => ({ type: 'image' }), { name: 'generation-form', version: 1.2 }));
 
 export const generationFormStore = {

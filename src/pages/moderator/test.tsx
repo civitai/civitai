@@ -128,6 +128,9 @@ function Test() {
 
         <ExamplePopover /> */}
         <CustomAspectRatio minResolution={64} maxResolution={5000} defaultResolution={320} />
+        {/* <FormWrapper engine="vidu">
+
+        </FormWrapper> */}
       </div>
     </div>
   );
@@ -424,6 +427,7 @@ function ExampleSelect() {
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import { Page } from '~/components/AppLayout/Page';
 import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/AspectRatioInput';
+import { FormWrapper } from '~/components/Generation/Video/FormWrapper';
 
 function ExamplePopover() {
   return (

@@ -55,7 +55,7 @@ export function VideoGenerationConfig2<
   defaultValues?: z.input<TSchema>;
 }) {
   function validate(data: any) {
-    return args.schema.parse(data);
+    return args.schema.parse({ ...defaultValues, ...data });
   }
 
   function getDefaultValues() {
