@@ -23,10 +23,11 @@ import {
   workflowIdSchema,
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
+import { reportProhibitedRequestSchema } from '~/server/schema/user.schema';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
-import { getExperimentalFlag } from '~/server/services/orchestrator/experimental';
+import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import {
   createTextToImage,
@@ -81,17 +82,29 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
         value: token,
       });
   }
-  const experimental = await getExperimentalFlag({
+
+  return next({ ctx: { ...ctx, user, token } });
+});
+
+const experimentalMiddleware = middleware(async ({ ctx, next }) => {
+  const user = ctx.user;
+  if (!user) throw throwAuthorizationError();
+
+  const flags = await getExperimentalFlags({
     userId: user.id,
     isModerator: user.isModerator,
     isMember: user.tier != null && user.tier !== 'free',
   });
 
-  return next({ ctx: { ...ctx, user, token, experimental } });
+  return next({ ctx: { ...ctx, user, ...flags } });
 });
 
 const orchestratorProcedure = protectedProcedure.use(orchestratorMiddleware);
-const orchestratorGuardedProcedure = guardedProcedure.use(orchestratorMiddleware);
+const orchestratorGuardedProcedure = guardedProcedure
+  .use(orchestratorMiddleware)
+  .use(experimentalMiddleware);
+const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
+
 export const orchestratorRouter = router({
   // #region [requests]
   deleteWorkflow: orchestratorProcedure
@@ -289,4 +302,11 @@ export const orchestratorRouter = router({
       return await createTrainingWhatIfWorkflow(args);
     }),
   // #endregion
+
+  reportProhibitedRequest: experimentalProcedure
+    .input(reportProhibitedRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.testing) return false;
+      return await reportProhibitedRequestHandler({ ctx, input });
+    }),
 });
