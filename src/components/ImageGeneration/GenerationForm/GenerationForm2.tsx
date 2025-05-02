@@ -311,7 +311,8 @@ export function GenerationFormContent() {
     }
   }
 
-  const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
+  const { mutateAsync: reportProhibitedRequest } =
+    trpc.orchestrator.reportProhibitedRequest.useMutation();
   const handleError = async (e: unknown) => {
     const promptError = (e as any)?.prompt as any;
     if (promptError?.type === 'custom' && promptError.message.startsWith('Blocked for')) {

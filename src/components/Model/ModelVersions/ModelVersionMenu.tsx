@@ -9,6 +9,7 @@ import {
   IconFileSettings,
   IconCloudX,
   IconAi,
+  IconShieldHalf,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -16,7 +17,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useRouter } from 'next/router';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
@@ -47,9 +48,18 @@ export function ModelVersionMenu({
   const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
 
-  const bustModelVersionCacheMutation = trpc.modelVersion.bustCache.useMutation();
+  const bustModelVersionCacheMutation = trpc.modelVersion.bustCache.useMutation({
+    onSuccess: () => showSuccessNotification({ message: 'Cache busted' }),
+  });
   function handleBustCache() {
     bustModelVersionCacheMutation.mutate({ id: modelVersionId });
+  }
+
+  const enqueuNsfwLevelUpdateMutation = trpc.modelVersion.enqueueNsfwLevelUpdate.useMutation({
+    onSuccess: () => showSuccessNotification({ message: 'Nsfw level update queued' }),
+  });
+  function handleEnqueueNsfwLevelUpdate() {
+    enqueuNsfwLevelUpdateMutation.mutate({ id: modelVersionId });
   }
 
   const { toggle, isLoading } = useToggleCheckpointCoverageMutation();
@@ -158,6 +168,19 @@ export function ModelVersionMenu({
         )}
         {currentUser?.isModerator && (
           <Menu.Item
+            icon={<IconShieldHalf size={14} stroke={1.5} />}
+            color="yellow"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              handleEnqueueNsfwLevelUpdate();
+            }}
+          >
+            Enqueue NsfwLevel Update
+          </Menu.Item>
+        )}
+        {currentUser?.isModerator && (
+          <Menu.Item
             icon={<IconCloudX size={14} stroke={1.5} />}
             color="yellow"
             onClick={(e) => {
@@ -194,7 +217,7 @@ export function ModelVersionMenu({
           href={`/models/${modelId}/model-versions/${modelVersionId}/edit`}
           icon={<IconEdit size={14} stroke={1.5} />}
           className={!features.canWrite ? 'pointer-events-none' : undefined}
-         >
+        >
           Edit details
         </Menu.Item>
         <Menu.Item

@@ -1,0 +1,28 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/debian
+{
+	"name": "Civitai Internal",
+	"dockerComposeFile": [
+		"../../docker-compose.base.yml",
+		"../public/docker-compose.yml",
+		"docker-compose.yml"
+	],
+	"service": "civitai",
+	"workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+	"shutdownAction": "stopCompose",
+	"features": {
+		"ghcr.io/jungaretti/features/make": {}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-azuretools.vscode-docker",
+				"mtxr.sqltools",
+				"mtxr.sqltools-driver-pg",
+				"ultram4rine.sqltools-clickhouse-driver"
+			]
+		}
+	},
+	"remoteUser": "root",
+	"postCreateCommand": "make init-devcontainer"
+}

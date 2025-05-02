@@ -283,7 +283,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
     if (!thisFile) {
       showErrorNotification({
-        error: new Error('Missing file data, please reupload your images.'),
+        error: new Error('Missing file data, please reupload your files.'),
         autoClose: false,
       });
       return;
@@ -526,7 +526,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 { label: 'Name', value: model.name },
                 { label: 'Type', value: thisTrainingDetails?.type ?? '(unknown)' },
                 {
-                  label: 'Images',
+                  label: 'Files',
                   value: thisNumImages || 0,
                 },
                 {
@@ -664,7 +664,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           >
             <Group spacing="sm" position="apart" noWrap>
               <Text>
-                You have &quot;tagged&quot; images, but{' '}
+                You have &quot;tagged&quot; files, but{' '}
                 {selectedRun.base in trainingModelInfo ? (
                   <Badge color="red">
                     {trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
@@ -692,7 +692,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           >
             <Group spacing="sm" position="apart" noWrap>
               <Text>
-                You have &quot;captioned&quot; images, but{' '}
+                You have &quot;captioned&quot; files, but{' '}
                 {selectedRun.base in trainingModelInfo ? (
                   <Badge color="violet">
                     {trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
@@ -718,7 +718,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           mt="sm"
         >
           <Group spacing="sm" position="apart" noWrap>
-            <Text>Video training requires that all images are labeled.</Text>
+            <Text>Video training requires that all files are labeled.</Text>
             <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
           </Group>
         </AlertWithIcon>
