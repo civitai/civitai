@@ -75,7 +75,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
     bountyEntryIds,
     modelVersionIds,
     modelIds,
-    // collectionIds: [],
+    collectionIds: [],
   });
 
   await dbWrite.jobQueue.deleteMany({
