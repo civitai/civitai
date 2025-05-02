@@ -52,6 +52,7 @@ import {
   GetEntitiesCoverImage,
   GetInfiniteImagesOutput,
   ImageEntityType,
+  ToggleImageFlagInput,
   imageMetaOutput,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
@@ -323,10 +324,16 @@ export const moderateImages = async ({
     // Remove needsReview status
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
-      data: { needsReview: null, ingestion: 'Scanned' },
+      data: {
+        needsReview: null,
+        ingestion: 'Scanned',
+        poi: reviewType === 'poi' ? false : undefined,
+        minor: reviewType === 'minor' ? false : undefined,
+      },
     });
     await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   } else {
+    const isMinor = reviewType === 'minor';
     // Approve
     await dbWrite.$queryRaw`
         UPDATE "Image" SET
@@ -334,12 +341,18 @@ export const moderateImages = async ({
           "blockedFor" = NULL,
           -- Remove ruleId and ruleReason from metadata
           "metadata" = "metadata" - 'ruleId' - 'ruleReason',
-          "ingestion" = 'Scanned',
+          "ingestion" = 'Scanned', 
+
+          ${
+            isMinor
+              ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
+              : Prisma.sql``
+          }
           -- if image was created within 72 hrs, set scannedAt to now
           "scannedAt" = CASE
-            WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
-            ELSE "scannedAt"
-          END
+              WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
+              ELSE "scannedAt"
+            END
         WHERE id IN (${Prisma.join(ids)});
       `;
 
@@ -4950,3 +4963,22 @@ export async function getImagesModRules() {
 export async function bustImageModRulesCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
 }
+
+export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: { [flag]: true },
+  });
+
+  if (!image) throw throwNotFoundError();
+
+  await dbWrite.image.update({
+    where: { id },
+    data: { [flag]: !image[flag] },
+  });
+
+  // Ensure we update the search index:
+  await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return true;
+};
