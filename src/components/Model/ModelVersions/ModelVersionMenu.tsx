@@ -17,7 +17,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useRouter } from 'next/router';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
@@ -48,12 +48,16 @@ export function ModelVersionMenu({
   const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
 
-  const bustModelVersionCacheMutation = trpc.modelVersion.bustCache.useMutation();
+  const bustModelVersionCacheMutation = trpc.modelVersion.bustCache.useMutation({
+    onSuccess: () => showSuccessNotification({ message: 'Cache busted' }),
+  });
   function handleBustCache() {
     bustModelVersionCacheMutation.mutate({ id: modelVersionId });
   }
 
-  const enqueuNsfwLevelUpdateMutation = trpc.modelVersion.enqueueNsfwLevelUpdate.useMutation();
+  const enqueuNsfwLevelUpdateMutation = trpc.modelVersion.enqueueNsfwLevelUpdate.useMutation({
+    onSuccess: () => showSuccessNotification({ message: 'Nsfw level update queued' }),
+  });
   function handleEnqueueNsfwLevelUpdate() {
     enqueuNsfwLevelUpdateMutation.mutate({ id: modelVersionId });
   }
