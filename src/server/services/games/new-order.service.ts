@@ -336,15 +336,14 @@ export async function addImageRating({
   if (valueInQueue.rank === NewOrderRankType.Knight && ++valueInQueue.value >= 5) {
     // Image is now rated by enough players, we can process it.
     const ratings = await getImageRatingsCounter(imageId).getAll();
-    const keys = Object.keys(ratings);
     let processed = false;
 
-    if (keys.length === 0) {
+    if (ratings.length === 0) {
       throw throwBadRequestError('No ratings found for image');
     }
 
     // Check if they all voted damned:
-    if (keys.length === 1 && keys[0].endsWith(`${NsfwLevel.Blocked}`)) {
+    if (ratings.length === 1 && ratings[0].endsWith(`${NsfwLevel.Blocked}`)) {
       processed = true;
       await addImageToQueue({
         imageIds: imageId,
@@ -353,7 +352,7 @@ export async function addImageRating({
       });
     }
 
-    if (keys.length > 1 && !processed) {
+    if (ratings.length > 1 && !processed) {
       // Means there are multiple entries for this image. We must raise this to the Templars:
       // Add to templars queue:
       await addImageToQueue({
@@ -363,7 +362,7 @@ export async function addImageRating({
       });
     }
 
-    const rating = Number(keys[0].split('-')[1]);
+    const rating = Number(ratings[0].split('-')[1]);
     const currentNsfwLevel = image.nsfwLevel;
 
     if (rating !== currentNsfwLevel && !processed) {
@@ -386,18 +385,18 @@ export async function addImageRating({
         // Else, we're good :)
         await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId });
       }
-
-      // Clear image from the pool:
-      valueInQueue.pool.reset({ id: imageId });
-
-      signalClient
-        .topicSend({
-          topic: `${SignalTopic.NewOrderQueue}:Knight`,
-          target: SignalMessages.NewOrderQueueUpdate,
-          data: { imageId, action: NewOrderSignalActions.RemoveImage },
-        })
-        .catch();
     }
+
+    // Clear image from the pool:
+    valueInQueue.pool.reset({ id: imageId });
+
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.NewOrderQueue}:Knight`,
+        target: SignalMessages.NewOrderQueueUpdate,
+        data: { imageId, action: NewOrderSignalActions.RemoveImage },
+      })
+      .catch();
   }
 
   // Process Templar rating:
@@ -715,7 +714,7 @@ export async function getImagesQueue({
     if (imageIds.length >= imageCount) break;
   }
 
-  const imageRaters = await getImageRaters({ imageIds });
+  const imageRaters = isModerator ? await getImageRaters({ imageIds }) : {};
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },

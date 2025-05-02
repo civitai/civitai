@@ -1,5 +1,5 @@
 import { clsx, MantineSize, Paper, PaperProps, ThemeIcon, Tooltip } from '@mantine/core';
-import { IconCoin, IconFlame, IconHeart, IconSword } from '@tabler/icons-react';
+import { IconFlame, IconHeart, IconMoneybag, IconSword } from '@tabler/icons-react';
 import React from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -146,7 +146,7 @@ export function PlayerStats({
         tooltip={`Total Gold: ${numberWithCommas(stats.blessedBuzz)}`}
         size={size}
         color="yellow"
-        icon={<IconCoin size={iconSize} stroke={1.5} />}
+        icon={<IconMoneybag size={iconSize} stroke={1.5} />}
       >
         {abbreviateNumber(stats.blessedBuzz)}
       </IconBadge>
