@@ -403,18 +403,17 @@ export async function addImageRating({
   if (valueInQueue.rank === NewOrderRankType.Templar && ++valueInQueue.value >= 2) {
     // Image is now rated by enough players, we can process it.
     const ratings = await getImageRatingsCounter(imageId).getAll();
-    const keys = Object.keys(ratings);
     let processed = false;
 
-    if (keys.length === 0) {
+    if (ratings.length === 0) {
       throw throwBadRequestError('No ratings found for image');
     }
 
-    const templarKeys = keys.filter((k) => k.startsWith(NewOrderRankType.Templar));
+    const templarKeys = ratings.filter((k) => k.startsWith(NewOrderRankType.Templar));
 
     // Check if they all voted damned or have a disparity in ratings:
     if (
-      (templarKeys.length === 1 && keys[0].endsWith(`${NsfwLevel.Blocked}`)) ||
+      (templarKeys.length === 1 && ratings[0].endsWith(`${NsfwLevel.Blocked}`)) ||
       templarKeys.length > 1
     ) {
       processed = true;
@@ -425,7 +424,7 @@ export async function addImageRating({
       });
     }
 
-    const rating = Number(keys[0].split('-')[1]);
+    const rating = Number(ratings[0].split('-')[1]);
     const currentNsfwLevel = image.nsfwLevel;
 
     if (rating !== currentNsfwLevel && !processed) {
