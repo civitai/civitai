@@ -18,38 +18,34 @@ import {
   minimaxVideoGenerationConfig,
 } from '~/server/orchestrator/minimax/minimax.schema';
 import { MochiInput, mochiVideoGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
-import {
-  ViduInput,
-  viduGenerationConfig,
-  viduVideoGenerationConfig,
-} from '~/server/orchestrator/vidu/vidu.schema';
-import { WanInput, wanVideoGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
+import { viduGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
+import { wanGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
 
 export type VideoGenerationSchema = z.infer<(typeof videoGenerationConfig)[number]['schema']>;
 export type VideoGenerationEngine = (typeof videoGenerationConfig)[number]['engine'];
 export const videoGenerationConfig = [
-  ...klingVideoGenerationConfig,
-  ...minimaxVideoGenerationConfig,
-  ...haiperVideoGenerationConfig,
-  ...mochiVideoGenerationConfig,
-  ...lightricksVideoGenerationConfig,
-  ...hunyuanVideoGenerationConfig,
-  ...viduVideoGenerationConfig,
-  ...wanVideoGenerationConfig,
+  // ...klingVideoGenerationConfig,
+  // ...minimaxVideoGenerationConfig,
+  // ...haiperVideoGenerationConfig,
+  // ...mochiVideoGenerationConfig,
+  // ...lightricksVideoGenerationConfig,
+  // ...hunyuanVideoGenerationConfig,
+  // ...viduVideoGenerationConfig,
+  // ...wanVideoGenerationConfig,
 ] as const;
 
 export const videoGenerationInput = {
-  kling: KlingInput,
-  minimax: MinimaxInput,
-  haiper: HaiperInput,
-  mochi: MochiInput,
-  lightricks: LightricksInput,
-  hunyuan: HunyuanInput,
-  vidu: ViduInput,
-  wan: WanInput,
+  // kling: KlingInput,
+  // minimax: MinimaxInput,
+  // haiper: HaiperInput,
+  // mochi: MochiInput,
+  // lightricks: LightricksInput,
+  // hunyuan: HunyuanInput,
+  // vidu: ViduInput,
+  // wan: WanInput,
 } as const;
 
-export const baseModelEngineMap: Partial<Record<BaseModelSetType, VideoGenerationEngine>> = {
+export const baseModelEngineMap: Partial<Record<BaseModelSetType, OrchestratorEngine2>> = {
   WanVideo: 'wan',
   HyV1: 'hunyuan',
 };
@@ -59,4 +55,5 @@ type VideoGenerationConfig = (typeof videoGenerationConfig2)[keyof typeof videoG
 export type VideoGenerationSchema2 = z.infer<VideoGenerationConfig['schema']>;
 export const videoGenerationConfig2 = {
   vidu: viduGenerationConfig,
+  wan: wanGenerationConfig,
 };

@@ -42,12 +42,14 @@ export class VideoGenerationConfig<TSchema extends z.AnyZodObject = z.AnyZodObje
 export function VideoGenerationConfig2<
   TSchema extends z.AnyZodObject = z.AnyZodObject,
   TOutput extends VideoGenInput = VideoGenInput,
+  TDefaults extends z.input<TSchema> = z.input<TSchema>,
   SchemaOutput = z.infer<TSchema>,
-  SchemaInput = z.input<TSchema>
+  RefinementOutput = SchemaOutput & TDefaults
 >({
   defaultValues,
   superRefine,
   schema,
+  transformFn,
   ...args
 }: {
   label: string;
@@ -55,9 +57,10 @@ export function VideoGenerationConfig2<
   whatIfProps: string[];
   metadataDisplayProps: string[];
   schema: TSchema;
-  inputFn: (args: SchemaOutput) => TOutput;
-  defaultValues?: SchemaInput;
-  superRefine?: (arg: SchemaOutput, ctx: RefinementCtx) => void;
+  defaultValues?: TDefaults;
+  superRefine?: (arg: RefinementOutput, ctx: RefinementCtx) => void;
+  transformFn?: (args: SchemaOutput) => RefinementOutput;
+  inputFn: (args: RefinementOutput) => TOutput;
 }) {
   const validationSchema = superRefine ? schema.superRefine(superRefine as any) : schema;
 
@@ -67,12 +70,25 @@ export function VideoGenerationConfig2<
   }
 
   function getDefaultValues() {
-    return schema.parse(defaultValues);
+    return schema.parse({ ...defaultValues });
   }
 
   function getWhatIfValues(data: any) {
     return schema.parse({ ...defaultValues, ...data });
   }
 
-  return { ...args, schema, validationSchema, getDefaultValues, validate, getWhatIfValues };
+  function inputFn(data: SchemaOutput): TOutput {
+    const transformed = transformFn?.(data) ?? data;
+    return args.inputFn(transformed as any);
+  }
+
+  return {
+    ...args,
+    schema,
+    validationSchema,
+    getDefaultValues,
+    validate,
+    getWhatIfValues,
+    inputFn,
+  };
 }

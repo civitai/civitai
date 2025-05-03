@@ -1,8 +1,10 @@
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
+import {
+  OrchestratorEngine2,
+  videoGenerationConfig2,
+} from '~/server/orchestrator/generation/generation.config';
 import { useMemo, useState, useEffect } from 'react';
 import { hashify } from '~/utils/string-helpers';
-import { z } from 'zod';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
@@ -17,13 +19,14 @@ import { Button, Notification } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { useFormContext, UseFormReturn } from 'react-hook-form';
+import { useFormContext } from 'react-hook-form';
 import { getQueryKey } from '@trpc/react-query';
 import { trpc } from '~/utils/trpc';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { IconX } from '@tabler/icons-react';
 import { useVideoGenerationStore } from '~/components/Generation/Video/VideoGenerationProvider';
 import { ViduFormInput } from './ViduFormInput';
+import { WanFormInput } from '~/components/Generation/Video/WanFormInput';
 
 export function VideoGenerationForm() {
   const getState = useVideoGenerationStore((state) => state.getState);
@@ -95,13 +98,17 @@ export function VideoGenerationForm() {
     }, 1000);
   }
 
+  const InputsComponent = inputDictionary[engine];
+  if (!InputsComponent)
+    return <div className="flex items-center justify-center p-3">Form not implemented</div>;
+
   return (
     <Form
       form={form}
       onSubmit={handleSubmit}
       className="relative flex h-full flex-1 flex-col justify-between gap-2"
     >
-      <VideoInputSwitch />
+      <InputsComponent />
       <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
       <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
         <DailyBoostRewardClaim />
@@ -204,12 +211,7 @@ function SubmitButton2({ loading }: { loading: boolean }) {
   );
 }
 
-function VideoInputSwitch() {
-  const engine = useVideoGenerationStore((state) => state.engine);
-  switch (engine) {
-    case 'vidu':
-      return <ViduFormInput />;
-    default:
-      return <div className="flex items-center justify-center p-3">Form not implemented</div>;
-  }
-}
+const inputDictionary: Record<OrchestratorEngine2, () => JSX.Element> = {
+  vidu: ViduFormInput,
+  wan: WanFormInput,
+};

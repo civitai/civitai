@@ -25,16 +25,16 @@ export const sourceImageSchema = z.object({
 export const seedSchema = z.number().optional();
 const prioritySchema = z.nativeEnum(Priority).default('low').catch('low');
 
-const baseSchema = z.object({
+export const baseGenerationSchema = z.object({
   priority: prioritySchema,
 });
 
-export const textEnhancementSchema = baseSchema.extend({
+export const textEnhancementSchema = baseGenerationSchema.extend({
   type: z.literal(GenerationType.txt2vid).catch(GenerationType.txt2vid),
   prompt: promptSchema,
 });
 
-export const imageEnhancementSchema = baseSchema.extend({
+export const imageEnhancementSchema = baseGenerationSchema.extend({
   type: z.literal(GenerationType.img2vid).catch(GenerationType.img2vid),
   sourceImage: sourceImageSchema,
 });

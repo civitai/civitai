@@ -65,16 +65,18 @@ export function VideoGenerationFormWrapper() {
             </div>
           </Alert>
         ) : (
-          <Select
-            label="Tool"
-            value={engine}
-            description={selected?.message && !selected?.disabled ? selected.message : undefined}
-            onChange={(engine) => setState({ engine: engine as OrchestratorEngine2 })}
-            data={data?.map(({ engine, label }) => ({ label, value: engine }))}
-          />
+          <>
+            <Select
+              label="Tool"
+              value={engine}
+              description={selected?.message && !selected?.disabled ? selected.message : undefined}
+              onChange={(engine) => setState({ engine: engine as OrchestratorEngine2 })}
+              data={data?.map(({ engine, label }) => ({ label, value: engine }))}
+            />
+            {engine && <VideoGenerationForm />}
+          </>
         )}
       </div>
-      {engine && <VideoGenerationForm />}
     </div>
   );
 }
