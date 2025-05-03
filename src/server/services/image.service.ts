@@ -1679,7 +1679,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
     filters.push(
       // Avoids blocked resources to the public
-      `((blockedFor IS NULL) OR "userId" = ${currentUserId})`
+      `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS) OR "userId" = ${currentUserId})`
     );
   }
 
@@ -1815,7 +1815,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
   if (requiringMeta) {
-    filters.push(`(blockedFor = ${BlockedReason.AiNotVerified})`);
+    filters.push(`("blockedFor" = ${BlockedReason.AiNotVerified})`);
   }
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
@@ -1937,8 +1937,12 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
     const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
     const filteredHits = results.hits.filter((hit) => {
-      // check for good data
-      if (!hit.url) return false;
+      if (hit.id === 17383305) {
+        console.log('hit', hit);
+      }
+      if (!hit.url)
+        // check for good data
+        return false;
       // filter out items flagged with minor unless it's the owner or moderator
       if (hit.acceptableMinor) return hit.userId === currentUserId || isModerator;
       // filter out non-scanned unless it's the owner or moderator

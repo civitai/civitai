@@ -98,6 +98,8 @@ class TipaltiCaller extends HttpCaller {
       // First, check if it exists:
       const existingPayee = await this.getPayeeByRefCode(payee.refCode);
 
+      // console.log('I happened', existingPayee);
+
       if (existingPayee) {
         return existingPayee;
       }
@@ -128,7 +130,20 @@ class TipaltiCaller extends HttpCaller {
 
     const data = await response.json();
 
-    return Tipalti.createPayeeInvitationResponseSchema.parse(data);
+    const res = Tipalti.createPayeeInvitationResponseSchema.safeParse(data);
+
+    if (!res.success) {
+      console.log(data);
+      const { errors } = data as { errors: { code: string }[] };
+      if (errors.find((e) => ['PYEEIN-100001', 'PYEEIN-100002'].includes(e.code))) {
+        // Payee already has an invitation. This will error in the request but its fine.
+        return;
+      }
+
+      throw new Error('Failed to create payee invitation');
+    }
+
+    return res.data;
   }
 
   async getPaymentDashboardUrl(

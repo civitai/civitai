@@ -2,6 +2,7 @@ import {
   ComfyStep,
   createCivitaiClient,
   HaiperVideoGenOutput,
+  ImageGenStep,
   ImageJobNetworkParams,
   Priority,
   TextToImageInput,
@@ -117,6 +118,8 @@ export async function parseGenerateImageInput({
   workflowDefinition: WorkflowDefinition;
   whatIf?: boolean;
 }) {
+  delete originalParams.openAIBackground;
+  // delete originalParams.openAIQuality;
   if (originalParams.workflow.startsWith('txt2img')) originalParams.sourceImage = null;
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
@@ -495,12 +498,65 @@ function formatWorkflowStep(args: {
       return formatTextToImageStep(args);
     case 'comfy':
       return formatComfyStep(args);
+    case 'imageGen':
+      return formatImageGenStep(args);
     case 'videoGen':
     case 'videoEnhancement':
       return formatVideoGenStep(args);
     default:
       throw new Error('failed to extract generation resources: unsupported workflow type');
   }
+}
+
+function formatImageGenStep({
+  step,
+  resources = [],
+  workflowId,
+}: {
+  step: WorkflowStep;
+  resources?: GenerationResource[];
+  workflowId: string;
+}) {
+  const { input, output, jobs } = step as ImageGenStep;
+  const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
+  const { params, resources: stepResources = [] } = metadata;
+
+  const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
+    (acc, job, i) => ({
+      ...acc,
+      [job.id]:
+        output?.images
+          ?.filter((x) => (x.jobId ? x.jobId === job.id : true))
+          .map((image) => ({
+            type: 'image',
+            workflowId,
+            stepName: step.name,
+            jobId: job.id,
+            id: image.id,
+            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
+            seed: params?.seed ? params.seed + i : undefined,
+            completed: job.completedAt ? new Date(job.completedAt) : undefined,
+            url: image.url as string,
+            width: params?.width ?? 1024,
+            height: params?.height ?? 1024,
+            blockedReason: image.blockedReason,
+          })) ?? [],
+    }),
+    {}
+  );
+
+  const images = Object.values(groupedImages).flat();
+
+  return {
+    $type: 'imageGen' as const,
+    timeout: step.timeout,
+    name: step.name,
+    params: params!,
+    images,
+    status: step.status,
+    metadata: metadata as GeneratedImageStepMetadata,
+    resources: combineResourcesWithInputResource(resources, stepResources),
+  };
 }
 
 function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
