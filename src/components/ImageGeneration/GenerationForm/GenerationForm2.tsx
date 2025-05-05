@@ -1017,7 +1017,7 @@ export function GenerationFormContent() {
                   />
                 )}
 
-                {isOpenAI && (
+                {/* {isOpenAI && (
                   <>
                     {!sourceImage && (
                       <InputSelect
@@ -1027,7 +1027,7 @@ export function GenerationFormContent() {
                       />
                     )}
                   </>
-                )}
+                )} */}
 
                 {isFluxUltra && <InputSeed name="seed" label="Seed" />}
                 {!disableAdvanced && (
