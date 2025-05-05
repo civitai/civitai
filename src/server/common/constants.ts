@@ -1318,3 +1318,8 @@ export const HOLIDAY_PROMO_VALUE = 0.2;
 export const MAX_APPEAL_MESSAGE_LENGTH = 220;
 
 export const FEATURED_MODEL_COLLECTION_ID = 104;
+
+export const newOrderConfig = {
+  baseExp: 100,
+  blessedBuzzConversionRatio: 0.001,
+};

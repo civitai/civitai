@@ -1,5 +1,5 @@
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, newOrderConfig } from '~/server/common/constants';
 import {
   NewOrderImageRatingStatus,
   NsfwLevel,
@@ -252,8 +252,6 @@ export async function addImageRating({
       : // Knights / Templars leave the image in the pending status until their vote is confirmed.
         NewOrderImageRatingStatus.Pending;
 
-  // TODO.newOrder: grantedExp and multiplier
-  const grantedExp = 100;
   const multiplier = status === NewOrderImageRatingStatus.Failed ? 0 : 1;
 
   if (chTracker) {
@@ -269,7 +267,7 @@ export async function addImageRating({
               : NewOrderImageRatingStatus.AcolyteFailed
             : status,
         damnedReason,
-        grantedExp,
+        grantedExp: newOrderConfig.baseExp,
         multiplier,
         rank: player.rankType,
       });
@@ -280,7 +278,15 @@ export async function addImageRating({
           type: 'error',
           name: 'new-order-image-rating',
           details: {
-            data: { playerId, imageId, rating, status, damnedReason, grantedExp, multiplier },
+            data: {
+              playerId,
+              imageId,
+              rating,
+              status,
+              damnedReason,
+              grantedExp: newOrderConfig.baseExp,
+              multiplier,
+            },
           },
           message: error.message,
           stack: error.stack,
@@ -311,7 +317,7 @@ export async function addImageRating({
     if (smite) {
       const updatedSmite = await dbWrite.newOrderSmite.update({
         where: { id: smite.id },
-        data: { remaining: smite.remaining - grantedExp * multiplier },
+        data: { remaining: smite.remaining - newOrderConfig.baseExp * multiplier },
       });
 
       if (updatedSmite.remaining <= 0)
@@ -323,7 +329,7 @@ export async function addImageRating({
   const stats = await updatePlayerStats({
     playerId,
     status,
-    exp: grantedExp * multiplier,
+    exp: newOrderConfig.baseExp * multiplier,
     updateAll: player.rankType !== NewOrderRankType.Acolyte,
   });
 

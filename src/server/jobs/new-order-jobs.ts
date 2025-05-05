@@ -2,6 +2,7 @@ import { removeDuplicates } from '@tiptap/react';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
+import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -36,7 +37,7 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   const judgments = await clickhouse.$query<{ userId: number; balance: number }>`
     SELECT
       userId,
-      SUM(grantedExp * multiplier) as balance
+      floor(SUM(grantedExp * multiplier) * ${newOrderConfig.blessedBuzzConversionRatio}) as balance
     FROM knights_new_order_image_rating
     WHERE createdAt BETWEEN ${startDate} AND ${endDate}
       AND (status = '${NewOrderImageRatingStatus.Correct}' OR status = '${NewOrderImageRatingStatus.Failed}')

@@ -1,5 +1,6 @@
 import dayjs from 'dayjs';
 import { z } from 'zod';
+import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderDamnedReason, NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -20,7 +21,10 @@ export const smitePlayerSchema = z.object({
   playerId: z.number(),
   imageId: z.number(),
   reason: z.string().optional(),
-  size: z.number().optional().default(1000),
+  size: z
+    .number()
+    .optional()
+    .default(newOrderConfig.baseExp * 10), // default to 10x base exp
 });
 
 export type CleanseSmiteInput = z.infer<typeof cleanseSmiteSchema>;

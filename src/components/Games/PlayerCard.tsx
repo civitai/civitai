@@ -7,6 +7,7 @@ import { LevelProgress } from '~/components/Games/LevelProgress/LevelProgress';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { newOrderConfig } from '~/server/common/constants';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { getLevelProgression } from '~/server/utils/research-utils';
 import { Currency, NewOrderRankType } from '~/shared/utils/prisma/enums';
@@ -25,7 +26,7 @@ const ranksExplanation: Record<NewOrderRankType, React.ReactElement> = {
   [NewOrderRankType.Knight]: (
     <>
       <p>You are a Knight of New Order and have access to all game features.</p>
-      <p>Keep rating images and leveling up to earn blessed buzz and fervor to become a Templar.</p>
+      <p>Keep rating images and leveling up to earn gold and fervor to become a Templar.</p>
     </>
   ),
   [NewOrderRankType.Templar]: (
@@ -139,6 +140,7 @@ export function PlayerStats({
   showSmiteCount?: boolean;
 }) {
   const iconSize = iconSizes[size] || iconSizes.lg;
+  const totalBuzz = Math.floor(stats.blessedBuzz / newOrderConfig.blessedBuzzConversionRatio);
 
   return (
     <div className="flex items-center gap-1">
@@ -151,12 +153,12 @@ export function PlayerStats({
         {abbreviateNumber(stats.blessedBuzz)}
       </IconBadge>
       <IconBadge
-        tooltip={`Total Buzz: ${numberWithCommas(Math.floor(stats.blessedBuzz / 1000))}`}
+        tooltip={`Total Buzz: ${numberWithCommas(totalBuzz)}`}
         size={size}
         color="yellow.7"
         icon={<CurrencyIcon type={Currency.BUZZ} size={iconSize} stroke={1.5} />}
       >
-        {abbreviateNumber(Math.floor(stats.blessedBuzz / 1000))}
+        {abbreviateNumber(totalBuzz)}
       </IconBadge>
       <IconBadge
         tooltip={`Total Fervor: ${numberWithCommas(stats.fervor)}`}

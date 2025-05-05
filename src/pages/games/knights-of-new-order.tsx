@@ -31,6 +31,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NewOrderImageRatings } from '~/components/Games/NewOrder/NewOrderImageRatings';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { RankUp } from '~/components/Games/LevelProgress/RankUp';
+import { newOrderConfig } from '~/server/common/constants';
 
 let levelUpTimer: NodeJS.Timeout | null = null;
 let rankUpTimer: NodeJS.Timeout | null = null;
@@ -101,7 +102,7 @@ export default Page(
 
       // Check for level up
       const progression = playerData ? getLevelProgression(playerData.stats.exp) : null;
-      const gainedExp = rating === currentImage.nsfwLevel ? 100 : 0;
+      const gainedExp = rating === currentImage.nsfwLevel ? newOrderConfig.baseExp : 0;
       const shouldLevelUp =
         progression && progression.xpIntoLevel + gainedExp >= progression.xpForNextLevel;
       if (shouldLevelUp) levelUp();
@@ -150,7 +151,7 @@ export default Page(
           ) : isLoading ? (
             <PageLoader />
           ) : playerData ? (
-            <div className="relative -mt-3 flex h-[calc(100%-44px)] flex-col gap-4 bg-dark-9 p-4 @md:flex-row @md:p-0">
+            <div className="relative -mt-3 flex h-[calc(100%-44px)] flex-col gap-4 bg-gray-2 p-4 @md:flex-row @md:p-0 dark:bg-dark-9">
               <NewOrderSidebar />
               <div className="relative flex size-full items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
                 {isLevelingUp && <LevelUp className="absolute" />}
