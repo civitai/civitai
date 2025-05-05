@@ -140,7 +140,7 @@ export function PlayerStats({
   showSmiteCount?: boolean;
 }) {
   const iconSize = iconSizes[size] || iconSizes.lg;
-  const totalBuzz = Math.floor(stats.blessedBuzz / newOrderConfig.blessedBuzzConversionRatio);
+  const totalBuzz = Math.floor(stats.blessedBuzz * newOrderConfig.blessedBuzzConversionRatio);
 
   return (
     <div className="flex items-center gap-1">

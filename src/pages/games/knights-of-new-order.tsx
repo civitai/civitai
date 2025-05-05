@@ -59,6 +59,7 @@ export default Page(
     const levelNoticeRef = useRef<HTMLDivElement>(null);
     const [isLevelingUp, setIsLevelingUp] = useState(false);
     const [isRankingUp, setIsRankingUp] = useState(false);
+    const [prevHistory, setPrevHistory] = useState<number[]>([]);
 
     const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
     const { playerData, isLoading, joined } = useJoinKnightsNewOrder();
@@ -69,6 +70,7 @@ export default Page(
       refetch,
       isRefetching,
     } = useQueryKnightsNewOrderImageQueue();
+    const filteredData = data.filter((image) => !prevHistory.includes(image.id));
 
     useKnightsNewOrderListener({
       onRankUp: () => {
@@ -85,6 +87,7 @@ export default Page(
     }: Omit<AddImageRatingInput, 'playerId' | 'imageId'>) => {
       if (!currentImage) return;
 
+      setPrevHistory((prev) => [...prev, currentImage.id]);
       playSound(rating === NsfwLevel.Blocked ? 'buzz' : 'point', ratingPlayBackRates[rating]);
 
       // Update level notice
@@ -115,7 +118,7 @@ export default Page(
     };
 
     const handleFetchNextBatch = () => {
-      if (data.length <= 1 && !isRefetching) {
+      if (filteredData.length <= 1 && !isRefetching) {
         playSound('challenge');
         refetch();
       }
@@ -136,7 +139,7 @@ export default Page(
       levelUpTimer = setTimeout(() => setIsLevelingUp(false), 2000);
     };
 
-    const currentImage = data[0];
+    const currentImage = filteredData[0];
 
     return (
       <GameErrorBoundary>

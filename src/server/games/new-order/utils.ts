@@ -99,11 +99,13 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
 export const correctJudgmentsCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.CORRECT,
   fetchCount: async () => 0,
+  ttl: CacheTTL.week,
 });
 
 export const allJudmentsCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.ALL,
   fetchCount: async () => 0,
+  ttl: CacheTTL.week,
 });
 
 export const fervorCounter = createCounter({
@@ -116,16 +118,19 @@ export const fervorCounter = createCounter({
 export const smitesCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.SMITE,
   fetchCount: async () => 0,
+  ttl: CacheTTL.week,
 });
 
 export const blessedBuzzCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.BUZZ,
   fetchCount: async () => 0,
+  ttl: CacheTTL.week,
 });
 
 export const expCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.EXP,
   fetchCount: async () => 0,
+  ttl: CacheTTL.week,
 });
 
 export const poolKeys = {
