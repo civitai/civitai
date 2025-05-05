@@ -732,7 +732,17 @@ export async function getResourceData({
         epochs are used to generate images from a trained model before the model is finished training. It allows the user to determine the best trained model from the available epochs.
       */
       return (epochsDetails?.length ?? 0) > 0
-        ? epochsDetails.map((epochDetails) => ({ ...payload, epochDetails }))
+        ? epochsDetails.map((epochDetails) => ({
+            ...payload,
+            epochDetails,
+            air: stringifyAIR({
+              baseModel: item.baseModel,
+              type: item.model.type,
+              modelId: epochDetails.jobId,
+              id: epochDetails.fileName,
+              source: 'orchestrator',
+            }),
+          }))
         : payload;
     });
   });
