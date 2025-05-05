@@ -42,6 +42,7 @@ import {
   getBaseModelFromResources,
   getBaseModelSet,
   getBaseModelSetType,
+  getResourceGenerationType,
   SupportedBaseModel,
 } from '~/shared/constants/generation.constants';
 import { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -227,6 +228,7 @@ export type RemixOfProps = {
   createdAt: Date;
 };
 export type GenerationData = {
+  type: MediaType;
   remixOfId?: number;
   resources: GenerationResource[];
   params: Partial<TextToImageParams>;
@@ -320,6 +322,8 @@ async function getMediaGenerationData({
     resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
 
+  const type = getResourceGenerationType(baseModel);
+
   switch (media.type) {
     case 'image':
       let aspectRatio = '0';
@@ -358,6 +362,7 @@ async function getMediaGenerationData({
       // }
 
       return {
+        type,
         remixOfId: media.id, // TODO - remove
         remixOf,
         resources,
@@ -377,6 +382,7 @@ async function getMediaGenerationData({
     case 'video':
       const engine = baseModelEngineMap[baseModel];
       return {
+        type,
         remixOfId: media.id, // TODO - remove,
         remixOf,
         resources,
@@ -420,7 +426,10 @@ const getModelVersionGenerationData = async ({
 
   const engine = baseModelEngineMap[baseModel];
 
+  // TODO - refactor this elsewhere
+
   return {
+    type: getResourceGenerationType(baseModel),
     resources: deduped,
     params: {
       baseModel,

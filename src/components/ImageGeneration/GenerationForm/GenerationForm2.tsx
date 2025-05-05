@@ -159,6 +159,7 @@ export function GenerationFormContent() {
     trpc.generation.getWorkflowDefinitions.useQuery();
 
   const [workflow] = form.watch(['workflow']) ?? 'txt2img';
+  const baseModel = form.watch('baseModel');
   const [sourceImage] = form.watch(['sourceImage']);
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
@@ -402,6 +403,12 @@ export function GenerationFormContent() {
     else setMinDenoise(0);
   }, [sourceImage, form]);
 
+  const isOpenAI = baseModel === 'OpenAI';
+  const isSDXL = getIsSdxl(baseModel);
+  const isFlux = getIsFlux(baseModel);
+  const isSD3 = getIsSD3(baseModel);
+  const disablePriority = runsOnFalAI || isOpenAI;
+
   return (
     <Form
       form={form}
@@ -414,12 +421,8 @@ export function GenerationFormContent() {
         fields={['baseModel', 'fluxMode', 'draft', 'model', 'workflow', 'sourceImage']}
       >
         {({ baseModel, fluxMode, draft, model, workflow, sourceImage }) => {
-          const isOpenAI = baseModel === 'OpenAI';
           // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
           const isImg2Img = !workflow.startsWith('txt') || (isOpenAI && sourceImage);
-          const isSDXL = getIsSdxl(baseModel);
-          const isFlux = getIsFlux(baseModel);
-          const isSD3 = getIsSD3(baseModel);
           const isDraft = isFlux
             ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
             : isSD3
@@ -487,7 +490,12 @@ export function GenerationFormContent() {
                     </div>
                   </div>
                 )}
-                {enableImageInput && <InputSourceImageUpload name="sourceImage" />}
+                {enableImageInput && (
+                  <InputSourceImageUpload
+                    name="sourceImage"
+                    label={isOpenAI ? 'Image (optional)' : undefined}
+                  />
+                )}
 
                 <div className="-mb-1 flex items-center gap-1">
                   <Input.Label style={{ fontWeight: 590 }} required>
@@ -1243,7 +1251,9 @@ export function GenerationFormContent() {
                     </Accordion.Item>
                   </PersistentAccordion>
                 )}
-                {!runsOnFalAI && <InputRequestPriority name="priority" label="Request Priority" />}
+                {!disablePriority && (
+                  <InputRequestPriority name="priority" label="Request Priority" />
+                )}
               </div>
               <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />

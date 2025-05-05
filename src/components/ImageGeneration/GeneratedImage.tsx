@@ -575,9 +575,10 @@ function GeneratedImageWorkflowMenuItems({
   const { copied, copy } = useClipboard();
 
   const isVideo = step.$type === 'videoGen';
+  const isOpenAI = !isVideo && step.params.engine === 'openai';
   const isFlux = !isVideo && getIsFlux(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
-  const canImg2Img = !isFlux && !isSD3 && !isVideo;
+  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isOpenAI;
   const img2imgWorkflows = !isVideo
     ? workflowDefinitions.filter(
         (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)
@@ -593,7 +594,9 @@ function GeneratedImageWorkflowMenuItems({
     'img2img-upscale-enhancement-realism': handleUpscaleEnhance,
   };
 
-  const canRemix = !!step.params.workflow && !(step.params.workflow in notSelectableMap);
+  const canRemix =
+    (!!step.params.workflow && !(step.params.workflow in notSelectableMap)) ||
+    !!(step.params as any).engine;
 
   async function handleGenerate(
     { seed, ...rest }: Partial<TextToImageParams> = {},
@@ -651,6 +654,10 @@ function GeneratedImageWorkflowMenuItems({
         params: step.params,
       },
     });
+  }
+
+  async function handleImg2ImgNoWorkflow() {
+    handleGenerate({ sourceImage: image.url as any });
   }
 
   async function handleUpscale() {
@@ -725,7 +732,10 @@ function GeneratedImageWorkflowMenuItems({
           Delete
         </Menu.Item>
       )}
-      {!isBlocked && !workflowsOnly && <Menu.Divider />}
+      {!isBlocked && !workflowsOnly && (!!img2vidConfigs.length || !!img2imgWorkflows.length) && (
+        <Menu.Divider />
+      )}
+
       {!isBlocked &&
         img2imgWorkflows.map((workflow) => {
           const handleMappedClick = notSelectableMap[workflow.key];
@@ -741,6 +751,9 @@ function GeneratedImageWorkflowMenuItems({
             </WithMemberMenuItem>
           );
         })}
+      {!isBlocked && isOpenAI && (
+        <WithMemberMenuItem onClick={handleImg2ImgNoWorkflow}>Image To Image</WithMemberMenuItem>
+      )}
       {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
       {!isBlocked && !!img2vidConfigs.length && (
         <>
