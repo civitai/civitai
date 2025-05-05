@@ -84,32 +84,29 @@ export default Page(
     }: Omit<AddImageRatingInput, 'playerId' | 'imageId'>) => {
       if (!currentImage) return;
 
-      try {
-        playSound(rating === NsfwLevel.Blocked ? 'buzz' : 'point', ratingPlayBackRates[rating]);
+      playSound(rating === NsfwLevel.Blocked ? 'buzz' : 'point', ratingPlayBackRates[rating]);
 
-        // Update level notice
-        if (levelNoticeRef.current && rating !== NsfwLevel.Blocked) {
-          const innerText = NsfwLevel[rating] ?? '';
+      // Update level notice
+      if (levelNoticeRef.current && rating !== NsfwLevel.Blocked) {
+        const innerText = NsfwLevel[rating] ?? '';
 
-          levelNoticeRef.current.innerText = innerText;
-          levelNoticeRef.current.style.display = 'block';
-          setTimeout(() => {
-            if (levelNoticeRef.current) levelNoticeRef.current.style.display = 'none';
-          }, 200);
-        }
-
-        await addRating({ imageId: currentImage.id, rating, damnedReason });
-
-        // Check for level up
-        const progression = playerData ? getLevelProgression(playerData.stats.exp) : null;
-        const shouldLevelUp =
-          progression && progression.xpIntoLevel + 100 >= progression.xpForNextLevel;
-        if (shouldLevelUp) levelUp();
-
-        handleFetchNextBatch();
-      } catch {
-        playSound('challengeFail');
+        levelNoticeRef.current.innerText = innerText;
+        levelNoticeRef.current.style.display = 'block';
+        setTimeout(() => {
+          if (levelNoticeRef.current) levelNoticeRef.current.style.display = 'none';
+        }, 200);
       }
+
+      await addRating({ imageId: currentImage.id, rating, damnedReason });
+
+      // Check for level up
+      const progression = playerData ? getLevelProgression(playerData.stats.exp) : null;
+      const gainedExp = rating === currentImage.nsfwLevel ? 100 : 0;
+      const shouldLevelUp =
+        progression && progression.xpIntoLevel + gainedExp >= progression.xpForNextLevel;
+      if (shouldLevelUp) levelUp();
+
+      handleFetchNextBatch();
     };
 
     const handleAddDamnedReason = async ({ reason }: { reason: NewOrderDamnedReason }) => {

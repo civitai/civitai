@@ -254,7 +254,7 @@ export async function addImageRating({
 
   // TODO.newOrder: grantedExp and multiplier
   const grantedExp = 100;
-  const multiplier = status === NewOrderImageRatingStatus.Failed ? -1 : 1;
+  const multiplier = status === NewOrderImageRatingStatus.Failed ? 0 : 1;
 
   if (chTracker) {
     try {

@@ -230,7 +230,7 @@ export const useAddImageRating = () => {
           ...old,
           stats: {
             ...old.stats,
-            exp: matchedImage && isCorrectRating ? old.stats.exp + 100 : old.stats.exp - 100,
+            exp: matchedImage && isCorrectRating ? old.stats.exp + 100 : old.stats.exp,
           },
         };
       });
