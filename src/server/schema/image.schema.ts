@@ -455,3 +455,9 @@ export const updateImageAcceptableMinorSchema = z.object({
   collectionId: z.number(),
   acceptableMinor: z.boolean(),
 });
+
+export type ToggleImageFlagInput = z.infer<typeof toggleImageFlagSchema>;
+export const toggleImageFlagSchema = z.object({
+  id: z.number(),
+  flag: z.enum(['minor', 'poi']),
+});

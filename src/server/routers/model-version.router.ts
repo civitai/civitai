@@ -32,6 +32,7 @@ import {
   upsertExplorationPromptSchema,
 } from '~/server/schema/model-version.schema';
 import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model.schema';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
   deleteExplorationPrompt,
   getExplorationPromptsById,
@@ -53,6 +54,7 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
 const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -143,4 +145,13 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .mutation(publishPrivateModelVersionHandler),
   bustCache: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => bustMvCache(input.id)),
+  enqueueNsfwLevelUpdate: moderatorProcedure.input(getByIdSchema).mutation(({ input }) =>
+    enqueueJobs([
+      {
+        entityId: input.id,
+        entityType: EntityType.ModelVersion,
+        type: JobQueueType.UpdateNsfwLevel,
+      },
+    ])
+  ),
 });

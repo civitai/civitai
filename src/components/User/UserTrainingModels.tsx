@@ -591,7 +591,7 @@ export default function UserTrainingModels() {
               ),
             },
             {
-              label: 'Images',
+              label: 'Files',
               value: modalData.file?.metadata?.numImages || 0,
             },
             {

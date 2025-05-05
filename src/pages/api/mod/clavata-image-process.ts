@@ -9,6 +9,14 @@ const schema = z.object({
   image: z.string().optional(),
 });
 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '17mb',
+    },
+  },
+};
+
 export default ModEndpoint(
   async (req: NextApiRequest, res: NextApiResponse) => {
     const { imageUrl, image, policyId } = schema.parse(req.body);

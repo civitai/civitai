@@ -10,7 +10,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
-import { hasNsfwWords } from '~/utils/metadata/audit';
+import { getBlockedNsfwWords, hasNsfwWords } from '~/utils/metadata/audit';
 import { isDefined, paired } from '~/utils/type-guards';
 
 export function useApplyHiddenPreferences<
@@ -293,6 +293,9 @@ function filterPreferences<
             hidden.tags++;
             return false;
           }
+
+        if (!currentUser?.isModerator && !!getBlockedNsfwWords(image.prompt).length) return false;
+
         return true;
       });
 
@@ -582,6 +585,7 @@ type BaseImage = {
   nsfwLevel: number;
   poi?: boolean;
   minor?: boolean;
+  prompt?: string;
 };
 
 type BaseModel = {

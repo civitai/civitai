@@ -1555,6 +1555,41 @@ export const upsertModel = async (
       );
     }
 
+    if (minorChanged || poiChanged) {
+      // Update all images:
+      const modelVersions = await dbWrite.modelVersion.findMany({
+        where: { modelId: id },
+        select: { id: true },
+      });
+
+      const modelVersionIds = modelVersions.map(({ id }) => id);
+
+      if (modelVersionIds.length !== 0) {
+        const imageIds = await dbRead.$queryRaw<{ id: number }[]>`
+          SELECT i.id
+          FROM "Image" i
+          JOIN "Post" p ON i."postId" = p.id
+          WHERE p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
+        `;
+
+        if (imageIds.length !== 0) {
+          await dbWrite.$executeRaw`
+            UPDATE "Image"
+              SET minor = ${result.minor},
+                  poi = ${result.poi}
+            WHERE id IN (${Prisma.join(
+              imageIds.map(({ id }) => id),
+              ','
+            )})
+          `;
+
+          await imagesSearchIndex.queueUpdate(
+            imageIds.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+          );
+        }
+      }
+    }
+
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
         saveItemInCollections({

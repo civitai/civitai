@@ -20,7 +20,7 @@ export async function upsertModelFlag({
     minor: boolean;
     triggerWords: boolean;
     poiName: boolean;
-    sfwOnly: boolean;
+    sfwOnly?: boolean;
   };
   details?: MixedObject;
 }) {

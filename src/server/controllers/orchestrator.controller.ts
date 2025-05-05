@@ -19,7 +19,7 @@ import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-type Ctx = { token: string; userId: number };
+type Ctx = { token: string; userId: number; experimental?: boolean };
 
 const blockedPromptLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
@@ -43,6 +43,7 @@ export async function generate({
   civitaiTip = 0,
   creatorTip = 0,
   tags = [],
+  experimental,
   ...args
 }: GenerationSchema & Ctx) {
   // throw throwBadRequestError(`Your prompt was flagged for: `);
@@ -94,6 +95,7 @@ export async function generate({
         civitai: civitaiTip,
         creators: creatorTip,
       },
+      experimental,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.TextToImageUpdate}`,
@@ -112,7 +114,7 @@ export async function whatIf(args: GenerationSchema & Ctx) {
 
   const workflow = await submitWorkflow({
     token: args.token,
-    body: { steps: [step] },
+    body: { steps: [step], experimental: args.experimental },
     query: { whatif: true },
   });
 

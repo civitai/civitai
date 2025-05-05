@@ -36,6 +36,7 @@ import { createJob } from './job';
 import { eventEngine } from '~/server/events';
 import { randomizeCollectionItems } from '~/server/services/collection.service';
 import { preventReplicationLag } from '~/server/db/db-helpers';
+import { handleLogError } from '~/server/utils/errorHandling';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -872,6 +873,33 @@ export async function startNextChallenge(config: ChallengeConfig) {
       WHERE id = ${upcomingChallenge.modelId};
     `;
     log('Cosmetic given');
+  }
+
+  // Notify to owner of the resource
+  const model = await dbRead.model.findUnique({
+    where: { id: upcomingChallenge.modelId },
+    select: { userId: true, name: true },
+  });
+  if (model) {
+    createNotification({
+      type: 'challenge-resource',
+      category: NotificationCategory.System,
+      key: `challenge-resource:${upcomingChallenge.articleId}`,
+      userId: model.userId,
+      details: {
+        articleId: upcomingChallenge.articleId,
+        challengeName: upcomingChallenge.title,
+        resourceName: model.name,
+      },
+    }).catch((error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'challenge-resource-notification',
+        message: error.message,
+      });
+      log('Failed to notify resource owner', error);
+    });
+    log('Resource owner notified');
   }
 
   // Set as current challenge

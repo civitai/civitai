@@ -255,7 +255,14 @@ export async function createTipaltiPayee({ userId }: { userId: number }) {
 
     // Send invite right away:
     // TODO: store some info on the meta object.
-    const invitation = await client.createPayeeInvitation(tipaltiPayee.id);
+    console.log('Tipalti payee created', tipaltiPayee.id);
+    await client.createPayeeInvitation(tipaltiPayee.id).catch((error) => {
+      log({
+        method: 'createTipaltiPayeeInvitation',
+        error,
+        userId,
+      });
+    });
 
     const updatedPaymentConfiguration = await dbWrite.userPaymentConfiguration.upsert({
       create: {

@@ -135,27 +135,27 @@ EXECUTE FUNCTION update_article_nsfw_level();
 
 
 -- COLLECTION ITEM TRIGGER
-CREATE OR REPLACE FUNCTION update_collection_nsfw_level()
-RETURNS TRIGGER AS $collection_nsfw_level$
-BEGIN
-  IF (TG_OP = 'DELETE') THEN
-    -- When a collection item is deleted, schedule update of collection nsfw level
-    PERFORM create_job_queue_record(OLD."collectionId", 'Collection', 'UpdateNsfwLevel');
-  -- On collection item publish, schedule update of collection nsfw level
-  ELSIF ((TG_OP = 'UPDATE' AND OLD.status != 'ACCEPTED' AND NEW.status = 'ACCEPTED')) THEN
-    PERFORM create_job_queue_record(OLD."collectionId", 'Collection', 'UpdateNsfwLevel');
-  -- When a collection item is added, schedule update of collection nsfw level
-  ELSIF (TG_OP = 'INSERT' AND NEW.status = 'ACCEPTED') THEN
-    PERFORM create_job_queue_record(NEW."collectionId", 'Collection', 'UpdateNsfwLevel');
-  END IF;
-  RETURN NULL;
-END;
-$collection_nsfw_level$ LANGUAGE plpgsql;
----
-CREATE OR REPLACE TRIGGER collection_nsfw_level_change
-AFTER INSERT OR UPDATE OF "status" OR DELETE ON "CollectionItem"
-FOR EACH ROW
-EXECUTE FUNCTION update_collection_nsfw_level();
+-- CREATE OR REPLACE FUNCTION update_collection_nsfw_level()
+-- RETURNS TRIGGER AS $collection_nsfw_level$
+-- BEGIN
+--   IF (TG_OP = 'DELETE') THEN
+--     -- When a collection item is deleted, schedule update of collection nsfw level
+--     PERFORM create_job_queue_record(OLD."collectionId", 'Collection', 'UpdateNsfwLevel');
+--   -- On collection item publish, schedule update of collection nsfw level
+--   ELSIF ((TG_OP = 'UPDATE' AND OLD.status != 'ACCEPTED' AND NEW.status = 'ACCEPTED')) THEN
+--     PERFORM create_job_queue_record(OLD."collectionId", 'Collection', 'UpdateNsfwLevel');
+--   -- When a collection item is added, schedule update of collection nsfw level
+--   ELSIF (TG_OP = 'INSERT' AND NEW.status = 'ACCEPTED') THEN
+--     PERFORM create_job_queue_record(NEW."collectionId", 'Collection', 'UpdateNsfwLevel');
+--   END IF;
+--   RETURN NULL;
+-- END;
+-- $collection_nsfw_level$ LANGUAGE plpgsql;
+-- ---
+-- CREATE OR REPLACE TRIGGER collection_nsfw_level_change
+-- AFTER INSERT OR UPDATE OF "status" OR DELETE ON "CollectionItem"
+-- FOR EACH ROW
+-- EXECUTE FUNCTION update_collection_nsfw_level();
 
 -- TODO ??? - create trigger for collection update nsfw? (NEW."nsfw" != OLD."nsfw" AND NEW.status = 'ACCEPTED')
 

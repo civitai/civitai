@@ -39,9 +39,9 @@ Portraying real people in any mature, suggestive, disparaging, or misleading con
 **A:** Fictional characters are generally fair game, but remember, if likeness is very obvious (Tom Cruise as Ethan Hunt from Mission Impossible for example), it's important to adhere to the same guidelines we use for real people.
 
 ### Q: I am the real person or a legal representitive of the real person displayed in these images. I did not consent to the use of my likeness, can they be taken down?
-**A:** We care a lot about the rights of individuals and the use of their likeness. If you find an image thats depicting your likeness you can request to have removed by filling out **[this form](https://forms.clickup.com/8459928/f/825mr-6491/4EW9JSIS4J9I1AUM6J)**, or by emailing us at digital-likeness@civitai.com
+**A:** We care a lot about the rights of individuals and the use of their likeness. If you find an image thats depicting your likeness you can request to have removed by filling out **[this form](/content/likeness-claim-request)**, or by emailing us at digital-likeness@civitai.com
 
-#### [Request removal of your likeness](https://forms.clickup.com/8459928/f/825mr-6491/4EW9JSIS4J9I1AUM6J)
+#### [Request removal of your likeness](/content/likeness-claim-request)
 
 ### Q: Are there any restrictions on using AI to create child-like models?
 **A:** Models intended for the photo-realistic depiction of minors are prohibited. You can read more about our requirements for content depicting minors [here](/content/rules/minors)
@@ -50,6 +50,6 @@ Portraying real people in any mature, suggestive, disparaging, or misleading con
 **A:** We take violations of our community guidelines seriously. Users who repeatedly fail to comply with our guidelines may face sanctions, such as content removal, temporary suspension, or, in extreme cases, permanent banishment from the kingdom (community). We hope it never comes to that, though!
 
 ### Q: Can I provide feedback or suggest changes to the community guidelines?
-**A:** Of course! We value your input. After all, this community is like a potluck – everyone brings something to the table. If you have suggestions for improving the guidelines or have spotted something we might have missed, please let us know by <a href="/canny/feedback" target="_blank">submitting feedback</a> or reaching out to us on Discord.
+**A:** Of course! We value your input. After all, this community is like a potluck – everyone brings something to the table. If you have suggestions for improving the guidelines or have spotted something we might have missed, please let us know by <a href="https://feedback.civitai.com/" target="_blank">submitting feedback</a> or reaching out to us on Discord.
 
 Remember, these guidelines are here to make sure that Civitai remains an innovative, respectful, and constructive community. With your cooperation and input, we can continue to make this community a shining example of how AI can be harnessed responsibly and creatively.

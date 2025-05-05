@@ -26,6 +26,7 @@ export default function MetadataTester() {
   const [tags, setTags] = useState<ImageTag[]>([]);
   const [error, setError] = useState<string | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
+  const [processed, setProcessed] = useState(false);
 
   const onDrop = async (files: File[]) => {
     if (isLoading) {
@@ -34,6 +35,7 @@ export default function MetadataTester() {
 
     setError(undefined);
     setIsLoading(true);
+    setProcessed(false);
     const [file] = files;
     try {
       // const base64 = await getBase64(file);
@@ -61,12 +63,13 @@ export default function MetadataTester() {
       }
 
       const resJson: ImageTag[] = await res.json();
-      setTags(resJson);
+      setTags(resJson.filter((t) => t.outcome !== 'OUTCOME_FALSE'));
     } catch (e) {
       console.error('Error processing image with Clavata:', e);
       setError('Failed to process image with Clavata: ' + (e as Error).message);
     } finally {
       setIsLoading(false);
+      setProcessed(true);
     }
   };
 
@@ -118,7 +121,7 @@ export default function MetadataTester() {
           </Alert>
         )}
 
-        {tags.length > 0 && (
+        {tags.length > 0 ? (
           <Stack spacing={4}>
             <Text size="lg" weight={700}>
               Detected Tags
@@ -132,7 +135,16 @@ export default function MetadataTester() {
               </Paper>
             ))}
           </Stack>
-        )}
+        ) : processed ? (
+          <Stack spacing={4}>
+            <Text size="lg" weight={700}>
+              Detected Tags
+            </Text>
+            <Text size="sm" color="dimmed">
+              No tags detected within policy.
+            </Text>
+          </Stack>
+        ) : null}
       </Stack>
     </Container>
   );

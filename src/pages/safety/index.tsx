@@ -274,7 +274,7 @@ export default function Safety({
                 </p>
                 <p>
                   Users can request an explanation or appeal a moderation decision using our{' '}
-                  <a href="/appeal" target="_blank">
+                  <a href="/content/content-appeal" target="_blank">
                     Appeal Form
                   </a>
                   .
@@ -357,7 +357,7 @@ export default function Safety({
                 <p>
                   If you believe your content has been removed unfairly, you can submit an appeal
                   for further review through our{' '}
-                  <a href="/appeal" target="_blank">
+                  <a href="/content/content-appeal" target="_blank">
                     Appeal Form
                   </a>
                   .

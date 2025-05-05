@@ -13,6 +13,7 @@ import {
   SignalMessages,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
@@ -26,7 +27,10 @@ import {
 import { createNotification } from '~/server/services/notification.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
-import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import {
+  insertTagsOnImageNew,
+  upsertTagsOnImageNew,
+} from '~/server/services/tagsOnImageNew.service';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
@@ -292,7 +296,6 @@ async function handleSuccess({
           confidence: x.confidence,
           disabled: shouldIgnore(x.tag, x.source ?? source),
         }));
-
       await insertTagsOnImageNew(toInsert);
     } else {
       await logToAxiom({
@@ -320,6 +323,14 @@ async function handleSuccess({
       if (minorTags.includes(name)) hasMinorTag = true;
       else if (constants.imageTags.styles.includes(name)) hasCartoonTag = true;
       else if (['adult'].includes(name)) hasAdultTag = true;
+    }
+
+    // check incoming tags clavata level and check for minor tags
+    if (tags.some((x) => clavataNsfwTags.includes(x.tag))) {
+      const minorReviewTags = [['realistic', 'child - 15'], ['child - 10']];
+      for (const mTags of minorReviewTags) {
+        if (mTags.every((tag) => tags.find((x) => x.tag === tag))) hasMinorTag = true;
+      }
     }
 
     const prompt = normalizeText(
@@ -419,7 +430,7 @@ async function handleSuccess({
       !isValidAIGeneration({
         ...image,
         // Make it so that if we have NSFW tags we treat it as R+
-        nsfwLevel: Math.max(image.nsfwLevel, nsfw ? NsfwLevel.R : NsfwLevel.PG),
+        nsfwLevel: Math.max(image.nsfwLevel, nsfw ? NsfwLevel.X : NsfwLevel.PG),
         meta: image.meta as ImageMetadata | VideoMetadata,
         tools: image.tools,
         // Avoids blocking images that we know are AI generated with some resources.
@@ -473,7 +484,15 @@ async function handleSuccess({
           WHERE id = ${id}
           GROUP BY id
         )
-        UPDATE "Image" i SET "scannedAt" = NOW(), "updatedAt" = NOW(), "ingestion" ='Scanned'
+        UPDATE "Image" i SET 
+          "scannedAt" = 
+            CASE 
+              WHEN i.metadata->'skipScannedAtReassignment' IS NOT NULL 
+              THEN "scannedAt" 
+              ELSE NOW()
+            END,
+          "updatedAt" = NOW(),
+          "ingestion" ='Scanned'
         FROM scan_count s
         WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS}
         RETURNING "ingestion";
@@ -575,7 +594,8 @@ const clavataTagConfidenceRequirements: Record<string, number> = {
   minimum: 51,
   minimumNsfw: 51,
 };
-const clavataNsfwTags = ['pg', 'pg-13', 'r', 'x', 'xxx'];
+const clavataNsfwTags = ['r', 'x', 'xxx'];
+const clavataNsfwLevelTags = ['pg', 'pg-13', ...clavataNsfwTags];
 function processClavataTags(tags: IncomingTag[]) {
   // Map tags to lowercase
   tags = tags.map((tag) => ({
@@ -587,7 +607,7 @@ function processClavataTags(tags: IncomingTag[]) {
   // Filter out tags
   let highestNsfwTag: IncomingTag = { tag: 'pg', confidence: 100 };
   tags = tags.filter((tag) => {
-    const nsfwLevelIndex = clavataNsfwTags.indexOf(tag.tag);
+    const nsfwLevelIndex = clavataNsfwLevelTags.indexOf(tag.tag);
     const isNsfwLevel = nsfwLevelIndex !== -1;
 
     // Remove tags below confidence threshold
@@ -599,7 +619,7 @@ function processClavataTags(tags: IncomingTag[]) {
 
     // Remove nsfw tags
     if (isNsfwLevel) {
-      if (nsfwLevelIndex > clavataNsfwTags.indexOf(highestNsfwTag.tag)) highestNsfwTag = tag;
+      if (nsfwLevelIndex > clavataNsfwLevelTags.indexOf(highestNsfwTag.tag)) highestNsfwTag = tag;
       return false;
     }
 

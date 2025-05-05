@@ -49,6 +49,7 @@ import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/u
 import { imageStore, useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { useToggleImageFlag } from '~/components/Image/hooks/useToggleImageFlag';
 
 type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
@@ -154,6 +155,7 @@ function ImageMenuItems(
       window.open(`/moderator/csam/${_userId}?imageId=${imageId}`, '_blank');
     else reportCsamMutation.mutate({ imageIds: [imageId] });
   };
+  const toggleImageFlag = useToggleImageFlag();
 
   const { additionalMenuItemsAfter, additionalMenuItemsBefore } = useImageContextMenuContext();
 
@@ -199,6 +201,32 @@ function ImageMenuItems(
           </LoginRedirect>
           <HideImageButton as="menu-item" imageId={imageId} />
           {_userId && <HideUserButton as="menu-item" userId={_userId} />}
+        </>
+      )}
+      {isModerator && (
+        <>
+          <Menu.Item
+            icon={<IconFlag size={14} stroke={1.5} />}
+            onClick={() =>
+              toggleImageFlag({
+                id: image.id,
+                flag: 'minor',
+              })
+            }
+          >
+            {image.minor ? 'Remove minor flag' : 'Flag as minor'}
+          </Menu.Item>
+          <Menu.Item
+            icon={<IconFlag size={14} stroke={1.5} />}
+            onClick={() =>
+              toggleImageFlag({
+                id: image.id,
+                flag: 'poi',
+              })
+            }
+          >
+            {image.poi ? 'Remove POI flag' : 'Flag as POI'}
+          </Menu.Item>
         </>
       )}
       {/* OWNER */}

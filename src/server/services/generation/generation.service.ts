@@ -676,7 +676,7 @@ export async function getResourceData({
       );
       const fileSizeKB = primaryFile?.sizeKB;
       let additionalResourceCost = false;
-      if (env.ORCHESTRATOR_EXPERIMENTAL && fileSizeKB) {
+      if (fileSizeKB) {
         additionalResourceCost =
           !FREE_RESOURCE_TYPES.includes(item.model.type) &&
           !featuredModels.map((fm) => fm.modelId).includes(item.model.id) &&
