@@ -1433,8 +1433,9 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
+  const isOpenAI = baseModel === 'OpenAI';
   const hasCreatorTip =
-    (!isFlux && !isSD3) ||
+    (!isFlux && !isSD3 && !isOpenAI) ||
     [...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();
