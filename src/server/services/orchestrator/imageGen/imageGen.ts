@@ -100,7 +100,7 @@ function getImageGenInput(params: InputParams) {
         prompt: params.prompt,
         size: !params.sourceImage ? `${params.width}x${params.height}` : 'auto',
         // quality: params.openAIQuality,
-        background: params.openAIBackground,
+        background: params.openAITransparentBackground ? 'transparent' : 'opaque',
         quantity: params.quantity,
       };
     default:
@@ -117,7 +117,7 @@ function getImageGenMetadataParams(params: InputParams) {
         width: params.width,
         height: params.height,
         // quality: params.openAIQuality,
-        background: params.openAIBackground,
+        background: params.openAITransparentBackground ? 'transparent' : 'opaque',
         quantity: params.quantity,
         workflow: params.workflow,
         sourceImage: params.sourceImage,

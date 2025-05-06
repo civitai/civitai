@@ -1017,17 +1017,9 @@ export function GenerationFormContent() {
                   />
                 )}
 
-                {/* {isOpenAI && (
-                  <>
-                    {!sourceImage && (
-                      <InputSelect
-                        name="openAIBackground"
-                        label="Background"
-                        data={['auto', 'transparent', 'opaque']}
-                      />
-                    )}
-                  </>
-                )} */}
+                {isOpenAI && (
+                  <InputSwitch name="openAITransparentBackground" label="Transparent Background" />
+                )}
 
                 {isFluxUltra && <InputSeed name="seed" label="Seed" />}
                 {!disableAdvanced && (
