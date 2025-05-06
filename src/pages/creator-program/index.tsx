@@ -16,6 +16,7 @@ import {
   Stack,
   Text,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconQuestionMark,
@@ -29,6 +30,7 @@ import {
   IconPercentage10,
   IconCaretRightFilled,
   IconCircleCheck,
+  IconInfoCircle,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -252,10 +254,6 @@ const FunStatsSection = () => {
   const { prevMonthStats, isLoading } = usePrevMonthStats();
   const currentUser = useCurrentUser();
 
-  if (!currentUser?.isModerator) {
-    return null;
-  }
-
   if (isLoading || !prevMonthStats) {
     return <Skeleton className={classes.section} width="100%" height="200px" />;
   }
@@ -270,19 +268,9 @@ const FunStatsSection = () => {
       <Paper withBorder className={cx(classes.card)} h="100%">
         <table className="-mt-2 w-full table-auto">
           <tbody>
-            <tr className="font-bold">
-              <td colSpan={2} className="border-b">
-                <div className="flex items-center gap-1">
-                  <span>Compensation Pool</span>
-                </div>
-              </td>
-              <td className="border-b border-l py-2 pl-2">
-                ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarValue ?? 0))}
-              </td>
-            </tr>
             <tr>
               <td colSpan={2} className="border-b">
-                Creators who Banked Buzz
+                # of Creators who Banked Buzz
               </td>
               <td className="border-b border-l py-2 pl-2">
                 <div className="flex items-center gap-2">
@@ -297,13 +285,17 @@ const FunStatsSection = () => {
               <td className="border-b border-l py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                  <span>{numberWithCommas(prevMonthStats.totalBankedBuzz)}</span>
+                  <span>
+                    {numberWithCommas(
+                      prevMonthStats.totalBankedBuzz + prevMonthStats.totalExtractedBuzz
+                    )}
+                  </span>
                 </div>
               </td>
             </tr>
             <tr>
               <td colSpan={2} className="border-b">
-                Creators who Extracted Buzz
+                # of Creators who Extracted Buzz
               </td>
               <td className="border-b border-l py-2 pl-2">
                 <div className="flex items-center gap-2">
@@ -313,7 +305,7 @@ const FunStatsSection = () => {
             </tr>
             <tr>
               <td colSpan={2} className="border-b">
-                Total Extracted Buzz
+                Total Buzz Extracted
               </td>
               <td className="border-b border-l py-2 pl-2">
                 <div className="flex items-center gap-2">
@@ -322,9 +314,24 @@ const FunStatsSection = () => {
                 </div>
               </td>
             </tr>
+
             <tr>
               <td colSpan={2} className="border-b">
-                Creators who cashed out
+                <div className="flex items-center gap-1">
+                  <span>Total Payout Buzz</span>
+                </div>
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                <div className="flex items-center gap-2">
+                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <span>{numberWithCommas(prevMonthStats.totalBankedBuzz)}</span>
+                </div>{' '}
+              </td>
+            </tr>
+
+            <tr>
+              <td colSpan={2} className="border-b">
+                # of Creators who cashed out
               </td>
               <td className="border-b border-l py-2 pl-2">
                 <div className="flex items-center gap-2">
@@ -335,7 +342,7 @@ const FunStatsSection = () => {
             <tr>
               <td colSpan={2} className="border-b">
                 <div className="flex items-center gap-1">
-                  <span>Value for 1,000 Buzz</span>
+                  <span>$ per 1,000 Buzz Banked</span>
                 </div>
               </td>
               <td className="border-b border-l py-2 pl-2">
@@ -348,7 +355,7 @@ const FunStatsSection = () => {
             <tr>
               <td colSpan={2} className="border-b">
                 <div className="flex items-center gap-1">
-                  <span>Highest earned amount</span>
+                  <span>Highest payout</span>
                 </div>
               </td>
               <td className="border-b border-l py-2 pl-2">
@@ -358,7 +365,7 @@ const FunStatsSection = () => {
             <tr>
               <td colSpan={2} className="border-b">
                 <div className="flex items-center gap-1">
-                  <span>Average earned amount</span>
+                  <span>Average payout</span>
                 </div>
               </td>
               <td className="border-b border-l py-2 pl-2">
@@ -368,7 +375,7 @@ const FunStatsSection = () => {
             <tr>
               <td colSpan={2}>
                 <div className="flex items-center gap-1">
-                  <span>Median earned amount</span>
+                  <span>Median payout</span>
                 </div>
               </td>
               <td className="border-l py-2 pl-2">
