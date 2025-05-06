@@ -18,6 +18,7 @@ export const useCreatorProgramRequirements = () => {
     isLoading,
   };
 };
+
 export const useCompensationPool = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.creatorProgram.getCompensationPool.useQuery(
@@ -29,6 +30,15 @@ export const useCompensationPool = () => {
 
   return {
     compensationPool: data,
+    isLoading,
+  };
+};
+
+export const usePrevMonthStats = () => {
+  const { data, isLoading } = trpc.creatorProgram.getPrevMonthStats.useQuery();
+
+  return {
+    prevMonthStats: data,
     isLoading,
   };
 };

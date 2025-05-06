@@ -313,14 +313,14 @@ export const CompensationPoolCard = () => {
 
   if (isLoading) {
     return (
-      <div className={clsx(cardProps.className, 'basis-1/4')}>
+      <div className={clsx(cardProps.className, 'h-full basis-1/4')}>
         <Loader className="m-auto" />
       </div>
     );
   }
 
   return (
-    <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
+    <div className={clsx(cardProps.className, 'h-full basis-1/4 gap-6')}>
       <div className="flex h-full flex-col justify-between gap-12">
         <div className="flex flex-col">
           <h3 className="text-center text-xl font-bold">Compensation Pool</h3>
