@@ -1,6 +1,8 @@
 import { Button, ThemeIcon } from '@mantine/core';
 import { IconShieldStar } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useJoinKnightsNewOrder } from '~/components/Games/KnightsNewOrder.utils';
 import { NewOrderRulesModal } from '~/components/Games/NewOrder/NewOrderRulesModal';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -9,15 +11,39 @@ export function NewOrderJoin() {
   const { join, isLoading } = useJoinKnightsNewOrder();
   const [opened, setOpened] = useState(false);
 
+  const handleJoin = useCallback(() => {
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: '⚠️ Sensitive Content Warning',
+        message: (
+          <>
+            <p>
+              This game contains explicit and sensitive content imagery, regardless of your on-site
+              browsing level settings, that may not be suitable for all players.
+            </p>
+            <p>
+              By continuing, you acknowledge that you are aware of the potential risks and agree to
+              proceed at your own discretion.
+            </p>
+          </>
+        ),
+        centered: true,
+        labels: { cancel: 'Cancel', confirm: 'Agree and Continue' },
+        onConfirm: async () => await join(),
+      },
+    });
+  }, [join]);
+
   const joinButton = useMemo(
     () => (
       <LoginRedirect reason="knights-new-order">
-        <Button color="orange.5" size="lg" onClick={() => join()} loading={isLoading} fullWidth>
+        <Button color="orange.5" size="lg" onClick={handleJoin} loading={isLoading} fullWidth>
           Join Game
         </Button>
       </LoginRedirect>
     ),
-    [join, isLoading]
+    [handleJoin, isLoading]
   );
 
   return (

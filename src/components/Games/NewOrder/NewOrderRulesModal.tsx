@@ -61,15 +61,15 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
           </h3>
           <p>
             Players earn <span className="font-semibold">Gold</span> by rating images.
-            <ul className="pl-8">
-              <li>
-                Gold must pass a 3-day settlement period before it can be converted into{' '}
-                <span className="flex items-center gap-1">
-                  <CurrencyIcon size={16} currency="BUZZ" /> Buzz.
-                </span>
-              </li>
-            </ul>
           </p>
+          <ul className="pl-8">
+            <li>
+              Gold must pass a 3-day settlement period before it can be converted into{' '}
+              <span className="flex items-center gap-1">
+                <CurrencyIcon size={16} currency="BUZZ" /> Buzz.
+              </span>
+            </li>
+          </ul>
         </div>
         <div className="flex flex-col gap-1">
           <h3 className="flex items-center gap-2 font-semibold">
@@ -81,13 +81,13 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
           <p>
             Players earn <span className="font-semibold">Fervor</span> by the accuracy of correct
             judgment they make.
-            <ul className="pl-8">
-              <li>
-                Fervor is used to determine the top 12 Knights of the week, who are then promoted to
-                Templar.
-              </li>
-            </ul>
           </p>
+          <ul className="pl-8">
+            <li>
+              Fervor is used to determine the top 12 Knights of the week, who are then promoted to
+              Templar.
+            </li>
+          </ul>
         </div>
         <div className="flex flex-col gap-1">
           <h3 className="font-semibold">
@@ -99,16 +99,16 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
           <p>
             Players can receive <span className="font-semibold">Smites</span> if their rating
             decision gets overturned by an <span className="font-semibold">Inquisitor</span>.
-            <ul className="pl-8">
-              <li>
-                These can be cleansed by rating images correctly, automatically after 7 days of
-                service or by intervention from a Inquisitor
-              </li>
-              <li className="font-semibold">
-                Receiving 3 smites results in demotion back to level 1
-              </li>
-            </ul>
           </p>
+          <ul className="pl-8">
+            <li>
+              These can be cleansed by rating images correctly, automatically after 7 days of
+              service or by intervention from a Inquisitor
+            </li>
+            <li className="font-semibold">
+              Receiving 3 smites results in demotion back to level 1
+            </li>
+          </ul>
         </div>
         <h2 className="text-lg font-semibold text-orange-5">Join the Order</h2>
         <p>
