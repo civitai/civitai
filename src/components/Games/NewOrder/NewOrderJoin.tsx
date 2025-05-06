@@ -28,7 +28,6 @@ export function NewOrderJoin() {
             </p>
           </>
         ),
-        centered: true,
         labels: { cancel: 'Cancel', confirm: 'Agree and Continue' },
         onConfirm: async () => await join(),
       },
