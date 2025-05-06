@@ -118,8 +118,7 @@ export async function parseGenerateImageInput({
   workflowDefinition: WorkflowDefinition;
   whatIf?: boolean;
 }) {
-  delete originalParams.openAIBackground;
-  // delete originalParams.openAIQuality;
+  delete originalParams.openAITransparentBackground;
   if (originalParams.workflow.startsWith('txt2img')) originalParams.sourceImage = null;
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);

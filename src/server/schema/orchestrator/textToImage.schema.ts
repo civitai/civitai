@@ -48,7 +48,7 @@ export const textToImageParamsSchema = z.object({
   sourceImage: sourceImageSchema.nullable().default(null).catch(null),
   disablePoi: z.boolean().default(false),
   // openAIQuality: z.enum(['auto', 'high', 'medium', 'low']).optional(),
-  openAIBackground: z.enum(['auto', 'transparent', 'opaque']).optional(),
+  openAITransparentBackground: z.boolean().optional(),
 });
 
 // #endregion
