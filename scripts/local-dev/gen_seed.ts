@@ -37,7 +37,9 @@ import {
 import { checkLocalDb, insertRows } from './utils';
 // import { fetchBlob } from '~/utils/file-utils';
 
-const numRows = 500;
+// Usage: npx tsx ./scripts/local-dev/gen_seed.ts --rows=1000
+// OR make bootstrap-db ROWS=1000
+const numRows = Number(process.argv.find((arg) => arg.startsWith('--rows='))?.split('=')[1]) || 500;
 
 faker.seed(1337);
 const randw = faker.helpers.weightedArrayElement;
@@ -3222,7 +3224,7 @@ const genClickhouseRows = async () => {
 };
 
 const genRedisSystemFeatures = async () => {
-  console.log(`Inserting system data into redis}`);
+  console.log(`Inserting system data into redis`);
 
   // Generation status
   await sysRedis.hSet(
