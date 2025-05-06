@@ -837,7 +837,9 @@ export function formatComfyStep({
   //   params.height = size.height;
   // }
 
-  const { width = 512, height = 512 } = params?.sourceImage ?? params ?? {};
+  const { width = 512, height = 512 } =
+    (params?.sourceImage && typeof params.sourceImage !== 'string' ? params.sourceImage : params) ??
+    {};
 
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
