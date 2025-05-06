@@ -27,6 +27,15 @@ export const viduGenerationConfig = VideoGenerationConfig2({
   whatIfProps: ['duration', 'sourceImage', 'endSourceImage'],
   metadataDisplayProps: ['style', 'duration', 'seed'],
   schema: viduSchema,
+  transformFn: (data) => {
+    let sourceImage = data.sourceImage;
+    if (!sourceImage) {
+      sourceImage = data.endSourceImage;
+      data.endSourceImage = null;
+    }
+    const subType = sourceImage ? 'img2vid' : 'txt2vid';
+    return { ...data, sourceImage, subType };
+  },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.endSourceImage && !data.prompt?.length) {
       ctx.addIssue({
@@ -39,7 +48,7 @@ export const viduGenerationConfig = VideoGenerationConfig2({
   inputFn: ({ sourceImage, endSourceImage, ...args }): ViduVideoGenInput => {
     return {
       ...args,
-      sourceImage: sourceImage?.url ?? endSourceImage?.url,
+      sourceImage: sourceImage?.url,
       endSourceImage: endSourceImage?.url,
     };
   },

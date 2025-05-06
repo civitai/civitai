@@ -1,23 +1,24 @@
 import { LightricksVideoGenInput } from '@civitai/client';
 import z from 'zod';
-import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
-  imageEnhancementSchema,
   negativePromptSchema,
   seedSchema,
-  textEnhancementSchema,
   promptSchema,
+  baseGenerationSchema,
+  sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const lightricksAspectRatios = ['16:9', '3:2', '1:1', '2:3'] as const;
 export const lightricksDuration = [5, 10] as const;
 
-const sharedSchema = z.object({
-  engine: z.literal('lightricks'),
-  model: z.string().default('urn:air:ltxv:checkpoint:civitai:982559@1182093'),
-  workflow: z.string(),
+const schema = baseGenerationSchema.extend({
+  engine: z.literal('lightricks').catch('lightricks'),
+  sourceImage: sourceImageSchema.nullish(),
+  prompt: promptSchema,
   negativePrompt: negativePromptSchema,
+  aspectRatio: z.enum(lightricksAspectRatios).optional().catch('3:2'),
   duration: numberEnum(lightricksDuration).default(5).catch(5),
   cfgScale: z.number().min(3).max(3.5).default(3).catch(3),
   steps: z.number().min(20).max(30).default(25).catch(25),
@@ -25,33 +26,29 @@ const sharedSchema = z.object({
   seed: seedSchema,
 });
 
-const lightricksTxt2VidSchema = textEnhancementSchema.merge(sharedSchema).extend({
-  aspectRatio: z.enum(lightricksAspectRatios).default('3:2').catch('3:2'),
-});
-
-const lightricksImg2VidSchema = imageEnhancementSchema.merge(sharedSchema).extend({
-  prompt: promptSchema,
-});
-
-const lightricksTxt2VidConfig = new VideoGenerationConfig({
-  subType: 'txt2vid',
-  engine: 'lightricks',
-  schema: lightricksTxt2VidSchema,
+export const lightricksGenerationConfig = VideoGenerationConfig2({
+  label: 'Wan',
+  whatIfProps: ['duration', 'cfgScale', 'steps'],
   metadataDisplayProps: ['cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
+  schema,
+  defaultValues: { aspectRatio: '3:2' },
+  transformFn: (data) => {
+    if (data.sourceImage) delete data.aspectRatio;
+    return { ...data, subType: data.sourceImage ? 'img2vid' : 'txt2vid' };
+  },
+  superRefine: (data, ctx) => {
+    if (!data.sourceImage && !data.prompt?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt is required',
+        path: ['prompt'],
+      });
+    }
+  },
+  inputFn: ({ sourceImage, ...args }): LightricksVideoGenInput => {
+    return {
+      ...args,
+      sourceImage: sourceImage?.url,
+    };
+  },
 });
-
-const lightricksImg2VidConfig = new VideoGenerationConfig({
-  subType: 'img2vid',
-  engine: 'lightricks',
-  schema: lightricksImg2VidSchema,
-  metadataDisplayProps: ['cfgScale', 'steps', 'duration', 'seed'],
-});
-
-export const lightricksVideoGenerationConfig = [lightricksTxt2VidConfig, lightricksImg2VidConfig];
-
-export function LightricksInput(
-  args: z.infer<(typeof lightricksVideoGenerationConfig)[number]['schema']>
-): LightricksVideoGenInput {
-  const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
-  return { ...args, sourceImage };
-}

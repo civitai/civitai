@@ -10,7 +10,7 @@ import {
   minDownscaleSize,
   Sampler,
 } from '~/server/common/constants';
-import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
@@ -657,8 +657,6 @@ export const engineDefinitions: EnginesDictionary = {
     whatIf: ['duration'],
   },
 };
-
-export const generationFormWorkflowConfigurations = videoGenerationConfig;
 
 export const fluxUltraAspectRatios = [
   { label: 'Landscape - 21:9', width: 3136, height: 1344 },

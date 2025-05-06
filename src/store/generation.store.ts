@@ -9,11 +9,8 @@ import {
   GenerationResource,
   RemixOfProps,
 } from '~/server/services/generation/generation.service';
-import {
-  engineDefinitions,
-  generationFormWorkflowConfigurations,
-  getSourceImageFromUrl,
-} from '~/shared/constants/generation.constants';
+import { engineDefinitions, getSourceImageFromUrl } from '~/shared/constants/generation.constants';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';

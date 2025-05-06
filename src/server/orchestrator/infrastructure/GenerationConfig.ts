@@ -39,12 +39,13 @@ export class VideoGenerationConfig<TSchema extends z.AnyZodObject = z.AnyZodObje
 //   key: string;
 // }
 
+type WithSubType = { subType: 'txt2vid' | 'img2vid' };
 export function VideoGenerationConfig2<
   TSchema extends z.AnyZodObject = z.AnyZodObject,
   TOutput extends VideoGenInput = VideoGenInput,
   TDefaults extends z.input<TSchema> = z.input<TSchema>,
   SchemaOutput = z.infer<TSchema>,
-  RefinementOutput = SchemaOutput & TDefaults
+  RefinementOutput extends WithSubType = SchemaOutput & TDefaults & WithSubType
 >({
   defaultValues,
   superRefine,
@@ -59,7 +60,7 @@ export function VideoGenerationConfig2<
   schema: TSchema;
   defaultValues?: TDefaults;
   superRefine?: (arg: RefinementOutput, ctx: RefinementCtx) => void;
-  transformFn?: (args: SchemaOutput) => RefinementOutput;
+  transformFn: (args: SchemaOutput) => RefinementOutput;
   inputFn: (args: RefinementOutput) => TOutput;
 }) {
   const validationSchema = superRefine ? schema.superRefine(superRefine as any) : schema;

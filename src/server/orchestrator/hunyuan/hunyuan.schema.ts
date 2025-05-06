@@ -36,6 +36,7 @@ export const hunyuanGenerationConfig = VideoGenerationConfig2({
   schema: hunyuanSchema,
   metadataDisplayProps: ['cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
   defaultValues: { aspectRatio: '1:1' },
+  transformFn: (data) => ({ ...data, subType: 'txt2vid' }),
   inputFn: ({ aspectRatio, resources, ...args }): HunyuanVdeoGenInput => {
     const { width, height } = hunyuanAspectRatioMap[aspectRatio].getSize2(480);
     return {

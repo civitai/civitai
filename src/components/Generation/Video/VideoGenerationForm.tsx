@@ -31,10 +31,14 @@ import { HunyuanFormInput } from '~/components/Generation/Video/HunyuanFormInput
 import { KlingFormInput } from '~/components/Generation/Video/KlingFormInput';
 import { MinimaxFormInput } from '~/components/Generation/Video/MinimaxFormInput';
 import { HaiperFormInput } from '~/components/Generation/Video/HaiperFormInput';
+import { MochiFormInput } from '~/components/Generation/Video/MochiFormInput';
+import { LightricksFormInput } from '~/components/Generation/Video/LightrixFormInput';
+import { generationStore, useGenerationStore } from '~/store/generation.store';
 
 export function VideoGenerationForm() {
   const getState = useVideoGenerationStore((state) => state.getState);
   const engine = useVideoGenerationStore((state) => state.engine);
+  const storeData = useGenerationStore((state) => state.data);
 
   const config = videoGenerationConfig2[engine];
   const status = useGenerationStatus();
@@ -102,6 +106,17 @@ export function VideoGenerationForm() {
     }, 1000);
   }
 
+  useEffect(() => {
+    if (storeData) {
+      // const registered = Object.keys(form.getValues());
+      const { params, resources } = storeData;
+      const validated = config.validate({ ...params, resources });
+      form.reset(validated, { keepDefaultValues: true });
+
+      generationStore.clearData();
+    }
+  }, [storeData]);
+
   const InputsComponent = inputDictionary[engine];
   if (!InputsComponent)
     return <div className="flex items-center justify-center p-3">Form not implemented</div>;
@@ -112,8 +127,10 @@ export function VideoGenerationForm() {
       onSubmit={handleSubmit}
       className="relative flex h-full flex-1 flex-col justify-between gap-2"
     >
-      <InputsComponent />
-      <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
+      <div className="flex flex-col gap-2 px-2">
+        <InputsComponent />
+        <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
+      </div>
       <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
         <DailyBoostRewardClaim />
         {!error ? (
@@ -219,4 +236,6 @@ const inputDictionary: Record<OrchestratorEngine2, () => JSX.Element> = {
   kling: KlingFormInput,
   minimax: MinimaxFormInput,
   haiper: HaiperFormInput,
+  mochi: MochiFormInput,
+  lightricks: LightricksFormInput,
 };

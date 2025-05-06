@@ -28,13 +28,14 @@ const schema = baseGenerationSchema.extend({
 
 export const haiperGenerationConfig = VideoGenerationConfig2({
   label: 'Haiper',
+  description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
   whatIfProps: ['duration'],
   metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
   schema,
   defaultValues: { aspectRatio: '1:1' },
   transformFn: (data) => {
     if (data.sourceImage) delete data.aspectRatio;
-    return data;
+    return { ...data, subType: data.sourceImage ? 'img2vid' : 'txt2vid' };
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {

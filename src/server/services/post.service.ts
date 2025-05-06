@@ -50,7 +50,10 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import {
+  getVideoGenerationConfig,
+  videoGenerationConfig2,
+} from '~/server/orchestrator/generation/generation.config';
 import {
   Availability,
   CollectionContributorPermission,
@@ -874,10 +877,10 @@ export const addPostImage = async ({
   }
 
   let techniqueId: number | undefined;
-  if (meta && 'workflow' in meta) {
-    const workflow = generationFormWorkflowConfigurations.find((x) => x.key === meta.workflow);
-    if (workflow) {
-      techniqueId = (await getTechniqueByName(workflow.subType))?.id;
+  if (meta && 'engine' in meta) {
+    const config = getVideoGenerationConfig(meta.engine as string);
+    if (config) {
+      techniqueId = (await getTechniqueByName(config.subType))?.id;
     }
   }
 

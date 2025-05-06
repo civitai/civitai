@@ -117,7 +117,10 @@ import {
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import {
+  getVideoGenerationConfig,
+  videoGenerationConfig2,
+} from '~/server/orchestrator/generation/generation.config';
 import { Flags } from '~/shared/utils';
 import {
   Availability,
@@ -330,7 +333,7 @@ export const moderateImages = async ({
           "blockedFor" = NULL,
           -- Remove ruleId and ruleReason from metadata
           "metadata" = "metadata" - 'ruleId' - 'ruleReason',
-          "ingestion" = 'Scanned', 
+          "ingestion" = 'Scanned',
 
           ${
             isMinor
@@ -1148,7 +1151,7 @@ export const getAllImages = async (
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
-  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
+  const engines = Object.keys(videoGenerationConfig2);
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const query = Prisma.sql`
     ${queryWith}
@@ -1179,8 +1182,8 @@ export const getAllImages = async (
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
-            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
-              ${Prisma.join(workflows)}
+            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
+              ${Prisma.join(engines)}
             ]::text[])
           THEN TRUE
           ELSE FALSE
@@ -2233,7 +2236,7 @@ export const getImage = async ({
     }
   }
 
-  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
+  const engines = Object.keys(videoGenerationConfig2);
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
       i.id,
@@ -2275,8 +2278,8 @@ export const getImage = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
-            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
-              ${Prisma.join(workflows)}
+            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
+              ${Prisma.join(engines)}
             ]::text[])
           THEN TRUE
           ELSE FALSE
@@ -2488,7 +2491,7 @@ export const getImagesForModelVersion = async ({
     );
   }
 
-  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
+  const engines = Object.keys(videoGenerationConfig2);
   const query = Prisma.sql`
     -- getImagesForModelVersion
     WITH targets AS (
@@ -2544,8 +2547,8 @@ export const getImagesForModelVersion = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
-            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
-              ${Prisma.join(workflows)}
+            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
+              ${Prisma.join(engines)}
             ]::text[])
           THEN TRUE
           ELSE FALSE
@@ -2696,7 +2699,7 @@ export const getImagesForPosts = async ({
     imageWhere.push(Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`);
   }
 
-  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
+  const engines = Object.keys(videoGenerationConfig2);
   const images = await dbRead.$queryRaw<
     {
       id: number;
@@ -2749,8 +2752,8 @@ export const getImagesForPosts = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
-            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
-                ${Prisma.join(workflows)}
+            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
+                ${Prisma.join(engines)}
               ]::text[])
           THEN TRUE
           ELSE FALSE
@@ -4533,9 +4536,9 @@ export async function getImageGenerationData({ id }: { id: number }) {
   let hasControlNet = false;
   if (meta) {
     if ('civitaiResources' in meta) onSite = true;
-    else if ('workflow' in meta) {
-      const workflow = generationFormWorkflowConfigurations.find((x) => x.key === meta.workflow);
-      if (workflow) {
+    else if ('engine' in meta) {
+      const config = getVideoGenerationConfig(meta.engine as string);
+      if (config) {
         onSite = true;
         process = workflow.subType;
       }

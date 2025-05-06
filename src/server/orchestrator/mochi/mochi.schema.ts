@@ -1,29 +1,27 @@
 import { MochiVideoGenInput } from '@civitai/client';
 import z from 'zod';
-import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
+  baseGenerationSchema,
+  promptSchema,
   seedSchema,
-  textEnhancementSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 
-const mochiTxt2VidSchema = textEnhancementSchema.extend({
-  engine: z.literal('mochi'),
-  workflow: z.string(),
+const schema = baseGenerationSchema.extend({
+  engine: z.literal('mochi').catch('mochi'),
   seed: seedSchema,
+  prompt: promptSchema,
   enablePromptEnhancer: z.boolean().default(true),
 });
 
-const mochiTxt2ImgConfig = new VideoGenerationConfig({
-  subType: 'txt2vid',
-  engine: 'mochi',
-  schema: mochiTxt2VidSchema,
+export const mochiGenerationConfig = VideoGenerationConfig2({
+  label: 'Mochi',
+  description: `Mochi 1 preview, by creators [https://www.genmo.ai](https://www.genmo.ai) is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation`,
+  whatIfProps: [],
   metadataDisplayProps: [],
+  schema,
+  transformFn: (data) => ({ ...data, subType: 'txt2vid' }),
+  inputFn: (args): MochiVideoGenInput => {
+    return { ...args };
+  },
 });
-
-export const mochiVideoGenerationConfig = [mochiTxt2ImgConfig];
-
-export function MochiInput(
-  args: z.infer<(typeof mochiVideoGenerationConfig)[number]['schema']>
-): MochiVideoGenInput {
-  return { ...args };
-}

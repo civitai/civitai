@@ -43,7 +43,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
   defaultValues: { aspectRatio: '1:1', duration: 5, cfgScale: 4, frameRate: 16 },
   transformFn: (data) => {
     if (data.sourceImage) delete data.aspectRatio;
-    return data;
+    return { ...data, subType: data.sourceImage ? 'img2vid' : 'txt2vid' };
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {

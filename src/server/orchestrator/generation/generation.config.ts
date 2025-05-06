@@ -3,12 +3,9 @@ import type { BaseModelSetType } from '~/server/common/constants';
 import { haiperGenerationConfig } from '~/server/orchestrator/haiper/haiper.schema';
 import { hunyuanGenerationConfig } from '~/server/orchestrator/hunyuan/hunyuan.schema';
 import { klingGenerationConfig } from '~/server/orchestrator/kling/kling.schema';
-import {
-  LightricksInput,
-  lightricksVideoGenerationConfig,
-} from '~/server/orchestrator/lightricks/lightricks.schema';
+import { lightricksGenerationConfig } from '~/server/orchestrator/lightricks/lightricks.schema';
 import { minimaxGenerationConfig } from '~/server/orchestrator/minimax/minimax.schema';
-import { MochiInput, mochiVideoGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
+import { mochiGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
 import { viduGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
 import { wanGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
 
@@ -51,4 +48,10 @@ export const videoGenerationConfig2 = {
   kling: klingGenerationConfig,
   minimax: minimaxGenerationConfig,
   haiper: haiperGenerationConfig,
+  mochi: mochiGenerationConfig,
+  lightricks: lightricksGenerationConfig,
 };
+
+export function getVideoGenerationConfig(key: string): VideoGenerationConfig | undefined {
+  return videoGenerationConfig2[key as OrchestratorEngine2];
+}

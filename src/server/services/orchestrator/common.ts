@@ -20,10 +20,7 @@ import { env } from '~/env/server';
 import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  VideoGenerationSchema,
-  VideoGenerationSchema2,
-} from '~/server/orchestrator/generation/generation.config';
+import { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
 import {
@@ -592,11 +589,11 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   let aspectRatio = 1;
 
   if (params) {
-    if (params.type === 'img2vid') {
+    if (sourceImage) {
       width = sourceImage?.width;
       height = sourceImage?.height;
       aspectRatio = width && height ? width / height : 16 / 9;
-    } else if (params.type === 'txt2vid') {
+    } else {
       switch (params.engine) {
         case 'minimax':
           aspectRatio = 16 / 9;
@@ -662,7 +659,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     params: {
       ...params,
       sourceImage: sourceImage,
-      workflow: videoMetadata.params?.workflow,
+      // workflow: videoMetadata.params?.workflow,
       quantity: 1,
     },
     images: videos,
