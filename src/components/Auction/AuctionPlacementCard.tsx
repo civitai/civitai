@@ -29,6 +29,7 @@ import {
 import clsx from 'clsx';
 import produce from 'immer';
 import React, { useEffect, useRef, useState } from 'react';
+import { useInView } from 'react-intersection-observer';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -41,6 +42,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -683,6 +685,8 @@ export const ModelPlacementCard = ({
   const currentUser = useCurrentUser();
   const { selectedAuction, justBid, setJustBid } = useAuctionContext();
   const animatedRef = useRef<HTMLDivElement>(null);
+  const node = useScrollAreaRef();
+  const { ref: viewRef, inView } = useInView({ root: node?.current, rootMargin: '1800px 0px' });
   const { classes: cardClasses } = useCardStyles({ aspectRatio: 1 });
 
   const { data: myBidData = [] } = trpc.auction.getMyBids.useQuery(undefined, {
@@ -724,11 +728,16 @@ export const ModelPlacementCard = ({
         [cardClasses.winnerThird]: aboveThreshold && data.position === 3,
         'before:blur-sm': aboveThreshold && !!data.position && data.position <= 3,
       })}
+      ref={viewRef}
     >
       <CosmeticCard
-        className={clsx('group hover:bg-gray-2 dark:hover:bg-dark-5', {
-          'animate-glowPulse': isRecentlyBid,
-        })}
+        className={clsx(
+          'group transition-opacity duration-300 ease-in-out hover:bg-gray-2 dark:hover:bg-dark-5 ',
+          {
+            'animate-glowPulse': isRecentlyBid,
+            'invisible opacity-0': !inView,
+          }
+        )}
         ref={animatedRef}
       >
         <Group className="gap-y-2 max-md:flex-col">
