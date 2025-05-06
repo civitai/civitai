@@ -744,13 +744,13 @@ export async function getImagesQueue({
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
 
-  return shuffle(
-    images.slice(0, imageCount).map(({ metadata, ...i }) => {
+  return shuffle(images)
+    .slice(0, imageCount)
+    .map(({ metadata, ...i }) => {
       const ratings = isModerator ? imageRaters[i.id] : null;
 
       return { ...i, ratings, metadata: metadata as ImageMetadata };
-    })
-  );
+    });
 }
 
 async function getImageRaters({ imageIds }: { imageIds: number[] }) {
