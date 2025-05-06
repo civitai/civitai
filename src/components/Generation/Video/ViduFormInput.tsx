@@ -1,25 +1,15 @@
 import { useFormContext } from 'react-hook-form';
 import { Input } from '@mantine/core';
-import {
-  InputNumberSlider,
-  InputSegmentedControl,
-  InputSwitch,
-  InputText,
-  InputTextArea,
-} from '~/libs/form';
+import { InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
 import { viduDuration } from '~/server/orchestrator/vidu/vidu.schema';
 import { ViduVideoGenStyle } from '@civitai/client';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
-import { useEffect, useState } from 'react';
-import { useFormSubscribe } from '~/libs/form/hooks/useFormSubscribe';
 
 export function ViduFormInput() {
-  // const form = useFormContext();
-  // const [requirePrompt, setRequirePrompt] = useState(false);
-  // useFormSubscribe(({ sourceImage, endSourceImage }) => {
-  //   setRequirePrompt(!sourceImage && !endSourceImage);
-  // });
+  const form = useFormContext();
+  const sourceImage = form.watch('sourceImage');
+  const endSourceImage = form.watch('endSourceImage');
 
   return (
     <>
@@ -35,7 +25,13 @@ export function ViduFormInput() {
           className="flex-1"
         />
       </div>
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea
+        required={!sourceImage && !endSourceImage}
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>

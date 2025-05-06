@@ -1,47 +1,45 @@
 import { Anchor, Input } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
-import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
-import { wanAspectRatios, wanDuration } from '~/server/orchestrator/wan/wan.schema';
+import { hunyuanAspectRatios, hunyuanDuration } from '~/server/orchestrator/hunyuan/hunyuan.schema';
 import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
 
-export function WanFormInput() {
+export function HunyuanFormInput() {
   const form = useFormContext();
-  const sourceImage = form.watch('sourceImage');
+  // const sourceImage = form.watch('sourceImage');
 
   return (
     <>
-      <InputSourceImageUpload name="sourceImage" label="Image (optional)" className="flex-1" />
       <InputResourceSelectMultipleStandalone
         name="resources"
-        options={{ resources: baseModelResourceTypes.WanVideo }}
+        options={{ resources: baseModelResourceTypes.HyV1 }}
         buttonLabel="Add additional resource"
       />
       <InputTextArea
-        required={!sourceImage}
+        required
         name="prompt"
         label="Prompt"
         placeholder="Your prompt goes here..."
         autosize
       />
-      {!sourceImage && (
-        <InputAspectRatioColonDelimited
-          name="aspectRatio"
-          label="Aspect Ratio"
-          options={wanAspectRatios}
-        />
-      )}
+      <InputAspectRatioColonDelimited
+        name="aspectRatio"
+        label="Aspect Ratio"
+        options={hunyuanAspectRatios}
+      />
+
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
+          data={hunyuanDuration.map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
+
       <InputNumberSlider
         name="cfgScale"
         label={
@@ -61,8 +59,8 @@ export function WanFormInput() {
             </InfoPopover>
           </div>
         }
-        min={2}
-        max={6}
+        min={4}
+        max={8}
         step={0.1}
         precision={1}
         reverse

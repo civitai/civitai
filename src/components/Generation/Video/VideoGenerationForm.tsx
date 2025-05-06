@@ -27,6 +27,10 @@ import { IconX } from '@tabler/icons-react';
 import { useVideoGenerationStore } from '~/components/Generation/Video/VideoGenerationProvider';
 import { ViduFormInput } from './ViduFormInput';
 import { WanFormInput } from '~/components/Generation/Video/WanFormInput';
+import { HunyuanFormInput } from '~/components/Generation/Video/HunyuanFormInput';
+import { KlingFormInput } from '~/components/Generation/Video/KlingFormInput';
+import { MinimaxFormInput } from '~/components/Generation/Video/MinimaxFormInput';
+import { HaiperFormInput } from '~/components/Generation/Video/HaiperFormInput';
 
 export function VideoGenerationForm() {
   const getState = useVideoGenerationStore((state) => state.getState);
@@ -50,7 +54,7 @@ export function VideoGenerationForm() {
     performTransactionOnPurchase: true,
   });
 
-  const form = usePersistForm(engine, {
+  const form = usePersistForm(`generation-form-${engine}`, {
     schema: config.validationSchema as any,
     version: 1,
     reValidateMode: 'onSubmit',
@@ -72,7 +76,7 @@ export function VideoGenerationForm() {
   });
 
   function handleReset() {
-    form.reset();
+    form.reset(config.getDefaultValues());
   }
 
   function handleSubmit(data: Record<string, unknown>) {
@@ -190,9 +194,6 @@ function SubmitButton2({ loading }: { loading: boolean }) {
 
   useEffect(() => {
     setState({ cost: data?.cost?.base ?? undefined });
-    // if (data?.cost?.base) {
-    //   setState({ cost: data.cost.base})
-    // }
   }, [data]);
 
   return (
@@ -214,4 +215,8 @@ function SubmitButton2({ loading }: { loading: boolean }) {
 const inputDictionary: Record<OrchestratorEngine2, () => JSX.Element> = {
   vidu: ViduFormInput,
   wan: WanFormInput,
+  hunyuan: HunyuanFormInput,
+  kling: KlingFormInput,
+  minimax: MinimaxFormInput,
+  haiper: HaiperFormInput,
 };

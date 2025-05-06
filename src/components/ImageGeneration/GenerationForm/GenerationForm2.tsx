@@ -567,6 +567,7 @@ export function GenerationFormContent() {
                                 control: classes.accordionControl,
                                 content: classes.accordionContent,
                               }}
+                              transitionDuration={0}
                             >
                               <Accordion.Item value="resources" className="border-b-0">
                                 <Accordion.Control
@@ -1039,6 +1040,7 @@ export function GenerationFormContent() {
                       control: classes.accordionControl,
                       content: classes.accordionContent,
                     }}
+                    transitionDuration={0}
                   >
                     <Accordion.Item value="advanced">
                       <Accordion.Control>

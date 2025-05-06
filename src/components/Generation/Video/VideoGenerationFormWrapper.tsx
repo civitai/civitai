@@ -73,7 +73,7 @@ export function VideoGenerationFormWrapper() {
               onChange={(engine) => setState({ engine: engine as OrchestratorEngine2 })}
               data={data?.map(({ engine, label }) => ({ label, value: engine }))}
             />
-            {engine && <VideoGenerationForm />}
+            {engine && <VideoGenerationForm key={engine} />}
           </>
         )}
       </div>

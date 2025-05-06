@@ -53,10 +53,6 @@ export const wanGenerationConfig = VideoGenerationConfig2({
         path: ['prompt'],
       });
     }
-    if (data.sourceImage) {
-      delete data.aspectRatio;
-    }
-    return data;
   },
   inputFn: ({ sourceImage, resources, ...args }): WanVdeoGenInput => {
     const ar = sourceImage
