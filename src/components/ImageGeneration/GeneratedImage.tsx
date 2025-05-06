@@ -220,6 +220,10 @@ export function GeneratedImage({
     handleDataTransfer(e);
   }
 
+  function handleDragImage(e: DragEvent<HTMLImageElement>) {
+    handleDataTransfer(e);
+  }
+
   const blockedReason = getImageBlockedReason(image.blockedReason);
   const isBlocked = !!nsfwLevelError || !!blockedReason;
 
@@ -264,6 +268,9 @@ export function GeneratedImage({
                 disablePoster
                 onLoad={handleLoad}
                 onError={handleError}
+                imageProps={{
+                  onDragStart: handleDragImage,
+                }}
                 videoProps={{
                   onLoadedData: handleLoad,
                   onError: handleError,
@@ -632,6 +639,7 @@ function GeneratedImageWorkflowMenuItems({
       props: {
         workflow: 'img2img-background-removal',
         sourceImage: await getSourceImageFromUrl({ url: image.url }),
+        metadata: step.metadata,
       },
     });
   }
@@ -642,6 +650,7 @@ function GeneratedImageWorkflowMenuItems({
       props: {
         workflow: 'img2img-upscale-enhancement-realism',
         sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
+        metadata: step.metadata,
       },
     });
   }
@@ -662,16 +671,13 @@ function GeneratedImageWorkflowMenuItems({
 
   async function handleUpscale() {
     if (step.$type !== 'videoGen') {
+      const sourceImage = await getSourceImageFromUrl({ url: image.url, upscale: true });
       dialogStore.trigger({
         component: UpscaleImageModal,
         props: {
-          resources: step.resources,
-          params: {
-            ...step.params,
-            sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
-            seed: image.seed,
-            workflow: 'img2img-upscale',
-          },
+          workflow: 'img2img-upscale',
+          sourceImage,
+          metadata: step.metadata,
         },
       });
     }
