@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import { getModelTypesForAuction, miscAuctionName } from '~/components/Auction/auction.utils';
 import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
 import type {
@@ -200,8 +200,8 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
 };
 
 export type GetAuctionBySlugReturn = AsyncReturnType<typeof getAuctionBySlug>;
-export async function getAuctionBySlug({ slug }: GetAuctionBySlugInput) {
-  const now = new Date();
+export async function getAuctionBySlug({ slug, date }: GetAuctionBySlugInput) {
+  const now = date ?? new Date();
 
   const auction = await dbWrite.auction.findFirst({
     where: { startAt: { lte: now }, endAt: { gt: now }, auctionBase: { slug } },

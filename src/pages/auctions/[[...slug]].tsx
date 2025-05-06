@@ -12,6 +12,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { InferGetServerSidePropsType } from 'next';
 import { usePathname } from 'next/navigation';
 import { useRouter } from 'next/router';
@@ -32,8 +33,9 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 
-type QueryData = {
+type AuctionQueryData = {
   slug?: string[];
+  date?: string | string[];
 };
 
 export const getServerSideProps = createServerSideProps({
@@ -47,13 +49,16 @@ export const getServerSideProps = createServerSideProps({
 
     if (ssg) {
       await ssg.auction.getAll.prefetch();
-      const { slug } = ctx.query as QueryData;
+      const { slug, date } = ctx.query as AuctionQueryData;
       if (slug && slug.length) {
         const sSlug = slug[0];
         if (sSlug !== MY_BIDS) {
           // await ssg.auction.getBySlug.prefetch({ slug: sSlug });
           try {
-            const res = await ssg.auction.getBySlug.fetch({ slug: sSlug });
+            const queryDate = Array.isArray(date) ? date[0] : date;
+            const parsedDate = dayjs(queryDate);
+            const dDate = parsedDate.isValid() ? parsedDate.startOf('day').toDate() : undefined;
+            const res = await ssg.auction.getBySlug.fetch({ slug: sSlug, date: dDate });
             await ssg.auction.getMyBids.prefetch();
             auctionName = res?.auctionBase?.name ?? null;
           } catch {
@@ -85,7 +90,7 @@ export default function Auctions({
   valid,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
-  const { slug: initialSlug } = router.query as QueryData;
+  const { slug: initialSlug } = router.query as AuctionQueryData;
   const slug = initialSlug && initialSlug.length ? initialSlug[0] : undefined;
   const {
     selectedAuction,
@@ -106,6 +111,18 @@ export default function Auctions({
     isLoading: isLoadingAuctions,
     isError: isErrorAuctions,
   } = trpc.auction.getAll.useQuery();
+
+  const getDocTitle = () => {
+    return `Auction${
+      slug === MY_BIDS
+        ? ': My Bids'
+        : auctionName
+        ? `: ${auctionName}`
+        : selectedAuction?.auctionBase?.name
+        ? `: ${selectedAuction.auctionBase.name}`
+        : 's'
+    } | Civitai`;
+  };
 
   // TODO fix hitting /auctions when none are available
   useEffect(() => {
@@ -128,6 +145,7 @@ export default function Auctions({
 
   useEffect(() => {
     if (!running) runTour({ key: 'auction', step: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const navLinks = (itemSize?: MantineSize) => (
@@ -188,18 +206,6 @@ export default function Auctions({
       </Skeleton>
     </Stack>
   );
-
-  const getDocTitle = () => {
-    return `Auction${
-      slug === MY_BIDS
-        ? ': My Bids'
-        : auctionName
-        ? `: ${auctionName}`
-        : selectedAuction?.auctionBase?.name
-        ? `: ${selectedAuction.auctionBase.name}`
-        : 's'
-    } | Civitai`;
-  };
 
   return (
     <>

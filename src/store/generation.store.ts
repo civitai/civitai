@@ -65,14 +65,15 @@ export const useGenerationStore = create<GenerationState>()(
 
         if (input) {
           const isMedia = ['audio', 'image', 'video'].includes(input.type);
-          if (isMedia) {
-            generationFormStore.setType(input.type as MediaType);
-          }
+          // if (isMedia) {
+          //   generationFormStore.setType(input.type as MediaType);
+          // }
           try {
             const result = await fetchGenerationData(input);
             const { remixOf, ...data } = result;
             const { params } = await transformParams(data.params, remixOf);
-            if (params.engine) useGenerationFormStore.setState({ engine: params.engine });
+            if (params.engine)
+              useGenerationFormStore.setState({ engine: params.engine, type: data.type });
 
             if (isMedia) {
               useRemixStore.setState({
@@ -123,6 +124,7 @@ export const useGenerationStore = create<GenerationState>()(
           state.remixOf = remixOf;
           state.data = {
             ...data,
+            type,
             params,
             resources: withSubstitute(data.resources),
             runType: 'replay',

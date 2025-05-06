@@ -32,6 +32,8 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { GenerationSort } from '~/server/common/enums';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
@@ -225,6 +227,35 @@ export function useGenerate(args?: { onError?: (e: any) => void }) {
     },
     ...args,
   });
+}
+
+export function useGenerateWithCost(cost = 0) {
+  const { conditionalPerformTransaction } = useBuzzTransaction({
+    message: (requiredBalance) =>
+      `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
+        requiredBalance
+      )}. Buy or earn more Buzz to perform this action.`,
+    performTransactionOnPurchase: true,
+    type: 'Generation',
+  });
+
+  const generate = useGenerate();
+
+  return useMemo(() => {
+    async function mutateAsync(...args: Parameters<typeof generate.mutate>) {
+      conditionalPerformTransaction(cost, async () => {
+        return await generate.mutateAsync(...args);
+      });
+    }
+
+    function mutate(...args: Parameters<typeof generate.mutate>) {
+      conditionalPerformTransaction(cost, () => {
+        generate.mutate(...args);
+      });
+    }
+
+    return { ...generate, mutateAsync, mutate };
+  }, [cost, generate]);
 }
 
 export function useDeleteTextToImageRequest() {

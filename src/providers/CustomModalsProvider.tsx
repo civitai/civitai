@@ -10,7 +10,7 @@ import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsMod
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
-import { openSendTipModal } from '~/components/Modals/SendTipModal';
+// import { openSendTipModal } from '~/components/Modals/SendTipModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
@@ -28,7 +28,7 @@ const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddT
 const ManageHomeBlocksModal = dynamic(
   () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
 );
-const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
+// const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
 const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'));
 const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
 const UserProfileEditModal = dynamic(() => import('~/components/Modals/UserProfileEditModal'));
@@ -64,10 +64,10 @@ const registry = {
     Component: ManageHomeBlocksModal,
     fn: openManageHomeBlocksModal,
   },
-  sendTip: {
-    Component: SendTipModal,
-    fn: openSendTipModal,
-  },
+  // sendTip: {
+  //   Component: SendTipModal,
+  //   fn: openSendTipModal,
+  // },
   bountyEntryFiles: {
     Component: BountyEntryFilesModal,
     fn: openBountyEntryFilesModal,

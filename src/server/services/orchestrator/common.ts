@@ -526,6 +526,9 @@ function formatImageGenStep({
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
   const { params, resources: stepResources = [] } = metadata;
 
+  const { width = 1024, height = 1024 } =
+    params?.sourceImage ?? (params as { width?: number; height?: number });
+
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
       ...acc,
@@ -542,8 +545,8 @@ function formatImageGenStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            width: params?.width ?? 1024,
-            height: params?.height ?? 1024,
+            width,
+            height,
             blockedReason: image.blockedReason,
           })) ?? [],
     }),

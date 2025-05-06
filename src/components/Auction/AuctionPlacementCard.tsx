@@ -5,6 +5,7 @@ import {
   Divider,
   Group,
   GroupProps,
+  Highlight,
   Skeleton,
   Stack,
   Text,
@@ -199,7 +200,13 @@ const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefine
   );
 };
 
-const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] }) => {
+const SectionModelInfo = ({
+  entityData,
+  searchText,
+}: {
+  entityData: ModelData['entityData'];
+  searchText: string;
+}) => {
   const { blurLevels } = useBrowsingLevelContext();
   const blurNsfw = !!entityData ? Flags.intersects(blurLevels, entityData.nsfwLevel) : false;
   const [hideText, setHideText] = useState(blurNsfw);
@@ -214,7 +221,7 @@ const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] 
       <Stack spacing={0}>
         {!hideText ? (
           <>
-            <Text
+            <Highlight
               size="lg"
               fw={500}
               sx={{
@@ -224,10 +231,11 @@ const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] 
                 whiteSpace: 'nowrap',
                 minWidth: 0,
               }}
+              highlight={searchText}
             >
               {entityData?.model?.name ?? '(Unknown Model)'}
-            </Text>
-            <Text
+            </Highlight>
+            <Highlight
               size="sm"
               color="dimmed"
               sx={{
@@ -237,9 +245,10 @@ const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] 
                 whiteSpace: 'nowrap',
                 minWidth: 0,
               }}
+              highlight={searchText}
             >
               {entityData?.name ?? '(Unknown Version)'}
-            </Text>
+            </Highlight>
           </>
         ) : (
           <div className="flex">
@@ -254,6 +263,7 @@ const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] 
           </div>
         )}
       </Stack>
+      {/* TODO highlight username */}
       {!!entityData?.model?.user && (
         <UserAvatar
           withUsername
@@ -349,7 +359,13 @@ const SectionBidInfo = ({
   );
 };
 
-export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
+export const ModelMyBidCard = ({
+  data,
+  searchText,
+}: {
+  data: ModelMyBidData;
+  searchText: string;
+}) => {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const { handleBuy, createLoading } = usePurchaseBid();
   const queryUtils = trpc.useUtils();
@@ -417,7 +433,7 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
           )}
           <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
             <SectionModelImage image={data.entityData?.image} />
-            <SectionModelInfo entityData={data.entityData} />
+            <SectionModelInfo entityData={data.entityData} searchText={searchText} />
           </Group>
 
           {!mobile && <Divider orientation="vertical" />}
@@ -501,7 +517,13 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
   );
 };
 
-export const ModelMyRecurringBidCard = ({ data }: { data: ModelMyRecurringBidData }) => {
+export const ModelMyRecurringBidCard = ({
+  data,
+  searchText,
+}: {
+  data: ModelMyRecurringBidData;
+  searchText: string;
+}) => {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const queryUtils = trpc.useUtils();
 
@@ -582,7 +604,7 @@ export const ModelMyRecurringBidCard = ({ data }: { data: ModelMyRecurringBidDat
         <Group className="gap-y-2 max-md:flex-col">
           <Group className="flex gap-y-2 p-2 max-md:w-full md:flex-[10]">
             <SectionModelImage image={data.entityData?.image} />
-            <SectionModelInfo entityData={data.entityData} />
+            <SectionModelInfo entityData={data.entityData} searchText={searchText} />
           </Group>
 
           {!mobile && <Divider orientation="vertical" />}
@@ -648,10 +670,14 @@ export const ModelPlacementCard = ({
   data,
   aboveThreshold,
   addBidFn,
+  searchText,
+  canBid,
 }: {
   data: ModelData;
   aboveThreshold: boolean;
   addBidFn: (r: GenerationResource) => void;
+  searchText: string;
+  canBid: boolean;
 }) => {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const currentUser = useCurrentUser();
@@ -709,7 +735,7 @@ export const ModelPlacementCard = ({
           {!mobile && <SectionPosition position={data.position} aboveThreshold={aboveThreshold} />}
           <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
             <SectionModelImage image={data.entityData?.image} />
-            <SectionModelInfo entityData={data.entityData} />
+            <SectionModelInfo entityData={data.entityData} searchText={searchText} />
           </Group>
 
           {!mobile && <Divider orientation="vertical" />}
@@ -719,7 +745,7 @@ export const ModelPlacementCard = ({
             position={data.position}
             aboveThreshold={aboveThreshold}
             right={
-              !!data.entityData ? (
+              !!data.entityData && canBid ? (
                 <Tooltip label="Support this model" position="top" withinPortal>
                   <ActionIcon
                     size="lg"
@@ -765,3 +791,5 @@ export const ModelPlacementCard = ({
     </div>
   );
 };
+
+// export const ModelPlacementCardMemo = memo(ModelPlacementCard);
