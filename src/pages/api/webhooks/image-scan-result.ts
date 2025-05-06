@@ -485,7 +485,8 @@ async function handleSuccess({
         UPDATE "Image" i SET 
           "scannedAt" = 
             CASE 
-              WHEN i.metadata->'skipScannedAtReassignment' IS NOT NULL 
+              WHEN i.metadata->'skipScannedAtReassignment' IS NOT NULL
+                OR i."createdAt" < NOW() - INTERVAL '1 week'
               THEN "scannedAt" 
               ELSE NOW()
             END,

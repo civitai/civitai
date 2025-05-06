@@ -14,7 +14,15 @@ export async function fetchBlobAsFile(
 ) {
   const blob = await fetchBlob(src);
   if (!blob) return null;
-  return new File([blob], fileName, { type: blob.type });
+  let type = blob.type;
+
+  // have to do this to handle cases where content-type is application/octet-stream
+  if (typeof src === 'string') {
+    if (src.endsWith('.mp4')) type = 'video/mp4';
+    else if (src.endsWith('.jpg') || src.endsWith('.jpeg')) type = 'image/jpeg';
+  }
+  const file = new File([blob], fileName, { type });
+  return file;
 }
 
 export async function fetchBlobAsBase64(src: string | Blob | File) {

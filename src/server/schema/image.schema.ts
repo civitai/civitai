@@ -91,6 +91,7 @@ export const imageGenerationSchema = z.object({
   'Clip skip': z.coerce.number().optional(),
   comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
   external: externalMetaSchema.optional(),
+  effects: z.record(z.any()).optional(),
   extra: z
     .object({
       remixOfId: z.number().optional(),
