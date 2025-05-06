@@ -32,6 +32,7 @@ import {
   fetchThroughCache,
 } from '~/server/utils/cache-helpers';
 import {
+  getCurrentValue,
   getExtractionFee,
   getPhases,
   getWithdrawalFee,
@@ -54,6 +55,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
 import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
+import { formatToLeastDecimals } from '~/utils/number-helpers';
 
 type UserCapCacheItem = {
   id: number;
@@ -309,6 +311,7 @@ export async function bustCompensationPoolCache() {
   await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE);
   await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
   await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST);
+  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.PREV_MONTH_STATS);
 }
 
 async function getFlippedPhaseStatus() {
@@ -721,14 +724,19 @@ export async function withdrawCash(userId: number, amount: number) {
   }
 }
 
-export async function getPoolParticipants(month?: Date) {
+export async function getPoolParticipants(month?: Date, includeNegativeAmounts = false) {
   month ??= new Date();
   const monthAccount = getMonthAccount(month);
-  const participants = await clickhouse!.$query<{ userId: number; amount: number }>`
+  const participants = await clickhouse!.$query<{
+    userId: number;
+    amount: number;
+    extracted: number;
+  }>`
     SELECT
       if(toAccountType = 'creator-program-bank', fromAccountId, toAccountId) as userId,
-      SUM(if(toAccountType = 'creator-program-bank', amount, -amount)) as amount
-    FROM buzzTransactions
+      SUM(if(toAccountType = 'creator-program-bank', amount, -amount)) as amount,
+      SUM(if(toAccountType = 'creator-program-bank', 0, bt.amount)) as extracted
+    FROM buzzTransactions bt
     WHERE (
       -- Banks
       toAccountType = 'creator-program-bank'
@@ -741,7 +749,7 @@ export async function getPoolParticipants(month?: Date) {
       AND toAccountType = 'user'
     )
     GROUP BY userId
-    HAVING amount > 0;
+    ${includeNegativeAmounts ? '' : 'HAVING amount > 0'};
   `;
 
   let bannedParticipants: { userId: number }[] = [];
@@ -871,4 +879,49 @@ export const updateCashWithdrawal = async ({
   } catch (e) {
     throw e;
   }
+};
+
+export const getPrevMonthStats = async () => {
+  const data = await fetchThroughCache(
+    REDIS_KEYS.CREATOR_PROGRAM.PREV_MONTH_STATS,
+    async () => {
+      const month = dayjs().subtract(1, 'month').toDate();
+      const compensationPool = await getCompensationPool({ month });
+      const participants = (await getPoolParticipants(month, true)).sort(
+        (a, b) => b.amount - a.amount
+      );
+      const cashedOutCreators = participants.filter((p) => p.amount > 0);
+      const extractedCreators = participants.filter((p) => p.extracted > 0);
+      const median = Math.floor(cashedOutCreators.length / 2);
+
+      const data = {
+        dollarValue: compensationPool.value,
+        creatorCount: participants.length,
+        totalBankedBuzz: cashedOutCreators.reduce((acc, p) => acc + p.amount, 0),
+        extractedCreatorCount: extractedCreators.length,
+        cashedOutCreatorCount: cashedOutCreators.length,
+        totalExtractedBuzz: extractedCreators.reduce((acc, p) => acc + p.extracted, 0),
+        dollarAmountPerThousand: formatToLeastDecimals(getCurrentValue(1000, compensationPool)),
+        dollarHighestEarned: formatToLeastDecimals(
+          getCurrentValue(cashedOutCreators[0].amount, compensationPool)
+        ),
+        dollarAverageEarned: formatToLeastDecimals(
+          getCurrentValue(
+            cashedOutCreators.reduce((acc, p) => acc + p.amount, 0) / cashedOutCreators.length,
+            compensationPool
+          )
+        ),
+        dollarMedianEarned: formatToLeastDecimals(
+          getCurrentValue(cashedOutCreators[median].amount, compensationPool)
+        ),
+      };
+
+      return data;
+    },
+    {
+      ttl: CacheTTL.month,
+    }
+  );
+
+  return data;
 };

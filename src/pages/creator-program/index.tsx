@@ -12,6 +12,7 @@ import {
   List,
   Loader,
   Paper,
+  Skeleton,
   Stack,
   Text,
   Title,
@@ -37,6 +38,7 @@ import { constants } from '../../server/common/constants';
 import {
   abbreviateNumber,
   formatCurrencyForDisplay,
+  formatToLeastDecimals,
   numberWithCommas,
 } from '../../utils/number-helpers';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
@@ -51,6 +53,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import {
   useCompensationPool,
   useCreatorProgramRequirements,
+  usePrevMonthStats,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import {
   CreatorProgramCapsInfo,
@@ -147,6 +150,7 @@ function CreatorsClubV1() {
             </Grid.Col>
           </Grid>
           <HowItWorksSection />
+          <FunStatsSection />
           <JoinSection applyFormUrl={applyFormUrl} />
           <CreatorCapsSection />
           <FAQ />
@@ -243,6 +247,140 @@ const HowItWorksSection = () => {
   );
 };
 
+const FunStatsSection = () => {
+  const { cx, classes } = useStyles();
+  const { prevMonthStats, isLoading } = usePrevMonthStats();
+  const currentUser = useCurrentUser();
+
+  if (!currentUser?.isModerator) {
+    return null;
+  }
+
+  if (isLoading || !prevMonthStats) {
+    return <Skeleton className={classes.section} width="100%" height="200px" />;
+  }
+
+  return (
+    <Stack className={classes.section}>
+      <Stack spacing={0} mb="sm">
+        <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
+          Some fun stats from the last month!
+        </Title>
+      </Stack>
+      <Paper withBorder className={cx(classes.card)} h="100%">
+        <table className="-mt-2 w-full table-auto">
+          <tbody>
+            <tr className="font-bold">
+              <td colSpan={2} className="border-b">
+                <div className="flex items-center gap-1">
+                  <span>Compensation Pool</span>
+                </div>
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarValue ?? 0))}
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2} className="border-b">
+                Creators who banked Buzz
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                <div className="flex items-center gap-2">
+                  <span>{numberWithCommas(prevMonthStats.creatorCount)}</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2} className="border-b">
+                Total banked Buzz
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                <div className="flex items-center gap-2">
+                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <span>{numberWithCommas(prevMonthStats.totalBankedBuzz)}</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2} className="border-b">
+                Creators who extracted Buzz
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                <div className="flex items-center gap-2">
+                  <span>{numberWithCommas(prevMonthStats.extractedCreatorCount)}</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2} className="border-b">
+                Total extracted Buzz
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                <div className="flex items-center gap-2">
+                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <span>{numberWithCommas(prevMonthStats.totalExtractedBuzz)}</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2} className="border-b">
+                Creators who cashed out
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                <div className="flex items-center gap-2">
+                  <span>{numberWithCommas(prevMonthStats.cashedOutCreatorCount)}</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2} className="border-b">
+                <div className="flex items-center gap-1">
+                  <span>Value for 1,000 Buzz</span>
+                </div>
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                $
+                {numberWithCommas(
+                  formatToLeastDecimals(prevMonthStats.dollarAmountPerThousand ?? 0)
+                )}
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2} className="border-b">
+                <div className="flex items-center gap-1">
+                  <span>Highest earned amount</span>
+                </div>
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarHighestEarned ?? 0))}
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2} className="border-b">
+                <div className="flex items-center gap-1">
+                  <span>Average earned amount</span>
+                </div>
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarAverageEarned ?? 0))}
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2}>
+                <div className="flex items-center gap-1">
+                  <span>Median earned amount</span>
+                </div>
+              </td>
+              <td className="border-l py-2 pl-2">
+                ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarMedianEarned ?? 0))}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </Paper>
+    </Stack>
+  );
+};
 const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
   const { cx, classes, theme } = useStyles();
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
