@@ -282,7 +282,7 @@ const FunStatsSection = () => {
             </tr>
             <tr>
               <td colSpan={2} className="border-b">
-                Creators who banked Buzz
+                Creators who Banked Buzz
               </td>
               <td className="border-b border-l py-2 pl-2">
                 <div className="flex items-center gap-2">
@@ -292,7 +292,7 @@ const FunStatsSection = () => {
             </tr>
             <tr>
               <td colSpan={2} className="border-b">
-                Total banked Buzz
+                Total Banked Buzz
               </td>
               <td className="border-b border-l py-2 pl-2">
                 <div className="flex items-center gap-2">
@@ -303,7 +303,7 @@ const FunStatsSection = () => {
             </tr>
             <tr>
               <td colSpan={2} className="border-b">
-                Creators who extracted Buzz
+                Creators who Extracted Buzz
               </td>
               <td className="border-b border-l py-2 pl-2">
                 <div className="flex items-center gap-2">
@@ -313,7 +313,7 @@ const FunStatsSection = () => {
             </tr>
             <tr>
               <td colSpan={2} className="border-b">
-                Total extracted Buzz
+                Total Extracted Buzz
               </td>
               <td className="border-b border-l py-2 pl-2">
                 <div className="flex items-center gap-2">
