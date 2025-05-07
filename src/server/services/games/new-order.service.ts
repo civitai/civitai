@@ -153,7 +153,7 @@ export async function cleanseAllSmites({
 
   await smitesCounter.reset({ id: playerId });
 
-  if (data.length === 0) return; // Nothing done :shrug:
+  if (data.count === 0) return; // Nothing done :shrug:
 
   signalClient
     .topicSend({
@@ -370,7 +370,7 @@ export async function addImageRating({
   // Increase rating count for the image in the queue.
   await valueInQueue.pool.increment({ id: imageId, value: 1 });
 
-  if (status === NewOrderImageRatingStatus.Correct) {
+  if (status === NewOrderImageRatingStatus.AcolyteCorrect) {
     // Reduce gainedExp from oldest smite remaining score
     const smite = await dbWrite.newOrderSmite.findFirst({
       where: { targetPlayerId: playerId, remaining: { gt: 0 } },

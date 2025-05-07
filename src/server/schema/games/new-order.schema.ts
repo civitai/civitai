@@ -19,6 +19,7 @@ export const getPlayersInfiniteSchema = infiniteQuerySchema.extend({
 export type SmitePlayerInput = z.infer<typeof smitePlayerSchema>;
 export const smitePlayerSchema = z.object({
   playerId: z.number(),
+  imageId: z.number().optional(), // needed for optimistic update
   reason: z.string().optional(),
   size: z
     .number()

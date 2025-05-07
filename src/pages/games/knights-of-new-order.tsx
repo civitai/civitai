@@ -32,6 +32,7 @@ import { NewOrderImageRatings } from '~/components/Games/NewOrder/NewOrderImageR
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { RankUp } from '~/components/Games/LevelProgress/RankUp';
 import { newOrderConfig } from '~/server/common/constants';
+import { NewOrderBetaBanner } from '~/components/Games/NewOrder/NewOrderBetaBanner';
 
 let levelUpTimer: NodeJS.Timeout | null = null;
 let rankUpTimer: NodeJS.Timeout | null = null;
@@ -85,7 +86,7 @@ export default Page(
       rating,
       damnedReason,
     }: Omit<AddImageRatingInput, 'playerId' | 'imageId'>) => {
-      if (!currentImage) return;
+      if (!currentImage || !playerData) return;
 
       setPrevHistory((prev) => [...prev, currentImage.id]);
       playSound(rating === NsfwLevel.Blocked ? 'buzz' : 'point', ratingPlayBackRates[rating]);
@@ -104,7 +105,7 @@ export default Page(
       await addRating({ imageId: currentImage.id, rating, damnedReason });
 
       // Check for level up
-      const progression = playerData ? getLevelProgression(playerData.stats.exp) : null;
+      const progression = getLevelProgression(playerData.stats.exp);
       const gainedExp = rating === currentImage.nsfwLevel ? newOrderConfig.baseExp : 0;
       const shouldLevelUp =
         progression && progression.xpIntoLevel + gainedExp >= progression.xpForNextLevel;
@@ -155,6 +156,7 @@ export default Page(
             <PageLoader />
           ) : playerData ? (
             <div className="relative -mt-3 flex h-[calc(100%-44px)] flex-col gap-4 bg-gray-2 p-4 @md:flex-row @md:p-0 dark:bg-dark-9">
+              <NewOrderBetaBanner />
               <NewOrderSidebar />
               <div className="relative flex size-full items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
                 {isLevelingUp && <LevelUp className="absolute" />}
