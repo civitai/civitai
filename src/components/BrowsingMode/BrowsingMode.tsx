@@ -10,13 +10,7 @@ import {
   Anchor,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import {
-  IconAlertTriangle,
-  IconCaretRightFilled,
-  IconEyeExclamation,
-  IconProps,
-  IconTriangleFilled,
-} from '@tabler/icons-react';
+import { IconAlertTriangle, IconEyeExclamation, IconProps, IconSword } from '@tabler/icons-react';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -66,15 +60,16 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                       <Button
                         onClick={closeMenu}
                         component={Link}
-                        href="/research/rater"
-                        compact
+                        href="/games/knights-of-new-order"
                         size="xs"
                         ml="auto"
                         variant="outline"
+                        color="orange.5"
+                        compact
                       >
                         <Group spacing={4}>
-                          Rating Game
-                          <IconCaretRightFilled size={14} />
+                          Join the Knights Order
+                          <IconSword size={14} />
                         </Group>
                       </Button>
                     </Tooltip>

@@ -1,7 +1,14 @@
-import { Button, Kbd, ActionIcon, Tooltip, Text, Modal } from '@mantine/core';
+import { Button, Kbd, ActionIcon, Tooltip, Text, Modal, Popover } from '@mantine/core';
 import { HotkeyItem, useHotkeys } from '@mantine/hooks';
-import { IconArrowBackUp, IconFlag, IconVolumeOff, IconVolume } from '@tabler/icons-react';
+import {
+  IconArrowBackUp,
+  IconFlag,
+  IconVolumeOff,
+  IconVolume,
+  IconHelpHexagon,
+} from '@tabler/icons-react';
 import { useState, useMemo, useCallback } from 'react';
+import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { damnedReasonOptions, ratingOptions } from '~/components/Games/KnightsNewOrder.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
@@ -186,9 +193,12 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
             </>
           )}
         </Text>
-        <ActionIcon className="ml-auto" size="sm" variant="transparent" onClick={onVolumeClick}>
-          {muted ? <IconVolumeOff size={16} /> : <IconVolume size={16} />}
-        </ActionIcon>
+        <div className="flex items-center gap-1">
+          <ActionIcon className="ml-auto" size="sm" variant="transparent" onClick={onVolumeClick}>
+            {muted ? <IconVolumeOff size={16} /> : <IconVolume size={16} />}
+          </ActionIcon>
+          <ExplainImageRaterPopover />
+        </div>
       </div>
     </div>
   );
@@ -247,5 +257,35 @@ function DamnedReasonOptions({
         })}
       </Button.Group>
     </div>
+  );
+}
+
+export function ExplainImageRaterPopover() {
+  return (
+    <Popover width={300} withArrow>
+      <Popover.Target>
+        <ActionIcon size="xs" color="dark">
+          <IconHelpHexagon strokeWidth={2.5} />
+        </ActionIcon>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Text color="orange" weight={500}>
+          What is this?
+        </Text>
+        <Text
+          size="sm"
+          lh={1.3}
+        >{`We're working on improving our automated content moderation system. We need your help to improve our data! Please assign the rating you think best fits the content`}</Text>
+        <Text
+          className="cursor-pointer"
+          size="xs"
+          td="underline"
+          color="blue.4"
+          onClick={openBrowsingLevelGuide}
+        >
+          What do the ratings mean?
+        </Text>
+      </Popover.Dropdown>
+    </Popover>
   );
 }

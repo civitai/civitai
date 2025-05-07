@@ -9,7 +9,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { newOrderConfig } from '~/server/common/constants';
 import { SimpleUser } from '~/server/selectors/user.selector';
-import { getLevelProgression } from '~/server/utils/research-utils';
+import { getLevelProgression } from '~/server/utils/game-helpers';
 import { Currency, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { GetPlayer } from '~/types/router';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';

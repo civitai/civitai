@@ -45,6 +45,8 @@ import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 
+type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
+
 const FERVOR_COEFFICIENT = -0.0025;
 
 export async function joinGame({ userId }: { userId: number }) {
@@ -188,10 +190,11 @@ export async function addImageRating({
 
   const valueInQueue = await isImageInQueue({
     imageId,
-    rankType:
-      player.rankType === NewOrderRankType.Templar
-        ? [NewOrderRankType.Templar, NewOrderRankType.Knight]
-        : player.rankType,
+    rankType: isModerator
+      ? ['Inquisitor', NewOrderRankType.Templar, NewOrderRankType.Knight]
+      : player.rankType === NewOrderRankType.Templar
+      ? [NewOrderRankType.Templar, NewOrderRankType.Knight]
+      : player.rankType,
   });
 
   if (!valueInQueue) {
@@ -484,6 +487,16 @@ async function updatePendingImageRatings({
 }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
+  // Get players that rated this image:
+  const votingPlayers = await clickhouse.$query<{ userId: number; startAt: Date }>`
+    SELECT DISTINCT "userId", p."startAt"
+    FROM knights_new_order_image_rating
+    JOIN civitai_pg."NewOrderPlayer" p ON p."userId" = "userId"
+    WHERE "imageId" = ${imageId}
+      AND status = '${NewOrderImageRatingStatus.Pending}'
+  `;
+  // TODO.newOrder: clean up smites if any voters have active smites.
+
   await clickhouse.exec({
     query: `
       ALTER TABLE knights_new_order_image_rating
@@ -494,6 +507,7 @@ async function updatePendingImageRatings({
       WHERE "imageId" = ${imageId}
         AND status = '${NewOrderImageRatingStatus.Pending}'
         AND rank != '${NewOrderRankType.Acolyte}'
+      RETURNING imageId, userId, status
     `,
   });
 }
@@ -509,7 +523,10 @@ export async function updatePlayerStats({
   exp: number;
   updateAll?: boolean;
 }) {
-  const newExp = await expCounter.increment({ id: playerId, value: exp });
+  const newExp =
+    exp < 0
+      ? await expCounter.decrement({ id: playerId, value: exp })
+      : await expCounter.increment({ id: playerId, value: exp });
   let stats = { exp: newExp, fervor: 0, blessedBuzz: 0 };
 
   if (updateAll) {
@@ -656,7 +673,7 @@ export async function addImageToQueue({
   priority = 3,
 }: {
   imageIds: number | number[];
-  rankType: NewOrderRankType | 'Inquisitor';
+  rankType: NewOrderHighRankType;
   priority?: 1 | 2 | 3;
 }) {
   imageIds = Array.isArray(imageIds) ? imageIds : [imageIds];
@@ -790,7 +807,7 @@ async function isImageInQueue({
   rankType,
 }: {
   imageId: number;
-  rankType: NewOrderRankType | NewOrderRankType[];
+  rankType: NewOrderHighRankType | NewOrderHighRankType[];
 }) {
   if (!Array.isArray(rankType)) rankType = [rankType];
   const pools = rankType

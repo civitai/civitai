@@ -25,7 +25,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { NewOrderSidebar } from '~/components/Games/NewOrder/NewOrderSidebar';
 import { Meta } from '~/components/Meta/Meta';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { getLevelProgression } from '~/server/utils/research-utils';
+import { getLevelProgression } from '~/server/utils/game-helpers';
 import { LevelUp } from '~/components/Games/LevelProgress/LevelUp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NewOrderImageRatings } from '~/components/Games/NewOrder/NewOrderImageRatings';

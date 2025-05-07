@@ -6,6 +6,7 @@ import { useMemo } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useStorage } from '~/hooks/useStorage';
+import { newOrderConfig } from '~/server/common/constants';
 import {
   NewOrderSignalActions,
   NewOrderDamnedReason,
@@ -230,7 +231,10 @@ export const useAddImageRating = () => {
           ...old,
           stats: {
             ...old.stats,
-            exp: matchedImage && isCorrectRating ? old.stats.exp + 100 : old.stats.exp,
+            exp:
+              matchedImage && isCorrectRating
+                ? old.stats.exp + newOrderConfig.baseExp
+                : old.stats.exp,
           },
         };
       });

@@ -15,15 +15,15 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
         <p>
           Knights of New Order is a thrilling game where players take on the roles of knights in
           order to apply divine judgment to the content shared by the community, ensuring that only
-          the righteous prevail. Players progress throught the ranks of the Order, moderating
-          content while earning rewards.
+          the righteous prevail. Players progress through the ranks of the Order, moderating content
+          while earning rewards.
         </p>
         <h2 className="text-lg font-semibold text-orange-5">Ranks of the New Order</h2>
         <div className="flex flex-col gap-1">
           <h3 className="font-semibold">Acolyte (Training Rank)</h3>
           <p>
-            All players start as <span className="font-semibold">Acolyte</span>, training in the art
-            of content judgment. As an Acolyte, you will learn the basics of the game and gain
+            All players start as an <span className="font-semibold">Acolyte</span>, training in the
+            art of content judgment. As an Acolyte, you will learn the basics of the game and gain
             experience by rating images to level up.
           </p>
         </div>
@@ -44,6 +44,14 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
             chosen as <span className="font-semibold">Templars</span>, serving as the final arbiters
             before judgment reaches the <span className="font-semibold">Inquisitors</span>. Templars
             review disputed cases where Knights fail to reach a consensus.
+          </p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <h3 className="font-semibold">Inquisitor (Final Authority)</h3>
+          <p>
+            These are the current site moderators, serving as the final decision-makers in the
+            Order. While not a player rank at this time, perhaps one day the most devoted Templars
+            may earn the right to stand among them.
           </p>
         </div>
         <h2 className="text-lg font-semibold text-orange-5">Mechanics</h2>
@@ -97,8 +105,9 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
             Smites
           </h3>
           <p>
-            Players can receive <span className="font-semibold">Smites</span> if their rating
-            decision gets overturned by an <span className="font-semibold">Inquisitor</span>.
+            Players may receive <span className="font-semibold">Smites</span> if their rating
+            decision is deemed gravely inaccurate by an{' '}
+            <span className="font-semibold">Inquisitor</span>.
           </p>
           <ul className="pl-8">
             <li>
