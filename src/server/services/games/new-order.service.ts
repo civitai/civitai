@@ -146,12 +146,14 @@ export async function cleanseAllSmites({
   playerId,
   cleansedReason,
 }: Omit<CleanseSmiteInput, 'id'>) {
-  await dbWrite.newOrderSmite.updateMany({
+  const data = await dbWrite.newOrderSmite.updateMany({
     where: { targetPlayerId: playerId, cleansedAt: null },
     data: { cleansedAt: new Date(), cleansedReason },
   });
 
   await smitesCounter.reset({ id: playerId });
+
+  if (data.length === 0) return; // Nothing done :shrug:
 
   signalClient
     .topicSend({
@@ -324,13 +326,13 @@ export async function addImageRating({
               size: 10,
             });
           }
-        } else if (levelAfterRating > currentLevel) {
+        } else if (levelAfterRating.level > currentLevel.level) {
           // Cleanup all smites & reset failed judgments
-          await acolyteFailedJudgments.reset({ id: playerId });
           await cleanseAllSmites({
             playerId,
             cleansedReason: 'Acolyte - Level up!',
           });
+          await acolyteFailedJudgments.reset({ id: playerId });
         }
       }
     } catch (e) {
