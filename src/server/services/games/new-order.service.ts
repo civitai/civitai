@@ -307,9 +307,9 @@ export async function addImageRating({
       });
 
       if (isAcolyte) {
-        const currentLevel = getLevelProgression(player.exp);
+        const currentLevel = getLevelProgression(player.totalExp);
         const levelAfterRating = getLevelProgression(
-          player.exp + newOrderConfig.baseExp * multiplier
+          player.totalExp + newOrderConfig.baseExp * multiplier
         );
 
         if (status === NewOrderImageRatingStatus.AcolyteFailed) {
