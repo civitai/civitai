@@ -102,8 +102,14 @@ export const correctJudgmentsCounter = createCounter({
   ttl: CacheTTL.week,
 });
 
-export const allJudmentsCounter = createCounter({
+export const allJudgmentsCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.ALL,
+  fetchCount: async () => 0,
+  ttl: CacheTTL.week,
+});
+
+export const acolyteFailedJudgments = createCounter({
+  key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.ACOLYTE_FAILED,
   fetchCount: async () => 0,
   ttl: CacheTTL.week,
 });

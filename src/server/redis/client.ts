@@ -414,6 +414,7 @@ export const REDIS_SYS_KEYS = {
     JUDGEMENTS: {
       ALL: 'new-order:judgments:all',
       CORRECT: 'new-order:judgments:correct',
+      ACOLYTE_FAILED: 'new-order:judgments:acolyte-failed',
     },
   },
 } as const;

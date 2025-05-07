@@ -6,7 +6,7 @@ import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
-  allJudmentsCounter,
+  allJudgmentsCounter,
   blessedBuzzCounter,
   correctJudgmentsCounter,
   expCounter,
@@ -200,7 +200,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   const userIds = userData.map((j) => j.userId);
   await Promise.all([
     ...userIds.map((id) => correctJudgmentsCounter.reset({ id })),
-    ...userIds.map((id) => allJudmentsCounter.reset({ id })),
+    ...userIds.map((id) => allJudgmentsCounter.reset({ id })),
     ...userIds.map((id) => fervorCounter.reset({ id })),
     ...userIds.map((id) => expCounter.reset({ id })),
   ]);

@@ -10,7 +10,8 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
-  allJudmentsCounter,
+  acolyteFailedJudgments,
+  allJudgmentsCounter,
   blessedBuzzCounter,
   correctJudgmentsCounter,
   expCounter,
@@ -39,6 +40,7 @@ import {
   throwInternalServerError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getLevelProgression } from '~/server/utils/game-helpers';
 import { Flags } from '~/shared/utils';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
@@ -48,6 +50,7 @@ import { isDefined } from '~/utils/type-guards';
 type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
 
 const FERVOR_COEFFICIENT = -0.0025;
+const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
 
 export async function joinGame({ userId }: { userId: number }) {
   const user = await dbRead.user.findUnique({
@@ -139,6 +142,34 @@ export async function smitePlayer({
   return smite;
 }
 
+export async function cleanseAllSmites({
+  playerId,
+  cleansedReason,
+}: Omit<CleanseSmiteInput, 'id'>) {
+  await dbWrite.newOrderSmite.updateMany({
+    where: { targetPlayerId: playerId, cleansedAt: null },
+    data: { cleansedAt: new Date(), cleansedReason },
+  });
+
+  await smitesCounter.reset({ id: playerId });
+
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+      target: SignalMessages.NewOrderPlayerUpdate,
+      data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: 0 } },
+    })
+    .catch();
+
+  createNotification({
+    category: NotificationCategory.Other,
+    type: 'new-order-smite-cleansed',
+    key: `new-order-smite-cleansed:${playerId}:all:${new Date().getTime()}`,
+    userId: playerId,
+    details: { cleansedReason },
+  }).catch();
+}
+
 export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmiteInput) {
   const smite = await dbWrite.newOrderSmite.update({
     where: { id, cleansedAt: null },
@@ -157,7 +188,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   createNotification({
     category: NotificationCategory.Other,
     type: 'new-order-smite-cleansed',
-    key: `new-order-smite-cleansed:${playerId}`,
+    key: `new-order-smite-cleansed:${playerId}:${id}`,
     userId: playerId,
     details: { cleansedReason },
   }).catch();
@@ -247,15 +278,20 @@ export async function addImageRating({
     return true;
   }
 
-  const status =
-    player.rankType === NewOrderRankType.Acolyte
-      ? image.nsfwLevel === rating
-        ? NewOrderImageRatingStatus.Correct
-        : NewOrderImageRatingStatus.Failed
-      : // Knights / Templars leave the image in the pending status until their vote is confirmed.
-        NewOrderImageRatingStatus.Pending;
+  const isAcolyte = player.rankType === NewOrderRankType.Acolyte;
+  const status = isAcolyte
+    ? image.nsfwLevel === rating
+      ? NewOrderImageRatingStatus.AcolyteCorrect
+      : NewOrderImageRatingStatus.AcolyteFailed
+    : // Knights / Templars leave the image in the pending status until their vote is confirmed.
+      NewOrderImageRatingStatus.Pending;
 
-  const multiplier = status === NewOrderImageRatingStatus.Failed ? 0 : 1;
+  const multiplier = [
+    NewOrderImageRatingStatus.Failed,
+    NewOrderImageRatingStatus.AcolyteFailed,
+  ].includes(status)
+    ? 0
+    : 1;
 
   if (chTracker) {
     try {
@@ -263,17 +299,39 @@ export async function addImageRating({
         userId: playerId,
         imageId,
         rating,
-        status:
-          player.rankType === NewOrderRankType.Acolyte
-            ? status === NewOrderImageRatingStatus.Correct
-              ? NewOrderImageRatingStatus.AcolyteCorrect
-              : NewOrderImageRatingStatus.AcolyteFailed
-            : status,
+        status,
         damnedReason,
         grantedExp: newOrderConfig.baseExp,
         multiplier,
         rank: player.rankType,
       });
+
+      if (isAcolyte) {
+        const currentLevel = getLevelProgression(player.exp);
+        const levelAfterRating = getLevelProgression(
+          player.exp + newOrderConfig.baseExp * multiplier
+        );
+
+        if (status === NewOrderImageRatingStatus.AcolyteFailed) {
+          const wrongAnswerCount = await acolyteFailedJudgments.increment({ id: playerId });
+          if (wrongAnswerCount >= ACOLYTE_WRONG_ANSWER_LIMIT) {
+            // Smite player:
+            await smitePlayer({
+              playerId,
+              modId: -1, // System
+              reason: 'Exceeded wrong answer limit',
+              size: 10,
+            });
+          }
+        } else if (levelAfterRating > currentLevel) {
+          // Cleanup all smites & reset failed judgments
+          await acolyteFailedJudgments.reset({ id: playerId });
+          await cleanseAllSmites({
+            playerId,
+            cleansedReason: 'Acolyte - Level up!',
+          });
+        }
+      }
     } catch (e) {
       const error = e as Error;
       logToAxiom(
@@ -530,7 +588,7 @@ export async function updatePlayerStats({
   let stats = { exp: newExp, fervor: 0, blessedBuzz: 0 };
 
   if (updateAll) {
-    const allJudgments = await allJudmentsCounter.increment({ id: playerId });
+    const allJudgments = await allJudgmentsCounter.increment({ id: playerId });
     const correctJudgments =
       status === NewOrderImageRatingStatus.Correct
         ? await correctJudgmentsCounter.increment({ id: playerId })
@@ -591,7 +649,7 @@ export async function resetPlayer({
   await Promise.all([
     smitesCounter.reset({ id: playerId }),
     correctJudgmentsCounter.reset({ id: playerId }),
-    allJudmentsCounter.reset({ id: playerId }),
+    allJudgmentsCounter.reset({ id: playerId }),
     expCounter.reset({ id: playerId }),
     fervorCounter.reset({ id: playerId }),
     blessedBuzzCounter.reset({ id: playerId }),
