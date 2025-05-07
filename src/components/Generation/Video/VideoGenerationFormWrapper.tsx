@@ -74,7 +74,7 @@ export function VideoGenerationFormWrapper() {
             label="Tool"
             value={engine}
             description={selected?.message && !selected?.disabled ? selected.message : undefined}
-            onChange={(engine) => setEngine(engine)}
+            onChange={(engine) => setEngine(engine!)}
             data={data?.map(({ engine, label }) => ({ label, value: engine }))}
           />
           {engine && <VideoGenerationForm key={engine} />}

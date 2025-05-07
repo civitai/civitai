@@ -92,5 +92,5 @@ export function useGenerationEngines() {
 export function useSelectedVideoGenerationEngine() {
   const { data } = useGenerationEngines();
   const selectedEngine = useGenerationFormStore((state) => state.engine);
-  return selectedEngine ?? data[0].engine;
+  return (selectedEngine ?? data[0].engine) as OrchestratorEngine2;
 }
