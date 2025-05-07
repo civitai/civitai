@@ -82,6 +82,7 @@ import {
   setAssociatedResources,
   setModelsCategory,
   toggleCannotPromote,
+  toggleLockComments,
 } from '~/server/services/model.service';
 import {
   guardedProcedure,
@@ -186,6 +187,10 @@ export const modelRouter = router({
     .input(toggleModelLockSchema)
     .use(isOwnerOrModerator)
     .mutation(toggleModelLockHandler),
+  toggleLockComments: protectedProcedure
+    .input(toggleModelLockSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input }) => toggleLockComments(input)),
   getSimple: publicProcedure
     .input(getByIdSchema)
     .query(({ input, ctx }) => getSimpleModelWithVersions({ id: input.id, ctx })),
