@@ -2017,6 +2017,14 @@ export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   await userContentOverviewCache.bust(model.userId);
 };
 
+export async function toggleLockComments({ id, locked }: { id: number; locked: boolean }) {
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    SET meta = jsonb_set(meta, '{commentsLocked}', to_jsonb(${locked}))
+    WHERE id = ${id}
+  `;
+}
+
 export const getSimpleModelWithVersions = async ({
   id,
   ctx,

@@ -37,7 +37,9 @@ import {
 import { checkLocalDb, insertRows } from './utils';
 // import { fetchBlob } from '~/utils/file-utils';
 
-const numRows = 500;
+// Usage: npx tsx ./scripts/local-dev/gen_seed.ts --rows=1000
+// OR make bootstrap-db ROWS=1000
+const numRows = Number(process.argv.find((arg) => arg.startsWith('--rows='))?.split('=')[1]) || 500;
 
 faker.seed(1337);
 const randw = faker.helpers.weightedArrayElement;
@@ -3222,14 +3224,108 @@ const genClickhouseRows = async () => {
 };
 
 const genRedisSystemFeatures = async () => {
-  // TODO set more system vars here
+  console.log(`Inserting system data into redis`);
 
-  const keys = [[REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS]];
+  // Generation status
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    REDIS_SYS_KEYS.GENERATION.STATUS,
+    JSON.stringify({
+      available: true,
+      message: null,
+      charge: true,
+      checkResourceAvailability: true,
+      limits: {
+        free: {
+          steps: 50,
+          quantity: 4,
+          queue: 4,
+          resources: 9,
+        },
+        founder: {
+          quantity: 10,
+          queue: 10,
+          steps: 60,
+          resources: 12,
+        },
+      },
+      membershipPriority: false,
+    })
+  );
 
-  for (const keySet of keys) {
-    const [baseKey, subKey] = keySet;
-    await sysRedis.hSet(baseKey, subKey, JSON.stringify({}));
-  }
+  // Training status
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    REDIS_SYS_KEYS.TRAINING.STATUS,
+    JSON.stringify({
+      available: true,
+      message: null,
+      blockedModels: [],
+    })
+  );
+
+  // Generation workflows
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.GENERATION.WORKFLOWS,
+    'txt2img',
+    JSON.stringify({
+      type: 'txt2img',
+      key: 'txt2img',
+      name: '',
+      features: ['draft'],
+      template:
+        '{"3": { "inputs": { "seed": {{seed}}, "steps": {{steps}}, "cfg": {{cfgScale}}, "sampler_name": "{{sampler}}", "scheduler": "{{scheduler}}", "denoise": 1.0, "model": [ "4", 0 ], "positive": [ "6", 0 ], "negative": [ "7", 0 ], "latent_image": [ "5", 0 ]}, "class_type": "KSampler" }, "4": { "inputs": { "ckpt_name": "placeholder.safetensors" }, "class_type": "CheckpointLoaderSimple" }, "5": { "inputs": { "width": {{width}}, "height": {{height}}, "batch_size": 1 }, "class_type": "EmptyLatentImage" }, "6": { "inputs": { "parser": "A1111", "mean_normalization": true, "multi_conditioning": true, "use_old_emphasis_implementation": false, "with_SDXL": false, "ascore": 6.0, "width": 0, "height": 0, "crop_w": 0, "crop_h": 0, "target_width": 0, "target_height": 0, "text_g": "", "text_l": "", "text": "{{prompt}}", "clip": [ "10", 0 ]}, "class_type": "smZ CLIPTextEncode" }, "7": { "inputs": { "parser": "A1111", "mean_normalization": true, "multi_conditioning": true, "use_old_emphasis_implementation": false, "with_SDXL": false, "ascore": 2.5, "width": 0, "height": 0, "crop_w": 0, "crop_h": 0, "target_width": 0, "target_height": 0, "text_g": "", "text_l": "", "text": "{{negativePrompt}}", "clip": [ "10", 0 ]}, "class_type": "smZ CLIPTextEncode" }, "8": { "inputs": { "samples": [ "3", 0 ], "vae": [ "4", 2 ]}, "class_type": "VAEDecode" }, "9": { "inputs": { "filename_prefix": "ComfyUI", "images": [ "8", 0 ]}, "class_type": "SaveImage" }, "10": { "inputs": { "stop_at_clip_layer": 0, "clip": [ "4", 1 ]}, "class_type": "CLIPSetLastLayer" }}',
+    })
+  );
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.GENERATION.WORKFLOWS,
+    'txt2img-hires',
+    JSON.stringify({
+      type: 'txt2img',
+      key: 'txt2img-hires',
+      name: 'Hi-res fix',
+      description: 'Generate an image then upscale it and regenerate it',
+      features: ['denoise', 'upscale'],
+      template:
+        '{"6":{"inputs":{"text":"{{prompt}}","parser":"A1111","mean_normalization":true,"multi_conditioning":true,"use_old_emphasis_implementation":false,"with_SDXL":false,"ascore":2.5,"width":0,"height":0,"crop_w":0,"crop_h":0,"target_width":0,"target_height":0,"text_g":"","text_l":"","smZ_steps":1,"clip":["101",1]},"class_type":"smZ CLIPTextEncode","_meta":{"title":"Positive"}},"7":{"inputs":{"text":"{{negativePrompt}}","parser":"A1111","mean_normalization":true,"multi_conditioning":true,"use_old_emphasis_implementation":false,"with_SDXL":false,"ascore":2.5,"width":0,"height":0,"crop_w":0,"crop_h":0,"target_width":0,"target_height":0,"text_g":"","text_l":"","smZ_steps":1,"clip":["101",1]},"class_type":"smZ CLIPTextEncode","_meta":{"title":"Negative"}},"11":{"inputs":{"seed":"{{{seed}}}","steps":"{{{steps}}}","cfg":"{{{cfgScale}}}","sampler_name":"{{sampler}}","scheduler":"{{scheduler}}","denoise":1,"model":["101",0],"positive":["6",0],"negative":["7",0],"latent_image":["26",0]},"class_type":"KSampler","_meta":{"title":"KSampler"}},"12":{"inputs":{"filename_prefix":"ComfyUI","images":["25",0]},"class_type":"SaveImage","_meta":{"title":"Save Image"}},"19":{"inputs":{"upscale_model":["20",0],"image":["27",0]},"class_type":"ImageUpscaleWithModel","_meta":{"title":"Upscale Image (using Model)"}},"20":{"inputs":{"model_name":"urn:air:other:upscaler:civitai:147759@164821"},"class_type":"UpscaleModelLoader","_meta":{"title":"Load Upscale Model"}},"21":{"inputs":{"pixels":["23",0],"vae":["101",2]},"class_type":"VAEEncode","_meta":{"title":"VAE Encode"}},"23":{"inputs":{"upscale_method":"nearest-exact","width":"{{{upscaleWidth}}}","height":"{{{upscaleHeight}}}","crop":"disabled","image":["19",0]},"class_type":"ImageScale","_meta":{"title":"Upscale Image"}},"24":{"inputs":{"seed":"{{{seed}}}","steps":"{{{steps}}}","cfg":"{{{cfgScale}}}","sampler_name":"{{sampler}}","scheduler":"{{scheduler}}","denoise":"{{{denoise}}}","model":["101",0],"positive":["6",0],"negative":["7",0],"latent_image":["21",0]},"class_type":"KSampler","_meta":{"title":"KSampler"}},"25":{"inputs":{"samples":["24",0],"vae":["101",2]},"class_type":"VAEDecode","_meta":{"title":"VAE Decode"}},"26":{"inputs":{"width":"{{{width}}}","height":"{{{height}}}","batch_size":1},"class_type":"EmptyLatentImage","_meta":{"title":"Empty Latent Image"}},"27":{"inputs":{"samples":["11",0],"vae":["101",2]},"class_type":"VAEDecode","_meta":{"title":"VAE Decode"}},"28":{"inputs":{"filename_prefix":"ComfyUI","images":["27",0]},"class_type":"SaveImage","_meta":{"title":"Save Image"}},"101":{"inputs":{"ckpt_name":"placeholder.safetensors"},"class_type":"CheckpointLoaderSimple","_meta":{"title":"Load Checkpoint"}}}',
+    })
+  );
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.GENERATION.WORKFLOWS,
+    'img2img',
+    JSON.stringify({
+      type: 'img2img',
+      key: 'img2img',
+      name: 'Variations (img2img)',
+      description: 'Generate a similar image',
+      features: ['denoise', 'image'],
+      template:
+        '{ "6": { "inputs": { "text": "{{prompt}}", "parser": "A1111", "mean_normalization": true, "multi_conditioning": true, "use_old_emphasis_implementation": false, "with_SDXL": false, "ascore": 2.5, "width": 0, "height": 0, "crop_w": 0, "crop_h": 0, "target_width": 0, "target_height": 0, "text_g": "", "text_l": "", "smZ_steps": 1, "clip": [ "101", 1 ] }, "class_type": "smZ CLIPTextEncode", "_meta": { "title": "Positive" } }, "7": { "inputs": { "text": "{{negativePrompt}}", "parser": "A1111", "mean_normalization": true, "multi_conditioning": true, "use_old_emphasis_implementation": false, "with_SDXL": false, "ascore": 2.5, "width": 0, "height": 0, "crop_w": 0, "crop_h": 0, "target_width": 0, "target_height": 0, "text_g": "", "text_l": "", "smZ_steps": 1, "clip": [ "101", 1 ] }, "class_type": "smZ CLIPTextEncode", "_meta": { "title": "Negative" } }, "11": { "inputs": { "seed": "{{{seed}}}", "steps": "{{{steps}}}", "cfg": "{{{cfgScale}}}", "sampler_name": "{{sampler}}", "scheduler": "{{scheduler}}", "denoise": "{{{denoise}}}", "model": [ "101", 0 ], "positive": [ "6", 0 ], "negative": [ "7", 0 ], "latent_image": [ "18", 0 ] }, "class_type": "KSampler", "_meta": { "title": "KSampler" } }, "12": { "inputs": { "filename_prefix": "ComfyUI", "images": [ "13", 0 ] }, "class_type": "SaveImage", "_meta": { "title": "Save Image" } }, "13": { "inputs": { "samples": [ "11", 0 ], "vae": [ "101", 2 ] }, "class_type": "VAEDecode", "_meta": { "title": "VAE Decode" } }, "17": { "inputs": { "image": "{{image}}", "upload": "image" }, "class_type": "LoadImage", "_meta": { "title": "Image Load" } }, "18": { "inputs": { "pixels": [ "17", 0 ], "vae": [ "101", 2 ] }, "class_type": "VAEEncode", "_meta": { "title": "VAE Encode" } }, "101": { "inputs": { "ckpt_name": "placeholder.safetensors" }, "class_type": "CheckpointLoaderSimple", "_meta": { "title": "Load Checkpoint" } } }',
+    })
+  );
+
+  // Generation engines
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.GENERATION.ENGINES,
+    'hunyuan',
+    JSON.stringify({
+      engine: 'hunyuan',
+      disabled: false,
+      message: '',
+      status: 'published',
+    })
+  );
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.GENERATION.ENGINES,
+    'civitai',
+    JSON.stringify({
+      engine: 'civitai',
+      disabled: true,
+      status: 'disabled',
+    })
+  );
+
+  console.log(`\t-> ✔️ Inserted redis data`);
 };
 
 const main = async () => {

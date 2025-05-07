@@ -14,7 +14,7 @@ import { videoGenerationConfig } from '~/server/orchestrator/generation/generati
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { getImageData } from '~/utils/media-preprocessors';
 import { findClosest } from '~/utils/number-helpers';
 
@@ -321,6 +321,10 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo'))
     return 'WanVideo';
   else return 'SD1';
+}
+const videoBaseModelSetTypes = ['HyV1', 'WanVideo'];
+export function getResourceGenerationType(baseModel: ReturnType<typeof getBaseModelFromResources>) {
+  return videoBaseModelSetTypes.includes(baseModel) ? 'video' : ('image' as MediaType);
 }
 
 export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(

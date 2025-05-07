@@ -84,6 +84,7 @@ import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchabl
 import { Meta } from '~/components/Meta/Meta';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
+import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
@@ -942,6 +943,26 @@ export default function ModelDetailsV2({
                                     </Menu.Item>
                                   )}
                                 </ToggleLockModel>
+                                <ToggleLockModelComments
+                                  modelId={model.id}
+                                  locked={model.meta?.commentsLocked}
+                                >
+                                  {({ onClick }) => (
+                                    <Menu.Item
+                                      icon={
+                                        model.meta?.commentsLocked ? (
+                                          <IconLockOff size={14} stroke={1.5} />
+                                        ) : (
+                                          <IconLock size={14} stroke={1.5} />
+                                        )
+                                      }
+                                      onClick={onClick}
+                                    >
+                                      {model.meta?.commentsLocked ? 'Unlock' : 'Lock'} model
+                                      comments
+                                    </Menu.Item>
+                                  )}
+                                </ToggleLockModelComments>
                                 <ToggleSearchableMenuItem
                                   entityType="Model"
                                   entityId={model.id}
@@ -1172,7 +1193,7 @@ export default function ModelDetailsV2({
           />
         )}
         {canLoadBelowTheFold &&
-          (!model.locked ? (
+          (!model.locked && !model.meta?.commentsLocked ? (
             <Container size="xl" my="xl">
               <Stack spacing="md">
                 <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>

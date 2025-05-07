@@ -118,8 +118,7 @@ export async function parseGenerateImageInput({
   workflowDefinition: WorkflowDefinition;
   whatIf?: boolean;
 }) {
-  delete originalParams.openAIBackground;
-  // delete originalParams.openAIQuality;
+  delete originalParams.openAITransparentBackground;
   if (originalParams.workflow.startsWith('txt2img')) originalParams.sourceImage = null;
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
@@ -521,6 +520,9 @@ function formatImageGenStep({
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
   const { params, resources: stepResources = [] } = metadata;
 
+  const { width = 1024, height = 1024 } =
+    params?.sourceImage ?? (params as { width?: number; height?: number });
+
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
       ...acc,
@@ -537,8 +539,8 @@ function formatImageGenStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            width: params?.width ?? 1024,
-            height: params?.height ?? 1024,
+            width,
+            height,
             blockedReason: image.blockedReason,
           })) ?? [],
     }),
@@ -835,7 +837,9 @@ export function formatComfyStep({
   //   params.height = size.height;
   // }
 
-  const { width = 512, height = 512 } = params?.sourceImage ?? params ?? {};
+  const { width = 512, height = 512 } =
+    (params?.sourceImage && typeof params.sourceImage !== 'string' ? params.sourceImage : params) ??
+    {};
 
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({

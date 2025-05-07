@@ -349,6 +349,7 @@ async function handleSuccess({
     let reviewKey: string | null = null;
     const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
+    if (prompt && includesPoi(prompt)) data.poi = true; // We wanna mark it regardless of nsfw.
     if (!reviewKey && hasBlockedTag) reviewKey = 'tag';
 
     // We now will mark images as poi / minor regardless of whether or not they're NSFW. This so that we know we need to hide from from
@@ -487,7 +488,8 @@ async function handleSuccess({
         UPDATE "Image" i SET 
           "scannedAt" = 
             CASE 
-              WHEN i.metadata->'skipScannedAtReassignment' IS NOT NULL 
+              WHEN i.metadata->'skipScannedAtReassignment' IS NOT NULL
+                OR i."createdAt" < NOW() - INTERVAL '1 week'
               THEN "scannedAt" 
               ELSE NOW()
             END,
