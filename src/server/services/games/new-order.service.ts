@@ -370,25 +370,6 @@ export async function addImageRating({
   // Increase rating count for the image in the queue.
   await valueInQueue.pool.increment({ id: imageId, value: 1 });
 
-  if (status === NewOrderImageRatingStatus.AcolyteCorrect) {
-    // Reduce gainedExp from oldest smite remaining score
-    const smite = await dbWrite.newOrderSmite.findFirst({
-      where: { targetPlayerId: playerId, remaining: { gt: 0 } },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, remaining: true },
-    });
-
-    if (smite) {
-      const updatedSmite = await dbWrite.newOrderSmite.update({
-        where: { id: smite.id },
-        data: { remaining: smite.remaining - newOrderConfig.baseExp * multiplier },
-      });
-
-      if (updatedSmite.remaining <= 0)
-        await cleanseSmite({ id: updatedSmite.id, cleansedReason: 'Smite expired', playerId });
-    }
-  }
-
   // Increase all counters
   const stats = await updatePlayerStats({
     playerId,
@@ -549,28 +530,64 @@ async function updatePendingImageRatings({
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
   // Get players that rated this image:
-  const votingPlayers = await clickhouse.$query<{ userId: number; startAt: Date }>`
-    SELECT DISTINCT "userId", p."startAt"
-    FROM knights_new_order_image_rating
-    JOIN civitai_pg."NewOrderPlayer" p ON p."userId" = "userId"
+  const votes = await clickhouse.$query<{ userId: number; createdAt: Date; rating: number }>`
+    SELECT 
+      DISTINCT "userId",
+      ir."createdAt",
+      ir.rating
+    FROM knights_new_order_image_rating ir
     WHERE "imageId" = ${imageId}
       AND status = '${NewOrderImageRatingStatus.Pending}'
   `;
-  // TODO.newOrder: clean up smites if any voters have active smites.
 
   await clickhouse.exec({
     query: `
-      ALTER TABLE knights_new_order_image_rating
-      UPDATE status = CASE
-        WHEN rating = ${rating} THEN '${NewOrderImageRatingStatus.Correct}'
-        ELSE '${NewOrderImageRatingStatus.Failed}'
-      END
-      WHERE "imageId" = ${imageId}
-        AND status = '${NewOrderImageRatingStatus.Pending}'
-        AND rank != '${NewOrderRankType.Acolyte}'
-      RETURNING imageId, userId, status
+    ALTER TABLE knights_new_order_image_rating
+    UPDATE status = CASE
+    WHEN rating = ${rating} THEN '${NewOrderImageRatingStatus.Correct}'
+    ELSE '${NewOrderImageRatingStatus.Failed}'
+    END
+    WHERE "imageId" = ${imageId}
+    AND status = '${NewOrderImageRatingStatus.Pending}'
+    AND rank != '${NewOrderRankType.Acolyte}'
+    RETURNING imageId, userId, status
     `,
   });
+
+  const correctVotes = votes.filter((v) => v.rating === rating);
+  // Doing raw query cause I want 1 smite per player :shrug:
+  // '[{"userId":5376986,"createdAt":"2025-05-07T21:58:38.691Z"}]'
+  const updated = await dbWrite.$queryRaw<{ id: number; userId: number; remaining: number }[]>`
+    WITH votes AS (
+        SELECT
+          (value ->> 'userId')::int as "userId",
+          (value ->> 'createdAt')::TIMESTAMP as "createdAt"
+        FROM json_array_elements(${JSON.stringify(correctVotes)}::json)
+    ), smites AS (
+      SELECT DISTINCT "targetPlayerId" as "userId", id, remaining
+        FROM "NewOrderSmite"
+        JOIN "NewOrderPlayer" p ON "targetPlayerId" = p."userId"
+        JOIN votes v ON p."userId" = v."userId" AND v."createdAt" >= p."startAt"
+        WHERE "cleansedAt" IS NULL
+    )
+    UPDATE "NewOrderSmite" 
+    SET "remaining" = "remaining" - 1
+    WHERE id IN (
+      SELECT id FROM smites
+    )
+    RETURNING id, "targetPlayerId" as "userId", remaining
+  `;
+
+  const cleansed = updated.filter((s) => s.remaining <= 0);
+  await Promise.all(
+    cleansed.map((s) =>
+      cleanseSmite({
+        id: s.id,
+        cleansedReason: 'Smite expired',
+        playerId: s.userId,
+      })
+    )
+  );
 }
 
 export async function updatePlayerStats({
