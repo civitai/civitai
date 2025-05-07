@@ -262,12 +262,24 @@ const FunStatsSection = () => {
     <Stack className={classes.section}>
       <Stack spacing={0} mb="sm">
         <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
-          Some fun stats from the last month!
+          Highlights from last month&rsquo;s cycle{' '}
         </Title>
       </Stack>
       <Paper withBorder className={cx(classes.card)} h="100%">
         <table className="-mt-2 w-full table-auto">
           <tbody>
+            <tr className="font-bold">
+              <td colSpan={2} className="border-b">
+                Compensation Pool{' '}
+              </td>
+              <td className="border-b border-l py-2 pl-2">
+                <div className="flex items-center gap-2">
+                  <span>
+                    ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarValue))}
+                  </span>
+                </div>
+              </td>
+            </tr>
             <tr>
               <td colSpan={2} className="border-b">
                 # of Creators who Banked Buzz
