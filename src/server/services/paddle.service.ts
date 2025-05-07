@@ -321,7 +321,8 @@ export const upsertSubscription = async (
   log('upsertSubscription :: Event:', eventName);
   const isUpdatingSubscription = eventName === 'subscription.updated';
   const isCreatingSubscription = eventName === 'subscription.activated';
-  const isCancelingSubscription = eventName === 'subscription.canceled';
+  const isSchedulingCancelation = subscriptionNotification.scheduledChange?.action === 'cancel';
+  const isCancelingSubscription = eventName === 'subscription.canceled' || isSchedulingCancelation;
 
   const subscriptionProducts = await getPlans({
     paymentProvider: PaymentProvider.Paddle,
@@ -447,11 +448,10 @@ export const upsertSubscription = async (
     priceId: mainSubscriptionItem.price?.id as string,
     productId: mainSubscriptionItem.price?.productId as string,
     cancelAtPeriodEnd: isCancelingSubscription ? true : false,
-    cancelAt:
-      subscriptionNotification.scheduledChange?.action === 'cancel'
-        ? new Date(subscriptionNotification.scheduledChange?.effectiveAt)
-        : null,
-    canceledAt: subscriptionNotification.scheduledChange?.action === 'cancel' ? new Date() : null,
+    cancelAt: isSchedulingCancelation
+      ? new Date(subscriptionNotification.scheduledChange?.effectiveAt)
+      : null,
+    canceledAt: isSchedulingCancelation ? new Date() : null,
     currentPeriodStart: subscriptionNotification.currentBillingPeriod?.startsAt
       ? new Date(subscriptionNotification.currentBillingPeriod?.startsAt)
       : undefined,
