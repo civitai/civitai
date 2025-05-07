@@ -64,16 +64,18 @@ export function SubscriptionCard() {
                       shortenPlanInterval(price.interval)}
                   </Text>
                 )}
-                <Text size="sm" color="dimmed">
-                  {subscription.cancelAtPeriodEnd ? 'Ends' : 'Renews'}{' '}
+                <Text size="sm" color={subscription.cancelAt ? 'red' : 'dimmed'}>
+                  {subscription.cancelAt ? 'Ends' : 'Renews'}{' '}
                   {formatDate(subscription.currentPeriodEnd)}
                 </Text>
               </Stack>
             </Group>
-            <CancelMembershipAction
-              variant="button"
-              buttonProps={{ color: 'red', variant: 'outline', fullWidth: true }}
-            />
+            {!subscription.cancelAt && (
+              <CancelMembershipAction
+                variant="button"
+                buttonProps={{ color: 'red', variant: 'outline', fullWidth: true }}
+              />
+            )}
           </>
         ) : null}
       </Stack>

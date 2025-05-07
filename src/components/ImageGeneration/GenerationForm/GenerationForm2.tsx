@@ -428,6 +428,12 @@ export function GenerationFormContent() {
             : isSD3
             ? model.id === 983611
             : features.draft && !!draft;
+          const minQuantity = !!isDraft ? 4 : 1;
+          const maxQuantity = isOpenAI
+            ? 10
+            : !!isDraft
+            ? Math.floor(status.limits.quantity / 4) * 4
+            : status.limits.quantity;
           const cfgDisabled = isDraft;
           const samplerDisabled = isDraft;
           const stepsDisabled = isDraft;
@@ -1355,13 +1361,9 @@ export function GenerationFormContent() {
                             <InputQuantity
                               name="quantity"
                               className={classes.generateButtonQuantityInput}
-                              min={!!isDraft ? 4 : 1}
-                              max={
-                                !!isDraft
-                                  ? Math.floor(status.limits.quantity / 4) * 4
-                                  : status.limits.quantity
-                              }
-                              step={!!isDraft ? 4 : 1}
+                              min={minQuantity}
+                              max={maxQuantity}
+                              step={minQuantity}
                             />
                           </Card>
 

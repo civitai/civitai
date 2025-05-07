@@ -347,6 +347,7 @@ async function handleSuccess({
     let reviewKey: string | null = null;
     const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
+    if (prompt && includesPoi(prompt)) data.poi = true; // We wanna mark it regardless of nsfw.
     if (!reviewKey && hasBlockedTag) reviewKey = 'tag';
 
     // We now will mark images as poi / minor regardless of whether or not they're NSFW. This so that we know we need to hide from from

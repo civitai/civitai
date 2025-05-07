@@ -193,6 +193,7 @@ export const modelUpsertSchema = licensingSchema.extend({
   meta: z
     .object({
       showcaseCollectionId: z.number().nullish(),
+      commentsLocked: z.boolean().default(false),
     })
     .passthrough()
     .transform((val) => val as ModelMeta | null)
@@ -253,6 +254,7 @@ export type ModelMeta = Partial<{
   declinedAt: string;
   showcaseCollectionId: number;
   cannotPromote: boolean;
+  commentsLocked: boolean;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;

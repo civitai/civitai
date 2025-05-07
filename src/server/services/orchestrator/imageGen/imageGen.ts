@@ -101,7 +101,7 @@ function getImageGenInput(params: InputParams) {
         size: !params.sourceImage ? `${params.width}x${params.height}` : 'auto',
         // quality: params.openAIQuality,
         background: params.openAITransparentBackground ? 'transparent' : 'opaque',
-        quantity: params.quantity,
+        quantity: Math.min(params.quantity, 10),
       };
     default:
       throw new Error('imageGen step type not implemented');
@@ -118,7 +118,7 @@ function getImageGenMetadataParams(params: InputParams) {
         height: params.height,
         // quality: params.openAIQuality,
         background: params.openAITransparentBackground ? 'transparent' : 'opaque',
-        quantity: params.quantity,
+        quantity: Math.min(params.quantity, 10),
         workflow: params.workflow,
         sourceImage: params.sourceImage,
       });

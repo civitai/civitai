@@ -1397,9 +1397,13 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
 }
 
 export const bustMvCache = async (ids: number | number[], userId?: number) => {
-  await resourceDataCache.bust(ids);
-  await bustOrchestratorModelCache(ids, userId);
-  await modelVersionAccessCache.bust(ids);
+  const versionIds = Array.isArray(ids) ? ids : [ids];
+  await resourceDataCache.bust(versionIds);
+  await bustOrchestratorModelCache(versionIds, userId);
+  await modelVersionAccessCache.bust(versionIds);
+  await modelsSearchIndex.queueUpdate(
+    versionIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 };
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
