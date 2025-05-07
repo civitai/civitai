@@ -542,15 +542,14 @@ async function updatePendingImageRatings({
 
   await clickhouse.exec({
     query: `
-    ALTER TABLE knights_new_order_image_rating
-    UPDATE status = CASE
-    WHEN rating = ${rating} THEN '${NewOrderImageRatingStatus.Correct}'
-    ELSE '${NewOrderImageRatingStatus.Failed}'
-    END
-    WHERE "imageId" = ${imageId}
-    AND status = '${NewOrderImageRatingStatus.Pending}'
-    AND rank != '${NewOrderRankType.Acolyte}'
-    RETURNING imageId, userId, status
+      ALTER TABLE knights_new_order_image_rating
+      UPDATE status = CASE
+        WHEN rating = ${rating} THEN '${NewOrderImageRatingStatus.Correct}'
+        ELSE '${NewOrderImageRatingStatus.Failed}'
+      END
+      WHERE "imageId" = ${imageId}
+        AND status = '${NewOrderImageRatingStatus.Pending}'
+        AND rank != '${NewOrderRankType.Acolyte}'
     `,
   });
 
@@ -987,6 +986,7 @@ export async function getPlayersInfinite({
       deletedAt: null,
       bannedAt: null,
       playerInfo: { isNot: null },
+      id: { not: -1 }, // Don't show the system user
     },
     cursor: cursor ? { id: cursor } : undefined,
     take,

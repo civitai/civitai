@@ -21,10 +21,7 @@ export const smitePlayerSchema = z.object({
   playerId: z.number(),
   imageId: z.number().optional(), // needed for optimistic update
   reason: z.string().optional(),
-  size: z
-    .number()
-    .optional()
-    .default(newOrderConfig.baseExp * 10), // default to 10x base exp
+  size: z.number().optional().default(newOrderConfig.smiteSize),
 });
 
 export type CleanseSmiteInput = z.infer<typeof cleanseSmiteSchema>;

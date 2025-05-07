@@ -1320,4 +1320,5 @@ export const FEATURED_MODEL_COLLECTION_ID = 104;
 export const newOrderConfig = {
   baseExp: 100,
   blessedBuzzConversionRatio: 0.001,
+  smiteSize: 10,
 };
