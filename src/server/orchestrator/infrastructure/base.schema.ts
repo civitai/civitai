@@ -27,17 +27,20 @@ const prioritySchema = z.nativeEnum(Priority).default('low').catch('low');
 
 export const baseGenerationSchema = z.object({
   priority: prioritySchema,
+  process: z.nativeEnum(GenerationType).default('txt2vid').catch('txt2vid'),
+  /** temporary property to satisfy type constraints */
+  workflow: z.string().optional(),
 });
 
-export const textEnhancementSchema = baseGenerationSchema.extend({
-  type: z.literal(GenerationType.txt2vid).catch(GenerationType.txt2vid),
-  prompt: promptSchema,
-});
+// export const textEnhancementSchema = baseGenerationSchema.extend({
+//   type: z.literal(GenerationType.txt2vid).catch(GenerationType.txt2vid),
+//   prompt: promptSchema,
+// });
 
-export const imageEnhancementSchema = baseGenerationSchema.extend({
-  type: z.literal(GenerationType.img2vid).catch(GenerationType.img2vid),
-  sourceImage: sourceImageSchema,
-});
+// export const imageEnhancementSchema = baseGenerationSchema.extend({
+//   type: z.literal(GenerationType.img2vid).catch(GenerationType.img2vid),
+//   sourceImage: sourceImageSchema,
+// });
 
 export type ResourceInput = z.input<typeof resourceSchema>;
 export const resourceSchema = z.object({

@@ -122,6 +122,8 @@ export const imageMetaOutput = imageGenerationSchema
     controlNets: z.string().array().optional(),
     software: z.coerce.string().optional(),
     civitaiResources: civitaiResourceSchema.array().optional(),
+    process: z.string().optional(),
+    type: z.string().optional(),
   })
   .passthrough();
 

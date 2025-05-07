@@ -6,9 +6,9 @@ import {
   OrchestratorEngine2,
   videoGenerationConfig2,
 } from '~/server/orchestrator/generation/generation.config';
+import { useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
 type StateData = {
   engine: OrchestratorEngine2;
@@ -50,7 +50,6 @@ export function VideoGenerationProvider({ children }: { children: React.ReactNod
       engine: data[0]?.engine ?? (Object.keys(videoGenerationConfig2)[0] as OrchestratorEngine2),
     })
   );
-  const status = useGenerationStatus();
 
   useEffect(() => {
     if (!!data.length) {
@@ -88,4 +87,10 @@ export function useGenerationEngines() {
     }),
     [availableEngines, isLoading]
   );
+}
+
+export function useSelectedVideoGenerationEngine() {
+  const { data } = useGenerationEngines();
+  const selectedEngine = useGenerationFormStore((state) => state.engine);
+  return selectedEngine ?? data[0].engine;
 }

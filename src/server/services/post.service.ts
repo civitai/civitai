@@ -878,9 +878,10 @@ export const addPostImage = async ({
 
   let techniqueId: number | undefined;
   if (meta && 'engine' in meta) {
-    const config = getVideoGenerationConfig(meta.engine as string);
-    if (config) {
-      techniqueId = (await getTechniqueByName(config.subType))?.id;
+    // older meta has type: string, but the updated meta has process: string
+    const process = (meta.process ?? meta.type) as string | undefined;
+    if (process) {
+      techniqueId = (await getTechniqueByName(process))?.id;
     }
   }
 

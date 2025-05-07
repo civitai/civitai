@@ -19,7 +19,8 @@ export const minimaxGenerationConfig = VideoGenerationConfig2({
   whatIfProps: [],
   metadataDisplayProps: [],
   schema,
-  transformFn: (data) => ({ ...data, subType: 'txt2vid' }),
+  processes: ['txt2vid', 'img2vid'],
+  transformFn: (data) => ({ ...data, process: data.sourceImage ? 'img2vid' : 'txt2vid' }),
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {
       ctx.addIssue({

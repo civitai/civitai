@@ -6,10 +6,7 @@ import React from 'react';
 import { isDefined } from '~/utils/type-guards';
 import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
 import { BaseModelSetType } from '~/server/common/constants';
-import {
-  getVideoGenerationConfig,
-  videoGenerationConfig2,
-} from '~/server/orchestrator/generation/generation.config';
+import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
 const simpleMetaProps = {
@@ -72,7 +69,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
         })
         .filter(isDefined);
     } else if (data.type === 'video') {
-      const config = getVideoGenerationConfig(data.engine);
+      const config = getVideoGenerationConfig((meta as any).engine);
       if (!config) return [];
       return (
         config.metadataDisplayProps?.map((key) => ({

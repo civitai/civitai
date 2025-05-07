@@ -15,7 +15,7 @@ export const wanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
 export const wanDuration = [3, 5] as const;
 export const wanAspectRatioMap = AspectRatioMap([...wanAspectRatios], { multiplier: 16 });
 
-const wanSchema = baseGenerationSchema.extend({
+const schema = baseGenerationSchema.extend({
   engine: z.literal('wan').catch('wan'),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
@@ -39,11 +39,12 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     'sourceImage',
   ],
   metadataDisplayProps: ['cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
-  schema: wanSchema,
+  schema,
   defaultValues: { aspectRatio: '1:1', duration: 5, cfgScale: 4, frameRate: 16 },
+  processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
     if (data.sourceImage) delete data.aspectRatio;
-    return { ...data, subType: data.sourceImage ? 'img2vid' : 'txt2vid' };
+    return { ...data, process: data.sourceImage ? 'img2vid' : 'txt2vid' };
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {

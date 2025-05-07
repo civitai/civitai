@@ -12,7 +12,7 @@ import {
 export const klingAspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const klingDuration = ['5', '10'] as const;
 
-const klingSchema = baseGenerationSchema.extend({
+const schema = baseGenerationSchema.extend({
   engine: z.literal('kling').catch('kling'),
   model: z.nativeEnum(KlingModel).default(KlingModel.V1_5).catch(KlingModel.V1_5),
   sourceImage: sourceImageSchema.nullish(),
@@ -30,11 +30,12 @@ export const klingGenerationConfig = VideoGenerationConfig2({
   label: 'Kling',
   whatIfProps: ['mode', 'duration'],
   metadataDisplayProps: ['cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
-  schema: klingSchema,
+  schema,
   defaultValues: { aspectRatio: '1:1' },
+  processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
     if (data.sourceImage) delete data.aspectRatio;
-    return { ...data, subType: data.sourceImage ? 'img2vid' : 'txt2vid' };
+    return { ...data, process: data.sourceImage ? 'img2vid' : 'txt2vid' };
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {

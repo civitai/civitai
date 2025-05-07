@@ -9,30 +9,6 @@ import { mochiGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema'
 import { viduGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
 import { wanGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
 
-export type VideoGenerationSchema = z.infer<(typeof videoGenerationConfig)[number]['schema']>;
-export type VideoGenerationEngine = (typeof videoGenerationConfig)[number]['engine'];
-export const videoGenerationConfig = [
-  // ...klingVideoGenerationConfig,
-  // ...minimaxVideoGenerationConfig,
-  // ...haiperVideoGenerationConfig,
-  // ...mochiVideoGenerationConfig,
-  // ...lightricksVideoGenerationConfig,
-  // ...hunyuanVideoGenerationConfig,
-  // ...viduVideoGenerationConfig,
-  // ...wanVideoGenerationConfig,
-] as const;
-
-export const videoGenerationInput = {
-  // kling: KlingInput,
-  // minimax: MinimaxInput,
-  // haiper: HaiperInput,
-  // mochi: MochiInput,
-  // lightricks: LightricksInput,
-  // hunyuan: HunyuanInput,
-  // vidu: ViduInput,
-  // wan: WanInput,
-} as const;
-
 export const baseModelEngineMap: Partial<Record<BaseModelSetType, OrchestratorEngine2>> = {
   WanVideo: 'wan',
   HyV1: 'hunyuan',
@@ -42,14 +18,14 @@ export type OrchestratorEngine2 = keyof typeof videoGenerationConfig2;
 type VideoGenerationConfig = (typeof videoGenerationConfig2)[keyof typeof videoGenerationConfig2];
 export type VideoGenerationSchema2 = z.infer<VideoGenerationConfig['schema']>;
 export const videoGenerationConfig2 = {
-  vidu: viduGenerationConfig,
-  wan: wanGenerationConfig,
-  hunyuan: hunyuanGenerationConfig,
-  kling: klingGenerationConfig,
   minimax: minimaxGenerationConfig,
+  kling: klingGenerationConfig,
+  lightricks: lightricksGenerationConfig,
   haiper: haiperGenerationConfig,
   mochi: mochiGenerationConfig,
-  lightricks: lightricksGenerationConfig,
+  hunyuan: hunyuanGenerationConfig,
+  wan: wanGenerationConfig,
+  vidu: viduGenerationConfig,
 };
 
 export function getVideoGenerationConfig(key: string): VideoGenerationConfig | undefined {

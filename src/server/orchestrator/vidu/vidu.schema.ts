@@ -11,7 +11,7 @@ import { numberEnum } from '~/utils/zod-helpers';
 
 export const viduDuration = [4, 8] as const;
 
-const viduSchema = baseGenerationSchema.extend({
+const schema = baseGenerationSchema.extend({
   engine: z.literal('vidu').catch('vidu'),
   sourceImage: sourceImageSchema.nullish(),
   endSourceImage: sourceImageSchema.nullish(),
@@ -26,15 +26,17 @@ export const viduGenerationConfig = VideoGenerationConfig2({
   label: 'Vidu',
   whatIfProps: ['duration', 'sourceImage', 'endSourceImage'],
   metadataDisplayProps: ['style', 'duration', 'seed'],
-  schema: viduSchema,
+  schema,
+  processes: ['txt2vid', 'img2vid'],
+  defaultValues: { sourceImage: null, endSourceImage: null },
   transformFn: (data) => {
     let sourceImage = data.sourceImage;
     if (!sourceImage) {
       sourceImage = data.endSourceImage;
       data.endSourceImage = null;
     }
-    const subType = sourceImage ? 'img2vid' : 'txt2vid';
-    return { ...data, sourceImage, subType };
+    const process = sourceImage ? 'img2vid' : 'txt2vid';
+    return { ...data, sourceImage, process };
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.endSourceImage && !data.prompt?.length) {

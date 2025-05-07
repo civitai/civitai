@@ -24,7 +24,10 @@ import { getQueryKey } from '@trpc/react-query';
 import { trpc } from '~/utils/trpc';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { IconX } from '@tabler/icons-react';
-import { useVideoGenerationStore } from '~/components/Generation/Video/VideoGenerationProvider';
+import {
+  useSelectedVideoGenerationEngine,
+  useVideoGenerationStore,
+} from '~/components/Generation/Video/VideoGenerationProvider';
 import { ViduFormInput } from './ViduFormInput';
 import { WanFormInput } from '~/components/Generation/Video/WanFormInput';
 import { HunyuanFormInput } from '~/components/Generation/Video/HunyuanFormInput';
@@ -37,7 +40,8 @@ import { generationStore, useGenerationStore } from '~/store/generation.store';
 
 export function VideoGenerationForm() {
   const getState = useVideoGenerationStore((state) => state.getState);
-  const engine = useVideoGenerationStore((state) => state.engine);
+  // const engine = useVideoGenerationStore((state) => state.engine);
+  const engine = useSelectedVideoGenerationEngine();
   const storeData = useGenerationStore((state) => state.data);
 
   const config = videoGenerationConfig2[engine];

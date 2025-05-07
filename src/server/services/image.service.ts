@@ -4532,15 +4532,15 @@ export async function getImageGenerationData({ id }: { id: number }) {
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 
   let onSite = false;
-  let process: string | null = null;
+  let process: string | undefined | null = undefined;
   let hasControlNet = false;
   if (meta) {
     if ('civitaiResources' in meta) onSite = true;
+    else if ('engine' in meta && meta.engine === 'openai') onSite = true;
     else if ('engine' in meta) {
-      const config = getVideoGenerationConfig(meta.engine as string);
-      if (config) {
+      process = meta.process ?? meta.type;
+      if (process) {
         onSite = true;
-        process = workflow.subType;
       }
     }
 

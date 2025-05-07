@@ -16,7 +16,7 @@ export const hunyuanDuration = [3, 5] as const;
 
 const hunyuanAspectRatioMap = AspectRatioMap([...hunyuanAspectRatios], { multiplier: 16 });
 
-const hunyuanSchema = baseGenerationSchema.extend({
+const schema = baseGenerationSchema.extend({
   engine: z.literal('hunyuan').catch('hunyuan'),
   prompt: promptSchema,
   // sourceImage: sourceImageSchema.nullish(),
@@ -33,10 +33,11 @@ const hunyuanSchema = baseGenerationSchema.extend({
 export const hunyuanGenerationConfig = VideoGenerationConfig2({
   label: 'Hunyuan',
   whatIfProps: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft', 'resources'],
-  schema: hunyuanSchema,
+  schema,
   metadataDisplayProps: ['cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
   defaultValues: { aspectRatio: '1:1' },
-  transformFn: (data) => ({ ...data, subType: 'txt2vid' }),
+  processes: ['txt2vid'],
+  transformFn: (data) => ({ ...data, process: 'txt2vid' }),
   inputFn: ({ aspectRatio, resources, ...args }): HunyuanVdeoGenInput => {
     const { width, height } = hunyuanAspectRatioMap[aspectRatio].getSize2(480);
     return {

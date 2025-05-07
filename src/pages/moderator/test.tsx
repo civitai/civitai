@@ -131,13 +131,6 @@ function Test() {
         {/* <FormWrapper engine="vidu">
 
         </FormWrapper> */}
-        <IsClient>
-          <GenerationProvider>
-            <VideoGenerationProvider>
-              <VideoGenerationFormWrapper />
-            </VideoGenerationProvider>
-          </GenerationProvider>
-        </IsClient>
       </div>
     </div>
   );
@@ -434,9 +427,6 @@ function ExampleSelect() {
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import { Page } from '~/components/AppLayout/Page';
 import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/AspectRatioInput';
-import { FormWrapper } from '~/components/Generation/Video/FormWrapper';
-import { VideoGenerationProvider } from '~/components/Generation/Video/VideoGenerationProvider';
-import { VideoGenerationFormWrapper } from '~/components/Generation/Video/VideoGenerationFormWrapper';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 

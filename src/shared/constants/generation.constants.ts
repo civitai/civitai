@@ -607,56 +607,6 @@ export function getBaseModelSetTypes({
 // #endregion
 
 // #region [workflows]
-type EnginesDictionary = Record<
-  string,
-  {
-    label: string;
-    description: string | (() => React.ReactNode);
-    whatIf?: string[];
-  }
->;
-
-export const engineDefinitions: EnginesDictionary = {
-  minimax: {
-    label: 'Hailuo by MiniMax',
-    description: '',
-    whatIf: [],
-  },
-  kling: {
-    label: 'Kling',
-    description: ``,
-    whatIf: ['mode', 'duration'],
-  },
-  lightricks: {
-    label: 'Lightricks',
-    description: '',
-    whatIf: ['duration', 'cfgScale', 'steps'],
-  },
-  haiper: {
-    label: 'Haiper',
-    description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
-    whatIf: ['duration'],
-  },
-  mochi: {
-    label: 'Mochi',
-    description: `Mochi 1 preview, by creators [https://www.genmo.ai](https://www.genmo.ai) is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation`,
-  },
-  hunyuan: {
-    label: 'Hunyuan',
-    description: ``,
-    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft', 'resources'],
-  },
-  wan: {
-    label: 'Wan',
-    description: '',
-    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft', 'resources'],
-  },
-  vidu: {
-    label: 'Vidu',
-    description: '',
-    whatIf: ['duration'],
-  },
-};
 
 export const fluxUltraAspectRatios = [
   { label: 'Landscape - 21:9', width: 3136, height: 1344 },

@@ -33,9 +33,10 @@ export const haiperGenerationConfig = VideoGenerationConfig2({
   metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
   schema,
   defaultValues: { aspectRatio: '1:1' },
+  processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
     if (data.sourceImage) delete data.aspectRatio;
-    return { ...data, subType: data.sourceImage ? 'img2vid' : 'txt2vid' };
+    return { ...data, process: data.sourceImage ? 'img2vid' : 'txt2vid' };
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {
