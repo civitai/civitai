@@ -53,7 +53,8 @@ export function getClient(
     connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
     min: 0,
     max: env.DATABASE_POOL_MAX,
-    idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
+    // trying this for leaderboard job
+    idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
       instance === 'primaryRead' || instance === 'notificationRead'
         ? env.DATABASE_READ_TIMEOUT
