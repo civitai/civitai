@@ -1030,7 +1030,11 @@ export function GenerationFormContent() {
                       name="openAITransparentBackground"
                       label="Transparent Background"
                     />
-                    <InputSelect name="openAIQuality" data={['auto', 'high', 'medium', 'low']} />
+                    <InputSelect
+                      name="openAIQuality"
+                      label="Quality"
+                      data={['auto', 'high', 'medium', 'low']}
+                    />
                   </>
                 )}
 
