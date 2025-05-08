@@ -33,6 +33,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { RankUp } from '~/components/Games/LevelProgress/RankUp';
 import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderBetaBanner } from '~/components/Games/NewOrder/NewOrderBetaBanner';
+import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 let levelUpTimer: NodeJS.Timeout | null = null;
 let rankUpTimer: NodeJS.Timeout | null = null;
@@ -88,8 +89,16 @@ export default Page(
     }: Omit<AddImageRatingInput, 'playerId' | 'imageId'>) => {
       if (!currentImage || !playerData) return;
 
+      const isCorrectRating = currentImage.nsfwLevel === rating;
+      const isBlocked = rating === NsfwLevel.Blocked;
+      const isAcolyte = playerData.rankType === NewOrderRankType.Acolyte;
+
       setPrevHistory((prev) => [...prev, currentImage.id]);
-      playSound(rating === NsfwLevel.Blocked ? 'buzz' : 'point', ratingPlayBackRates[rating]);
+      if (isBlocked || (!isCorrectRating && isAcolyte)) {
+        playSound('buzz');
+      } else {
+        playSound('point', ratingPlayBackRates[rating]);
+      }
 
       // Update level notice
       if (levelNoticeRef.current && rating !== NsfwLevel.Blocked) {
@@ -102,8 +111,6 @@ export default Page(
         }, 200);
       }
 
-      await addRating({ imageId: currentImage.id, rating, damnedReason });
-
       // Check for level up
       const progression = getLevelProgression(playerData.stats.exp);
       const gainedExp = rating === currentImage.nsfwLevel ? newOrderConfig.baseExp : 0;
@@ -112,6 +119,8 @@ export default Page(
       if (shouldLevelUp) levelUp();
 
       handleFetchNextBatch();
+
+      await addRating({ imageId: currentImage.id, rating, damnedReason }).catch(() => null); // errors are handled in the hook
     };
 
     const handleAddDamnedReason = async ({ reason }: { reason: NewOrderDamnedReason }) => {
