@@ -77,7 +77,7 @@ export function VideoGenerationFormWrapper() {
             onChange={(engine) => setEngine(engine!)}
             data={data?.map(({ engine, label }) => ({ label, value: engine }))}
           />
-          {engine && <VideoGenerationForm key={engine} />}
+          {engine && <VideoGenerationForm key={engine} engine={engine} />}
         </>
       )}
     </div>

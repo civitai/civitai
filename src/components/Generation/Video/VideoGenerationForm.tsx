@@ -38,10 +38,9 @@ import { MochiFormInput } from '~/components/Generation/Video/MochiFormInput';
 import { LightricksFormInput } from '~/components/Generation/Video/LightrixFormInput';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 
-export function VideoGenerationForm() {
+export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
   // const engine = useVideoGenerationStore((state) => state.engine);
-  const engine = useSelectedVideoGenerationEngine();
   const storeData = useGenerationStore((state) => state.data);
 
   const config = videoGenerationConfig2[engine];
