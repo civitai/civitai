@@ -834,7 +834,10 @@ export async function getImagesQueue({
 
   const imageRaters = isModerator ? await getImageRaters({ imageIds }) : {};
   const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds } },
+    where: {
+      id: { in: imageIds },
+      post: !isModerator ? { publishedAt: { lt: new Date() } } : undefined,
+    },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
 

@@ -118,9 +118,9 @@ export default Page(
         progression && progression.xpIntoLevel + gainedExp >= progression.xpForNextLevel;
       if (shouldLevelUp) levelUp();
 
-      handleFetchNextBatch();
-
       await addRating({ imageId: currentImage.id, rating, damnedReason }).catch(() => null); // errors are handled in the hook
+
+      handleFetchNextBatch();
     };
 
     const handleAddDamnedReason = async ({ reason }: { reason: NewOrderDamnedReason }) => {

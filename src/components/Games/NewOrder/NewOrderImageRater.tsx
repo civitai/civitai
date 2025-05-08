@@ -155,7 +155,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
                     key={rating}
                     label={browsingLevelDescriptions[rating]}
                     position="top"
-                    openDelay={1000}
+                    openDelay={500}
                     maw={350}
                     withArrow
                     multiline

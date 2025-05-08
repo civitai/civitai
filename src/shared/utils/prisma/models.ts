@@ -2679,6 +2679,7 @@ export interface NewOrderRank {
   minExp: number;
   createdAt: Date;
   updatedAt: Date;
+  iconUrl: string | null;
   players?: NewOrderPlayer[];
 }
 

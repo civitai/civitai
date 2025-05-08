@@ -1,4 +1,4 @@
-import { Badge, Modal, ThemeIcon } from '@mantine/core';
+import { Modal, ThemeIcon } from '@mantine/core';
 import { IconFlame, IconHammer, IconMoneybag } from '@tabler/icons-react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 
@@ -14,9 +14,9 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
       <div className="flex flex-col gap-4">
         <p>
           Knights of New Order is a thrilling game where players take on the roles of knights in
-          order to apply divine judgment to the content shared by the community, ensuring that only
-          the righteous prevail. Players progress through the ranks of the Order, moderating content
-          while earning rewards.
+          order to apply ratings to content shared by the community, ensuring that content has the
+          correct ratings. Players progress through the ranks of the Order, moderating content while
+          earning rewards.
         </p>
         <h2 className="text-lg font-semibold text-orange-5">Ranks of the New Order</h2>
         <div className="flex flex-col gap-1">

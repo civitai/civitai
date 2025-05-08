@@ -32,8 +32,9 @@ export const browsingLevelLabels = {
 export const browsingLevelDescriptions = {
   [NsfwLevel.PG]: 'Safe for work. No naughty stuff',
   [NsfwLevel.PG13]: 'Revealing clothing, violence, or light gore',
-  [NsfwLevel.R]: 'Adult themes and situations, partial nudity, graphic violence, or death',
-  [NsfwLevel.X]: 'Graphic nudity, adult objects, or settings',
+  [NsfwLevel.R]:
+    'Adult themes and situations, partial nudity, female nipples, graphic violence, or death',
+  [NsfwLevel.X]: 'Graphic nudity, genitalia, adult objects, or settings',
   [NsfwLevel.XXX]: 'Overtly sexual or disturbing graphic content',
   [NsfwLevel.Blocked]: 'Violates our terms of service',
 } as const;

@@ -3548,6 +3548,7 @@ model NewOrderRank {
   minExp    Int
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
+  iconUrl   String?
   players   NewOrderPlayer[]
 }
 

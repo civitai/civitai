@@ -146,7 +146,7 @@ function PlayerDetails({ player }: { player: GetPlayersItem }) {
         subText={<PlayerStats stats={{ ...player.stats }} showSmiteCount />}
         withUsername
       />
-      {!features.newOrderReset && (
+      {features.newOrderReset && (
         <Button
           size="sm"
           color="red"
