@@ -68,6 +68,19 @@ const someObject = new Promise((resolve) =>
   })
 );
 
+const imageData = [
+  {
+    url: 'https://orchestration.civitai.com/v2/consumer/blobs/105199769287210187091817890725710212070',
+    width: 2560,
+    height: 3712,
+  },
+  {
+    url: 'https://orchestration.civitai.com/v2/consumer/blobs/266732626383127446662542620709216983092',
+    width: 1856,
+    height: 1280,
+  },
+];
+
 function Test() {
   const [count, setCount] = useState(0);
 
@@ -85,10 +98,8 @@ function Test() {
 
   const [data, setData] = useState<any>(null);
 
-  console.log(data);
-
   return (
-    <div>
+    <div className="container flex h-full max-w-sm flex-col gap-3">
       {/* <div className="container flex items-center gap-2 pb-2">
         <span>{count}</span>
         <Button
@@ -102,8 +113,8 @@ function Test() {
       <ComponentWithSlots>
         <Content />
       </ComponentWithSlots> */}
-      <div className="container flex max-w-sm flex-col gap-3">
-        {/* <GenerationSettingsPopover>
+
+      {/* <GenerationSettingsPopover>
           <Button>Popover</Button>
         </GenerationSettingsPopover>
         <Button
@@ -131,12 +142,14 @@ function Test() {
         <ExampleSelect />
 
         <ExamplePopover /> */}
-        {/* <CustomAspectRatio minResolution={64} maxResolution={5000} defaultResolution={320} /> */}
-        {/* <FormWrapper engine="vidu">
+      {/* <CustomAspectRatio minResolution={64} maxResolution={5000} defaultResolution={320} /> */}
+      {/* <FormWrapper engine="vidu">
 
         </FormWrapper> */}
-        {/* <SourceImageUpload value={data} onChange={setData} limit={3} /> */}
-      </div>
+      {/* <SourceImageUpload value={data} onChange={setData} limit={3} /> */}
+      <IsClient>
+        <ImageCropperTest images={imageData} />
+      </IsClient>
     </div>
   );
 }
@@ -435,6 +448,7 @@ import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/As
 import { IsClient } from '~/components/IsClient/IsClient';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { SourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
+import { ImageCropperTest } from '~/components/Generation/Input/ImageCropModal';
 
 function ExamplePopover() {
   return (
