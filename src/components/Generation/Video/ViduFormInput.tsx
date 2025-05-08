@@ -5,6 +5,7 @@ import { viduDuration } from '~/server/orchestrator/vidu/vidu.schema';
 import { ViduVideoGenStyle } from '@civitai/client';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
+import { IconPlus } from '@tabler/icons-react';
 
 export function ViduFormInput() {
   const form = useFormContext();
@@ -14,17 +15,27 @@ export function ViduFormInput() {
 
   return (
     <>
-      <div className="flex gap-2">
-        <InputSourceImageUpload
-          name="sourceImage"
-          label="Start Image (optional)"
-          className="flex-1"
-        />
-        <InputSourceImageUpload
-          name="endSourceImage"
-          label="End Image (optional)"
-          className="flex-1"
-        />
+      <div className="flex flex-col">
+        <div className="flex justify-center gap-2">
+          <InputSourceImageUpload
+            name="sourceImage"
+            className="flex aspect-video flex-1 flex-col justify-center"
+            iconSize={32}
+          >
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-sm">Upload image</span>
+            </div>
+          </InputSourceImageUpload>
+          <InputSourceImageUpload
+            name="endSourceImage"
+            className="flex aspect-video flex-1 flex-col justify-center"
+            iconSize={32}
+          >
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-sm">(Optional)</span>
+            </div>
+          </InputSourceImageUpload>
+        </div>
       </div>
       <InputTextArea
         required={!hasImage}

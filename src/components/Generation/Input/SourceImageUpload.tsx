@@ -17,13 +17,17 @@ export type SourceImageUploadProps = {
   value?: SourceImageProps | null;
   onChange?: (value?: SourceImageProps | null) => void;
   removable?: boolean;
+  children?: React.ReactNode;
+  iconSize?: number;
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>;
 export function SourceImageUpload({
   value,
   onChange,
   removable = true,
-  className,
+  className = 'min-h-36',
   label,
+  children,
+  iconSize,
   ...inputWrapperProps
 }: SourceImageUploadProps) {
   const [loaded, setLoaded] = useState(false);
@@ -84,33 +88,33 @@ export function SourceImageUpload({
       <Input.Wrapper
         {...inputWrapperProps}
         error={error ?? inputWrapperProps.error}
-        className={clsx('min-h-36', className)}
+        className={className}
       >
-        <div className={`flex ${label ? 'justify-between' : 'justify-end'}`}>
-          {label && <Input.Label>{label}</Input.Label>}
-          {/* <ActionIcon size="xs">
+        {/* <ActionIcon size="xs">
             <IconHistory />
           </ActionIcon> */}
-        </div>
-        {!value ? (
-          <ImageDropzone
-            allowExternalImageDrop
-            onDrop={handleDrop}
-            count={value ? 1 : 0}
-            max={1}
-            maxSize={maxOrchestratorImageFileSize}
-            label="Drag image here or click to select a file"
-            onDropCapture={handleDropCapture}
-            loading={(loading || isLoading) && !isError}
-          />
-        ) : (
-          <div className="flex max-h-96 justify-center overflow-hidden rounded-md bg-gray-2 dark:bg-dark-6">
-            <div className="relative w-full">
+        <div className="relative flex size-full items-stretch justify-center rounded-md bg-gray-2 dark:bg-dark-6">
+          {!value ? (
+            <ImageDropzone
+              allowExternalImageDrop
+              onDrop={handleDrop}
+              count={value ? 1 : 0}
+              max={1}
+              maxSize={maxOrchestratorImageFileSize}
+              label="Drag image here or click to select a file"
+              onDropCapture={handleDropCapture}
+              loading={(loading || isLoading) && !isError}
+              iconSize={iconSize}
+            >
+              {children}
+            </ImageDropzone>
+          ) : (
+            <div className="flex max-h-96 justify-center ">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={value.url}
                 alt="image to refine"
-                className="mx-auto max-h-full shadow-sm shadow-black"
+                className="max-h-full shadow-sm shadow-black"
                 onLoad={() => setLoaded(true)}
               />
               {loaded && removable && (
@@ -127,8 +131,8 @@ export function SourceImageUpload({
                 </div>
               )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </Input.Wrapper>
     </>
   );
