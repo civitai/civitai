@@ -1023,6 +1023,7 @@ export const generation = {
     model: generationConfig.Flux1.checkpoint,
     priority: 'low',
     sourceImage: null,
+    openAIQuality: 'auto',
   },
   maxValues: {
     seed: 4294967295,
