@@ -83,6 +83,10 @@ function Test() {
   //   });
   // }, []);
 
+  const [data, setData] = useState<any>(null);
+
+  console.log(data);
+
   return (
     <div>
       {/* <div className="container flex items-center gap-2 pb-2">
@@ -131,6 +135,7 @@ function Test() {
         {/* <FormWrapper engine="vidu">
 
         </FormWrapper> */}
+        {/* <SourceImageUpload value={data} onChange={setData} limit={3} /> */}
       </div>
     </div>
   );
@@ -429,6 +434,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/AspectRatioInput';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
+import { SourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 
 function ExamplePopover() {
   return (

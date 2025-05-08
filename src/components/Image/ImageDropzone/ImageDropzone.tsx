@@ -74,7 +74,9 @@ export function ImageDropzone({
             disabled,
         })}
         classNames={{
-          root: clsx({ ['border-red-6 mb-1']: hasError || !!error }),
+          root: clsx('flex items-center justify-center', {
+            ['border-red-6 mb-1']: hasError || !!error,
+          }),
         }}
         disabled={!canAddFiles || disabled}
         onDrop={handleDrop}

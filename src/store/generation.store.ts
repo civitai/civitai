@@ -289,3 +289,7 @@ export const useRemixStore = create<{
 //     ) ?? workflowsByEngine[0]
 //   );
 // }
+
+export const generationStore2 = create<{ type: MediaType; engine?: string }>()(
+  persist((set) => ({ type: 'image' }), { name: 'generation', version: 1 })
+);

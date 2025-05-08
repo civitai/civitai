@@ -17,7 +17,7 @@ const schema = baseGenerationSchema.extend({
   endSourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
   enablePromptEnhancer: z.boolean().default(true),
-  style: z.nativeEnum(ViduVideoGenStyle).catch(ViduVideoGenStyle.GENERAL),
+  style: z.nativeEnum(ViduVideoGenStyle).optional().catch(ViduVideoGenStyle.GENERAL),
   duration: numberEnum(viduDuration).default(4).catch(4),
   seed: seedSchema,
 });
@@ -28,12 +28,15 @@ export const viduGenerationConfig = VideoGenerationConfig2({
   metadataDisplayProps: ['style', 'duration', 'seed'],
   schema,
   processes: ['txt2vid', 'img2vid'],
-  defaultValues: { sourceImage: null, endSourceImage: null },
+  defaultValues: { sourceImage: null, endSourceImage: null, style: ViduVideoGenStyle.GENERAL },
   transformFn: (data) => {
     let sourceImage = data.sourceImage;
     if (!sourceImage) {
       sourceImage = data.endSourceImage;
       data.endSourceImage = null;
+    }
+    if (sourceImage) {
+      delete data.style;
     }
     const process = sourceImage ? 'img2vid' : 'txt2vid';
     return { ...data, sourceImage, process };
