@@ -1032,7 +1032,7 @@ export function GenerationFormContent() {
                     <InputSelect
                       name="openAIQuality"
                       label="Quality"
-                      data={['auto', 'high', 'medium', 'low']}
+                      data={['high', 'medium', 'low']}
                     />
                   </>
                 )}
