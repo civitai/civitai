@@ -1153,7 +1153,7 @@ export const getAllImages = async (
   const query = Prisma.sql`
     ${queryWith}
     SELECT
-      i.id,
+      ${(reactions?.length ?? 0) > 0 ? Prisma.sql`DISTINCT ` : Prisma.sql``} i.id,
       i.name,
       i.url,
       i."nsfwLevel",
