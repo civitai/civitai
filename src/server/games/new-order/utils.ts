@@ -17,15 +17,15 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
   async function populateCount(id: number | string) {
     const fetchedCount = await fetchCount(id);
     if (ordered) {
-      await Promise.all([
+      const promises: Promise<unknown>[] = [
         sysRedis.zAdd(key, { score: fetchedCount, value: id.toString() }),
-        sysRedis.expire(key, ttl),
-      ]);
+      ];
+      if (ttl !== 0) promises.push(sysRedis.expire(key, ttl));
+      await Promise.all(promises);
     } else {
-      await Promise.all([
-        sysRedis.hSet(key, id.toString(), fetchedCount),
-        sysRedis.hExpire(key, id.toString(), ttl),
-      ]);
+      const promises: Promise<unknown>[] = [sysRedis.hSet(key, id.toString(), fetchedCount)];
+      if (ttl !== 0) promises.push(sysRedis.hExpire(key, id.toString(), ttl));
+      await Promise.all(promises);
     }
 
     return fetchedCount;
@@ -162,7 +162,7 @@ export const poolCounters = {
     createCounter({
       key: key as NewOrderRedisKey,
       fetchCount: async () => 0,
-      ttl: CacheTTL.week,
+      ttl: 0,
       ordered: true,
     })
   ),
@@ -186,7 +186,7 @@ export const poolCounters = {
     createCounter({
       key: `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Inquisitor`,
       fetchCount: async () => 0,
-      ttl: CacheTTL.week,
+      ttl: 0,
       ordered: true,
     }),
   ],

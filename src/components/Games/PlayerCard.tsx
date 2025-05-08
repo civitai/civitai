@@ -116,7 +116,7 @@ export function PlayerCard({
 type Props = PaperProps &
   GetPlayer['stats'] & {
     user: Omit<Partial<SimpleUser & { isModerator: boolean }>, 'profilePicture' | 'deletedAt'>;
-    rank: { type: NewOrderRankType; name: string; iconUrl?: string };
+    rank: GetPlayer['rank'];
     showStats?: boolean;
     leaderboard?: number;
     onClick?: VoidFunction;

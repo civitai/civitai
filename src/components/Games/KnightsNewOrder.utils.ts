@@ -36,7 +36,7 @@ type PlayerUpdateStatsPayload = {
 type PlayerRankUpPayload = {
   action: NewOrderSignalActions.RankUp;
   rankType: NewOrderRankType;
-  rank: { type: NewOrderRankType; name: string };
+  rank: { type: NewOrderRankType; name: string; iconUrl: string };
 };
 
 type PlayerUpdatePayload = PlayerUpdateStatsPayload | PlayerRankUpPayload;

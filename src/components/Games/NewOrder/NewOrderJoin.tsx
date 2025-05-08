@@ -3,9 +3,11 @@ import { IconShieldStar } from '@tabler/icons-react';
 import { useCallback, useMemo, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useJoinKnightsNewOrder } from '~/components/Games/KnightsNewOrder.utils';
 import { NewOrderRulesModal } from '~/components/Games/NewOrder/NewOrderRulesModal';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { newOrderConfig } from '~/server/common/constants';
 
 export function NewOrderJoin() {
   const { join, isLoading } = useJoinKnightsNewOrder();
@@ -48,6 +50,15 @@ export function NewOrderJoin() {
   return (
     <div className="flex size-full items-center justify-center p-4">
       <div className="mx-auto flex w-full max-w-[448px] flex-col items-center gap-4 text-center">
+        {/* <div className="max-w-xs overflow-hidden rounded-md">
+          <EdgeMedia
+            type="image"
+            className="size-full object-cover"
+            src={newOrderConfig.welcomeImageUrl}
+            width={1024}
+            alt="Title screen for knights of new order showing a knight in full plate armor holding a sword in a field with a castle in the distant"
+          />
+        </div> */}
         <ThemeIcon
           className="rounded-full border border-orange-5"
           size={128}
@@ -62,9 +73,9 @@ export function NewOrderJoin() {
         <p>Forge your destiny in a realm of honor and glory</p>
         {joinButton}
         <Button
-          className="text-orange-5"
+          className="mx-12 text-orange-5"
           variant="white"
-          size="lg"
+          size="md"
           onClick={() => setOpened(true)}
           fullWidth
         >

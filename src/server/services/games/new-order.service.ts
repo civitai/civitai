@@ -33,6 +33,7 @@ import { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
 import { updateImageNsfwLevel } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
+import { claimCosmetic } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   handleLogError,
@@ -59,8 +60,8 @@ export async function joinGame({ userId }: { userId: number }) {
       playerInfo: { select: playerInfoSelect },
     },
   });
-
   if (!user) throw throwNotFoundError(`No user with id ${userId}`);
+
   if (user.playerInfo) {
     // User is already in game
     const stats = await getPlayerStats({ playerId: userId });
@@ -72,6 +73,12 @@ export async function joinGame({ userId }: { userId: number }) {
     data: { userId, rankType: NewOrderRankType.Acolyte, startAt: new Date() },
     select: playerInfoSelect,
   });
+
+  // Grant cosmetic to new players
+  await claimCosmetic({
+    id: newOrderConfig.cosmetics.badgeIds.acolyte,
+    userId,
+  }).catch(() => null); // Ignore if it fails
 
   const { user: userInfo, ...playerData } = player;
   return { ...playerData, ...userInfo, stats: { exp: 0, fervor: 0, smites: 0, blessedBuzz: 0 } };
@@ -389,6 +396,12 @@ export async function addImageRating({
       where: { userId: playerId },
       data: { rankType: knightRank.type },
     });
+
+    // Grant cosmetic to new players
+    await claimCosmetic({
+      id: newOrderConfig.cosmetics.badgeIds.knight,
+      userId: playerId,
+    }).catch(() => null); // Ignore if it fails
 
     signalClient
       .topicSend({
@@ -711,7 +724,7 @@ export async function getNewOrderRanks({ name }: { name: string }) {
     async () => {
       const ranks = await dbRead.newOrderRank.findMany({
         orderBy: { type: 'asc' },
-        select: { type: true, name: true, minExp: true },
+        select: { type: true, name: true, minExp: true, iconUrl: true },
       });
 
       return ranks;

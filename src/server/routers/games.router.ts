@@ -90,37 +90,52 @@ export const gamesRouter = router({
     }),
   }),
   newOrder: router({
-    join: guardedProcedure.mutation(({ ctx }) => joinGame({ userId: ctx.user.id })),
-    getPlayer: guardedProcedure.query(({ ctx }) => getPlayerById({ playerId: ctx.user.id })),
+    join: guardedProcedure
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ ctx }) => joinGame({ userId: ctx.user.id })),
+    getPlayer: guardedProcedure
+      .use(isFlagProtected('newOrderGame'))
+      .query(({ ctx }) => getPlayerById({ playerId: ctx.user.id })),
     getPlayers: moderatorProcedure
       .input(getPlayersInfiniteSchema)
+      .use(isFlagProtected('newOrderGame'))
       .query(({ input }) => getPlayersInfinite({ ...input })),
     getImagesQueue: guardedProcedure
+      .use(isFlagProtected('newOrderGame'))
       .input(getImageQueueSchema.optional())
       .query(({ input, ctx }) =>
         getImagesQueue({ ...input, playerId: ctx.user.id, isModerator: ctx.user.isModerator })
       ),
     getHistory: guardedProcedure
       .input(getHistorySchema)
+      .use(isFlagProtected('newOrderGame'))
       .query(({ input, ctx }) => getPlayerHistory({ ...input, playerId: ctx.user.id })),
     smitePlayer: moderatorProcedure
       .input(smitePlayerSchema)
+      .use(isFlagProtected('newOrderGame'))
       .mutation(({ input, ctx }) => smitePlayer({ ...input, modId: ctx.user.id })),
     cleanseSmite: moderatorProcedure
       .input(cleanseSmiteSchema)
+      .use(isFlagProtected('newOrderGame'))
       .mutation(({ input }) => cleanseSmite({ ...input })),
-    addRating: guardedProcedure.input(addImageRatingSchema).mutation(({ input, ctx }) =>
-      addImageRating({
-        ...input,
-        playerId: ctx.user.id,
-        chTracker: ctx.track,
-        isModerator: ctx.user.isModerator,
-      })
-    ),
-    resetCareer: guardedProcedure.mutation(({ ctx }) => resetPlayer({ playerId: ctx.user.id })),
+    addRating: guardedProcedure
+      .input(addImageRatingSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ input, ctx }) =>
+        addImageRating({
+          ...input,
+          playerId: ctx.user.id,
+          chTracker: ctx.track,
+          isModerator: ctx.user.isModerator,
+        })
+      ),
+    resetCareer: guardedProcedure
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ ctx }) => resetPlayer({ playerId: ctx.user.id })),
     resetPlayerById: moderatorProcedure
-      .use(isFlagProtected('newOrderReset'))
       .input(resetPlayerByIdSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .use(isFlagProtected('newOrderReset'))
       .mutation(({ input }) => resetPlayer({ ...input, withNotification: true })),
   }),
 });

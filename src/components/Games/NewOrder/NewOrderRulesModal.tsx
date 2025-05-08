@@ -30,7 +30,7 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
         <div className="flex flex-col gap-1">
           <h3 className="font-semibold">Knight (Blessed Rank)</h3>
           <p>
-            Upon reaching Level 30, Acolytes are ordained as{' '}
+            Upon reaching Level 20, Acolytes are ordained as{' '}
             <span className="font-semibold">Knights</span> and may earn{' '}
             <span className="font-semibold">Gold</span> by each rating they give, or get{' '}
             <span className="font-semibold">Smites</span> if the given rating does not align with
