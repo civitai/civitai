@@ -134,7 +134,7 @@ export async function smitePlayer({
   createNotification({
     category: NotificationCategory.Other,
     type: 'new-order-smite-received',
-    key: `new-order-smite-received:${playerId}`,
+    key: `new-order-smite-received:${playerId}:${smite.id}`,
     userId: playerId,
     details: {},
   }).catch();
@@ -699,7 +699,7 @@ export async function resetPlayer({
     createNotification({
       category: NotificationCategory.Other,
       type: 'new-order-game-over',
-      key: `new-order-fame-over:${playerId}`,
+      key: `new-order-game-over:${playerId}:${new Date().getTime()}`,
       userId: playerId,
       details: {},
     }).catch(handleLogError);

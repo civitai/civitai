@@ -345,6 +345,15 @@ export const useInquisitorTools = () => {
     },
   });
 
+  const resetPlayerMutation = trpc.games.newOrder.resetPlayerById.useMutation({
+    onSuccess: async () => {
+      await queryUtils.games.newOrder.getPlayers.invalidate();
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to reset player', error: new Error(error.message) });
+    },
+  });
+
   return {
     smitePlayer: smitePlayerMutation.mutate,
     smitePayload: smitePlayerMutation.variables,
@@ -352,6 +361,9 @@ export const useInquisitorTools = () => {
     cleansePayload: cleanseSmiteMutation.variables,
     applyingSmite: smitePlayerMutation.isLoading,
     cleansingSmite: cleanseSmiteMutation.isLoading,
+    resetPlayer: resetPlayerMutation.mutate,
+    resettingPlayer: resetPlayerMutation.isLoading,
+    resetPayload: resetPlayerMutation.variables,
   };
 };
 

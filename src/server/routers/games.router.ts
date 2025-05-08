@@ -9,6 +9,7 @@ import {
   getHistorySchema,
   getImageQueueSchema,
   getPlayersInfiniteSchema,
+  resetPlayerByIdSchema,
   smitePlayerSchema,
 } from '~/server/schema/games/new-order.schema';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
@@ -23,7 +24,13 @@ import {
   resetPlayer,
   smitePlayer,
 } from '~/server/services/games/new-order.service';
-import { guardedProcedure, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  moderatorProcedure,
+  protectedProcedure,
+  router,
+} from '~/server/trpc';
 import { generateToken } from '~/utils/string-helpers';
 
 const newGameSchema = z.object({
@@ -111,5 +118,9 @@ export const gamesRouter = router({
       })
     ),
     resetCareer: guardedProcedure.mutation(({ ctx }) => resetPlayer({ playerId: ctx.user.id })),
+    resetPlayerById: moderatorProcedure
+      .use(isFlagProtected('newOrderReset'))
+      .input(resetPlayerByIdSchema)
+      .mutation(({ input }) => resetPlayer({ ...input, withNotification: true })),
   }),
 });

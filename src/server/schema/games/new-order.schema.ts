@@ -77,3 +77,8 @@ export const getHistorySchema = z.object({
     })
     .optional(),
 });
+
+export type ResetPlayerByIdInput = z.infer<typeof resetPlayerByIdSchema>;
+export const resetPlayerByIdSchema = z.object({
+  playerId: z.number(),
+});

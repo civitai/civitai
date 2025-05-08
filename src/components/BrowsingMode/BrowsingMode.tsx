@@ -16,6 +16,7 @@ import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { constants } from '~/server/common/constants';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   return (
@@ -42,6 +43,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
   const disableHidden = useBrowsingSettings((x) => x.disableHidden);
   const setState = useBrowsingSettings((x) => x.setState);
   const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const features = useFeatureFlags();
 
   const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
   const toggleDisableHidden = () => setState((state) => ({ disableHidden: !state.disableHidden }));
@@ -55,7 +57,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
               <Stack spacing={0}>
                 <Group align="flex-start">
                   <Text sx={{ lineHeight: 1 }}>Browsing Level</Text>
-                  {showNsfw && (
+                  {showNsfw && features.newOrderGame && (
                     <Tooltip label="Help us improve by playing!" withArrow color="dark">
                       <Button
                         onClick={closeMenu}

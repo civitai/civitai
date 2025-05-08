@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Button,
   Card,
   CloseButton,
   Loader,
@@ -15,10 +16,13 @@ import {
   IconHammer,
   IconHealthRecognition,
   IconSearch,
+  IconSkull,
 } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   useInquisitorTools,
   useQueryPlayersInfinite,
@@ -27,6 +31,7 @@ import { PlayerStats } from '~/components/Games/PlayerCard';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GetPlayersItem } from '~/types/router';
 
 export default function PlayersDirectoryModal() {
@@ -116,7 +121,22 @@ export default function PlayersDirectoryModal() {
 }
 
 function PlayerDetails({ player }: { player: GetPlayersItem }) {
-  const { cleanseSmite, cleansingSmite, cleansePayload } = useInquisitorTools();
+  const features = useFeatureFlags();
+  const { cleanseSmite, cleansingSmite, cleansePayload, resetPlayer, resettingPlayer } =
+    useInquisitorTools();
+
+  const handleResetPlayerClick = () => {
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Reset Player',
+        message: `Are you sure you want to reset ${player.username}? The player will be notified and this action cannot be undone.`,
+        labels: { cancel: 'Cancel', confirm: 'Reset Player' },
+        confirmProps: { color: 'red' },
+        onConfirm: async () => resetPlayer({ playerId: player.id }),
+      },
+    });
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -126,6 +146,18 @@ function PlayerDetails({ player }: { player: GetPlayersItem }) {
         subText={<PlayerStats stats={{ ...player.stats }} showSmiteCount />}
         withUsername
       />
+      {!features.newOrderReset && (
+        <Button
+          size="sm"
+          color="red"
+          leftIcon={<IconSkull className="size-5" />}
+          loading={resettingPlayer}
+          onClick={handleResetPlayerClick}
+          fullWidth
+        >
+          Reset player career
+        </Button>
+      )}
       <p className="text-lg font-semibold">Active Smites</p>
       {player.activeSmites.length ? (
         player.activeSmites.map((smite) => {
