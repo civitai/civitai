@@ -2,7 +2,7 @@ import { Divider, Modal, Notification } from '@mantine/core';
 import { z } from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
+import { InputSourceImageUpscale } from '~/components/Generation/Input/SourceImageUpscale';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import {
   useGenerateWithCost,
@@ -62,7 +62,7 @@ export function UpscaleImageModal({
     <Modal {...dialog} title="Upscale">
       <GenerationProvider>
         <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-          <InputSourceImageUpload
+          <InputSourceImageUpscale
             name="sourceImage"
             removable={false}
             upscaleMultiplier
@@ -163,7 +163,7 @@ function UpscalImageForm({
   return (
     <GenerationProvider>
       <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-        <InputSourceImageUpload
+        <InputSourceImageUpscale
           name="sourceImage"
           removable={false}
           upscaleMultiplier

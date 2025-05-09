@@ -1,6 +1,5 @@
 import { Modal, Notification } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, InputNumberSlider, useForm } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
@@ -13,6 +12,7 @@ import { z } from 'zod';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 import { IconX } from '@tabler/icons-react';
+import { InputSourceImageUpscale } from '~/components/Generation/Input/SourceImageUpscale';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -52,7 +52,7 @@ export function UpscaleEnhancementModal({
     <Modal {...dialog} title="Upscale Enhancement">
       <GenerationProvider>
         <Form form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <InputSourceImageUpload
+          <InputSourceImageUpscale
             name="sourceImage"
             removable={false}
             upscaleMultiplier

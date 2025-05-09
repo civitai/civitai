@@ -205,7 +205,7 @@ export function useSubmitCreateImage() {
   });
 }
 
-export function useGenerate() {
+export function useGenerate(args?: { onError?: (e: any) => void }) {
   return trpc.orchestrator.generate.useMutation({
     onSuccess: (data) => {
       updateTextToImageRequests({
@@ -225,6 +225,7 @@ export function useGenerate() {
       });
       updateFromEvents();
     },
+    ...args,
   });
 }
 

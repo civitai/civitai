@@ -20,7 +20,7 @@ import { env } from '~/env/server';
 import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
+import { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
 import {
@@ -504,7 +504,9 @@ function formatWorkflowStep(args: {
     case 'videoEnhancement':
       return formatVideoGenStep(args);
     default:
-      throw new Error('failed to extract generation resources: unsupported workflow type');
+      throw new Error(
+        `failed to extract generation resources: unsupported workflow type ${step.$type}`
+      );
   }
 }
 
@@ -564,7 +566,7 @@ function formatImageGenStep({
 
 function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
   const { input, output, jobs } = step as VideoGenStep;
-  const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
+  const videoMetadata = step.metadata as { params?: VideoGenerationSchema2 };
   const { params } = videoMetadata;
 
   // handle legacy source image
@@ -588,11 +590,11 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   let aspectRatio = 1;
 
   if (params) {
-    if (params.type === 'img2vid') {
+    if (sourceImage) {
       width = sourceImage?.width;
       height = sourceImage?.height;
       aspectRatio = width && height ? width / height : 16 / 9;
-    } else if (params.type === 'txt2vid') {
+    } else {
       switch (params.engine) {
         case 'minimax':
           aspectRatio = 16 / 9;
@@ -602,6 +604,11 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           height = 480;
           aspectRatio = width / height;
           break;
+        case 'vidu':
+          width = 1280;
+          height = 720;
+          aspectRatio = width / height;
+          break;
         default: {
           if (params.aspectRatio) {
             const [rw, rh] = params.aspectRatio.split(':').map(Number);
@@ -609,11 +616,6 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           }
           break;
         }
-        case 'vidu':
-          width = 1280;
-          height = 720;
-          aspectRatio = width / height;
-          break;
       }
     }
   }
@@ -656,9 +658,9 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     name: step.name,
     // workflow and quantity are only here because they are required for other components to function
     params: {
-      ...params,
+      ...params!,
       sourceImage: sourceImage,
-      workflow: videoMetadata.params?.workflow,
+      // workflow: videoMetadata.params?.workflow,
       quantity: 1,
     },
     images: videos,

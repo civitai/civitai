@@ -92,6 +92,10 @@ export const constants = {
     'HiDream',
     'OpenAI',
     'Other',
+    // 'Wan Video 1.3B T2V',
+    // 'Wan Video 14B T2V',
+    // 'Wan Video 14B I2V 480p',
+    // 'Wan Video 14B I2V 720p',
   ],
   hiddenBaseModels: [
     'ODOR',
@@ -551,6 +555,18 @@ export const baseModelSets = {
   HiDream: new BaseModelSet({ name: 'HiDream', baseModels: ['HiDream'] }),
   OpenAI: new BaseModelSet({ name: 'OpenAI', baseModels: ['OpenAI'] }),
 };
+
+// the ecosystem in the air just needs to start with a corresponding orchestrator controller ecosystem
+// const test = [
+//   //1.3b
+//   'urn:air:wanvideo-1.3bt2v:lora:civitai:1132089@1315010',
+//   // 14b Text to video
+//   'urn:air:wanvideo-14bt2v:lora:civitai:1132089@1315010',
+
+//   // 14b Image to video
+//   'urn:air:wanvideo-14bi2v480:lora:civitai:1132089@1315010',
+//   'urn:air:wanvideo-14bi2v720:lora:civitai:1132089@1315010',
+// ];
 
 type BaseModelSets = typeof baseModelSets;
 export type BaseModelSetType = keyof BaseModelSets;

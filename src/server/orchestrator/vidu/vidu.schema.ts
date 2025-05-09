@@ -1,53 +1,60 @@
 import { ViduVideoGenInput, ViduVideoGenStyle } from '@civitai/client';
 import z from 'zod';
-import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
-  imageEnhancementSchema,
-  negativePromptSchema,
+  baseGenerationSchema,
   promptSchema,
   seedSchema,
-  textEnhancementSchema,
+  sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const viduDuration = [4, 8] as const;
 
-const baseKlingSchema = z.object({
-  engine: z.literal('vidu'),
-  workflow: z.string(),
+const schema = baseGenerationSchema.extend({
+  engine: z.literal('vidu').catch('vidu'),
+  sourceImage: sourceImageSchema.nullish(),
+  endSourceImage: sourceImageSchema.nullish(),
+  prompt: promptSchema,
   enablePromptEnhancer: z.boolean().default(true),
-  style: z.nativeEnum(ViduVideoGenStyle).catch(ViduVideoGenStyle.GENERAL),
+  style: z.nativeEnum(ViduVideoGenStyle).optional().catch(ViduVideoGenStyle.GENERAL),
   duration: numberEnum(viduDuration).default(4).catch(4),
   seed: seedSchema,
 });
 
-const viduTxt2VidSchema = textEnhancementSchema.merge(baseKlingSchema).extend({
-  negativePrompt: negativePromptSchema,
-});
-
-const viduImg2VidSchema = imageEnhancementSchema
-  .merge(baseKlingSchema)
-  .extend({ prompt: promptSchema });
-
-const viduTxt2ImgConfig = new VideoGenerationConfig({
-  subType: 'txt2vid',
-  engine: 'vidu',
-  schema: viduTxt2VidSchema,
+export const viduGenerationConfig = VideoGenerationConfig2({
+  label: 'Vidu',
+  whatIfProps: ['duration', 'sourceImage', 'endSourceImage'],
   metadataDisplayProps: ['style', 'duration', 'seed'],
+  schema,
+  processes: ['txt2vid', 'img2vid'],
+  defaultValues: { sourceImage: null, endSourceImage: null, style: ViduVideoGenStyle.GENERAL },
+  transformFn: (data) => {
+    let sourceImage = data.sourceImage;
+    if (!sourceImage) {
+      sourceImage = data.endSourceImage;
+      data.endSourceImage = null;
+    }
+    if (sourceImage) {
+      delete data.style;
+    }
+    const process = sourceImage ? 'img2vid' : 'txt2vid';
+    return { ...data, sourceImage, process };
+  },
+  superRefine: (data, ctx) => {
+    if (!data.sourceImage && !data.endSourceImage && !data.prompt?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt is required',
+        path: ['prompt'],
+      });
+    }
+  },
+  inputFn: ({ sourceImage, endSourceImage, ...args }): ViduVideoGenInput => {
+    return {
+      ...args,
+      sourceImage: sourceImage?.url,
+      endSourceImage: endSourceImage?.url,
+    };
+  },
 });
-
-const viduImg2VidConfig = new VideoGenerationConfig({
-  subType: 'img2vid',
-  engine: 'vidu',
-  schema: viduImg2VidSchema,
-  metadataDisplayProps: ['style', 'duration', 'seed'],
-});
-
-export const viduVideoGenerationConfig = [viduTxt2ImgConfig, viduImg2VidConfig];
-
-export function ViduInput({
-  ...args
-}: z.infer<(typeof viduVideoGenerationConfig)[number]['schema']>): ViduVideoGenInput {
-  const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
-  return { ...args, sourceImage };
-}

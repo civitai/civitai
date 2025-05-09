@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
+import { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { videoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 
@@ -13,7 +13,7 @@ export type GenerationDataSchema = z.infer<typeof generationDataSchema>;
 const generationDataSchema = z.discriminatedUnion('$type', [
   z.object({
     $type: z.literal('videoGen'),
-    data: z.record(z.any()).transform((data) => data as VideoGenerationSchema),
+    data: z.record(z.any()).transform((data) => data as VideoGenerationSchema2),
   }),
   z.object({
     $type: z.literal('videoEnhancement'),
@@ -55,7 +55,7 @@ export function getGenerationTags(args: GenerationDataSchema) {
       tags.push(WORKFLOW_TAGS.VIDEO);
       break;
     case 'videoGen':
-      tags.push(WORKFLOW_TAGS.VIDEO, args.data.workflow, args.data.type);
+      tags.push(WORKFLOW_TAGS.VIDEO, args.data.engine);
       break;
     case 'image':
       tags.push(WORKFLOW_TAGS.IMAGE, args.data.workflow, args.data.type);

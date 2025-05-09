@@ -7,10 +7,10 @@ import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 
 const READ_BATCH_SIZE = 100000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -314,7 +314,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     logger(`PullData :: ${indexName} :: Pulling data for batch ::`, batchLogKey);
 
     if (step === 0) {
-      const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
+      const engines = Object.keys(videoGenerationConfig2);
 
       const images = await db.$queryRaw<SearchBaseImage[]>`
       SELECT
@@ -353,12 +353,12 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             THEN TRUE
             ELSE FALSE
           END
-        ) AS "hasPositivePrompt", 
+        ) AS "hasPositivePrompt",
         (
           CASE
             WHEN i.meta->>'civitaiResources' IS NOT NULL
-              OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
-                ${Prisma.join(workflows)}
+              OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
+                ${Prisma.join(engines)}
               ]::text[])
             THEN TRUE
             ELSE FALSE

@@ -140,9 +140,10 @@ export function usePersistForm<
 
   useEffect(() => {
     const storage = getParsedStorage();
-    for (const [key, value] of Object.entries(storage)) {
-      form.setValue(key as any, value as any);
-    }
+    form.reset(storage, { keepDefaultValues: true });
+    // for (const [key, value] of Object.entries(storage)) {
+    //   form.setValue(key as any, value as any);
+    // }
   }, []);
 
   // update storage values on form input update
