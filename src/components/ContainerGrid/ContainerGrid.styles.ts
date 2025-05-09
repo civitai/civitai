@@ -1,12 +1,9 @@
-import {
-  createStyles,
-  MantineNumberSize,
-  MantineTheme,
-  MANTINE_SIZES,
-  MantineSize,
-} from '@mantine/styles';
+import { MantineTheme, MantineSize, useMantineTheme, getSize } from '@mantine/core';
 import React from 'react';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+
+type MantineNumberSize = MantineSize | number;
+const MANTINE_SIZES = ['xs', 'sm', 'md', 'lg', 'xl'] as const;
 
 export interface GridStylesParams {
   gutter: MantineNumberSize;
@@ -20,15 +17,11 @@ export interface GridStylesParams {
   containerName?: string;
 }
 
-function getGutterStyles(
-  gutters: Record<MantineSize, MantineNumberSize>,
-  theme: MantineTheme,
-  containerName?: string
-) {
+function getGutterStyles(gutters: Record<MantineSize, MantineNumberSize>, containerName?: string) {
   return MANTINE_SIZES.reduce<Record<string, React.CSSProperties>>((acc, size) => {
     if (typeof gutters[size] !== 'undefined') {
       acc[containerQuery.largerThan(size, containerName)] = {
-        margin: -theme.fn.size({ size: gutters[size], sizes: theme.spacing }) / 2,
+        margin: -Number(getSize(gutters[size])) / 2,
       };
     }
 
@@ -36,32 +29,30 @@ function getGutterStyles(
   }, {});
 }
 
-export default createStyles(
-  (
-    theme,
-    {
-      justify,
-      align,
-      gutter,
-      gutterXs,
-      gutterSm,
-      gutterMd,
-      gutterLg,
-      gutterXl,
-      containerName,
-    }: GridStylesParams
-  ) => ({
+const useContainerGridStyles = ({
+  justify,
+  align,
+  gutter,
+  gutterXs,
+  gutterSm,
+  gutterMd,
+  gutterLg,
+  gutterXl,
+  containerName,
+}: GridStylesParams) => {
+  return {
     root: {
-      margin: -theme.fn.size({ size: gutter, sizes: theme.spacing }) / 2,
+      margin: -Number(getSize(gutter)) / 2,
       display: 'flex',
       flexWrap: 'wrap',
       justifyContent: justify,
       alignItems: align,
       ...getGutterStyles(
         { xs: gutterXs, sm: gutterSm, md: gutterMd, lg: gutterLg, xl: gutterXl },
-        theme,
         containerName
       ),
     },
-  })
-);
+  };
+};
+
+export default useContainerGridStyles;

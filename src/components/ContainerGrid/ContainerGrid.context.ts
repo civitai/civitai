@@ -1,5 +1,6 @@
-import { createSafeContext } from '@mantine/utils';
-import type { MantineNumberSize } from '@mantine/styles';
+import { MantineSize, createSafeContext } from '@mantine/core';
+
+type MantineNumberSize = MantineSize | number;
 
 interface GridContextValue {
   gutter: MantineNumberSize;
