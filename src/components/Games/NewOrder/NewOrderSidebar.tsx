@@ -1,5 +1,6 @@
 import { Group, Navbar, Popover, ThemeIcon } from '@mantine/core';
 import {
+  IconBubbleText,
   IconChevronDown,
   IconCrown,
   IconHistory,
@@ -120,6 +121,19 @@ export function NewOrderSidebar() {
             Restart Career
           </Group>
         </button>
+        <Link
+          className="w-full cursor-pointer rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+          href="https://forms.clickup.com/8459928/f/825mr-13011/SEFW63SLT4PH1H7DQ0"
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          <Group>
+            <ThemeIcon size="xl" color="gray" variant="light">
+              <IconBubbleText />
+            </ThemeIcon>
+            Send Feedback
+          </Group>
+        </Link>
         <button
           className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
           onClick={() => setModalOpened(true)}
