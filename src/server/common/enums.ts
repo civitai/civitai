@@ -138,6 +138,8 @@ export enum SignalMessages {
   CashInvalidator = 'creators-program:cash-invalidator',
   AuctionBidChange = 'auction:bid-change',
   TopicUpdate = 'topic:connections',
+  NewOrderQueueUpdate = 'new-order:queue-update',
+  NewOrderPlayerUpdate = 'new-order:player-update',
 }
 
 export enum BountySort {
@@ -348,4 +350,30 @@ export enum SignalTopic {
   CreatorProgram = 'creators-program',
   Auction = 'auction', // with :auctionId
   ModelVersion = 'model-version', // with :modelVersionId
+  NewOrderPlayer = 'new-order-player', // with :playerId
+  NewOrderQueue = 'new-order-queue', // with :queueId
+}
+
+export enum NewOrderImageRatingStatus {
+  Correct = 'Correct',
+  Pending = 'Pending',
+  Failed = 'Failed',
+  AcolyteCorrect = 'AcolyteCorrect',
+  AcolyteFailed = 'AcolyteFailed',
+}
+
+export enum NewOrderDamnedReason {
+  InappropriateMinors = 'InappropriateMinors',
+  RealisticMinors = 'RealisticMinors',
+  InappropriateRealPerson = 'InappropriateRealPerson',
+  Bestiality = 'Bestiality',
+  GraphicViolence = 'GraphicViolence',
+}
+
+export enum NewOrderSignalActions {
+  UpdateStats = 'update-stats',
+  RankUp = 'rank-up',
+  Reset = 'reset',
+  AddImage = 'add-image',
+  RemoveImage = 'remove-image',
 }

@@ -1,16 +1,16 @@
-import {
+import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
+import { MyImagesSection } from '~/components/Profile/Sections/MyImagesSection';
+import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
+import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArticlesSection';
+import { PopularModelsSection } from '~/components/Profile/Sections/PopularModelsSection';
+import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReviewsSection';
+import { ShowcaseSection } from '~/components/Profile/Sections/ShowcaseSection';
+import type {
   ProfileSectionSchema,
   ProfileSectionType,
   ShowcaseItemSchema,
 } from '~/server/schema/user-profile.schema';
-import { ProfileSectionProps } from '~/components/Profile/ProfileSection';
-import { PopularModelsSection } from '~/components/Profile/Sections/PopularModelsSection';
-import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArticlesSection';
-import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
-import { MyImagesSection } from '~/components/Profile/Sections/MyImagesSection';
-import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReviewsSection';
-import { UserOverview, UserWithProfile } from '~/types/router';
-import { ShowcaseSection } from '~/components/Profile/Sections/ShowcaseSection';
+import type { UserOverview, UserWithProfile } from '~/types/router';
 
 // Used to determine which sections are enabled by default when the user does not have them
 // on the profile items' list. This is used such that when we add a new section, if we want to enforce

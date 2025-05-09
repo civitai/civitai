@@ -1,15 +1,14 @@
-import { Divider, Card, Button, ButtonProps } from '@mantine/core';
-
-import { CopyButton } from '~/components/CopyButton/CopyButton';
-import { trpc } from '~/utils/trpc';
 import { CloseButton, Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
-import React from 'react';
+import { Button, ButtonProps, Card, Divider } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
-import { generationPanel } from '~/store/generation.store';
-import { encodeMetadata } from '~/utils/metadata';
+import React from 'react';
+import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta';
 import { useIsClient } from '~/providers/IsClientProvider';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import { generationPanel } from '~/store/generation.store';
+import { encodeMetadata } from '~/utils/metadata';
+import { trpc } from '~/utils/trpc';
 
 export function ImageMetaPopover2({
   imageId,

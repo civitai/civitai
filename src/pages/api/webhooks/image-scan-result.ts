@@ -18,6 +18,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { addImageToQueue } from '~/server/services/games/new-order.service';
 import {
   getImagesModRules,
   getTagNamesForImages,
@@ -34,9 +35,11 @@ import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { getComputedTags } from '~/server/utils/tag-rules';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   ImageIngestionStatus,
   ModerationRuleAction,
+  NewOrderRankType,
   TagSource,
   TagTarget,
   TagType,
@@ -304,33 +307,6 @@ async function handleSuccess({
       });
     }
 
-    // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
-    const tagsFromTagsOnImageDetails = await dbWrite.$queryRaw<{ type: TagType; name: string }[]>`
-      SELECT t.type, t.name
-      FROM "TagsOnImageDetails" toi
-      JOIN "Tag" t ON t.id = toi."tagId"
-      WHERE toi."imageId" = ${id} AND toi.automated AND NOT toi.disabled
-    `;
-
-    let hasAdultTag = false,
-      hasMinorTag = false,
-      hasCartoonTag = false,
-      nsfw = false;
-    for (const { name, type } of tagsFromTagsOnImageDetails) {
-      if (type === TagType.Moderation) nsfw = true;
-      if (minorTags.includes(name)) hasMinorTag = true;
-      else if (constants.imageTags.styles.includes(name)) hasCartoonTag = true;
-      else if (['adult'].includes(name)) hasAdultTag = true;
-    }
-
-    // check incoming tags clavata level and check for minor tags
-    if (tags.some((x) => clavataNsfwTags.includes(x.tag))) {
-      const minorReviewTags = [['realistic', 'child - 15'], ['child - 10']];
-      for (const mTags of minorReviewTags) {
-        if (mTags.every((tag) => tags.find((x) => x.tag === tag))) hasMinorTag = true;
-      }
-    }
-
     const prompt = normalizeText(
       (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined
     );
@@ -338,17 +314,90 @@ async function handleSuccess({
       (image.meta as Prisma.JsonObject)?.['negativePrompt'] as string | undefined
     );
 
-    const data: Prisma.ImageUpdateInput = {};
-
-    if (hasMinorTag) {
-      data.minor = true;
-    }
+    // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
+    const tagsFromTagsOnImageDetails = await dbWrite.$queryRaw<
+      { name: string; nsfwLevel: number }[]
+    >`
+      SELECT t.name, t."nsfwLevel",
+      FROM "TagsOnImageDetails" toi
+      JOIN "Tag" t ON t.id = toi."tagId"
+      WHERE toi."imageId" = ${id} AND toi.automated AND NOT toi.disabled
+    `;
 
     let reviewKey: string | null = null;
-    const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
-    if (inappropriate !== false) reviewKey = inappropriate;
-    if (prompt && includesPoi(prompt)) data.poi = true; // We wanna mark it regardless of nsfw.
-    if (!reviewKey && hasBlockedTag) reviewKey = 'tag';
+    const flags = {
+      hasAdultTag: false,
+      hasMinorTag: false,
+      hasCartoonTag: false,
+      nsfw: false,
+      minor: false,
+      poi: false,
+      minorReview: false,
+      poiReview: false,
+      tagReview: false,
+      newUserReview: false,
+    };
+
+    // let hasAdultTag = false,
+    //   hasMinorTag = false,
+    //   hasCartoonTag = false,
+    //   nsfw = false;
+    for (const { name, nsfwLevel } of tagsFromTagsOnImageDetails) {
+      if (nsfwLevel > sfwBrowsingLevelsFlag) flags.nsfw = true;
+      if (minorTags.includes(name)) {
+        flags.hasMinorTag = true;
+        flags.minor = true;
+      } else if (constants.imageTags.styles.includes(name)) flags.hasCartoonTag = true;
+      else if (['adult'].includes(name)) flags.hasAdultTag = true;
+    }
+
+    const clavataNsfwLevel = tags.find((x) =>
+      clavataNsfwLevelTags.includes(x.tag as ClavataNsfwLevelTag)
+    )?.tag as ClavataNsfwLevelTag | undefined;
+    if (clavataNsfwLevel) {
+      switch (clavataNsfwLevel) {
+        case 'pg':
+          if (tags.some((x) => x.tag === 'child-10')) flags.minor = true;
+          if (['realistic', 'child-15'].every((tag) => tags.find((x) => x.tag === tag))) {
+            flags.minor = true;
+            flags.minorReview = true;
+          }
+          break;
+        case 'pg-13':
+        case 'r':
+        case 'x':
+        case 'xxx':
+          if (tags.some((x) => x.tag === 'child-10')) {
+            flags.minor = true;
+            flags.minorReview = true;
+          }
+          if (
+            ['child-10', 'child-13', 'child-15'].some((tag) => tags.find((x) => x.tag === tag)) &&
+            tags.some((x) => x.tag === 'realistic')
+          ) {
+            flags.minor = true;
+            flags.minorReview = true;
+          }
+          break;
+      }
+    }
+
+    const inappropriate = includesInappropriate({ prompt, negativePrompt }, flags.nsfw);
+    if (inappropriate === 'minor') flags.minorReview = true;
+    if (inappropriate === 'poi') flags.poiReview = true;
+    if (prompt && includesPoi(prompt)) flags.poi = true;
+    if (hasBlockedTag) flags.tagReview = true;
+
+    const data: Prisma.ImageUpdateInput = {};
+
+    // if (hasMinorTag) {
+    //   data.minor = true;
+    // }
+
+    // const inappropriate = includesInappropriate({ prompt, negativePrompt }, flags.nsfw);
+    // if (inappropriate !== false) reviewKey = inappropriate;
+    // if (prompt && includesPoi(prompt)) data.poi = true; // We wanna mark it regardless of nsfw.
+    // if (!reviewKey && hasBlockedTag) reviewKey = 'tag';
 
     // We now will mark images as poi / minor regardless of whether or not they're NSFW. This so that we know we need to hide from from
     // NSFW feeds.
@@ -391,45 +440,49 @@ async function handleSuccess({
       `;
 
     if (poi) {
-      if (!reviewKey && nsfw) reviewKey = 'poi';
-      // Makes this image tied to POI.
-      data.poi = true;
+      flags.poi = true;
+      if (flags.nsfw) flags.poiReview = true;
     }
 
     if (minor) {
-      if (!reviewKey && nsfw) reviewKey = 'minor';
-      // Marks this image as using a minor resource / tags. Will block it from NSFW searches.
-      data.minor = true;
+      flags.minor = true;
+      if (flags.nsfw) flags.minorReview = true;
     }
 
-    if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
-      reviewKey = 'minor';
+    if (flags.hasMinorTag && !flags.hasAdultTag && (!flags.hasCartoonTag || flags.nsfw)) {
+      flags.minorReview = true;
     }
 
-    if (!reviewKey && nsfw) {
+    if (!flags.minorReview && !flags.poiReview && !flags.tagReview && flags.nsfw) {
       // If user is new and image is NSFW send it for review
       const [{ isNewUser }] =
         (await dbRead.$queryRaw<{ isNewUser: boolean }[]>`
         SELECT is_new_user(CAST(${image.userId} AS INT)) "isNewUser";
       `) ?? [];
-      if (isNewUser) reviewKey = 'newUser';
-    }
-    if (!reviewKey) {
-      const reviewer = determineReviewer({ tags, source });
-      if (reviewer === 'moderators') reviewKey = 'tag';
-      else if (reviewer === 'knights') {
-        // TODO @manuelurenah - Add knight review logic
-      }
+      if (isNewUser) flags.newUserReview = true;
     }
 
+    const reviewer = determineReviewer({ tags, source });
+    if (reviewer === 'moderators') flags.tagReview = true;
+    else if (reviewer === 'knights') {
+      // TODO @manuelurenah - Add knight review logic
+    }
+
+    if (flags.poiReview) reviewKey = 'poi';
+    else if (flags.minorReview) reviewKey = 'minor';
+    else if (flags.tagReview) reviewKey = 'tag';
+    else if (flags.newUserReview) reviewKey = 'newUser';
+
+    if (flags.poi) data.poi = true;
+    if (flags.minor) data.minor = true;
     if (reviewKey) data.needsReview = reviewKey;
     // Block NSFW images without meta:
     if (
-      nsfw &&
+      flags.nsfw &&
       !isValidAIGeneration({
         ...image,
         // Make it so that if we have NSFW tags we treat it as R+
-        nsfwLevel: Math.max(image.nsfwLevel, nsfw ? NsfwLevel.X : NsfwLevel.PG),
+        nsfwLevel: Math.max(image.nsfwLevel, flags.nsfw ? NsfwLevel.X : NsfwLevel.PG),
         meta: image.meta as ImageMetadata | VideoMetadata,
         tools: image.tools,
         // Avoids blocking images that we know are AI generated with some resources.
@@ -440,9 +493,9 @@ async function handleSuccess({
       data.blockedFor = BlockedReason.AiNotVerified;
     }
 
-    if (nsfw && prompt && data.ingestion !== ImageIngestionStatus.Blocked) {
+    if (flags.nsfw && prompt && data.ingestion !== ImageIngestionStatus.Blocked) {
       // Determine if we need to block the image
-      const { success, blockedFor } = auditMetaData({ prompt }, nsfw);
+      const { success, blockedFor } = auditMetaData({ prompt }, flags.nsfw);
       if (!success) {
         data.ingestion = ImageIngestionStatus.Blocked;
         data.blockedFor = blockedFor?.join(',') ?? 'Failed audit, no explanation';
@@ -524,6 +577,31 @@ async function handleSuccess({
             : SearchIndexUpdateQueueAction.Update;
 
         await queueImageSearchIndexUpdate({ ids: [id], action });
+
+        // #region [NewOrder]
+        // New Order Queue Management. Only added when scan is succesful.
+        const queueDetails: { priority: 1 | 2 | 3; rankType: NewOrderRankType } = {
+          priority: 1,
+          rankType: NewOrderRankType.Knight,
+        };
+
+        if (flags.nsfw) queueDetails.priority = 2;
+
+        if (reviewKey) {
+          data.needsReview = reviewKey;
+          queueDetails.rankType = NewOrderRankType.Templar;
+
+          if (reviewKey === 'minor') queueDetails.priority = 1;
+          if (reviewKey === 'poi') queueDetails.priority = 2;
+        } else {
+          // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
+          await addImageToQueue({
+            imageIds: id,
+            rankType: queueDetails.rankType,
+            priority: queueDetails.priority,
+          });
+        }
+        // #endregion
       }
     }
 
@@ -570,8 +648,10 @@ const clavataTagConfidenceRequirements: Record<string, number> = {
   minimum: 51,
   minimumNsfw: 51,
 };
-const clavataNsfwTags = ['r', 'x', 'xxx'];
-const clavataNsfwLevelTags = ['pg', 'pg-13', ...clavataNsfwTags];
+
+type ClavataNsfwLevelTag = (typeof clavataNsfwLevelTags)[number];
+const clavataNsfwLevelTags = ['pg', 'pg-13', 'r', 'x', 'xxx'] as const;
+
 function processClavataTags(tags: IncomingTag[]) {
   // Map tags to lowercase
   tags = tags.map((tag) => ({
@@ -583,7 +663,7 @@ function processClavataTags(tags: IncomingTag[]) {
   // Filter out tags
   let highestNsfwTag: IncomingTag = { tag: 'pg', confidence: 100 };
   tags = tags.filter((tag) => {
-    const nsfwLevelIndex = clavataNsfwLevelTags.indexOf(tag.tag);
+    const nsfwLevelIndex = clavataNsfwLevelTags.indexOf(tag.tag as ClavataNsfwLevelTag);
     const isNsfwLevel = nsfwLevelIndex !== -1;
 
     // Remove tags below confidence threshold
@@ -595,7 +675,8 @@ function processClavataTags(tags: IncomingTag[]) {
 
     // Remove nsfw tags
     if (isNsfwLevel) {
-      if (nsfwLevelIndex > clavataNsfwLevelTags.indexOf(highestNsfwTag.tag)) highestNsfwTag = tag;
+      if (nsfwLevelIndex > clavataNsfwLevelTags.indexOf(highestNsfwTag.tag as ClavataNsfwLevelTag))
+        highestNsfwTag = tag;
       return false;
     }
 
