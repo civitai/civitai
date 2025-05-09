@@ -9,6 +9,7 @@ import {
   Card,
   Group,
   Divider,
+  useMantineColorScheme,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
@@ -22,6 +23,7 @@ import { auditMetaData } from '~/utils/metadata/audit';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const [meta, setMeta] = useState<ImageMetaProps | undefined>();
   const [nsfw, setNsfw] = useState<boolean>(false);
   const nodeJson = useGlobalValue('nodeJson');
@@ -49,14 +51,14 @@ export default function MetadataTester() {
             <IconUpload
               size={50}
               stroke={1.5}
-              color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Accept>
           <Dropzone.Reject>
             <IconX
               size={50}
               stroke={1.5}
-              color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Reject>
           <Dropzone.Idle>

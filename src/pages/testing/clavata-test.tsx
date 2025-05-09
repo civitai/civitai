@@ -10,6 +10,7 @@ import {
   Paper,
   Group,
   Badge,
+  useMantineColorScheme,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
@@ -21,6 +22,7 @@ import { ImageTag } from '~/server/integrations/clavata';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const user = useCurrentUser();
   const [policyId, setPolicyId] = useState<string | undefined>(undefined);
   const [tags, setTags] = useState<ImageTag[]>([]);
@@ -91,14 +93,14 @@ export default function MetadataTester() {
             <IconUpload
               size={50}
               stroke={1.5}
-              color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Accept>
           <Dropzone.Reject>
             <IconX
               size={50}
               stroke={1.5}
-              color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Reject>
           <Dropzone.Idle>

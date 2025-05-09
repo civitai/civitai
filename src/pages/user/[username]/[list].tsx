@@ -3,7 +3,6 @@ import {
   Anchor,
   Center,
   Container,
-  createStyles,
   Group,
   List,
   Loader,
@@ -28,6 +27,7 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
+import styles from './[list].module.scss';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx }) => {
@@ -41,24 +41,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const useStyles = createStyles((theme) => ({
-  striped: {
-    li: {
-      display: 'flex',
-      padding: theme.spacing.xs * 0.8, // 8px
-
-      '&:nth-of-type(2n)': {
-        backgroundColor:
-          theme.colorScheme === 'dark'
-            ? theme.fn.lighten(theme.colors.dark[7], 0.05)
-            : theme.fn.darken(theme.colors.gray[0], 0.01),
-      },
-    },
-  },
-}));
-
 export default function UserLists() {
-  const { classes } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { list, username } = router.query as {
@@ -86,10 +69,7 @@ export default function UserLists() {
           </Group>
         </ContainerGrid.Col>
         <ContainerGrid.Col span={12}>
-          <Tabs
-            defaultValue={list}
-            onTabChange={(value) => router.push(`/user/${username}/${value}`)}
-          >
+          <Tabs value={list} onChange={(value) => router.push(`/user/${username}/${value}`)}>
             <Tabs.List grow>
               <Tabs.Tab value="following">{`Following (${abbreviateNumber(
                 data?.followingCount ?? 0
@@ -118,7 +98,7 @@ export default function UserLists() {
                   <List
                     listStyleType="none"
                     styles={{ itemWrapper: { width: '100%' } }}
-                    className={classes.striped}
+                    className={styles.striped}
                   >
                     {data.following.length > 0 ? (
                       data.following.map((user) => (
@@ -150,7 +130,7 @@ export default function UserLists() {
                   <List
                     listStyleType="none"
                     styles={{ itemWrapper: { width: '100%' } }}
-                    className={classes.striped}
+                    className={styles.striped}
                   >
                     {data.followers.length > 0 ? (
                       data.followers.map((user) => (
@@ -184,7 +164,7 @@ export default function UserLists() {
                       <List
                         listStyleType="none"
                         styles={{ itemWrapper: { width: '100%' } }}
-                        className={classes.striped}
+                        className={styles.striped}
                       >
                         {data.hidden.length > 0 ? (
                           data.hidden.map((user) => (
@@ -216,7 +196,7 @@ export default function UserLists() {
                       <List
                         listStyleType="none"
                         styles={{ itemWrapper: { width: '100%' } }}
-                        className={classes.striped}
+                        className={styles.striped}
                       >
                         {data.blocked.length > 0 ? (
                           data.blocked.map((user) => (

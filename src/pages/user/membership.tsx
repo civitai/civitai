@@ -210,7 +210,7 @@ export default function UserMembership() {
                   color="red"
                   iconColor="red"
                   icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
-                  iconSize={28}
+                  iconSize="lg"
                   py={11}
                 >
                   <Stack gap={0}>
