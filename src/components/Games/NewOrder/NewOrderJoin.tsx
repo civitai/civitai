@@ -65,6 +65,7 @@ export function NewOrderJoin() {
             src="/images/games/new-order-animated-bg.webp"
             width={360}
             height={560}
+            unoptimized
           />
           <div className="absolute bottom-0 left-0 flex w-full flex-col gap-2 p-4">
             <Image
