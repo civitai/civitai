@@ -427,7 +427,7 @@ export function GenerationFormContent() {
             ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
             : isSD3
             ? model.id === 983611
-            : features.draft && !!draft;
+            : features.draft && !!draft && !isOpenAI;
           const minQuantity = !!isDraft ? 4 : 1;
           const maxQuantity = isOpenAI
             ? 10
@@ -1024,7 +1024,17 @@ export function GenerationFormContent() {
                 )}
 
                 {isOpenAI && (
-                  <InputSwitch name="openAITransparentBackground" label="Transparent Background" />
+                  <>
+                    <InputSwitch
+                      name="openAITransparentBackground"
+                      label="Transparent Background"
+                    />
+                    <InputSelect
+                      name="openAIQuality"
+                      label="Quality"
+                      data={['high', 'medium', 'low']}
+                    />
+                  </>
                 )}
 
                 {isFluxUltra && <InputSeed name="seed" label="Seed" />}

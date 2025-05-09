@@ -90,6 +90,7 @@ export function UserAvatar({
   badgeSize,
   withDecorations = true,
   withOverlay = false,
+  className,
 }: Props) {
   const theme = useMantineTheme();
   const { canViewNsfw } = useFeatureFlags();
@@ -138,6 +139,7 @@ export function UserAvatar({
 
   return (
     <Group
+      className={className}
       align="center"
       sx={
         withOverlay
@@ -279,6 +281,7 @@ type Props = {
   badgeSize?: number;
   withDecorations?: boolean;
   withOverlay?: boolean;
+  className?: string;
 };
 
 export const UserProfileLink = ({

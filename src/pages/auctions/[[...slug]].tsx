@@ -12,7 +12,6 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
-import dayjs from 'dayjs';
 import { InferGetServerSidePropsType } from 'next';
 import { usePathname } from 'next/navigation';
 import { useRouter } from 'next/router';
@@ -35,7 +34,7 @@ import { trpc } from '~/utils/trpc';
 
 type AuctionQueryData = {
   slug?: string[];
-  date?: string | string[];
+  d?: string | string[];
 };
 
 export const getServerSideProps = createServerSideProps({
@@ -49,17 +48,19 @@ export const getServerSideProps = createServerSideProps({
 
     if (ssg) {
       await ssg.auction.getAll.prefetch();
-      const { slug, date } = ctx.query as AuctionQueryData;
+      const { slug, d } = ctx.query as AuctionQueryData;
       if (slug && slug.length) {
         const sSlug = slug[0];
         if (sSlug !== MY_BIDS) {
           // await ssg.auction.getBySlug.prefetch({ slug: sSlug });
           try {
-            const queryDate = Array.isArray(date) ? date[0] : date;
-            const parsedDate = dayjs(queryDate);
-            const dDate = parsedDate.isValid() ? parsedDate.startOf('day').toDate() : undefined;
-            const res = await ssg.auction.getBySlug.fetch({ slug: sSlug, date: dDate });
             await ssg.auction.getMyBids.prefetch();
+
+            // TODO try to parse this better
+            // const queryD = Array.isArray(d) ? d[0] : d;
+            // const realD = !queryD ? 0 : Number(queryD);
+            // const res = await ssg.auction.getBySlug.fetch({ slug: sSlug, d: realD });
+            const res = await ssg.auction.getBySlug.fetch({ slug: sSlug });
             auctionName = res?.auctionBase?.name ?? null;
           } catch {
             valid = false;

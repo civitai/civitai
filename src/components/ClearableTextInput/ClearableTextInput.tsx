@@ -12,7 +12,7 @@ export const ClearableTextInput = forwardRef<HTMLInputElement, ClearableTextInpu
     const inputRef = useRef<HTMLInputElement>(null);
     const mergedRef = useMergedRef(ref, inputRef);
 
-    const closeButton = props.value && (
+    const closeButton = inputRef.current?.value && (
       <CloseButton
         variant="transparent"
         onClick={() => {
