@@ -16,7 +16,6 @@ import {
   Slider,
   Switch,
   Textarea,
-  TransferList,
 } from '@mantine/core';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
@@ -47,7 +46,6 @@ export const InputNumber = withController(NumberInputWrapper, ({ field }) => ({
   value: field.value,
 }));
 export const InputTextArea = withController(Textarea);
-export const InputTransferList = withController(TransferList);
 export const InputSelect = withController(SelectWrapper);
 export const InputMultiSelect = withController(MultiSelectWrapper);
 export const InputSegmentedControl = withController(SegmentedControlWrapper);

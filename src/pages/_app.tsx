@@ -1,6 +1,6 @@
 // src/pages/_app.tsx
 import { ColorScheme } from '@mantine/core';
-import { NotificationsProvider } from '@mantine/notifications';
+import { Notifications } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, getCookies } from 'cookies-next';
 import dayjs from 'dayjs';
@@ -166,32 +166,25 @@ function MyApp(props: CustomAppProps) {
                                       <PaddleProvider>
                                         <HiddenPreferencesProvider>
                                           <CivitaiLinkProvider>
-                                            <NotificationsProvider
-                                              className="notifications-container"
-                                              zIndex={9999}
-                                            >
-                                              <BrowserRouterProvider>
-                                                <IntersectionObserverProvider>
-                                                  <ToursProvider>
-                                                    <AuctionContextProvider>
-                                                      <BaseLayout>
-                                                        {isProd && <TrackPageView />}
-                                                        <ChatContextProvider>
-                                                          <CustomModalsProvider>
-                                                            {getLayout(
-                                                              <Component {...pageProps} />
-                                                            )}
-                                                            {/* <StripeSetupSuccessProvider /> */}
-                                                            <DialogProvider />
-                                                            <RoutedDialogProvider />
-                                                          </CustomModalsProvider>
-                                                        </ChatContextProvider>
-                                                      </BaseLayout>
-                                                    </AuctionContextProvider>
-                                                  </ToursProvider>
-                                                </IntersectionObserverProvider>
-                                              </BrowserRouterProvider>
-                                            </NotificationsProvider>
+                                            <BrowserRouterProvider>
+                                              <IntersectionObserverProvider>
+                                                <ToursProvider>
+                                                  <AuctionContextProvider>
+                                                    <BaseLayout>
+                                                      {isProd && <TrackPageView />}
+                                                      <ChatContextProvider>
+                                                        <CustomModalsProvider>
+                                                          {getLayout(<Component {...pageProps} />)}
+                                                          {/* <StripeSetupSuccessProvider /> */}
+                                                          <DialogProvider />
+                                                          <RoutedDialogProvider />
+                                                        </CustomModalsProvider>
+                                                      </ChatContextProvider>
+                                                    </BaseLayout>
+                                                  </AuctionContextProvider>
+                                                </ToursProvider>
+                                              </IntersectionObserverProvider>
+                                            </BrowserRouterProvider>
                                           </CivitaiLinkProvider>
                                         </HiddenPreferencesProvider>
                                       </PaddleProvider>

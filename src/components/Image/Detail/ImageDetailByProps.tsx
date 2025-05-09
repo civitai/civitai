@@ -51,6 +51,7 @@ import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { Notifications } from '@mantine/notifications';
 
 export function ImageDetailByProps({
   imageId,
@@ -98,6 +99,7 @@ export function ImageDetailByProps({
       />
       {image && <TrackView entityId={image.id} entityType="Image" type="ImageView" />}
       <MantineProvider theme={{ colorScheme: 'dark' }}>
+        <Notifications />
         <Paper className={classes.root}>
           <CloseButton
             style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}

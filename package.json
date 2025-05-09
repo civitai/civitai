@@ -44,7 +44,8 @@
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
     "test:reset": "make bootstrap-db",
-    "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts"
+    "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts",
+    "generate-types": "typed-scss-modules src"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -291,6 +292,7 @@
     "ts-node": "^10.9.1",
     "tsc-files": "^1.1.4",
     "tsx": "^4.19.2",
+    "typed-scss-modules": "^8.1.1",
     "typescript": "^5.5.3"
   },
   "ct3aMetadata": {

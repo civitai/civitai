@@ -1,15 +1,8 @@
 import '@mantine/core/styles.css';
 import '@mantine/dates/styles.css';
-import {
-  MantineColorScheme,
-  ColorSchemeScript,
-  createTheme,
-  MantineProvider,
-  useMantineColorScheme,
-} from '@mantine/core';
-import dayjs from 'dayjs';
-import { useCallback, useEffect, useState } from 'react';
-import { setCookie } from 'cookies-next';
+
+import { MantineColorScheme, ColorSchemeScript, createTheme, MantineProvider } from '@mantine/core';
+import { Notifications } from '@mantine/notifications';
 
 const theme = createTheme({
   components: {
@@ -120,6 +113,7 @@ export function ThemeProvider({
   return (
     <ColorSchemeScript defaultColorScheme={cookeColorScheme}>
       <MantineProvider theme={theme} defaultColorScheme={cookeColorScheme ?? 'dark'}>
+        <Notifications />
         {children}
       </MantineProvider>
     </ColorSchemeScript>

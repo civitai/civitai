@@ -79,6 +79,7 @@ import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { Notifications } from '@mantine/notifications';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -605,6 +606,7 @@ export default function BountyEntryDetailsPage({
 
 BountyEntryDetailsPage.getLayout = (page: React.ReactElement) => (
   <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
+    <Notifications />
     {page}
   </MantineProvider>
 );

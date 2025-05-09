@@ -1,5 +1,4 @@
 import { createStyles, useMantineTheme } from '@mantine/core';
-import { bounceRight, heartbeat, vibrate } from '~/libs/animations';
 
 export function CivitaiLinkSvg() {
   const theme = useMantineTheme();

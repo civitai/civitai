@@ -52,29 +52,6 @@ export const bounceRight = keyframes({
   },
 });
 
-export const heartbeat = keyframes({
-  from: {
-    transform: 'scale(1)',
-    animationTimingFunction: 'ease-out',
-  },
-  '10%': {
-    transform: 'scale(0.96)',
-    animationTimingFunction: 'ease-in',
-  },
-  '17%': {
-    transform: 'scale(0.98)',
-    animationTimingFunction: 'ease-out',
-  },
-  '33%': {
-    transform: 'scale(0.94)',
-    animationTimingFunction: 'ease-in',
-  },
-  '45%': {
-    transform: 'scale(1)',
-    animationTimingFunction: 'ease-out',
-  },
-});
-
 export const vibrate = (amount = 2) =>
   keyframes({
     '0%': {
