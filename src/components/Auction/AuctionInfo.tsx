@@ -313,7 +313,7 @@ export const AuctionInfo = () => {
   const today = dayjs().startOf('day').toDate();
   const showParseError = useRef(true);
   const dateToUse = parseResult.hasError ? today : parseResult.date ?? today;
-  const canBid = dateToUse.getTime() === today.getTime();
+  const canBid = dateToUse.getTime() >= today.getTime();
 
   const {
     data: auctionData,

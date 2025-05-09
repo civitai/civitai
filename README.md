@@ -130,8 +130,7 @@ Services that require external input will currently not work locally. These incl
 
 Any contributions you make are **greatly appreciated**.
 
-If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "
-enhancement".
+If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "enhancement".
 Don't forget to give the project a star! Thanks again!
 
 1. Fork the repository to your own GitHub account.
@@ -152,7 +151,7 @@ Over the course of development, you may need to change the structure of the data
 3. In this folder, create a file called `migration.sql`
 4. In that file, put your sql changes
     - These are usually simple sql commands like `ALTER TABLE ...`
-5. Run `make run-migrations`
+5. Run `make run-migrations` and `make gen-prisma`
 6. If you are adding/changing a column or table, please try to keep the `gen_seed.ts` file up to date with these changes
 
 ## Sponsors

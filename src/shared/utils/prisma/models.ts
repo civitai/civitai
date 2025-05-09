@@ -162,6 +162,8 @@ export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
 
+export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -2656,6 +2658,20 @@ export interface ModerationRule {
   reason: string | null;
   createdById: number;
   createdBy?: User;
+}
+
+export interface Changelog {
+  id: number;
+  title: string;
+  content: string;
+  link: string | null;
+  cta: string | null;
+  effectiveAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  type: ChangelogType;
+  tags: string[];
+  disabled: boolean;
 }
 
 export interface QuestionRank {

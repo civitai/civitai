@@ -3129,6 +3129,8 @@ const genRows = async (truncate = true) => {
 
   const featuredModelVersions = genFeaturedModelVersions(auctions.length * 10, mvIds);
   await insertRows('FeaturedModelVersion', featuredModelVersions);
+
+  // TODO add changelog
 };
 
 /**
