@@ -148,7 +148,7 @@ function Test() {
         </FormWrapper> */}
       {/* <SourceImageUpload value={data} onChange={setData} limit={3} /> */}
       <IsClient>
-        <ImageCropperTest images={imageData} />
+        <ImageCropperContent images={imageData} />
       </IsClient>
     </div>
   );
@@ -448,7 +448,7 @@ import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/As
 import { IsClient } from '~/components/IsClient/IsClient';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { SourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
-import { ImageCropperTest } from '~/components/Generation/Input/ImageCropModal';
+import { ImageCropperContent } from '~/components/Generation/Input/ImageCropModal';
 
 function ExamplePopover() {
   return (

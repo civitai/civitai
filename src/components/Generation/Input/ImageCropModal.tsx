@@ -1,31 +1,12 @@
-import { ActionIcon, Card, Modal, Radio, SegmentedControl, Slider } from '@mantine/core';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActionIcon, Button, Card, Modal, Radio, SegmentedControl, Slider } from '@mantine/core';
+import { useEffect, useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
 import { Point, Area, MediaSize } from 'react-easy-crop/types';
 import { IconZoomIn, IconZoomOut } from '@tabler/icons-react';
 
 type ImageProps = { url: string; width: number; height: number; label?: string };
-
-export function ImageCropModal({ images }: { images: ImageProps[] }) {
-  const dialog = useDialogContext();
-  const [selected, setSelected] = useState('0');
-  const [state, setState] = useState(images);
-
-  return (
-    <Modal {...dialog} title="Crop Images">
-      <SegmentedControl
-        onChange={setSelected}
-        value={selected}
-        data={images.map(({ label }, index) => ({
-          label: label ?? `Image ${index + 1}`,
-          value: `${index}`,
-        }))}
-      />
-    </Modal>
-  );
-}
-
+type ImageCropperProps = { images: ImageProps[]; onCancel?: () => void; onConfirm: () => void };
 type CroppedImageProps = ImageProps & {
   zoom: number;
   crop: Point;
@@ -33,7 +14,27 @@ type CroppedImageProps = ImageProps & {
   croppedArea: Area | null;
 };
 
-export function ImageCropperTest({ images }: { images: ImageProps[] }) {
+export function ImageCropModal(props: ImageCropperProps) {
+  const dialog = useDialogContext();
+
+  function handleCancel() {
+    props.onCancel?.();
+    dialog.onClose();
+  }
+
+  function handleConfirm() {
+    props.onConfirm();
+    dialog.onClose();
+  }
+
+  return (
+    <Modal {...dialog} title="Crop Images" size={768}>
+      <ImageCropperContent {...props} onCancel={handleCancel} onConfirm={handleConfirm} />
+    </Modal>
+  );
+}
+
+export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCropperProps) {
   const [selected, setSelected] = useState('0');
   const [state, setState] = useState<CroppedImageProps[]>(
     images.map((image) => ({
@@ -78,25 +79,37 @@ export function ImageCropperTest({ images }: { images: ImageProps[] }) {
     });
   }
 
+  function handleConfirm() {
+    onConfirm();
+  }
+
   return (
     <div className="flex gap-3 max-sm:flex-col">
-      <div className="flex flex-1 flex-col gap-3 rounded-md bg-[#000] py-3">
-        <SegmentedControl
-          onChange={setSelected}
-          value={selected}
-          data={images.map(({ label }, index) => ({
-            label: label ?? `Image ${index + 1}`,
-            value: `${index}`,
-          }))}
-          className="mx-3"
-        />
-        <div className="relative aspect-square">
-          <ImageCropper
-            key={selectedIndex}
-            {...image}
-            aspect={aspect}
-            onCropComplete={handleCropComplete}
+      <div className="flex flex-1 flex-col gap-3">
+        <div className="flex flex-1 flex-col gap-3 rounded-md bg-[#000] py-3">
+          <SegmentedControl
+            onChange={setSelected}
+            value={selected}
+            data={images.map(({ label }, index) => ({
+              label: label ?? `Image ${index + 1}`,
+              value: `${index}`,
+            }))}
+            className="mx-3"
           />
+          <div className="relative aspect-square">
+            <ImageCropper
+              key={selectedIndex}
+              {...image}
+              aspect={aspect}
+              onCropComplete={handleCropComplete}
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-3">
+          <Button onClick={onCancel} variant="default">
+            Cancel
+          </Button>
+          <Button onClick={handleConfirm}>Confirm</Button>
         </div>
       </div>
       <div className="flex flex-col gap-3 sm:w-40">
