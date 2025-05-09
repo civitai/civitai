@@ -61,7 +61,7 @@ export function OnboardingRedTos() {
         )}
       </ScrollArea>
       {!termsLoading && (
-        <Group position="apart" align="flex-start">
+        <Group justify="space-between" align="flex-start">
           <OnboardingAbortButton showWarning>Decline</OnboardingAbortButton>
           <Button
             rightIcon={<IconCheck />}

@@ -83,11 +83,11 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
   );
 
   const dropdown = (
-    <Stack spacing="xs">
-      <Stack spacing="xs">
+    <Stack gap="xs">
+      <Stack gap="xs">
         <Divider label="Type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={filters.types ?? []}
           onChange={(types: ModelType[]) => {
             setFilters({
@@ -104,7 +104,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
         </Chip.Group>
         <Divider label="Category" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={filters.categories ?? []}
           onChange={(categories: string[]) => {
             setFilters({
@@ -123,7 +123,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
         </Chip.Group>
         <Divider label="Base Model" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={filters.baseModels ?? []}
           onChange={(baseModels: string[]) => {
             setFilters({

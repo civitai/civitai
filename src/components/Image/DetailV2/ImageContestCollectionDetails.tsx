@@ -220,7 +220,7 @@ export const ImageContestCollectionDetails = ({
                       title="Share now"
                       collect={{ type: CollectionType.Image, imageId: image.id }}
                     >
-                      <Button radius="xl" color="gray" size="sm" compact className="text-center">
+                      <Button radius="xl" color="gray" size="compact-sm" className="text-center">
                         <Text size="xs">Share Now</Text>
                       </Button>
                     </ShareButton>

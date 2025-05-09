@@ -53,7 +53,7 @@ export function TipBuzzButton({ toUserId, entityId, entityType, label, ...button
         sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
         {...buttonProps}
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <IconBolt size={14} fill="currentColor" />
           {label ?? 'Tip'}
         </Group>

@@ -396,7 +396,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           )}
 
           {showEarlyAccessInput && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Divider label="Early Access Set Up" mb="md" />
 
               <DismissibleAlert
@@ -404,14 +404,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 size="sm"
                 color="yellow"
                 title={
-                  <Group spacing="xs">
+                  <Group gap="xs">
                     <Text>Earn Buzz with early access! </Text>
                     <Popover width={300} withArrow withinPortal shadow="sm">
                       <Popover.Target>
                         <IconInfoCircle size={16} />
                       </Popover.Target>
                       <Popover.Dropdown>
-                        <Stack spacing="xs">
+                        <Stack gap="xs">
                           <Text size="sm">
                             Early Access helps creators monetize, learn more{' '}
                             <Anchor href="/articles/6341">here</Anchor>
@@ -469,14 +469,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 <Stack>
                   <Input.Wrapper
                     label={
-                      <Group spacing="xs">
+                      <Group gap="xs">
                         <Text weight="bold">Early Access Time Frame</Text>
                         <Popover width={300} withArrow withinPortal shadow="sm">
                           <Popover.Target>
                             <IconInfoCircle size={16} />
                           </Popover.Target>
                           <Popover.Dropdown>
-                            <Stack spacing="xs">
+                            <Stack gap="xs">
                               <Text size="sm">
                                 The amount of resources you can have in early access and for how
                                 long is determined by actions you&rsquo;ve taken on the site.
@@ -522,7 +522,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     />
                     {earlyAccessUnlockedDays.length !==
                       constants.earlyAccess.timeframeValues.length && (
-                      <Group noWrap>
+                      <Group wrap="nowrap">
                         <Text size="xs" color="yellow">
                           You will unlock more early access day over time by posting models to the
                           site.
@@ -539,7 +539,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     {modelDownloadEnabled && (
                       <Card withBorder>
                         <Card.Section withBorder>
-                          <Group py="sm" px="md" position="apart" noWrap>
+                          <Group py="sm" px="md" justify="space-between" wrap="nowrap">
                             <div>
                               <Text weight={500} size="sm">
                                 Allow users to pay for download (Includes ability to generate)
@@ -578,7 +578,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     )}
                     <Card withBorder>
                       <Card.Section withBorder>
-                        <Group py="sm" px="md" position="apart" noWrap>
+                        <Group py="sm" px="md" justify="space-between" wrap="nowrap">
                           <div>
                             <Text weight={500} size="sm">
                               Allow users to pay for generation only - no download.
@@ -637,7 +637,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       features.donationGoals && (
                         <Card withBorder>
                           <Card.Section withBorder>
-                            <Group py="sm" px="md" position="apart" noWrap>
+                            <Group py="sm" px="md" justify="space-between" wrap="nowrap">
                               <div>
                                 <Text weight={500} size="sm">
                                   Enable donation goal
@@ -702,7 +702,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               <Divider my="md" />
             </Stack>
           )}
-          <Group spacing="xs" grow>
+          <Group gap="xs" grow>
             <InputSelect
               name="baseModel"
               label="Base Model"
@@ -745,7 +745,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             editorSize="xl"
           />
           {acceptsTrainedWords && (
-            <Stack spacing="xs">
+            <Stack gap="xs">
               {!skipTrainedWords && (
                 <InputMultiSelect
                   name="trainedWords"
@@ -774,9 +774,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               )}
             </Stack>
           )}
-          <Stack spacing={4}>
+          <Stack gap={4}>
             <Divider label="Training Params" />
-            <Group spacing="xs" grow>
+            <Group gap="xs" grow>
               <InputNumber
                 name="epochs"
                 label="Epochs"
@@ -795,9 +795,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               />
             </Group>
           </Stack>
-          <Stack spacing={4}>
+          <Stack gap={4}>
             <Divider label="Recommended Settings" />
-            <Group spacing="xs" sx={{ '&>*': { flexGrow: 1 } }}>
+            <Group gap="xs" sx={{ '&>*': { flexGrow: 1 } }}>
               <InputNumber
                 name="clipSkip"
                 label="Clip Skip"
@@ -862,7 +862,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             </Group>
           </Stack>
           {modelDownloadEnabled && (
-            <Stack spacing={8}>
+            <Stack gap={8}>
               <Divider label="Additional options" />
 
               <InputSwitch

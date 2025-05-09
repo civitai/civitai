@@ -51,9 +51,9 @@ export const SubscriptionFeature = ({
 
   return (
     <Paper className={classes.card} py="xs">
-      <Group noWrap>
+      <Group wrap="nowrap">
         {image && <EdgeMedia src={image} style={{ width: 50 }} />}
-        <Stack spacing={2}>
+        <Stack gap={2}>
           <Text className={classes.title}>{title}</Text>
           <Text className={classes.subtitle} lh={1.2}>
             {subtitle}
@@ -79,7 +79,7 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
   return (
     <SubscriptionFeature
       title={
-        <Group noWrap spacing={2}>
+        <Group wrap="nowrap" gap={2}>
           <CurrencyIcon size={20} />
           <span>
             {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier - buzzAmount))} Bonus Buzz

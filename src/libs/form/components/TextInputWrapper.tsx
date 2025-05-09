@@ -36,7 +36,7 @@ export const TextInputWrapper = forwardRef<HTMLInputElement, ClearableTextInputP
         rightSection={
           (clearable || rightSection) &&
           props.type !== 'hidden' && (
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               {clearable && !props.disabled && closeButton}
               {rightSection}
             </Group>

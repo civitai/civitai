@@ -67,7 +67,7 @@ export function NotificationsCard() {
         </Title>
         <Card withBorder pb={0}>
           <Card.Section withBorder inheritPadding py="xs">
-            <Group position="apart">
+            <Group justify="space-between">
               <Text weight={500}>On-site Notifications</Text>
               <SkeletonSwitch
                 loading={isLoading}
@@ -77,7 +77,7 @@ export function NotificationsCard() {
             </Group>
           </Card.Section>
           {!hasNotifications ? (
-            <Group noWrap mt="xs" pb="sm">
+            <Group wrap="nowrap" mt="xs" pb="sm">
               <IconBellOff size={24} strokeWidth={2} />
               <Text sx={{ lineHeight: 1.3 }}>
                 {`All non-essential notifications are turned off`}
@@ -88,7 +88,7 @@ export function NotificationsCard() {
               {Object.entries(notificationCategoryTypes).map(([category, settings]) => (
                 <React.Fragment key={category}>
                   <Card.Section withBorder inheritPadding py="xs">
-                    <Group position="apart">
+                    <Group justify="space-between">
                       <Text weight={500}>{category} Notifications</Text>
                       <SkeletonSwitch
                         loading={isLoading}

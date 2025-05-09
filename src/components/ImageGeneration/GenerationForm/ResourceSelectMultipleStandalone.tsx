@@ -44,7 +44,7 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
 
               <Button
                 component="span"
-                compact
+                size="compact-md"
                 variant="light"
                 onClick={(e) => {
                   e.preventDefault();

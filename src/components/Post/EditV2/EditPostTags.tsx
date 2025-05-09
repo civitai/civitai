@@ -52,7 +52,7 @@ export function EditPostTags({
     <EditPostTagsContext.Provider
       value={{ postId: post.id, tags, setTags: handleSetTags, autosuggest }}
     >
-      <Group spacing="xs">
+      <Group gap="xs">
         {tags.map((tag, index) => (
           <PostTag
             key={index}
@@ -97,7 +97,7 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
       pr={tag.id ? 'xs' : undefined}
       sx={{ minHeight: 32, display: 'flex', alignItems: 'center' }}
     >
-      <Group spacing="xs">
+      <Group gap="xs">
         <Text>{tag.name}</Text>
         {tag.id && canRemove && (
           <ActionIcon
@@ -236,7 +236,7 @@ function TagPicker() {
         sx={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
       >
         {!editing ? (
-          <Group spacing={4} data-tour="post:tag">
+          <Group gap={4} data-tour="post:tag">
             <IconPlus size={16} />
             <Text>Tag</Text>
           </Group>
@@ -285,16 +285,16 @@ function TagPicker() {
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown p={0}>
         <Box style={{ width: 300 }} ref={setDropdown}>
-          <Group position="apart" px="sm" py="xs">
+          <Group justify="space-between" px="sm" py="xs">
             <Text weight={500}>{label} Tags</Text>
             {isFetching && <Loader variant="dots" />}
           </Group>
           <Divider />
           {!!filteredData?.length && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               {filteredData.map((tag, index) => (
                 <Group
-                  position="apart"
+                  justify="space-between"
                   key={index}
                   className={cx({ [classes.active]: index === active })}
                   onMouseOver={() => setActive(index)}
@@ -302,7 +302,7 @@ function TagPicker() {
                   onClick={() => handleClick(index)}
                   p="sm"
                 >
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <Text size="sm">{tag.name}</Text>
                     {tag.isCategory && <IconStar className={classes.categoryIcon} size={12} />}
                   </Group>

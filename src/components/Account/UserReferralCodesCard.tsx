@@ -60,7 +60,7 @@ export function UserReferralCodesCard() {
   return (
     <Card id="referrals" withBorder>
       <Stack>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Title order={2}>Referral Codes</Title>
           {features.buzz && (
             <Text color="dimmed" size="sm">
@@ -86,7 +86,7 @@ export function UserReferralCodesCard() {
               {userReferralCodes.length === 0 ? (
                 <Paper radius="md" p="lg" sx={{ position: 'relative' }} withBorder>
                   <Center>
-                    <Stack spacing={2}>
+                    <Stack gap={2}>
                       <Text weight="bold">You have not created any referral codes</Text>
                       <Text size="sm" color="dimmed">
                         Start by creating your first referral code to invite friends.
@@ -95,11 +95,11 @@ export function UserReferralCodesCard() {
                   </Center>
                 </Paper>
               ) : (
-                <Stack spacing="xs">
+                <Stack gap="xs">
                   {userReferralCodes.map((referralCode) => (
                     <Paper withBorder p="sm" key={referralCode.id}>
-                      <Group position="apart">
-                        <Stack spacing={0}>
+                      <Group justify="space-between">
+                        <Stack gap={0}>
                           <Code color="blue" style={{ textAlign: 'center' }}>
                             {referralCode.code}
                           </Code>

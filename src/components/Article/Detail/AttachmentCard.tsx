@@ -52,11 +52,11 @@ export function AttachmentCard({ id, name, sizeKB, url }: Props) {
       href={`/api/download/attachments/${id}`}
       download
     >
-      <Group spacing="xs" noWrap>
+      <Group gap="xs" wrap="nowrap">
         <ThemeIcon size="lg" variant="light" color={color} sx={{ backgroundColor: 'transparent' }}>
           {icon}
         </ThemeIcon>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text size="sm" lineClamp={1}>
             {name}
           </Text>

@@ -15,7 +15,7 @@ export function ImageFeedFilters({
   const currentUser = useCurrentUser();
 
   return (
-    <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
+    <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser && (
         <FollowedFilter
           type="images"
@@ -25,14 +25,13 @@ export function ImageFeedFilters({
       )}
       <SortFilter type="images" className={classes.subnavDropdown} />
       <MediaFiltersDropdown
-        size="sm"
         w="100%"
         className={classes.subnavDropdown}
         filterType="images"
         hideMediaTypes={hideMediaTypes}
         hideTools={hideTools}
         isFeed
-        compact
+        size="compact-sm"
       />
     </Group>
   );

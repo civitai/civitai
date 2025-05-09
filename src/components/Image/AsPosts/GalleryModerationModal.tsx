@@ -8,6 +8,7 @@ import {
   Loader,
   Modal,
   Paper,
+  Portal,
   Stack,
   Text,
   createStyles,
@@ -105,26 +106,29 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
         <Text weight={500}>Hidden Tags</Text>
       </Card.Section>
       <Card.Section withBorder sx={{ marginTop: -1 }}>
-        <Autocomplete
-          name="tag"
-          ref={searchInputRef}
-          placeholder="Search tags to hide"
-          data={options}
-          value={search}
-          onChange={setSearch}
-          icon={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
-          onItemSubmit={(item: { value: string; id: number }) => {
-            handleToggleBlockedTag({ id: item.id, name: item.value });
-            searchInputRef.current?.focus();
-          }}
-          withinPortal
-          variant="unstyled"
-        />
+        <Portal reuseTargetNode>
+          <Autocomplete
+            name="tag"
+            ref={searchInputRef}
+            placeholder="Search tags to hide"
+            data={options}
+            value={search}
+            onChange={setSearch}
+            leftSection={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
+            onOptionSubmit={(value: string) => {
+              const item = options.find((o) => o.value === value);
+              if (!item) return;
+              handleToggleBlockedTag({ id: item.id, name: item.value });
+              searchInputRef.current?.focus();
+            }}
+            variant="unstyled"
+          />
+        </Portal>
       </Card.Section>
       <Card.Section inheritPadding pt="md" pb="xs">
-        <Stack spacing={5}>
+        <Stack gap={5}>
           {hiddenTags.length > 0 && (
-            <Group spacing={4}>
+            <Group gap={4}>
               {hiddenTags.map((tag) => (
                 <Badge
                   key={tag.id}
@@ -187,9 +191,11 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
           data={options}
           value={search}
           onChange={setSearch}
-          icon={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
-          onItemSubmit={({ id, value: username }: { value: string; id: number }) => {
-            handleToggleBlocked({ id, username });
+          leftSection={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
+          onOptionSubmit={(value: string) => {
+            const { id } = options.find((x) => x.value === value) ?? {};
+            if (!id) return;
+            handleToggleBlocked({ id, username: value });
             searchInputRef.current?.focus();
           }}
           withinPortal
@@ -197,9 +203,9 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
         />
       </Card.Section>
       <Card.Section inheritPadding pt="md" pb="xs">
-        <Stack spacing={5}>
+        <Stack gap={5}>
           {gallerySettings && gallerySettings.hiddenUsers.length > 0 && (
-            <Group spacing={4}>
+            <Group gap={4}>
               {gallerySettings.hiddenUsers.map((user) => (
                 <Badge
                   key={user.id}
@@ -267,14 +273,14 @@ function BrowsingLevelsStacked({
           const isSelected = Flags.hasFlag(browsingLevel, level);
           return (
             <Group
-              position="apart"
+              justify="space-between"
               key={level}
               p="md"
               onClick={() => toggleBrowsingLevel(level)}
               className={cx({ [classes.active]: isSelected })}
-              noWrap
+              wrap="nowrap"
             >
-              <Group noWrap>
+              <Group wrap="nowrap">
                 <Text weight={700} w={50} ta="center">
                   {browsingLevelLabels[level]}
                 </Text>

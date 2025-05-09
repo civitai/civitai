@@ -90,7 +90,7 @@ export default function Pricing() {
         <Stack>
           {!!redirectReason && (
             <Alert color="yellow">
-              <Group spacing="xs" noWrap align="flex-start">
+              <Group gap="xs" wrap="nowrap" align="flex-start">
                 <ThemeIcon color="yellow">
                   <IconExclamationMark />
                 </ThemeIcon>
@@ -109,7 +109,7 @@ export default function Pricing() {
                   className="hidden rounded-md md:block"
                 />
 
-                <Stack spacing="xs">
+                <Stack gap="xs">
                   <Text size="md">
                     To celebrate the holidays and our amazing community, new subscribers and current
                     members alike will receive 20% additional Blue Buzz along with their standard
@@ -147,7 +147,7 @@ export default function Pricing() {
               iconSize={28}
               py={11}
             >
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Text lh={1.2}>
                   Uh oh! It looks like there was an issue with your membership. You can update your
                   payment method or renew your membership now by clicking{' '}
@@ -172,7 +172,7 @@ export default function Pricing() {
               iconSize={28}
               py={11}
             >
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Text lh={1.2}>
                   Uh oh! Your active subscription is not using our default payment provider. We are
                   working on this issue and will notify you when it is resolved.
@@ -211,9 +211,9 @@ export default function Pricing() {
             )}
             {appliesForDiscount && (
               <Alert maw={650} mx="auto" py={4} miw="calc(50% - 8px)" pl="sm">
-                <Group spacing="xs">
+                <Group gap="xs">
                   <EdgeMedia src="df2b3298-7352-40d6-9fbc-17a08e2a43c5" width={48} />
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text color="blue" weight="bold">
                       Supporter Offer!
                     </Text>
@@ -243,7 +243,7 @@ export default function Pricing() {
               <ContainerGrid.Col md={3} sm={6} xs={12}>
                 <Card className={classes.card}>
                   <Stack style={{ height: '100%' }}>
-                    <Stack spacing="md" mb="md">
+                    <Stack gap="md" mb="md">
                       <Title className={classes.cardTitle} order={2} align="center" mb="sm">
                         Free
                       </Title>
@@ -254,7 +254,7 @@ export default function Pricing() {
                           className={classes.image}
                         />
                       </Center>
-                      <Group position="center" spacing={4} align="flex-end" mb={24}>
+                      <Group justify="center" gap={4} align="flex-end" mb={24}>
                         <Text
                           className={classes.price}
                           align="center"

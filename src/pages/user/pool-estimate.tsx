@@ -79,11 +79,11 @@ export default function EarnPotential() {
       value: (
         <NumberInput
           value={bankPortion}
-          onChange={(v) => setBankPortion(v ?? 50)}
+          onChange={(v) => setBankPortion(Number(v) ?? 50)}
           min={10}
           max={80}
           step={5}
-          icon={<IconPercentage />}
+          leftSection={<IconPercentage />}
         />
       ),
     },
@@ -103,11 +103,11 @@ export default function EarnPotential() {
       value: (
         <NumberInput
           value={creatorBankPortion}
-          onChange={(v) => setCreatorBankPortion(v ?? 50)}
+          onChange={(v) => setCreatorBankPortion(Number(v) ?? 50)}
           min={10}
           max={100}
           step={5}
-          icon={<IconPercentage />}
+          leftSection={<IconPercentage />}
         />
       ),
     },
@@ -123,7 +123,7 @@ export default function EarnPotential() {
       <Meta deIndex />
       <Container size="md">
         <Stack>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Title mb={0}>Estimated Creator Compensation Pool Earnings</Title>
             <Text color="dimmed">
               This is an estimate of your potential earnings from the Creator Compensation Pool
@@ -141,7 +141,7 @@ export default function EarnPotential() {
               items={poolDetails}
               labelWidth="30%"
               paperProps={{
-                sx: {
+                style: {
                   borderLeft: 0,
                   borderRight: 0,
                   borderBottom: 0,
@@ -158,7 +158,7 @@ export default function EarnPotential() {
               unitAmount={forecastedEarning}
               {...dollarCurrencyProps}
               size="xl"
-              sx={{ fontWeight: 900, fontSize: 24 }}
+              style={{ fontWeight: 900, fontSize: 24 }}
             />
           </Group>
           <Text size="xs" c="dimmed">

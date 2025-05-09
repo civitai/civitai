@@ -183,8 +183,8 @@ const ReviewCollection = () => {
               <ModerationControls collectionItems={collectionItems} filters={filters} />
             </Paper>
 
-            <Stack spacing="sm" mb="lg">
-              <Group spacing="xs">
+            <Stack gap="sm" mb="lg">
+              <Group gap="xs">
                 <BackButton url={`/collections/${collectionId}`} />
                 <Title order={1}>Collection items that need review</Title>
               </Group>
@@ -201,7 +201,7 @@ const ReviewCollection = () => {
                   }
                 />
               )}
-              <Group position="apart">
+              <Group justify="space-between">
                 <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
                   <Chip value={CollectionItemStatus.REVIEW}>
                     <span>Review</span>
@@ -527,7 +527,7 @@ function ModerationControls({
   };
 
   return (
-    <Group noWrap spacing="xs">
+    <Group wrap="nowrap" gap="xs">
       <ButtonTooltip label="Select all" {...tooltipProps}>
         <ActionIcon
           variant="outline"

@@ -356,17 +356,17 @@ export function ExistingChat() {
   };
 
   return (
-    <Stack spacing={0} h="100%">
+    <Stack gap={0} h="100%">
       {/* TODO this component stinks, it is hardcoded as a button */}
       <Spoiler
         showLabel={
-          <Group mt={4} spacing={8}>
+          <Group mt={4} gap={8}>
             <IconChevronDown size={16} />
             <Text size="xs">Expand</Text>
           </Group>
         }
         hideLabel={
-          <Group mt={8} spacing={8}>
+          <Group mt={8} gap={8}>
             <IconChevronUp size={16} />
             <Text size="xs">Hide</Text>
           </Group>
@@ -376,7 +376,7 @@ export function ExistingChat() {
           root: { textAlign: 'center' },
         }}
       >
-        <Group m="sm" mb={0} position="apart" noWrap align="flex-start" spacing="sm">
+        <Group m="sm" mb={0} justify="space-between" wrap="nowrap" align="flex-start" gap="sm">
           {isMobile && (
             <ActionIcon onClick={goBack}>
               <IconChevronLeft />
@@ -387,19 +387,19 @@ export function ExistingChat() {
               <Loader />
             </Center>
           ) : (
-            <Group spacing="xs">
+            <Group gap="xs">
               {/* TODO improve useravatar to show loading (if necessary) */}
               {/* TODO online status (later), blocked users, etc */}
 
               {otherMembers?.map((cm) => (
-                <Button key={cm.userId} variant="light" color="gray" compact>
+                <Button key={cm.userId} variant="light" color="gray" size="compact-md">
                   <UserAvatar
                     user={cm.user}
                     size="xs"
                     withUsername
                     linkToProfile
                     badge={
-                      <Group spacing={6} ml={4} align="center">
+                      <Group gap={6} ml={4} align="center">
                         {cm.user.isModerator ? (
                           <Image
                             src="/images/civ-c.png"
@@ -457,7 +457,7 @@ export function ExistingChat() {
                 <Loader />
               </Center>
             ) : allChats.length > 0 ? (
-              <Stack sx={{ overflowWrap: 'break-word' }} spacing={12}>
+              <Stack sx={{ overflowWrap: 'break-word' }} gap={12}>
                 {hasNextPage && (
                   <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
                     <Center p="xl" sx={{ height: 36 }} mt="md">
@@ -484,7 +484,7 @@ export function ExistingChat() {
             <>
               {!!replyId && (
                 <>
-                  <Group p="xs" noWrap>
+                  <Group p="xs" wrap="nowrap">
                     <Text size="xs">Replying:</Text>
                     <Box sx={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
                       {allChats.find((ac) => ac.id === replyId)?.content ?? ''}
@@ -515,7 +515,7 @@ export function ExistingChat() {
                 {myMember.status === ChatMemberStatus.Left && (
                   <Button
                     variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    compact
+                    size="compact-md"
                     disabled={isJoining}
                     onClick={handleJoinChat}
                   >
@@ -537,7 +537,7 @@ export function ExistingChat() {
               )}${allChats[0].content.length > 70 ? '...' : ''}"`}</Text>
             )}
             <Text align="center">Join the chat?</Text>
-            <Group p="sm" position="center">
+            <Group p="sm" justify="center">
               <Button
                 disabled={isJoining || myMember.status === ChatMemberStatus.Ignored}
                 variant="light"
@@ -725,7 +725,7 @@ function ChatInputBox({
   }, [state.existingChatId]);
 
   return (
-    <Group spacing={0}>
+    <Group gap={0}>
       <Textarea
         sx={{ flexGrow: 1 }}
         disabled={isMuted}
@@ -804,7 +804,7 @@ const EmbedMessage = ({ content }: { content: string }) => {
         border: '1px solid gray',
       }}
       className={cx(classes.chatMessage)}
-      noWrap
+      wrap="nowrap"
     >
       {(!!title || !!description) && (
         <Stack>
@@ -877,7 +877,7 @@ function DisplayMessages({
             component={div}
             // ref={c.id === lastReadId ? lastReadRef : undefined}
             key={c.id}
-            spacing={12}
+            gap={12}
             style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
             initial={{ y: -20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -886,7 +886,7 @@ function DisplayMessages({
             {isSystemChat && c.contentType === ChatMessageType.Embed ? (
               <EmbedMessage content={c.content} />
             ) : isSystemChat ? (
-              // <Group align="center" position="center">
+              // <Group align="center" justify="center">
               //   <Text size="xs">{formatDate(c.createdAt)}</Text>
               //   ...Text (below)
               // </Group>
@@ -918,8 +918,8 @@ function DisplayMessages({
                 {/* TODO this needs better styling and click -> message */}
                 {!!c.referenceMessageId && (
                   <Group
-                    spacing={6}
-                    position="right"
+                    gap={6}
+                    justify="flex-end"
                     sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
                   >
                     <IconArrowBack size={14} />
@@ -942,7 +942,7 @@ function DisplayMessages({
                   </Group>
                 )}
                 <Group
-                  position="right"
+                  justify="flex-end"
                   className={classes.highlightRow}
                   sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
                 >

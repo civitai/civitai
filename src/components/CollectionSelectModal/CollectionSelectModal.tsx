@@ -136,7 +136,7 @@ function ResourceHitList() {
     return (
       <div className="p-3 py-5">
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && <HiddenNotice hiddenCount={hiddenCount} />}
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
@@ -238,11 +238,11 @@ function CollectionSelectCard({ data }: { data: SearchIndexDataMap['collections'
           </Text>
           <div className="flex flex-nowrap gap-1">
             <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconLayoutGrid size={14} stroke={2.5} />
                 <Text size="xs">{abbreviateNumber(itemCount)}</Text>
               </Group>
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconUser size={14} stroke={2.5} />
                 <Text size="xs">{abbreviateNumber(contributorCount)}</Text>
               </Group>

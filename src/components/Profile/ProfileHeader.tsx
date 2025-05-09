@@ -166,7 +166,7 @@ export function ProfileHeader({ username }: { username: string }) {
 
     return (
       <Alert px="xs" className={classes.message}>
-        <Group spacing="xs" noWrap>
+        <Group gap="xs" wrap="nowrap">
           <ThemeIcon
             size={32}
             // @ts-ignore: transparent variant does work
@@ -175,7 +175,7 @@ export function ProfileHeader({ username }: { username: string }) {
           >
             <IconBellFilled />
           </ThemeIcon>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text>
               <CustomMarkdown
                 rehypePlugins={[rehypeRaw, remarkGfm]}

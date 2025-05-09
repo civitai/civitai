@@ -41,7 +41,7 @@ export function BrowsingLevelsInput({ value, onChange, ...props }: BrowsingLevel
 
   return (
     <Input.Wrapper {...props} error={props.error}>
-      <Group spacing="xs" mt="md" noWrap>
+      <Group gap="xs" mt="md" wrap="nowrap">
         {browsingLevels.map((level) => (
           <BrowsingLevelLabel
             key={level}

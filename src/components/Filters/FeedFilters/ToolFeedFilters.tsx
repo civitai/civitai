@@ -7,9 +7,9 @@ export function ToolFeedFilters({ ...groupProps }: GroupProps) {
   const { classes } = useFeedFiltersStyles();
 
   return (
-    <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
+    <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       <SortFilter type="tools" className={classes.subnavDropdown} />
-      <ToolFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
+      <ToolFiltersDropdown w="100%" size="compact-sm" className={classes.subnavDropdown} />
     </Group>
   );
 }

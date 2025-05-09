@@ -111,7 +111,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
               <React.Fragment key={level}>
                 <Button
                   variant={nsfwLevel === level ? 'filled' : 'outline'}
-                  compact
+                  size="compact-md"
                   onClick={() => handleSetLevel(level)}
                   color={
                     item.nsfwLevelLocked && item.nsfwLevel === level

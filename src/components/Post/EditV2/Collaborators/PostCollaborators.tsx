@@ -24,7 +24,7 @@ export const PostCollaboratorSelection = ({ post }: { post: PostDetailEditable }
   const isLoading = upsertingEntityCollaborator;
 
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <Text size="lg" weight={500}>
         Invite Collaborators
       </Text>

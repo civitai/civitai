@@ -118,7 +118,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     <Card className={classes.card}>
       <Stack justify="space-between" style={{ height: '100%' }}>
         <Stack>
-          <Stack spacing="md" mb="md">
+          <Stack gap="md" mb="md">
             <Title className={classes.title} order={2} align="center" mb="sm">
               {product.name}
             </Title>
@@ -129,13 +129,13 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                 </Box>
               </Center>
             )}
-            <Stack spacing={0} align="center">
+            <Stack gap={0} align="center">
               {appliesForDiscount ? (
-                <Stack spacing={0} align="center">
+                <Stack gap={0} align="center">
                   <Text td="line-through" color="gray" component="span" align="center" lh={1}>
                     {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                   </Text>
-                  <Group position="center" spacing={4} align="flex-end">
+                  <Group justify="center" gap={4} align="flex-end">
                     <Text className={classes.price} align="center" lh={1}>
                       {getStripeCurrencyDisplay(
                         price.unitAmount *
@@ -149,7 +149,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   </Group>
                 </Stack>
               ) : (
-                <Group position="center" spacing={4} align="flex-end">
+                <Group justify="center" gap={4} align="flex-end">
                   <Text className={classes.price} align="center" lh={1}>
                     {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                   </Text>

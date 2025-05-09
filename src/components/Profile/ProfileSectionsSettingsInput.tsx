@@ -71,7 +71,7 @@ export const ProfileSectionsSettingsInput = ({
 
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
-      <Stack mt="md" spacing="xs">
+      <Stack mt="md" gap="xs">
         <DndContext
           sensors={sensors}
           collisionDetection={rectIntersection}
@@ -94,7 +94,7 @@ export const ProfileSectionsSettingsInput = ({
                     p="xs"
                     radius="md"
                   >
-                    <Group noWrap>
+                    <Group wrap="nowrap">
                       <IconArrowsMove />
                       <Text size="sm">{profileSectionLabels[s.key]}</Text>
                       <Switch

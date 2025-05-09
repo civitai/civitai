@@ -63,7 +63,7 @@ export function InlineSocialLinkInput({
 
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
-      <Stack spacing="xs" mt="sm">
+      <Stack gap="xs" mt="sm">
         {links.length > 0 && (
           <Paper withBorder p="sm">
             <Stack>
@@ -71,7 +71,7 @@ export function InlineSocialLinkInput({
                 const isLast = index === links.length - 1;
                 return (
                   <Fragment key={index}>
-                    <Group align="center" noWrap>
+                    <Group align="center" wrap="nowrap">
                       <DomainIcon url={link.url} size={24} />
                       <Text size="sm">{link.url}</Text>
                       <ActionIcon

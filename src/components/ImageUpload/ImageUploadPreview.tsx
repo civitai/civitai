@@ -96,7 +96,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
               radius={0}
             >
               {isBlocked && (
-                <Group spacing={4}>
+                <Group gap={4}>
                   <Popover position="top" withinPortal withArrow>
                     <Popover.Target>
                       <ActionIcon>
@@ -104,7 +104,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
                       </ActionIcon>
                     </Popover.Target>
                     <Popover.Dropdown sx={{ maxWidth: 400 }} pb={14}>
-                      <Stack spacing={0}>
+                      <Stack gap={0}>
                         <Text size="xs" weight={500}>
                           Blocked for
                         </Text>

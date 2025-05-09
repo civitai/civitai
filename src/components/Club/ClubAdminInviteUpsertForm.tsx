@@ -57,11 +57,11 @@ export function ClubAdminInviteUpsertForm({ clubId, clubAdminInvite, onSuccess, 
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={32}>
+      <Stack gap={32}>
         <Grid gutter="xl">
           <Grid.Col xs={12}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
+            <Stack gap={32}>
+              <Stack gap="xl">
                 <InputDatePicker
                   name="expiresAt"
                   label="Expires At"
@@ -73,7 +73,7 @@ export function ClubAdminInviteUpsertForm({ clubId, clubAdminInvite, onSuccess, 
                   name="permissions"
                   orientation="vertical"
                   label="Invite Permissions"
-                  spacing={8}
+                  gap={8}
                 >
                   {Object.keys(ClubAdminPermission).map((permission) => {
                     return (
@@ -81,7 +81,7 @@ export function ClubAdminInviteUpsertForm({ clubId, clubAdminInvite, onSuccess, 
                         key={permission}
                         value={permission.toString()}
                         label={
-                          <Group spacing="xs" position="apart" w="100%" noWrap>
+                          <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
                             <Text lineClamp={1} inherit>
                               {getDisplayName(permission)}
                             </Text>
@@ -95,7 +95,7 @@ export function ClubAdminInviteUpsertForm({ clubId, clubAdminInvite, onSuccess, 
             </Stack>
           </Grid.Col>
         </Grid>
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button
               loading={upsertingInvite}

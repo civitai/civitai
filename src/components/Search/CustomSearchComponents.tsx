@@ -214,7 +214,7 @@ export function ChipRefinementList({ title, ...props }: RefinementListProps & { 
           </Group>
         </Accordion.Control>
         <Accordion.Panel>
-          <Group spacing="xs">
+          <Group gap="xs">
             {items.map((item) => (
               <Chip
                 size="sm"

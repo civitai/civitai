@@ -37,7 +37,7 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
   return (
     <Modal {...dialog} title="Add content to this club" size="sm" withCloseButton>
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           {canCreatePosts && (
             <UnstyledButton
               className={classes.button}

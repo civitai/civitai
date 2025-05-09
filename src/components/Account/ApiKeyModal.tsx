@@ -63,7 +63,7 @@ export function ApiKeyModal({ ...props }: Props) {
       closeOnEscape={!mutating}
     >
       {apiKey ? (
-        <Stack spacing={4}>
+        <Stack gap={4}>
           <Text weight={500}>Here is your API Key:</Text>
           <CopyButton value={apiKey}>
             {({ copied, copy }) => (
@@ -91,7 +91,7 @@ export function ApiKeyModal({ ...props }: Props) {
         <Form form={form} onSubmit={handleSaveApiKey}>
           <Stack>
             <InputText name="name" label="Name" placeholder="Your API Key name" withAsterisk />
-            <Group position="apart">
+            <Group justify="space-between">
               <Button variant="default" disabled={mutating} onClick={handleClose}>
                 Cancel
               </Button>

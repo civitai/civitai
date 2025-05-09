@@ -55,10 +55,10 @@ const schema = z.object({
 
 const BuzzFeatures = (props: Omit<ListProps, 'children'>) => {
   return (
-    <List listStyleType="none" spacing="sm" {...props}>
+    <List listStyleType="none" gap="sm" {...props}>
       {BUZZ_FEATURE_LIST.map((feature) => (
         <List.Item key={feature}>
-          <Group noWrap>
+          <Group wrap="nowrap">
             <CurrencyIcon style={{ flexShrink: 0 }} currency={Currency.BUZZ} size={18} />
             <Text>{feature}</Text>
           </Group>
@@ -126,7 +126,7 @@ export default function PurchaseBuzz() {
     <Container size="md" mb="lg">
       {minBuzzAmount && (
         <Alert radius="sm" color="info" mb="xl">
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text>
               The action you are trying to perform requires you to purchase a minimum of
               <CurrencyBadge currency={Currency.BUZZ} unitAmount={minBuzzAmount} /> to continue.
@@ -140,7 +140,7 @@ export default function PurchaseBuzz() {
         </Alert>
       )}
       <Alert radius="sm" color="yellow" style={{ zIndex: 10 }} mb="xl">
-        <Group spacing="xs" noWrap position="center">
+        <Group gap="xs" wrap="nowrap" justify="center">
           <CurrencyIcon currency={Currency.BUZZ} size={24} />
           <Title order={2}>Buy Buzz now</Title>
         </Group>

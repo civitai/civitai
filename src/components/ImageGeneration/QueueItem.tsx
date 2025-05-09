@@ -405,7 +405,7 @@ const ResourceBadge = (props: GenerationResource) => {
   const hasEpochDetails = !!epochDetails?.epochNumber;
 
   const badge = (
-    <Group spacing={0} noWrap>
+    <Group gap={0} wrap="nowrap">
       <Badge
         size="sm"
         color={unstable ? 'yellow' : undefined}

@@ -37,7 +37,7 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
       <ContainerGrid.Col span={12} sx={{ position: 'relative' }}>
         <LoadingOverlay visible={isLoading} zIndex={10} />
         {hasItems ? (
-          <Stack spacing={8}>
+          <Stack gap={8}>
             <MasonryGrid2
               data={comments}
               render={CommentDiscussionItem}
@@ -56,7 +56,7 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
                 style={{ display: 'flex', justifyContent: 'center', alignSelf: 'center' }}
               >
                 <Text size="xs" color="dimmed">
-                  <Group spacing={4} position="center">
+                  <Group gap={4} justify="center">
                     <IconMessageCancel size={16} />
                     <Text inherit inline>
                       {`See ${hiddenCommentsCount} more hidden ${

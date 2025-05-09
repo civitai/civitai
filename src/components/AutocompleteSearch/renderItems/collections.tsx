@@ -34,7 +34,7 @@ export const CollectionsSearchItem = forwardRef<
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
   return (
-    <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
+    <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
       <Center
         sx={{
           width: 64,
@@ -65,14 +65,14 @@ export const CollectionsSearchItem = forwardRef<
           />
         )}
       </Center>
-      <Stack spacing={8} sx={{ flex: '1 !important' }}>
+      <Stack gap={8} sx={{ flex: '1 !important' }}>
         <Text>
           <Highlight attribute="name" hit={hit} classNames={classes} />
         </Text>
         <UserAvatar size="xs" user={user} withUsername />
 
         {metrics && (
-          <Group spacing={4}>
+          <Group gap={4}>
             <ActionIconBadge icon={<IconMoodSmile size={12} stroke={2.5} />}>
               {abbreviateNumber(metrics.followerCount || 0)}
             </ActionIconBadge>

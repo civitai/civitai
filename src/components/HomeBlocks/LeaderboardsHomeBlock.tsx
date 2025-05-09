@@ -154,7 +154,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
   const { leaderboards } = homeBlock ?? {};
 
   return (
-    <Stack spacing="xl">
+    <Stack gap="xl">
       <div>
         <HomeBlockHeaderMeta metadata={metadata} />
       </div>
@@ -177,15 +177,14 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
                       h="100%"
                       style={{ scrollSnapAlign: 'start' }}
                     >
-                      <Group position="apart" align="center">
+                      <Group justify="space-between" align="center">
                         <Text size="lg">{leaderboard.title}</Text>
                         <Button
                           component={Link}
                           href={`/leaderboard/${leaderboard.id}`}
                           rightIcon={<IconArrowRight size={16} />}
                           variant="subtle"
-                          size="xs"
-                          compact
+                          size="compact-xs"
                         >
                           More
                         </Button>

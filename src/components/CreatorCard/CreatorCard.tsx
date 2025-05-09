@@ -97,8 +97,8 @@ export function CreatorCard({
   return (
     <Card p="xs" withBorder {...cardProps}>
       <Card.Section>
-        <Stack spacing="xs" p="xs">
-          <Group align="center" position="apart">
+        <Stack gap="xs" p="xs">
+          <Group align="center" justify="space-between">
             <UserAvatar
               size="sm"
               avatarProps={{ size: 32 }}
@@ -111,23 +111,22 @@ export function CreatorCard({
               linkToProfile
             />
             {withActions && (
-              <Group spacing={8} noWrap>
+              <Group gap={8} wrap="nowrap">
                 {tipsEnabled && (
                   <TipBuzzButton
                     toUserId={creator.id}
-                    size="xs"
                     entityId={tipBuzzEntityId}
                     label=""
                     entityType={tipBuzzEntityType}
-                    compact
+                    size="compact-xs"
                   />
                 )}
-                <ChatUserButton user={creator} size="xs" label="" compact />
-                <FollowUserButton userId={creator.id} size="xs" compact />
+                <ChatUserButton user={creator} label="" size="compact-xs" />
+                <FollowUserButton userId={creator.id} size="compact-xs" />
               </Group>
             )}
           </Group>
-          <Group spacing={8}>
+          <Group gap={8}>
             <RankBadge size="md" rank={creator.rank} />
             {stats && (
               <UserStatBadges
@@ -149,7 +148,7 @@ export function CreatorCard({
           })}
           py={5}
         >
-          <Group spacing={4}>
+          <Group gap={4}>
             {sortDomainLinks(creator.links).map((link, index) => (
               <ActionIcon
                 key={index}
@@ -289,9 +288,9 @@ export const CreatorCardV2 = ({
           />
         )}
         <Stack p="md">
-          <Group position="apart" align="flex-start" mih={60} style={{ zIndex: 1 }}>
+          <Group justify="space-between" align="flex-start" mih={60} style={{ zIndex: 1 }}>
             <Group>
-              <Group spacing={4}>
+              <Group gap={4}>
                 <RankBadge size="md" rank={creator.rank} />
                 {stats && displayStats.length > 0 && (
                   <UserStatBadgesV2
@@ -321,10 +320,10 @@ export const CreatorCardV2 = ({
             />
           </Group>
           <Box className={classes.profileDetailsContainer}>
-            <Stack spacing="xs" className={classes.profileDetails} py={8} h="100%">
-              <Group align="center" position="apart" noWrap>
+            <Stack gap="xs" className={classes.profileDetails} py={8} h="100%">
+              <Group align="center" justify="space-between" wrap="nowrap">
                 <UserProfileLink user={creator} linkToProfile>
-                  <Group noWrap>
+                  <Group wrap="nowrap">
                     <Box className={classes.avatar}>
                       <UserAvatar
                         size="lg"
@@ -338,7 +337,7 @@ export const CreatorCardV2 = ({
                         user={creatorWithCosmetics}
                       />
                     </Box>
-                    <Stack spacing={0} ml={70}>
+                    <Stack gap={0} ml={70}>
                       <Username
                         username={creator?.username}
                         deletedAt={creator?.deletedAt}
@@ -366,7 +365,7 @@ export const CreatorCardV2 = ({
                   </Group>
                 </UserProfileLink>
                 {withActions && (
-                  <Group spacing={8} noWrap>
+                  <Group gap={8} wrap="nowrap">
                     {tipsEnabled && (
                       <TipBuzzButton
                         toUserId={creator.id}
@@ -414,7 +413,7 @@ export const CreatorCardV2 = ({
           })}
           py={5}
         >
-          <Group spacing={4}>
+          <Group gap={4}>
             {sortDomainLinks(creator.links).map((link, index) => (
               <ActionIcon
                 key={index}

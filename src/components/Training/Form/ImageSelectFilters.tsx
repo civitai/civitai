@@ -87,9 +87,9 @@ export function ImageSelectFiltersTrainingDropdown({
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
-        compact
+        size="compact-md"
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <IconFilter size={16} />
           Filters
         </Group>
@@ -98,8 +98,8 @@ export function ImageSelectFiltersTrainingDropdown({
   );
 
   const dropdown = (
-    <Stack spacing="lg" p="md">
-      <Stack spacing="md">
+    <Stack gap="lg" p="md">
+      <Stack gap="md">
         <Divider label="Labels" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip
           {...chipProps}
@@ -111,7 +111,7 @@ export function ImageSelectFiltersTrainingDropdown({
         </Chip>
 
         <Divider label="Label Type" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group spacing={8} my={4}>
+        <Group gap={8} my={4}>
           {constants.autoLabel.labelTypes.map((lt) => (
             <Chip
               {...chipProps}
@@ -128,7 +128,7 @@ export function ImageSelectFiltersTrainingDropdown({
 
         <Divider label="Training Status" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={selectFilters.statuses}
           onChange={(sts: TrainingStatus[]) => setSelectFilters((f) => ({ ...f, statuses: sts }))}
           multiple
@@ -148,7 +148,7 @@ export function ImageSelectFiltersTrainingDropdown({
 
         <Divider label="Media Type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={selectFilters.mediaTypes}
           onChange={(ts: TrainingDetailsObj['mediaType'][]) =>
             setSelectFilters((f) => ({ ...f, mediaTypes: ts }))
@@ -165,7 +165,7 @@ export function ImageSelectFiltersTrainingDropdown({
 
         <Divider label="Type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={selectFilters.types}
           onChange={(ts: TrainingDetailsObj['type'][]) =>
             setSelectFilters((f) => ({ ...f, types: ts }))
@@ -182,7 +182,7 @@ export function ImageSelectFiltersTrainingDropdown({
 
         <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={selectFilters.baseModels}
           onChange={(bms: BaseModel[]) => setSelectFilters((f) => ({ ...f, baseModels: bms }))}
           multiple

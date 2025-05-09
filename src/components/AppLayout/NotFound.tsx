@@ -25,13 +25,13 @@ export function NotFound() {
       <Meta title="Page Not Found" deIndex />
 
       <Container size="md">
-        <Stack align="center" spacing={0}>
+        <Stack align="center" gap={0}>
           <Title order={1} lh={1}>
             404
           </Title>
           <Text size="lg">The page you are looking for doesn&apos;t exist</Text>
 
-          <Stack spacing={4} my="xl">
+          <Stack gap={4} my="xl">
             <Box
               sx={(theme) => ({
                 height: 400,

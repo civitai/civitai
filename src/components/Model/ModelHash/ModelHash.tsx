@@ -30,7 +30,7 @@ export const ModelHash = ({
   };
 
   return (
-    <Group spacing={0} noWrap sx={{ userSelect: 'none' }}>
+    <Group gap={0} wrap="nowrap" sx={{ userSelect: 'none' }}>
       <Badge
         variant="outline"
         color={color}

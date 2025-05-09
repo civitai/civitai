@@ -138,7 +138,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
           </Text>
         </div>
         {rank && (
-          <Group align="center" position="apart" spacing={4}>
+          <Group align="center" justify="space-between" gap={4}>
             <ModelTypeBadge
               classNames={{ inner: 'flex gap-2 flex-nowrap' }}
               type={type}
@@ -150,15 +150,15 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
               radius="xl"
               classNames={{ inner: 'flex gap-2 flex-nowrap' }}
             >
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconDownload size={14} strokeWidth={2.5} />
                 <Text size="xs">{abbreviateNumber(rank?.downloadCount ?? 0)}</Text>
               </Group>
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconBookmark size={14} strokeWidth={2.5} />
                 <Text size="xs">{abbreviateNumber(rank?.collectedCount ?? 0)}</Text>
               </Group>
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconMessageCircle2 size={14} strokeWidth={2.5} />
                 <Text size="xs">{abbreviateNumber(rank?.commentCount ?? 0)}</Text>
               </Group>

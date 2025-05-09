@@ -54,11 +54,11 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
 
   return (
     <div id="browsing-mode">
-      <Stack spacing="md" className="sm:min-w-96">
+      <Stack gap="md" className="sm:min-w-96">
         {showNsfw && (
-          <Stack spacing="lg">
-            <Stack spacing={4}>
-              <Stack spacing={0}>
+          <Stack gap="lg">
+            <Stack gap={4}>
+              <Stack gap={0}>
                 <Group align="flex-start">
                   <Text sx={{ lineHeight: 1 }}>Browsing Level</Text>
                   {showNsfw && (
@@ -67,12 +67,11 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                         onClick={closeMenu}
                         component={Link}
                         href="/research/rater"
-                        compact
-                        size="xs"
+                        size="compact-xs"
                         ml="auto"
                         variant="outline"
                       >
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           Rating Game
                           <IconCaretRightFilled size={14} />
                         </Group>
@@ -84,7 +83,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
               </Stack>
               <BrowsingLevelsGrouped />
               {browsingSettingsAddons.settings.disablePoi && (
-                <Group spacing="sm" mt={4}>
+                <Group gap="sm" mt={4}>
                   <IconAlertTriangle size={16} />
                   <Text color="dimmed" size="xs">
                     With X or XXX enabled, some content may be hidden.{' '}
@@ -102,7 +101,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
           </Stack>
         )}
 
-        <Group position="apart">
+        <Group justify="space-between">
           <Checkbox
             checked={!disableHidden}
             onChange={toggleDisableHidden}

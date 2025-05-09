@@ -61,11 +61,11 @@ export function ClubTierUpsertForm({
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={32}>
+      <Stack gap={32}>
         <Grid gutter="xl">
           <Grid.Col xs={12}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
+            <Stack gap={32}>
+              <Stack gap="xl">
                 <InputText name="name" label="Title" placeholder="e.g.: Gold Tier" withAsterisk />
                 <InputNumber
                   name="unitAmount"
@@ -138,8 +138,8 @@ export function ClubTierUpsertForm({
                 <InputSwitch
                   name="unlisted"
                   label={
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
+                    <Stack gap={4}>
+                      <Group gap={4}>
                         <Text inline>Unlisted</Text>
                       </Group>
                       <Text size="xs" color="dimmed">
@@ -152,8 +152,8 @@ export function ClubTierUpsertForm({
                 <InputSwitch
                   name="joinable"
                   label={
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
+                    <Stack gap={4}>
+                      <Group gap={4}>
                         <Text inline>Joinable</Text>
                       </Group>
                       <Text size="xs" color="dimmed">
@@ -168,8 +168,8 @@ export function ClubTierUpsertForm({
                 <InputSwitch
                   name="oneTimeFee"
                   label={
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
+                    <Stack gap={4}>
+                      <Group gap={4}>
                         <Text inline>One time payment</Text>
                       </Group>
                       <Text size="xs" color="dimmed">
@@ -183,7 +183,7 @@ export function ClubTierUpsertForm({
             </Stack>
           </Grid.Col>
         </Grid>
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button
               loading={upsertingTier}

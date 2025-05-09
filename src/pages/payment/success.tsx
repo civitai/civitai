@@ -39,7 +39,7 @@ export default function PaymentSuccess() {
       <Container size="xs" mb="lg">
         <Stack>
           <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-            <Group spacing="xs" noWrap position="center">
+            <Group gap="xs" wrap="nowrap" justify="center">
               <ThemeIcon color="green" size="lg">
                 <IconCircleCheck />
               </ThemeIcon>

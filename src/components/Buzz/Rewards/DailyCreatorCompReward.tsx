@@ -197,8 +197,8 @@ export function DailyCreatorCompReward() {
         <Grid.Col xs={12} md={8}>
           <Paper withBorder className={classes.tileCard} h="100%">
             <Stack p="md" h="100%">
-              <Stack spacing={0}>
-                <Group spacing={8} position="apart">
+              <Stack gap={0}>
+                <Group gap={8} justify="space-between">
                   <Title order={3}>Generation Buzz Earned</Title>
                   <Select
                     data={dateOptions}
@@ -212,7 +212,7 @@ export function DailyCreatorCompReward() {
                     }}
                   />
                 </Group>
-                <Group position="left" spacing={4}>
+                <Group position="left" gap={4}>
                   <CurrencyIcon currency={Currency.BUZZ} size={24} />
                   <Text
                     size="xl"
@@ -247,7 +247,7 @@ export function DailyCreatorCompReward() {
         </Grid.Col>
         <Grid.Col xs={12} md={4}>
           <Paper className={classes.tileCard} h="100%" withBorder>
-            <Stack spacing={8} py="md">
+            <Stack gap={8} py="md">
               <Title order={3} px="md">
                 Top Earning Resources
               </Title>
@@ -260,10 +260,9 @@ export function DailyCreatorCompReward() {
               {filteredVersionIds.length > 0 && (
                 <Button
                   variant="subtle"
-                  size="xs"
                   radius={0}
                   onClick={() => setFilteredVersionIds([])}
-                  compact
+                  size="compact-xs"
                 >
                   Clear selection
                 </Button>
@@ -280,7 +279,7 @@ export function DailyCreatorCompReward() {
                     type="auto"
                     className="[&>*]:w-full"
                   >
-                    <Stack spacing={8} px="md">
+                    <Stack gap={8} px="md">
                       {filteredResources.map((version) => {
                         const isSelected = filteredVersionIds.includes(version.id);
 
@@ -305,8 +304,8 @@ export function DailyCreatorCompReward() {
                             }}
                             w="100%"
                           >
-                            <Group position="apart" spacing={8} noWrap>
-                              <Stack spacing={0}>
+                            <Group justify="space-between" gap={8} wrap="nowrap">
+                              <Stack gap={0}>
                                 <Text size="sm" weight="bold" lineClamp={1}>
                                   {version.modelName}
                                 </Text>
@@ -314,7 +313,7 @@ export function DailyCreatorCompReward() {
                                   {version.name}
                                 </Text>
                               </Stack>
-                              <Group spacing={4} noWrap>
+                              <Group gap={4} wrap="nowrap">
                                 <CurrencyIcon currency={Currency.BUZZ} size={16} />
                                 <Text
                                   size="sm"

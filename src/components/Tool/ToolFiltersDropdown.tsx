@@ -70,11 +70,11 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
   if (!isClient) return target;
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
+    <Stack gap="lg">
+      <Stack gap="md">
         <Divider label="Type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={mergedFilters.type}
           onChange={(type: ToolType) => handleChange({ type })}
           my={4}

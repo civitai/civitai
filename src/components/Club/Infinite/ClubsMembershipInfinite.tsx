@@ -178,7 +178,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                   </td>
                   <td>
                     {canManageMemberships ? (
-                      <Group noWrap>
+                      <Group wrap="nowrap">
                         {membership.unitAmount > 0 && (
                           <Tooltip
                             label={`${
@@ -234,7 +234,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
               <Divider
                 size="sm"
                 label={
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconClock size={16} stroke={1.5} />
                     No more members to show.
                   </Group>
@@ -243,7 +243,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                 labelProps={{ size: 'sm' }}
               />
               <Center>
-                <Stack spacing={0} align="center">
+                <Stack gap={0} align="center">
                   <Text
                     variant="link"
                     size="sm"

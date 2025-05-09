@@ -39,7 +39,7 @@ export const ArticlesSearchItem = forwardRef<
   const nsfw = !getIsSafeBrowsingLevel(coverImage.nsfwLevel);
 
   return (
-    <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
+    <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
       <Center
         sx={{
           width: 64,
@@ -76,9 +76,9 @@ export const ArticlesSearchItem = forwardRef<
           </ThemeIcon>
         )}
       </Center>
-      <Stack spacing={4} sx={{ flex: '1 !important' }}>
+      <Stack gap={4} sx={{ flex: '1 !important' }}>
         <Highlight attribute="title" hit={hit} classNames={classes} />
-        <Group spacing={4}>
+        <Group gap={4}>
           <UserAvatar size="xs" user={user} withUsername />
           {nsfw && (
             <Badge size="xs" color="red">
@@ -92,7 +92,7 @@ export const ArticlesSearchItem = forwardRef<
           ))}
         </Group>
         {stats && (
-          <Group spacing={4}>
+          <Group gap={4}>
             <ActionIconBadge icon={<IconBookmark size={12} stroke={2.5} />}>
               {abbreviateNumber(favoriteCount)}
             </ActionIconBadge>

@@ -24,7 +24,7 @@ export function VotableTagMature({ tags, addTag }: VotableTagMatureProps) {
     <Popover width={400} withArrow withinPortal zIndex={1000}>
       <Popover.Target>
         <Badge radius="xs" className={classes.badge} px={5}>
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <IconPlus size={14} strokeWidth={2.5} />
             Moderated Content
           </Group>
@@ -38,9 +38,9 @@ export function VotableTagMature({ tags, addTag }: VotableTagMatureProps) {
           {moderationCategories.map((category) => {
             if (!category.children?.length || category.noInput || category.hidden) return null;
             return (
-              <Stack spacing="xs" key={category.value}>
+              <Stack gap="xs" key={category.value}>
                 <Divider label={getDisplayName(category.label)} labelPosition="center" />
-                <Group spacing={5} px="sm">
+                <Group gap={5} px="sm">
                   {category.children
                     .filter((x) => !x.hidden)
                     .map((child) => (

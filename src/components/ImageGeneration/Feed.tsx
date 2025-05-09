@@ -32,10 +32,10 @@ export function Feed() {
   if (!steps.flatMap((x) => x.images).length)
     return (
       <Center h="100%">
-        <Stack spacing="xs" align="center" py="16">
+        <Stack gap="xs" align="center" py="16">
           <IconInbox size={64} stroke={1} />
           {filters.marker && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text size={32} align="center">
                 No results found
               </Text>
@@ -43,7 +43,7 @@ export function Feed() {
             </Stack>
           )}
           {!filters.marker && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text size="md" align="center">
                 The queue is empty
               </Text>

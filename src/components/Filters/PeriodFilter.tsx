@@ -57,7 +57,7 @@ function DumbPeriodFilter({
         </SelectMenu>
       )}
       {variant === 'chips' && (
-        <Chip.Group spacing={8} value={value} onChange={onChange}>
+        <Chip.Group gap={8} value={value} onChange={onChange}>
           {options.map((x, index) => (
             <FilterChip key={index} value={x.value}>
               <span>{x.label}</span>

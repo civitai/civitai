@@ -73,9 +73,9 @@ export default function GenerationPage() {
     <>
       <Meta title="Generation" deIndex />
       <Container size="md">
-        <Stack spacing="xl">
-          <Group position="apart">
-            <Stack spacing={0}>
+        <Stack gap="xl">
+          <Group justify="space-between">
+            <Stack gap={0}>
               <Title>Unavailable Resources</Title>
               <Text color="dimmed">List of temporarily unavailable resources</Text>
             </Stack>

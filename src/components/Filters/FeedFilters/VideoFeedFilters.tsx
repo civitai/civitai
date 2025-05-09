@@ -10,7 +10,7 @@ export function VideoFeedFilters({ ...groupProps }: GroupProps) {
   const currentUser = useCurrentUser();
 
   return (
-    <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
+    <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser && (
         <FollowedFilter
           type="videos"
@@ -20,12 +20,11 @@ export function VideoFeedFilters({ ...groupProps }: GroupProps) {
       )}
       <SortFilter type="videos" className={classes.subnavDropdown} />
       <MediaFiltersDropdown
-        size="sm"
         w="100%"
         className={classes.subnavDropdown}
         filterType="videos"
         hideMediaTypes
-        compact
+        size="compact-sm"
         isFeed
       />
     </Group>

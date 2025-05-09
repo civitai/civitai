@@ -76,7 +76,7 @@ export const TosModal = ({
           <Loader />
         </Center>
       ) : (
-        <Stack spacing="md">
+        <Stack gap="md">
           {data?.title && (
             <>
               <Title order={2}>{data?.title}</Title>

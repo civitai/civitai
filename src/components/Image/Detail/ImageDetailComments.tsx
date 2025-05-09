@@ -32,7 +32,7 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
           <Stack>
             <ReturnToRootThread />
             {activeComment && (
-              <Stack spacing="xl">
+              <Stack gap="xl">
                 <Divider />
                 <Text size="sm" color="dimmed">
                   Viewing thread for

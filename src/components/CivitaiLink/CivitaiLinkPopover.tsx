@@ -147,14 +147,14 @@ function AboutCivitaiLink() {
         This feature is currently in early access and only available to Supporters.
       </AlertWithIcon>
       <SupporterHelp />
-      <Stack py="sm" px="lg" spacing={4}>
+      <Stack py="sm" px="lg" gap={4}>
         <Center p="md" pb={0}>
           <CivitaiLinkSvg />
         </Center>
         <Text my="xs">Interact with any Stable Diffusion instance in realtime from Civitai</Text>
       </Stack>
       <Divider />
-      <Group spacing={0} grow>
+      <Group gap={0} grow>
         <Button
           leftIcon={<IconVideo size={18} />}
           radius={0}
@@ -186,9 +186,9 @@ function LinkDropdown() {
 
   return (
     <Paper style={{ overflow: 'hidden' }}>
-      <Stack spacing={0} p="xs">
-        <Group position="apart" noWrap>
-          <Group spacing="xs">
+      <Stack gap={0} p="xs">
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap="xs">
             <Title order={4} size="sm">
               Civitai Link
             </Title>
@@ -228,7 +228,7 @@ function LinkDropdown() {
 
 function NotConnected({ error }: { error?: string }) {
   return (
-    <Stack p="xl" align="center" spacing={0}>
+    <Stack p="xl" align="center" gap={0}>
       <IconNetworkOff size={60} strokeWidth={1} />
       <Text>Cannot Connect</Text>
       <Text
@@ -246,7 +246,7 @@ function NotConnected({ error }: { error?: string }) {
 
 function LostConnection({ error }: { error?: string }) {
   return (
-    <Stack p="xl" align="center" spacing={0}>
+    <Stack p="xl" align="center" gap={0}>
       <IconNetworkOff size={60} strokeWidth={1} />
       <Text>Connection Lost</Text>
       <Text
@@ -282,13 +282,12 @@ function InstancesManager() {
   const showControls = status !== 'no-socket-connection';
 
   return (
-    <Stack spacing={0}>
-      <Group position="apart" p="xs">
+    <Stack gap={0}>
+      <Group justify="space-between" p="xs">
         <Text weight={500}>Stable Diffusion Instances</Text>
         {showControls && (
           <Button
-            compact
-            size="xs"
+            size="compact-xs"
             variant="outline"
             leftIcon={<IconPlus size={18} />}
             onClick={handleAddClick}
@@ -301,9 +300,9 @@ function InstancesManager() {
         {instances?.map((instance) => {
           const isSelected = instance.id === selectedInstance?.id;
           return (
-            <Group key={instance.id} className={classes.listItem} position="apart" p="xs">
+            <Group key={instance.id} className={classes.listItem} justify="space-between" p="xs">
               <Text>{instance.name}</Text>
-              <Group spacing="xs">
+              <Group gap="xs">
                 {isSelected && <BigIndicator />}
                 {showControls && (
                   <>
@@ -350,7 +349,7 @@ function BigIndicator() {
 function GetStarted() {
   return (
     <>
-      <Stack py="sm" px="lg" spacing={4}>
+      <Stack py="sm" px="lg" gap={4}>
         <Center p="md" pb={0}>
           <CivitaiLinkSvg />
         </Center>
@@ -383,9 +382,9 @@ function GetReconnected() {
         size="md"
         color="yellow"
       >{`Couldn't connect to SD instance!`}</AlertWithIcon>
-      <Stack p="sm" spacing={4}>
+      <Stack p="sm" gap={4}>
         {instance?.key && (
-          <Stack spacing={0} align="center" mb="md">
+          <Stack gap={0} align="center" mb="md">
             <Text size="md" weight={700}>
               Link Key
             </Text>
@@ -493,9 +492,9 @@ function LinkActivity({ id, ...props }: { id: string } & GroupProps) {
   };
 
   return (
-    <Group align="center" noWrap spacing="xs" {...props}>
+    <Group align="center" wrap="nowrap" gap="xs" {...props}>
       {isAdd ? <IconDownload /> : <IconTrash />}
-      <Stack style={{ flex: 1 }} spacing={0}>
+      <Stack style={{ flex: 1 }} gap={0}>
         <Text lineClamp={1} size="md" weight={500} style={{ lineHeight: 1 }}>
           {activity.resource.modelName || (isAdd ? activity.resource.name : undefined)}
         </Text>
@@ -540,9 +539,9 @@ function RequestProgress({
   if (!progress && !remainingTime && !speed) return null;
 
   return (
-    <Stack spacing={2} {...props}>
+    <Stack gap={2} {...props}>
       {progress && (
-        <Group spacing={4}>
+        <Group gap={4}>
           <Progress
             sx={{ width: '100%', flex: 1 }}
             size="xl"
@@ -558,7 +557,7 @@ function RequestProgress({
         </Group>
       )}
       {(speed || remainingTime) && (
-        <Group position="apart">
+        <Group justify="space-between">
           {speed ? <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text> : <span />}
           {remainingTime ? (
             <Text size="xs" color="dimmed">{`${formatSeconds(remainingTime)} remaining`}</Text>

@@ -70,7 +70,7 @@ export function GenerateButton({
         paddingRight: '6px',
       }}
     >
-      <Group spacing={0}>
+      <Group gap={0}>
         <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />{' '}
         <Text color="dark.9">{abbreviateNumber(generationPrice ?? 0, { decimals: 0 })}</Text>
       </Group>
@@ -113,7 +113,7 @@ export function GenerateButton({
       {iconOnly ? (
         <IconBrush size={24} />
       ) : (
-        <Group spacing={8} noWrap>
+        <Group gap={8} wrap="nowrap">
           <IconBrush size={20} />
           <Text inherit inline className="hide-mobile">
             Create

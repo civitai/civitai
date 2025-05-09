@@ -186,7 +186,7 @@ export const AdvancedSettings = ({
         <Group mt="md">
           <Switch
             label={
-              <Group spacing={4} noWrap>
+              <Group gap={4} wrap="nowrap">
                 <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
                   <Text>
                     Your LoRA will be trained in {<b>{rapidEta} minutes</b>} or less so you can get
@@ -245,7 +245,7 @@ export const AdvancedSettings = ({
       >
         <Accordion.Item value="custom-prompts">
           <Accordion.Control>
-            <Stack spacing={4}>
+            <Stack gap={4}>
               <Text>Sample Media Prompts</Text>
               {openedSections.includes('custom-prompts') && (
                 <Text size="xs" color="dimmed">
@@ -305,7 +305,7 @@ export const AdvancedSettings = ({
         {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
           <Card withBorder mt="md" p="sm">
             <Card.Section inheritPadding withBorder py="sm">
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text
                   color={theme.colorScheme === 'dark' ? theme.colors.gray[6] : theme.colors.gray[5]}
                 >
@@ -328,8 +328,8 @@ export const AdvancedSettings = ({
         ) : (
           <Accordion.Item value="training-settings">
             <Accordion.Control>
-              <Stack spacing={4}>
-                <Group spacing="sm">
+              <Stack gap={4}>
+                <Group gap="sm">
                   <Text>Training Parameters</Text>
                   {!!selectedRun.customModel && (
                     <Tooltip
@@ -481,7 +481,7 @@ export const AdvancedSettings = ({
                         label={hint}
                       >
                         <Group>
-                          <Group spacing={6}>
+                          <Group gap={6}>
                             <Text inline style={{ cursor: 'help' }}>
                               {ts.label}
                             </Text>

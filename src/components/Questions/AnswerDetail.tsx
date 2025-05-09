@@ -45,7 +45,7 @@ export function AnswerDetail({
   return (
     <Card p="sm" withBorder>
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <UserAvatar
             user={answer.user}
             subText={<DaysFromNow date={answer.createdAt} />}
@@ -87,7 +87,7 @@ export function AnswerDetail({
           )}
         </Group>
         <RenderHtml html={answer.content} />
-        <Group position="apart">
+        <Group justify="space-between">
           <Button.Group>
             <FavoriteBadge
               userReacted={answer.userReactions.some((x) => x.reaction === ReviewReactions.Heart)}

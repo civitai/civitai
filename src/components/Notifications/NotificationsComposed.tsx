@@ -79,9 +79,9 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
     return (
       <>
         <div className="flex flex-col gap-4 p-4">
-          <Group position="apart">
+          <Group justify="space-between">
             <Title order={1}>Notifications</Title>
-            <Group spacing={8}>
+            <Group gap={8}>
               <Switch
                 label="Hide Read"
                 labelPosition="left"

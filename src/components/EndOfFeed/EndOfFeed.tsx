@@ -9,7 +9,7 @@ export function EndOfFeed() {
       <Divider
         size="sm"
         label={
-          <Group spacing={4}>
+          <Group gap={4}>
             <IconClock size={16} stroke={1.5} />
             You are all caught up
           </Group>
@@ -18,7 +18,7 @@ export function EndOfFeed() {
         labelProps={{ size: 'sm' }}
       />
       <Center>
-        <Stack spacing={0} align="center">
+        <Stack gap={0} align="center">
           <Text size="sm" color="dimmed">
             Consider changing your period or filters to find more
           </Text>

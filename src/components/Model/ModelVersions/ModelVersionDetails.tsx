@@ -352,7 +352,7 @@ export function ModelVersionDetails({
     {
       label: 'Type',
       value: (
-        <Group spacing={0} noWrap position="apart">
+        <Group gap={0} wrap="nowrap" justify="space-between">
           <Badge radius="sm" px={5}>
             {getDisplayName(model.type)} {model.checkpointType}
           </Badge>
@@ -369,7 +369,7 @@ export function ModelVersionDetails({
     {
       label: 'Stats',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           {!downloadsDisabled && (
             <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Downloads">
               <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
@@ -441,14 +441,14 @@ export function ModelVersionDetails({
       label: 'Base Model',
       value:
         version.baseModel === 'ODOR' ? (
-          <Group spacing={8} position="apart" noWrap>
+          <Group gap={8} justify="space-between" wrap="nowrap">
             <Text component={Link} href="/product/odor" target="_blank">
               {version.baseModel}{' '}
             </Text>
             <HowToButton href="https://youtu.be/7j_sakwGK8M" tooltip="What is this?" />
           </Group>
         ) : (
-          <Group spacing={8} position="apart" noWrap>
+          <Group gap={8} justify="space-between" wrap="nowrap">
             <Text>
               {version.baseModel}{' '}
               {version.baseModelType && version.baseModelType === 'Standard'
@@ -465,7 +465,7 @@ export function ModelVersionDetails({
     {
       label: 'Training',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           {version.steps && (
             <Badge size="sm" radius="sm" color="teal">
               Steps: {version.steps.toLocaleString()}
@@ -483,7 +483,7 @@ export function ModelVersionDetails({
     {
       label: 'Usage Tips',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           {version.clipSkip && (
             <Badge size="sm" radius="sm" color="cyan">
               Clip Skip: {version.clipSkip.toLocaleString()}
@@ -529,7 +529,7 @@ export function ModelVersionDetails({
     },
     {
       label: (
-        <Group spacing="xs">
+        <Group gap="xs">
           <Text weight={500}>AIR</Text>
           <URNExplanation size={20} />
         </Group>
@@ -546,7 +546,7 @@ export function ModelVersionDetails({
     },
     {
       label: (
-        <Group spacing="xs">
+        <Group gap="xs">
           <Text weight={500}>Bounty</Text>
         </Group>
       ),
@@ -560,10 +560,10 @@ export function ModelVersionDetails({
   ];
 
   const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
-    <Group position="apart" noWrap spacing={0}>
+    <Group justify="space-between" wrap="nowrap" gap={0}>
       <Group>
         <VerifiedText file={file} />
-        <Group spacing={4}>
+        <Group gap={4}>
           <Text size="xs" color="dimmed">
             {file.type === 'Pruned Model' ? 'Pruned ' : ''}
             {file.metadata.format}
@@ -610,9 +610,9 @@ export function ModelVersionDetails({
         backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
       })}
     >
-      <Stack spacing={4}>
-        <Group position="apart" noWrap>
-          <Group spacing={4}>
+      <Stack gap={4}>
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap={4}>
             <Text size="xs" weight={500} lineClamp={2}>
               {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
             </Text>
@@ -625,10 +625,9 @@ export function ModelVersionDetails({
           <Button
             component="a"
             variant="subtle"
-            size="xs"
             {...getDownloadProps(file)}
             disabled={archived}
-            compact
+            size="compact-xs"
           >
             Download
           </Button>
@@ -698,7 +697,7 @@ export function ModelVersionDetails({
               Request a Review
             </Button>
           ) : showPublishButton ? (
-            <Stack spacing={4}>
+            <Stack gap={4}>
               {couldGenerate && isOwnerOrMod && (
                 <GenerateButton
                   model={model}
@@ -734,7 +733,7 @@ export function ModelVersionDetails({
 
               {scheduledPublishDate && isOwnerOrMod && (
                 <Stack>
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <ThemeIcon color="gray" variant="filled" radius="xl">
                       <IconClock size={20} />
                     </ThemeIcon>
@@ -746,9 +745,9 @@ export function ModelVersionDetails({
               )}
             </Stack>
           ) : (
-            <Stack spacing={4}>
-              <Group spacing="xs" className={classes.ctaContainer}>
-                <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
+            <Stack gap={4}>
+              <Group gap="xs" className={classes.ctaContainer}>
+                <Group gap="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} wrap="nowrap">
                   {couldGenerate && (
                     <GenerateButton
                       model={model}
@@ -880,7 +879,7 @@ export function ModelVersionDetails({
                     </DownloadButton>
                   )}
                 </Group>
-                <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
+                <Group gap="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} wrap="nowrap">
                   <Tooltip label="Share" position="top" withArrow>
                     <div>
                       <ShareButton
@@ -1034,9 +1033,9 @@ export function ModelVersionDetails({
             >
               {({ modelId, modelVersionId, userReview, loading }) => (
                 <Card p={8} withBorder>
-                  <Stack spacing={8}>
-                    <Group spacing={8} position="apart" noWrap>
-                      <Group spacing={8} noWrap>
+                  <Stack gap={8}>
+                    <Group gap={8} justify="space-between" wrap="nowrap">
+                      <Group gap={8} wrap="nowrap">
                         {loading ? (
                           <Loader size="xs" />
                         ) : userReview ? (
@@ -1066,7 +1065,7 @@ export function ModelVersionDetails({
                           size="xs"
                         />
                       ) : (
-                        <Group noWrap spacing={4}>
+                        <Group wrap="nowrap" gap={4}>
                           <Button
                             size="xs"
                             color="gray"
@@ -1173,7 +1172,7 @@ export function ModelVersionDetails({
             )}
             <Accordion.Item value="version-details">
               <Accordion.Control>
-                <Group position="apart">
+                <Group justify="space-between">
                   Details
                   {showEditButton && (
                     <Menu withinPortal>
@@ -1230,7 +1229,7 @@ export function ModelVersionDetails({
                 })}
               >
                 <Accordion.Control disabled={archived}>
-                  <Group position="apart">
+                  <Group justify="space-between">
                     {filesVisibleCount > 0
                       ? `${filesVisibleCount === 1 ? '1 File' : `${filesVisibleCount} Files`}`
                       : 'Files'}
@@ -1244,7 +1243,7 @@ export function ModelVersionDetails({
                   </Group>
                 </Accordion.Control>
                 <Accordion.Panel>
-                  <Stack spacing={2}>
+                  <Stack gap={2}>
                     {hasVisibleFiles ? (
                       downloadFileItems
                     ) : (
@@ -1262,7 +1261,7 @@ export function ModelVersionDetails({
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
                 <Accordion.Panel>
-                  <Stack spacing={2}>
+                  <Stack gap={2}>
                     {version.recommendedResources.map((resource) => (
                       <Card
                         key={resource.id}
@@ -1279,8 +1278,8 @@ export function ModelVersionDetails({
                         })}
                         data-activity="follow-recommendation:details"
                       >
-                        <Stack spacing={4}>
-                          <Group position="apart" spacing={8} noWrap>
+                        <Stack gap={4}>
+                          <Group justify="space-between" gap={8} wrap="nowrap">
                             <Text size="xs" weight={500} lineClamp={2}>
                               {resource.model.name}
                             </Text>
@@ -1300,7 +1299,7 @@ export function ModelVersionDetails({
               <Accordion.Item value="version-description">
                 <Accordion.Control>About this version</Accordion.Control>
                 <Accordion.Panel px="sm" pb="sm">
-                  <Stack spacing={4}>
+                  <Stack gap={4}>
                     {version.description && (
                       <Box sx={{ p: { fontSize: 14, marginBottom: 10 } }}>
                         <ContentClamp
@@ -1343,8 +1342,8 @@ export function ModelVersionDetails({
           {onSite && (
             <Group
               align="flex-start"
-              position="right"
-              spacing={4}
+              justify="flex-end"
+              gap={4}
               mt={-10}
               mb={-5}
               style={{ opacity: 0.5 }}
@@ -1356,9 +1355,14 @@ export function ModelVersionDetails({
             </Group>
           )}
 
-          <Group position="apart" align="flex-start" noWrap>
+          <Group justify="space-between" align="flex-start" wrap="nowrap">
             {model.type === 'Checkpoint' && (
-              <Group spacing={4} noWrap style={{ flex: 1, overflow: 'hidden' }} align="flex-start">
+              <Group
+                gap={4}
+                wrap="nowrap"
+                style={{ flex: 1, overflow: 'hidden' }}
+                align="flex-start"
+              >
                 <IconLicense size={16} />
                 <Text
                   size="xs"
@@ -1370,7 +1374,7 @@ export function ModelVersionDetails({
                 >
                   License{model.licenses.length > 0 ? 's' : ''}:
                 </Text>
-                <Stack spacing={0}>
+                <Stack gap={0}>
                   {license && (
                     <Text
                       component="a"
@@ -1416,7 +1420,7 @@ export function ModelVersionDetails({
                 </Stack>
               </Group>
             )}
-            <PermissionIndicator spacing={5} size={28} permissions={model} ml="auto" />
+            <PermissionIndicator gap={5} size={28} permissions={model} ml="auto" />
           </Group>
           {license?.notice && (
             <Text size="xs" color="dimmed">

@@ -99,13 +99,12 @@ export const EarningBuzz = ({ asList, withCTA }: Props) => {
   const earnings = getEarnings();
 
   return (
-    <Stack spacing={20}>
-      <Stack spacing={4}>
-        <Group spacing="xs" align="center">
+    <Stack gap={20}>
+      <Stack gap={4}>
+        <Group gap="xs" align="center">
           <Title order={2}>Earn Buzz</Title>
           <Button
-            compact
-            size="xs"
+            size="compact-xs"
             mt={4}
             onClick={() => {
               dialogStore.trigger({ component: RedeemCodeModal });
@@ -223,8 +222,8 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
   const spendings = getSpendings({ userId: currentUser?.id });
 
   return (
-    <Stack spacing={20}>
-      <Stack spacing={4}>
+    <Stack gap={20}>
+      <Stack gap={4}>
         <Title order={2}>Spend Buzz</Title>
         <Text>Got some Buzz? Here&rsquo;s what you can do with it</Text>
       </Stack>
@@ -266,7 +265,7 @@ export const FeatureCard = ({ title, description, icon, btnProps, withCTA }: Fea
 
   return (
     <Paper withBorder className={classes.featureCard} h="100%">
-      <Stack spacing={4} p="md" align="center" h="100%">
+      <Stack gap={4} p="md" align="center" h="100%">
         <Center>{icon}</Center>
         <Text weight={500} size="xl" align="center" transform="capitalize">
           {title}
@@ -284,12 +283,12 @@ export const FeatureList = ({ data }: { data: FeatureCardProps[] }) => {
   return (
     <List
       listStyleType="none"
-      spacing={8}
+      gap={8}
       icon={<CurrencyIcon currency="BUZZ" size={20} style={{ verticalAlign: 'middle' }} />}
     >
       {data.map((item, index) => (
         <List.Item key={index}>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text weight={590} transform="capitalize">
               {item.title}
               {item.btnProps.disabled ? ' (Coming Soon)' : ''}

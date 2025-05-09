@@ -150,7 +150,7 @@ export function AssociateModels({
           filters={onlyMe && currentUser ? `user.username='${currentUser.username}'` : undefined}
           rightSectionWidth={100}
           rightSection={
-            <Button size="xs" variant="light" onClick={toggleSearchMode} compact>
+            <Button variant="light" onClick={toggleSearchMode} size="compact-xs">
               {onlyMe ? 'Only mine' : 'Everywhere'}
             </Button>
           }
@@ -164,7 +164,7 @@ export function AssociateModels({
           <Loader />
         </Center>
       ) : (
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text align="right" color="dimmed" size="xs">
             You can select {limit - associatedResources.length} more resources
           </Text>
@@ -178,25 +178,25 @@ export function AssociateModels({
                 items={associatedResources.map(({ item }) => item.id)}
                 strategy={verticalListSortingStrategy}
               >
-                <Stack spacing={4}>
+                <Stack gap={4}>
                   {associatedResources.map((association) => (
                     <SortableItem key={association.item.id} id={association.item.id}>
                       <Card withBorder pl={4} pr={6} pt={4} pb={6}>
-                        <Group position="apart">
-                          <Group align="center" spacing="xs">
+                        <Group justify="space-between">
+                          <Group align="center" gap="xs">
                             <IconGripVertical />
-                            <Stack spacing={4}>
+                            <Stack gap={4}>
                               <Text size="md" lineClamp={2}>
                                 {'name' in association.item
                                   ? association.item.name
                                   : association.item.title}
                               </Text>
-                              <Group spacing={4}>
+                              <Group gap={4}>
                                 <Badge size="xs">
                                   {'type' in association.item ? association.item.type : 'Article'}
                                 </Badge>
                                 <Badge size="xs" pl={4}>
-                                  <Group spacing={2}>
+                                  <Group gap={2}>
                                     <IconUser size={12} strokeWidth={2.5} />
                                     {association.item.user.username}
                                   </Group>
@@ -229,7 +229,7 @@ export function AssociateModels({
         </Stack>
       )}
       {changed && (
-        <Group position="right">
+        <Group justify="flex-end">
           <Button variant="default" onClick={handleReset}>
             Reset
           </Button>
@@ -247,8 +247,8 @@ const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
   ({ value, item, nsfw, ...props }, ref) => {
     return (
       <Box ref={ref} {...props}>
-        <Group noWrap spacing="xs">
-          <Stack spacing={0}>
+        <Group wrap="nowrap" gap="xs">
+          <Stack gap={0}>
             <Text lineClamp={1} lh={1}>
               {value}
             </Text>

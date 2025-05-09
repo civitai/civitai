@@ -150,14 +150,14 @@ export function MultiFileInputUpload({
           }
         >
           <Group
-            position="center"
-            spacing={verticalOrientation ? 8 : 'xl'}
+            justify="center"
+            gap={verticalOrientation ? 8 : 'xl'}
             style={{
               minHeight: 120,
               pointerEvents: 'none',
               flexDirection: verticalOrientation ? 'column' : 'row',
             }}
-            noWrap
+            wrap="nowrap"
           >
             {showDropzoneStatus ? (
               <>
@@ -182,7 +182,7 @@ export function MultiFileInputUpload({
             ) : (
               <IconFileUpload size={50} stroke={1.5} />
             )}
-            <Stack spacing={4} align={verticalOrientation ? 'center' : 'flex-start'}>
+            <Stack gap={4} align={verticalOrientation ? 'center' : 'flex-start'}>
               <Text size="xl">Drop your files or click to select</Text>
               <Text color="dimmed" size="sm">
                 {maxFiles ? `Attach up to ${maxFiles} files` : 'Attach as many files as you like'}
@@ -193,9 +193,9 @@ export function MultiFileInputUpload({
           </Group>
         </Dropzone>
       </Input.Wrapper>
-      <Stack spacing={8}>
+      <Stack gap={8}>
         {files.map((file, index) => (
-          <Group key={file.id ?? file.url} spacing={8} position="apart" noWrap>
+          <Group key={file.id ?? file.url} gap={8} justify="space-between" wrap="nowrap">
             {renderItem ? (
               renderItem(
                 file,
@@ -234,8 +234,8 @@ export function MultiFileInputUpload({
 type UploadItemProps = Pick<TrackedFile, 'progress' | 'speed' | 'timeRemaining' | 'abort' | 'name'>;
 function UploadItem({ progress, speed, timeRemaining, abort, name }: UploadItemProps) {
   return (
-    <Stack spacing={4}>
-      <Group spacing={8} position="apart" noWrap>
+    <Stack gap={4}>
+      <Group gap={8} justify="space-between" wrap="nowrap">
         <Text size="sm" weight={500} lineClamp={1}>
           {name}
         </Text>
@@ -245,7 +245,7 @@ function UploadItem({ progress, speed, timeRemaining, abort, name }: UploadItemP
           </ActionIcon>
         </Tooltip>
       </Group>
-      <Stack spacing={2}>
+      <Stack gap={2}>
         <Progress
           sx={{ width: '100%' }}
           size="xl"
@@ -255,7 +255,7 @@ function UploadItem({ progress, speed, timeRemaining, abort, name }: UploadItemP
           striped
           animate
         />
-        <Group position="apart">
+        <Group justify="space-between">
           <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
           <Text size="xs" color="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
         </Group>

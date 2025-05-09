@@ -80,7 +80,7 @@ export default function Safety({
       />
       <div className={classes.hero}>
         <Container size="md">
-          <Stack align="center" spacing={0}>
+          <Stack align="center" gap={0}>
             <Title className={classes.heroTitle}>Civitai Safety Center</Title>
             <Text ta="center" className={classes.heroText}>
               A summary of our policies, guidelines, and approach to keeping Civitai safe.

@@ -78,7 +78,7 @@ export function ArticlesHitList() {
     const NotFound = (
       <Box>
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
               <Text color="dimmed">
                 {hiddenCount} articles have been hidden due to your settings.

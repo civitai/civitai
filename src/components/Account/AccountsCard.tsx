@@ -42,7 +42,7 @@ export function AccountsCard() {
   return (
     <Card withBorder id="accounts">
       <Stack>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Title order={2}>Connected Accounts</Title>
           <Text color="dimmed" size="sm">
             Connect multiple accounts to your user and sign in with any of them
@@ -50,7 +50,7 @@ export function AccountsCard() {
         </Stack>
         {error && (
           <Alert color="yellow">
-            <Stack spacing={4}>
+            <Stack gap={4}>
               <Text color="yellow" weight={500}>
                 Account not linked
               </Text>
@@ -63,7 +63,7 @@ export function AccountsCard() {
 
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={deletingAccount} />
-          <Table striped withBorder>
+          <Table striped withTableBorder>
             <tbody>
               {Object.values(providers)
                 .filter((provider) => provider.type === 'oauth')
@@ -72,7 +72,7 @@ export function AccountsCard() {
                   return (
                     <tr key={provider.id}>
                       <td>
-                        <Group position="apart">
+                        <Group justify="space-between">
                           <SocialLabel
                             key={provider.id}
                             type={provider.id as BuiltInProviderType}

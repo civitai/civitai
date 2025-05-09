@@ -172,7 +172,7 @@ export function ImageDetail2() {
           onClick={() => generationPanel.open({ type: image.type, id: image.id })}
           data-activity="remix:image"
         >
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <IconBrush size={16} />
             <Text size="xs">Remix</Text>
           </Group>

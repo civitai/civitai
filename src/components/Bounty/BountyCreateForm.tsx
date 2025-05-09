@@ -288,22 +288,22 @@ export function BountyCreateForm() {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={32}>
-        <Group spacing="md" noWrap>
+      <Stack gap={32}>
+        <Group gap="md" wrap="nowrap">
           <BackButton url="/bounties" />
           <Title className={classes.title}>Create a new bounty</Title>
         </Group>
         <ContainerGrid gutter="xl">
           <ContainerGrid.Col xs={12} md={8}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
+            <Stack gap={32}>
+              <Stack gap="xl">
                 <InputText
                   name="name"
                   label="Bounty Name"
                   placeholder="e.g.:LoRA for XYZ"
                   withAsterisk
                 />
-                <Group spacing="md" grow>
+                <Group gap="md" grow>
                   <InputSelect
                     className={classes.fluid}
                     name="type"
@@ -368,7 +368,7 @@ export function BountyCreateForm() {
                 </Input.Wrapper>
                 {imageFiles.length > 0 && (
                   <SimpleGrid
-                    spacing="sm"
+                    gap="sm"
                     breakpoints={[
                       { minWidth: 'xs', cols: 1 },
                       { minWidth: 'sm', cols: 3 },
@@ -432,7 +432,7 @@ export function BountyCreateForm() {
                   </SimpleGrid>
                 )}
                 <Stack>
-                  <Group spacing="md" grow>
+                  <Group gap="md" grow>
                     <InputDatePicker
                       className={classes.fluid}
                       name="startsAt"
@@ -489,7 +489,7 @@ export function BountyCreateForm() {
                     ))}
                   </InputRadioGroup>
                 )}
-                <Group spacing="md" grow>
+                <Group gap="md" grow>
                   <InputNumber
                     className={classes.fluid}
                     name="unitAmount"
@@ -524,7 +524,7 @@ export function BountyCreateForm() {
                   )}
                 </Group>
               </Stack>
-              <Stack spacing="xl">
+              <Stack gap="xl">
                 {bountyEntryModeEnabled && (
                   <InputRadioGroup name="entryMode" label="Entry Mode" withAsterisk>
                     {Object.values(BountyEntryMode).map((value) => (
@@ -569,7 +569,7 @@ export function BountyCreateForm() {
             <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
-                <Stack spacing="xl">
+                <Stack gap="xl">
                   <Input.Wrapper
                     className={classes.fluid}
                     label="Preferred model format"
@@ -605,8 +605,8 @@ export function BountyCreateForm() {
               <InputSwitch
                 name="poi"
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Depicts an actual person</Text>
                     </Group>
                     <Text size="xs" color="dimmed">
@@ -618,8 +618,8 @@ export function BountyCreateForm() {
               <InputSwitch
                 name="nsfw"
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Mature theme</Text>
                       <ActionIcon radius="xl" size="xs" onClick={openBrowsingLevelGuide}>
                         <IconQuestionMark />
@@ -645,7 +645,7 @@ export function BountyCreateForm() {
             </Stack>
           </ContainerGrid.Col>
         </ContainerGrid>
-        <Group position="right">
+        <Group justify="flex-end">
           <NavigateBack url="/bounties">
             {({ onClick }) => (
               <Button variant="light" color="gray" onClick={onClick}>
@@ -675,7 +675,7 @@ export function BountyCreateForm() {
 
 type RadioItemProps = { label: string; description: string };
 const RadioItem = ({ label, description }: RadioItemProps) => (
-  <Stack spacing={4}>
+  <Stack gap={4}>
     <Text inline>{label}</Text>
     <Text size="xs" color="dimmed">
       {description}

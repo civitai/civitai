@@ -129,7 +129,7 @@ export const SearchHeader = () => {
   const data: SegmentedControlItem[] = [
     {
       label: (
-        <Group align="center" spacing={8} noWrap>
+        <Group align="center" gap={8} wrap="nowrap">
           <ThemeIcon
             size={30}
             color={index === MODELS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -148,7 +148,7 @@ export const SearchHeader = () => {
     features.imageSearch
       ? {
           label: (
-            <Group align="center" spacing={8} noWrap>
+            <Group align="center" gap={8} wrap="nowrap">
               <ThemeIcon
                 size={30}
                 color={index === IMAGES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -167,7 +167,7 @@ export const SearchHeader = () => {
       : undefined,
     {
       label: (
-        <Group align="center" spacing={8} noWrap>
+        <Group align="center" gap={8} wrap="nowrap">
           <ThemeIcon
             size={30}
             color={index === ARTICLES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -185,7 +185,7 @@ export const SearchHeader = () => {
     },
     {
       label: (
-        <Group align="center" spacing={8} noWrap>
+        <Group align="center" gap={8} wrap="nowrap">
           <ThemeIcon
             size={30}
             color={index === COLLECTIONS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -204,7 +204,7 @@ export const SearchHeader = () => {
     features.bounties
       ? {
           label: (
-            <Group align="center" spacing={8} noWrap>
+            <Group align="center" gap={8} wrap="nowrap">
               <ThemeIcon
                 size={30}
                 color={index === BOUNTIES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -223,7 +223,7 @@ export const SearchHeader = () => {
       : undefined,
     {
       label: (
-        <Group align="center" spacing={8} noWrap>
+        <Group align="center" gap={8} wrap="nowrap">
           <ThemeIcon
             size={30}
             color={index === USERS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -242,7 +242,7 @@ export const SearchHeader = () => {
     features.toolSearch
       ? {
           label: (
-            <Group align="center" spacing={8} noWrap>
+            <Group align="center" gap={8} wrap="nowrap">
               <ThemeIcon
                 size={30}
                 color={index === TOOLS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -289,7 +289,7 @@ export const SearchHeader = () => {
     <Stack>
       <Title order={3}>{titleString}</Title>
       <Box sx={{ overflow: 'hidden' }}>
-        <Group spacing="xs" noWrap className={classes.wrapper}>
+        <Group gap="xs" wrap="nowrap" className={classes.wrapper}>
           <Tooltip label="Filters & sorting" position="bottom" withArrow>
             <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
               <ThemeIcon

@@ -38,9 +38,9 @@ export function SocialProfileCard() {
     return (
       <Card withBorder>
         <Card.Section withBorder p="sm">
-          <Group position="apart">
+          <Group justify="space-between">
             <Title order={5}>{type} Links</Title>
-            <Button compact onClick={() => setSelectedLink({ type })}>
+            <Button size="compact-md" onClick={() => setSelectedLink({ type })}>
               Add Link
             </Button>
           </Group>

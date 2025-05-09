@@ -177,7 +177,7 @@ export const CommentForm = ({
           hideToolbar
         />
         {focused && (
-          <Group position="right">
+          <Group justify="flex-end">
             <Button variant="default" size="xs" onClick={handleCancel}>
               Cancel
             </Button>

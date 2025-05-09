@@ -170,12 +170,12 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
             )}
           </Grid.Col>
           <Grid.Col xs={12} sm={6} className={classes.preview}>
-            <Stack align="center" spacing="xl">
+            <Stack align="center" gap="xl">
               {selectedItem &&
                 selectedItem.entityImage &&
                 (selectedItem.entityImage.entityId !== entityId ||
                   selectedItem.entityImage.entityType !== entityType) && (
-                  <Group noWrap>
+                  <Group wrap="nowrap">
                     <Paper className="overflow-hidden" radius="md" w={48} h={62}>
                       <EdgeMedia2
                         src={selectedItem.entityImage.url}

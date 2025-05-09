@@ -44,8 +44,8 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
 
   return (
     <Card p="sm" withBorder>
-      <Stack spacing="xs">
-        <Group position="apart" noWrap align="center">
+      <Stack gap="xs">
+        <Group justify="space-between" wrap="nowrap" align="center">
           <Title order={1}>{question.title}</Title>
           {/* TODO - add additional actions and remove condition here */}
           {(isOwner || isModerator) && (
@@ -82,7 +82,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
             </Menu>
           )}
         </Group>
-        <Group spacing={4}>
+        <Group gap={4}>
           {question.tags.map((tag) => (
             <Badge key={tag.id} color="blue" component="a" size="sm" radius="sm">
               {tag.name}
@@ -101,7 +101,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
           linkToProfile
         />
         <RenderHtml html={question.content} />
-        <Group spacing="xs" position="apart">
+        <Group gap="xs" justify="space-between">
           <FavoriteBadge
             userReacted={question.userReactions.some((x) => x.reaction === ReviewReactions.Heart)}
             count={question.rank?.heartCountAllTime}

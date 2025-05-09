@@ -223,7 +223,6 @@ export function PostDetailContent({ postId }: Props) {
                   </Text>
                   <div className="flex gap-2 ">
                     <Button
-                      size="md"
                       radius="xl"
                       color="gray"
                       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
@@ -234,7 +233,7 @@ export function PostDetailContent({ postId }: Props) {
                           type: CollectionType.Post,
                         })
                       }
-                      compact
+                      size="compact-md"
                     >
                       <Text size="xs">Save</Text>
                     </Button>
@@ -247,9 +246,8 @@ export function PostDetailContent({ postId }: Props) {
                         radius="xl"
                         color="gray"
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        size="md"
                         leftIcon={<IconShare3 size={14} />}
-                        compact
+                        size="compact-md"
                       >
                         <Text size="xs">Share</Text>
                       </Button>
@@ -282,22 +280,21 @@ export function PostDetailContent({ postId }: Props) {
                     withUsername
                     linkToProfile
                   />
-                  <Group spacing={8} noWrap>
+                  <Group gap={8} wrap="nowrap">
                     <TipBuzzButton
                       toUserId={post.user.id}
                       entityId={post.id}
                       entityType="Post"
-                      size="md"
-                      compact
+                      size="compact-md"
                     />
-                    <ChatUserButton user={post.user} size="md" compact />
-                    <FollowUserButton userId={post.user.id} size="md" compact />
+                    <ChatUserButton user={post.user} size="compact-md" />
+                    <FollowUserButton userId={post.user.id} size="compact-md" />
                   </Group>
                 </div>
                 {postCollaborators.length > 0 &&
                   postCollaborators.map((collaborator) => {
                     return (
-                      <Group key={collaborator.user.id} spacing={4} noWrap>
+                      <Group key={collaborator.user.id} gap={4} wrap="nowrap">
                         <UserAvatar
                           user={collaborator.user}
                           avatarProps={{ size: 32 }}
@@ -307,7 +304,7 @@ export function PostDetailContent({ postId }: Props) {
                           withUsername
                           linkToProfile
                         />
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           {collaborator.user.id === currentUser?.id &&
                             collaborator.status === EntityCollaboratorStatus.Pending && (
                               <Fragment key={collaborator.user.id}>
@@ -383,7 +380,7 @@ export function PostDetailContent({ postId }: Props) {
                   )}
                 </>
               )}
-              <Stack spacing="xl" mt="xl" id="comments" mb={90}>
+              <Stack gap="xl" mt="xl" id="comments" mb={90}>
                 {!!post.tags.length && (
                   <Collection
                     items={post.tags}

@@ -55,7 +55,7 @@ type CosmeticShopItemSelectItemProps = { title: string; description?: string } &
 const CosmeticShopItemSelectItem = forwardRef<HTMLDivElement, CosmeticShopItemSelectItemProps>(
   ({ title, description, ...others }: CosmeticShopItemSelectItemProps, ref) => (
     <div ref={ref} {...others}>
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Text size="sm">{title}</Text>
         {description && (
           <ContentClamp maxHeight={200}>
@@ -163,7 +163,7 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
 
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
-      <Stack spacing="xs" mt="sm">
+      <Stack gap="xs" mt="sm">
         <CosmeticShopItemSearch onItemSelected={onItemSelected} />
         <Paper mt="md">
           <DndContext
@@ -182,7 +182,7 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
                       <SortableItem key={item.id} id={item.id}>
                         <Grid.Col span={12} md={3}>
                           <Paper withBorder pos="relative" p="sm" radius="lg" h="100%">
-                            <Stack spacing={0} h="100%">
+                            <Stack gap={0} h="100%">
                               <Text weight="bold" size="md">
                                 {item.title}
                               </Text>

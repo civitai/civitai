@@ -111,7 +111,7 @@ export function ImageContextMenu({
 
   if (image.needsReview || image.ingestion === 'Blocked')
     return (
-      <Group spacing={4} className={className}>
+      <Group gap={4} className={className}>
         <NeedsReviewBadge {...props} isModerator={isModerator} isOwner={isOwner} />
         {ContextMenu}
       </Group>
@@ -411,7 +411,7 @@ function NeedsReviewBadge({
       <HoverCard width={200} withArrow>
         <HoverCard.Target>{Badge}</HoverCard.Target>
         <HoverCard.Dropdown p={8}>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text weight="bold" size="xs">
               Flagged for review
             </Text>

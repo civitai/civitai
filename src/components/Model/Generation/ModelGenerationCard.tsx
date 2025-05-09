@@ -183,9 +183,9 @@ export function ModelGenerationCard({
           withBorder
         >
           <Card.Section py="xs" inheritPadding withBorder>
-            <Stack spacing={4}>
-              <Group spacing="xs" position="apart">
-                <Group spacing={8}>
+            <Stack gap={4}>
+              <Group gap="xs" justify="space-between">
+                <Group gap={8}>
                   <Image
                     src="https://downloads.intercomcdn.com/i/o/415875/17821df0928378c5e14e54e6/17c1c63527031e39c565ab2c57308471.png"
                     width={32}
@@ -194,7 +194,7 @@ export function ModelGenerationCard({
                     radius="sm"
                     withPlaceholder
                   />
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text size="sm" weight="bold">
                       Generated Exploration
                     </Text>
@@ -326,7 +326,7 @@ export function ModelGenerationCard({
             )}
           </Card.Section>
           <Card.Section pt="xs" inheritPadding withBorder>
-            <Group spacing={8} align="flex-start" noWrap>
+            <Group gap={8} align="flex-start" wrap="nowrap">
               {withEditingActions && (
                 <ActionIcon
                   variant="outline"
@@ -344,7 +344,7 @@ export function ModelGenerationCard({
               )}
               <ScrollArea styles={{ viewport: { overflowY: 'hidden' } }} offsetScrollbars>
                 <Chip.Group
-                  spacing={4}
+                  gap={4}
                   value={prompt}
                   onChange={(prompt) => {
                     setPrompt(prompt);
@@ -356,7 +356,7 @@ export function ModelGenerationCard({
                     }
                   }}
                   multiple={false}
-                  noWrap
+                  wrap="nowrap"
                 >
                   {data.map((prompt) => (
                     <Chip
@@ -366,7 +366,7 @@ export function ModelGenerationCard({
                       size="xs"
                       radius="sm"
                     >
-                      <Group spacing={4} position="apart" noWrap>
+                      <Group gap={4} justify="space-between" wrap="nowrap">
                         <Text inherit inline>
                           {prompt.name}
                         </Text>

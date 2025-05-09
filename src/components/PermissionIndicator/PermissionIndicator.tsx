@@ -63,7 +63,7 @@ export const PermissionIndicator = ({
   return (
     <Popover withArrow withinPortal>
       <Popover.Target>
-        <Group spacing={spacing} sx={{ cursor: 'pointer' }} noWrap {...props}>
+        <Group gap={spacing} sx={{ cursor: 'pointer' }} wrap="nowrap" {...props}>
           {icons.map(({ label, icon }, i) => (
             <Tooltip key={i} label={label} withArrow withinPortal position="top">
               <Box sx={(theme) => ({ color: theme.colors.gray[5] })}>{icon}</Box>

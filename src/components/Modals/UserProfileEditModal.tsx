@@ -402,7 +402,7 @@ const { openModal, Modal } = createContextModal({
     return (
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
-          <Group position="apart">
+          <Group justify="space-between">
             <Text size={24} weight={590}>
               Customize Profile
             </Text>
@@ -450,12 +450,12 @@ const { openModal, Modal } = createContextModal({
                 )}
               </>
             )}
-            <Stack spacing="md">
+            <Stack gap="md">
               {featureFlags.cosmeticShop && (
                 <>
                   <InputProfileImageUpload name="profilePicture" label="Edit avatar" />
                   <Divider label="Showcase Stats" />
-                  <InputChipGroup spacing={8} name="creatorCardStatsPreferences" multiple>
+                  <InputChipGroup gap={8} name="creatorCardStatsPreferences" multiple>
                     {Object.values(creatorCardStats).map((type, index) => (
                       <Chip key={index} value={type} {...chipProps}>
                         <span>{getDisplayName(type)}</span>
@@ -505,7 +505,7 @@ const { openModal, Modal } = createContextModal({
                 name="nameplateId"
                 placeholder="Select style"
                 label={
-                  <Group spacing={4} noWrap>
+                  <Group gap={4} wrap="nowrap">
                     <Input.Label>Nameplate Style</Input.Label>
                     <Popover withArrow width={300} withinPortal position="top">
                       <Popover.Target>
@@ -578,7 +578,7 @@ const { openModal, Modal } = createContextModal({
             maxLength={constants.profile.messageMaxLength}
             labelProps={{ style: { width: '100%' } }}
             label={
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Announcement</Text>
                 <Text size="xs">
                   {message?.length ?? 0}/{constants.profile.messageMaxLength}
@@ -590,7 +590,7 @@ const { openModal, Modal } = createContextModal({
             name="bio"
             labelProps={{ style: { width: '100%' } }}
             label={
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Bio</Text>
                 <Text size="xs">
                   {bio?.length ?? 0}/{constants.profile.bioMaxLength}
@@ -604,7 +604,7 @@ const { openModal, Modal } = createContextModal({
             name="location"
             labelProps={{ style: { width: '100%' } }}
             label={
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Location</Text>
                 <Text size="xs">
                   {location?.length ?? 0}/{constants.profile.locationMaxLength}
@@ -629,7 +629,7 @@ const { openModal, Modal } = createContextModal({
               description={`Select up to ${constants.profile.showcaseItemsLimit} items to showcase on your profile. You do this via the "Add to showcase" button on models and images`}
             />
           )}
-          <Group position="right" align="flex-end">
+          <Group justify="flex-end" align="flex-end">
             <Button radius="xl" size="md" loading={loading} type="submit">
               Save Changes
             </Button>
@@ -678,7 +678,7 @@ export function ProfilePreview({
     });
 
   return (
-    <Stack spacing={4}>
+    <Stack gap={4}>
       <Input.Label>Preview</Input.Label>
       <Paper p="sm" withBorder>
         <UserAvatar

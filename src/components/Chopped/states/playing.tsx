@@ -71,9 +71,9 @@ function RoundPending({ theme, roundNumber }: RoundProps) {
     <Stack>
       {roundNumber === 1 && (
         <Alert className="self-center">
-          <Group position="apart">
+          <Group justify="space-between">
             <Text size={40}>🎉</Text>
-            <Stack align="center" spacing={0}>
+            <Stack align="center" gap={0}>
               <Text>Invite others to join!</Text>
               <Text className="text-xl font-bold uppercase">{gameCode}</Text>
             </Stack>
@@ -153,7 +153,7 @@ function RoundSubmissions({ theme }: RoundProps) {
   if (spectating)
     return (
       <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-        <Group spacing="xs" noWrap position="center">
+        <Group gap="xs" wrap="nowrap" justify="center">
           <Text size="md" weight={500}>
             Spectating
           </Text>
@@ -174,7 +174,7 @@ function RoundSubmissions({ theme }: RoundProps) {
       )}
       {submitted && (
         <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-          <Group spacing="xs" noWrap position="center">
+          <Group gap="xs" wrap="nowrap" justify="center">
             <Text size="md" weight={500}>{`✅ We've got your submission`}</Text>
           </Group>
         </Alert>
@@ -291,12 +291,11 @@ function SubmissionCreateButton({ theme, minimized }: { theme: Theme; minimized?
 
   return (
     <Button
-      size={minimized ? 'sm' : 'lg'}
-      compact
+      size={minimized ? 'compact-sm' : 'compact-lg'}
       onClick={createSubmission}
       className="self-center"
     >
-      <Group spacing={4}>
+      <Group gap={4}>
         <IconBrush size={minimized ? 16 : 20} /> Create
       </Group>
     </Button>

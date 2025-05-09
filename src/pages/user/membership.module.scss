@@ -1,0 +1,15 @@
+.card {
+  height: '100%';
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-8)
+  );
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-lg);
+    
+} 
+
+price {
+  font-size: mantine.rem(48px);
+  font-weight: 700;
+}

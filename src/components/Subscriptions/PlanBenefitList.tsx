@@ -49,7 +49,7 @@ export const PlanBenefitList = ({
   return (
     <Stack>
       <List
-        spacing="xs"
+        gap="xs"
         size="md"
         center
         icon={
@@ -81,7 +81,7 @@ export const PlanBenefitList = ({
       {useDefaultBenefits && (
         <>
           <Divider mx="-md" />
-          <List spacing="xs" size="md" center>
+          <List gap="xs" size="md" center>
             {defaultBenefits.map(({ content, tiers }, index) => {
               const isUnavailable =
                 defaultBenefitsDisabled || (tiers && (!tier || !tiers.includes(tier)));

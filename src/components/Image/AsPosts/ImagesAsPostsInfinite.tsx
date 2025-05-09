@@ -174,8 +174,8 @@ export default function ImagesAsPostsInfinite({
         style={{ flex: 1 }}
       >
         <MasonryContainer>
-          <Stack spacing="md">
-            <Group spacing="xs">
+          <Stack gap="md">
+            <Group gap="xs">
               <Title order={2} data-tour="model:gallery">
                 Gallery
               </Title>
@@ -205,9 +205,9 @@ export default function ImagesAsPostsInfinite({
                   )}
                 </Group>
               )}
-              <Group ml="auto" spacing={8}>
+              <Group ml="auto" gap={8}>
                 <SortFilter type="modelImages" />
-                <MediaFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
+                <MediaFiltersDropdown filterType="modelImages" size="compact-sm" hideBaseModels />
                 {showModerationOptions && (
                   <>
                     {!!gallerySettings?.hiddenImages.length && (

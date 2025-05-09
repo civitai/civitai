@@ -143,7 +143,7 @@ export function AddUserContentModal({ collectionId }: Props) {
 
   return (
     <Modal {...dialog} title="Add images to collection" size="80%" onClose={handleClose} centered>
-      <Stack spacing="xl">
+      <Stack gap="xl">
         {error && (
           <AlertWithIcon color="red" iconColor="red" size="sm" icon={<IconInfoCircle size={16} />}>
             {error}
@@ -203,8 +203,8 @@ export function AddUserContentModal({ collectionId }: Props) {
           />
         )}
         <Group
-          spacing="xs"
-          position="right"
+          gap="xs"
+          justify="flex-end"
           mx="-lg"
           px="lg"
           pt="lg"

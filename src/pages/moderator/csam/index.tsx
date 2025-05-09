@@ -95,7 +95,7 @@ export default function CsamReports() {
   return (
     <Container size="xl">
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <Title>Csam Reports</Title>
           {statsArr.length > 0 && (
             <Group>

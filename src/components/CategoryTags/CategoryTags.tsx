@@ -41,7 +41,7 @@ export function CategoryTags({
           variant={!_tag ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
           color={!_tag ? 'blue' : 'gray'}
           onClick={() => _setTag(undefined)}
-          compact
+          size="compact-md"
         >
           All
         </Button>
@@ -57,7 +57,7 @@ export function CategoryTags({
               variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
               onClick={() => _setTag(!active ? tag.name : undefined)}
-              compact
+              size="compact-md"
             >
               {tag.name}
             </Button>
@@ -78,7 +78,7 @@ function EarlyAccessBadge() {
       variant={earlyAccess ? 'filled' : 'outline'}
       color="success.5"
       onClick={() => setFilters({ earlyAccess: !earlyAccess })}
-      compact
+      size="compact-md"
       leftIcon={<IconClock size={16} />}
     >
       Early Access

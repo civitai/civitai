@@ -30,7 +30,7 @@ export default function Account() {
 
       <Container pb="md" size="xs">
         <Stack>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Title order={1}>Manage Account</Title>
             <Text color="dimmed" size="sm">
               Take a moment to review your account information and preferences to personalize your

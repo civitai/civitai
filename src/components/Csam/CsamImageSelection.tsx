@@ -95,7 +95,7 @@ export function CsamImageSelection({
         </div>
       </MasonryProvider>
       <Card className="sticky inset-x-0 bottom-0 z-30 rounded-none">
-        <Group position="right">
+        <Group justify="flex-end">
           {/* <Button variant="default">Cancel</Button> */}
           <Badge>
             Selected: <SelectedCount />

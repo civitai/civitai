@@ -41,7 +41,7 @@ function GeneratePage() {
   if (currentUser?.muted)
     return (
       <Center h="100%" w="75%" mx="auto">
-        <Stack spacing="xl" align="center">
+        <Stack gap="xl" align="center">
           <ThemeIcon size="xl" radius="xl" color="yellow">
             <IconLock />
           </ThemeIcon>
@@ -72,8 +72,8 @@ function GeneratePage() {
         keepMounted={false}
       >
         <Tabs.List px="md" py="xs">
-          <Group position="apart" w="100%">
-            <Group align="flex-start" spacing="xs">
+          <Group justify="space-between" w="100%">
+            <Group align="flex-start" gap="xs">
               <Tabs.Tab value="queue" icon={<IconClockHour9 size={16} />}>
                 Queue
               </Tabs.Tab>

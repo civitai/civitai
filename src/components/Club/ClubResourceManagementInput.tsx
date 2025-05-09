@@ -105,7 +105,7 @@ export const ClubResourceManagementInput = ({
 
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
-      <Stack spacing="xs" mt="sm">
+      <Stack gap="xs" mt="sm">
         {(userClubs ?? []).map((club) => {
           const clubResource = clubResources.find((cr) => cr.clubId === club.id);
           const tiers = clubTiers.filter((t) => t.clubId === club.id);

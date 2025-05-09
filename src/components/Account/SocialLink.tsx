@@ -21,12 +21,12 @@ export function SocialLink({
   });
 
   return (
-    <Group noWrap spacing="sm">
+    <Group wrap="nowrap" gap="sm">
       <DomainIcon url={link.url} />
       <Text lineClamp={1} size="sm" style={{ flex: 1 }}>
         {link.url}
       </Text>
-      <Group noWrap spacing="xs">
+      <Group wrap="nowrap" gap="xs">
         <ButtonTooltip label="Edit link">
           <ActionIcon onClick={() => setSelected(link)} variant="default" size="md">
             <IconPencil size={14} />

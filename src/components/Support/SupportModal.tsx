@@ -13,8 +13,8 @@ export default function SupportModal() {
       withCloseButton={false}
       centered
     >
-      <Stack spacing={32}>
-        <Group align="flex-start" position="apart" spacing={80} noWrap>
+      <Stack gap={32}>
+        <Group align="flex-start" justify="space-between" gap={80} wrap="nowrap">
           <Title size={32} weight={600} color="gray.1">
             Let&apos;s pick a support option that works for you
           </Title>

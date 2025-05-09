@@ -60,14 +60,13 @@ export default function Downloads() {
 
   return (
     <Container size="xs">
-      <Group position="apart" align="flex-end">
+      <Group justify="space-between" align="flex-end">
         <Title order={1}>Downloads</Title>
-        <Group spacing={8}>
+        <Group gap={8}>
           <Button
             rightIcon={<IconTrash size={16} />}
             variant="subtle"
-            size="xs"
-            compact
+            size="compact-xs"
             onClick={() => handleHide({ all: true })}
           >
             Clear History
@@ -104,7 +103,7 @@ export default function Downloads() {
           <ThemeIcon size={96} radius={100}>
             <IconCloudOff size={60} />
           </ThemeIcon>
-          <Text size={18} align="center">
+          <Text size="18px" align="center">
             No downloads in your history
           </Text>
         </Stack>

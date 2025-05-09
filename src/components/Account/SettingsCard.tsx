@@ -11,6 +11,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import produce from 'immer';
+import { StoreMutatorIdentifier } from 'zustand';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -55,7 +56,7 @@ export function SettingsCard() {
         <Title order={2}>Browsing Settings</Title>
 
         <Divider label="Image Preferences" mb={-12} />
-        <Group noWrap grow>
+        <Group wrap="nowrap" grow>
           <AutoplayGifsToggle />
           <Select
             label="Preferred Format"
@@ -71,10 +72,10 @@ export function SettingsCard() {
               },
             ]}
             value={user.filePreferences?.imageFormat ?? 'metadata'}
-            onChange={(value: ImageFormat) =>
+            onChange={(value: string) =>
               mutate({
                 id: user.id,
-                filePreferences: { ...user.filePreferences, imageFormat: value },
+                filePreferences: { ...user.filePreferences, imageFormat: value as ImageFormat },
               })
             }
             disabled={isLoading}
@@ -82,14 +83,17 @@ export function SettingsCard() {
         </Group>
 
         <Divider label="Model File Preferences" mb={-12} />
-        <Group noWrap grow>
+        <Group wrap="nowrap" grow>
           <Select
             label="Preferred Format"
             name="fileFormat"
             data={validModelFormats}
             value={user.filePreferences?.format ?? 'SafeTensor'}
-            onChange={(value: ModelFileFormat) =>
-              mutate({ id: user.id, filePreferences: { ...user.filePreferences, format: value } })
+            onChange={(value: string | null) =>
+              mutate({
+                id: user.id,
+                filePreferences: { ...user.filePreferences, format: value as ModelFileFormat },
+              })
             }
             disabled={isLoading}
           />
@@ -101,14 +105,17 @@ export function SettingsCard() {
               label: titleCase(size),
             }))}
             value={user.filePreferences?.size ?? 'pruned'}
-            onChange={(value: ModelFileSize) =>
-              mutate({ id: user.id, filePreferences: { ...user.filePreferences, size: value } })
+            onChange={(value: string | null) =>
+              mutate({
+                id: user.id,
+                filePreferences: { ...user.filePreferences, size: value as ModelFileSize },
+              })
             }
             disabled={isLoading}
           />
           <Select
             label="Preferred Precision"
-            name="fp"
+            // name="fp"
             data={constants.modelFileFp.map((value) => ({
               value,
               label: value.toUpperCase(),
@@ -136,7 +143,7 @@ export function SettingsCard() {
                 <div>
                   <Select
                     label={
-                      <Group mb={4} spacing="xs">
+                      <Group mb={4} gap="xs">
                         <Text>Personality</Text>
                         {new Date() < new Date('2025-04-21') && <Badge color="green">New</Badge>}
                       </Group>
@@ -154,9 +161,9 @@ export function SettingsCard() {
                       },
                     ]}
                     value={assistantPersonality ?? 'civbot'}
-                    onChange={(value: UserAssistantPersonality) => {
+                    onChange={(value: string | null) => {
                       if (flags.assistantPersonality) {
-                        mutateSetting({ assistantPersonality: value });
+                        mutateSetting({ assistantPersonality: value as UserAssistantPersonality });
                       }
                     }}
                   />

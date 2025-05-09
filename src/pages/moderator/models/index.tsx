@@ -138,7 +138,7 @@ export default function ModeratorModels() {
               </Center>
             ) : !!data?.items.length ? (
               <Stack>
-                <List listStyleType="none" spacing="md">
+                <List listStyleType="none" gap="md">
                   {data?.items.map((model) => {
                     const hasVersion = !!model.modelVersion;
                     const unpublishedAt =
@@ -167,8 +167,8 @@ export default function ModeratorModels() {
                           '& > *': { width: '100%' },
                         })}
                       >
-                        <Stack spacing={8}>
-                          <Group position="apart" align="flex-start" noWrap>
+                        <Stack gap={8}>
+                          <Group justify="space-between" align="flex-start" wrap="nowrap">
                             {hasVersion ? (
                               <Badge color="violet" radius="xl">
                                 Model Version
@@ -178,10 +178,9 @@ export default function ModeratorModels() {
                             )}
                             <Button
                               variant="subtle"
-                              size="xs"
                               color="red"
                               onClick={() => toggleModal({ selectedModel: model })}
-                              compact
+                              size="compact-xs"
                             >
                               Decline Request
                             </Button>
@@ -227,7 +226,7 @@ export default function ModeratorModels() {
                   })}
                 </List>
                 {pagination.totalPages > 1 && (
-                  <Group position="apart">
+                  <Group justify="space-between">
                     <Text>Total {pagination.totalItems} items</Text>
                     <Pagination
                       page={state.page}
@@ -246,7 +245,7 @@ export default function ModeratorModels() {
                       value={state.declineReason}
                       onChange={(e) => setState((s) => ({ ...s, declineReason: e.target.value }))}
                     />
-                    <Group position="right">
+                    <Group justify="flex-end">
                       <Button variant="default" onClick={() => toggleModal()}>
                         Cancel
                       </Button>

@@ -127,7 +127,7 @@ export function VideoGenerationForm() {
                 ).map(({ engine }) => (
                   <Button
                     key={engine}
-                    compact
+                    size="compact-md"
                     onClick={() => generationFormStore.setEngine(engine)}
                     variant="outline"
                     color="yellow"

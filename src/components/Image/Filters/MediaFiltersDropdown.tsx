@@ -138,8 +138,8 @@ export function MediaFiltersDropdown({
   );
 
   const dropdown = (
-    <Stack spacing="lg" p="md">
-      <Stack spacing="md">
+    <Stack gap="lg" p="md">
+      <Stack gap="md">
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
         {query?.period && onChange ? (
           <PeriodFilter
@@ -153,10 +153,10 @@ export function MediaFiltersDropdown({
         )}
       </Stack>
       {!hideBaseModels && (
-        <Stack spacing="md">
+        <Stack gap="md">
           <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
           <Chip.Group
-            spacing={8}
+            gap={8}
             value={mergedFilters.baseModels ?? []}
             onChange={(baseModels: BaseModel[]) => handleChange({ baseModels })}
             multiple
@@ -184,12 +184,12 @@ export function MediaFiltersDropdown({
         </Stack>
       )}
 
-      <Stack spacing="md">
+      <Stack gap="md">
         {!hideMediaTypes && (
           <>
             <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
             <Chip.Group
-              spacing={8}
+              gap={8}
               value={mergedFilters.types ?? []}
               onChange={(types: MediaType[]) => handleChange({ types })}
               multiple

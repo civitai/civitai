@@ -10,7 +10,7 @@ export default function SupportPage() {
         description="Need help? Visit the Civitai support page to get help with using Civitai, report a bug, suggest a feature, and more."
       />
       <Container size="md" py="xl">
-        <Stack spacing={32}>
+        <Stack gap={32}>
           <Title size={32} weight={600} color="gray.1">
             Let&apos;s pick a support option that works for you
           </Title>

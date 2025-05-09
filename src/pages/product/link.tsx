@@ -64,7 +64,7 @@ export default function LinkApp(props: ServerSideProps) {
           justify="space-between"
           className={classes.heroContainer}
         >
-          <Stack spacing={12} mb={{ base: 24, md: 0 }}>
+          <Stack gap={12} mb={{ base: 24, md: 0 }}>
             <Title className={classes.heroTitle} order={1}>
               Civitai Link App
             </Title>
@@ -85,7 +85,7 @@ export default function LinkApp(props: ServerSideProps) {
           <div className={classes.gradientBox} />
         </Flex>
 
-        <Stack spacing={12} mb={40}>
+        <Stack gap={12} mb={40}>
           <Title className={classes.heading} order={2}>
             Add models to your local library with one click
           </Title>

@@ -128,7 +128,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
         }
 
         return (
-          <Stack spacing="xs">
+          <Stack gap="xs">
             {/* <Select
               label="Select model version"
               onClick={(e) => {
@@ -209,7 +209,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
             <InputClubResourceManagementInput name="clubs" />
           )}
           {clubId && (
-            <Stack spacing="sm">
+            <Stack gap="sm">
               <Divider mx="-lg" mb="md" />
               <Checkbox
                 checked={createClubPost}

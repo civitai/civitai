@@ -33,7 +33,7 @@ export function CommentReplies({ commentId, userId }: { commentId: number; userI
               {!!remaining && !showMore && (
                 <Divider
                   label={
-                    <Group spacing="xs" align="center">
+                    <Group gap="xs" align="center">
                       <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                         Show {remaining} More
                       </Text>

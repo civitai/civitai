@@ -43,7 +43,7 @@ export function TagScroller({
               handleChange(tag.id, shouldAdd);
             }}
             className="uppercase"
-            compact
+            size="compact-md"
           >
             {tag.name}
           </Button>

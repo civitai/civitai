@@ -56,14 +56,14 @@ function AlertContentInner({
       closeButtonLabel="Close alert"
       withCloseButton={!!onDismiss}
     >
-      <Group spacing="xs" noWrap pr="xs">
+      <Group gap="xs" wrap="nowrap" pr="xs">
         {emoji && (
           <Text size={36} p={0} sx={{ lineHeight: 1.2 }}>
             {emoji}
           </Text>
         )}
         {icon}
-        <Stack spacing={0}>
+        <Stack gap={0}>
           {title && (
             <Text size={size} weight={500} className={classes.title} mb={4}>
               {title}

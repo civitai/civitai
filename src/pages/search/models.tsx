@@ -128,7 +128,7 @@ export function ModelsHitList() {
   if (hits.length === 0) {
     const NotFound = (
       <div className="flex items-center justify-center">
-        <Stack spacing="md" align="center" maw={800}>
+        <Stack gap="md" align="center" maw={800}>
           {hiddenCount > 0 && (
             <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
           )}

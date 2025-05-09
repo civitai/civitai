@@ -75,14 +75,14 @@ const SetupPaymentMethod = ({ redirectUrl, onCancel, cancelLabel }: Props) => {
         handleSubmit();
       }}
     >
-      <Stack spacing="md">
+      <Stack gap="md">
         <PaymentElement id="payment-element" options={paymentElementOptions} />
         {errorMessage && (
           <Text color="red" size="sm">
             {errorMessage}
           </Text>
         )}
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button
               component="button"

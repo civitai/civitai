@@ -225,7 +225,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   }, [debouncedSearch, query]);
 
   return (
-    <Group className={classes.wrapper} spacing={0} noWrap>
+    <Group className={classes.wrapper} gap={0} wrap="nowrap">
       {!!showIndexSelect && (
         <Select
           classNames={{
@@ -257,7 +257,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         maxDropdownHeight={300}
         nothingFound={
           !hits.length ? (
-            <Stack spacing={0} align="center">
+            <Stack gap={0} align="center">
               <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
             </Stack>
           ) : undefined

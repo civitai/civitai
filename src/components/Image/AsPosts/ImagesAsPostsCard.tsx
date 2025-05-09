@@ -198,7 +198,7 @@ export function ImagesAsPostsCard({
             {alreadyPinned ? (
               'Unpin this post'
             ) : (
-              <Stack spacing={2}>
+              <Stack gap={2}>
                 <Text inline>Pin this post</Text>
                 {maxedOut && (
                   <Text size="xs" color="yellow">
@@ -272,18 +272,18 @@ export function ImagesAsPostsCard({
           {data.user.id !== -1 && (
             <Paper p="xs" radius={0} className={cx('h-[58px] z-[2]', cosmetic && 'rounded-t-lg ')}>
               {inView && (
-                <Group spacing={8} align="flex-start" position="apart" noWrap>
+                <Group gap={8} align="flex-start" justify="space-between" wrap="nowrap">
                   <UserAvatar
                     user={data.user}
                     subText={
-                      <Group spacing="xs" noWrap>
+                      <Group gap="xs" wrap="nowrap">
                         {data.publishedAt ? (
                           <DaysFromNow date={data.publishedAt} />
                         ) : (
                           <Text>Not published</Text>
                         )}
                         {(fromAutoResource || fromManualResource) && (
-                          <Group ml={6} spacing={4}>
+                          <Group ml={6} gap={4}>
                             {fromAutoResource && (
                               <Tooltip label="Auto-detected resource" withArrow>
                                 <ThemeIcon color="teal" variant="light" radius="xl" size={18}>
@@ -304,7 +304,7 @@ export function ImagesAsPostsCard({
                     }
                     subTextForce
                     size="md"
-                    spacing="xs"
+                    gap="xs"
                     badge={
                       isOP ? (
                         <Badge size="xs" color="violet" radius="xl">
@@ -315,7 +315,7 @@ export function ImagesAsPostsCard({
                     withUsername
                     linkToProfile
                   />
-                  <Group spacing={8} position="right" noWrap>
+                  <Group gap={8} justify="flex-end" wrap="nowrap">
                     {!data.publishedAt && (
                       <Tooltip label="Post not Published" withArrow>
                         <Link href={`/posts/${data.postId}/edit`}>
@@ -334,7 +334,7 @@ export function ImagesAsPostsCard({
                           style={{ userSelect: 'none', padding: 4, height: 'auto' }}
                           color={isThumbsUp ? 'success.5' : 'red'}
                         >
-                          <Group spacing={4} noWrap>
+                          <Group gap={4} wrap="nowrap">
                             {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
                             {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
                           </Group>
@@ -359,7 +359,7 @@ export function ImagesAsPostsCard({
                       {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
                       <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                       {safe && (
-                        <Stack spacing="xs" className="absolute right-2 top-2 z-10">
+                        <Stack gap="xs" className="absolute right-2 top-2 z-10">
                           <ImageContextMenu
                             image={image}
                             additionalMenuItems={moderationOptions(image)}
@@ -455,7 +455,7 @@ export function ImagesAsPostsCard({
                                 {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
                                 <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                                 {safe && (
-                                  <Stack spacing="xs" className="absolute right-2 top-2 z-10">
+                                  <Stack gap="xs" className="absolute right-2 top-2 z-10">
                                     <ImageContextMenu
                                       image={image}
                                       additionalMenuItems={moderationOptions(image)}

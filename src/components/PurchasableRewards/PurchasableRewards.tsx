@@ -108,8 +108,8 @@ const RewardDetailsModal = ({
 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="md">
-      <Stack spacing="sm">
-        <Group position="apart">
+      <Stack gap="sm">
+        <Group justify="space-between">
           <Text size="lg" weight="bold">
             Reward Details
           </Text>
@@ -121,7 +121,7 @@ const RewardDetailsModal = ({
         </Group>
         <Divider mx="-lg" />
         <Paper key={purchasableReward.id} className={classes.rewardCard} my="sm">
-          <Stack spacing="sm">
+          <Stack gap="sm">
             {image && (
               <ImageCSSAspectRatioWrap
                 aspectRatio={constants.purchasableRewards.coverImageAspectRatio}
@@ -153,7 +153,7 @@ const RewardDetailsModal = ({
             <Text size="lg">{purchasableReward.title}</Text>
             <div>
               {isPurchased ? (
-                <Group spacing={8}>
+                <Group gap={8}>
                   <ThemeIcon color="teal" radius="xl" size="sm">
                     <IconCheck size={14} />
                   </ThemeIcon>
@@ -171,7 +171,7 @@ const RewardDetailsModal = ({
                   size="md"
                 />
               ) : (
-                <Group spacing={8}>
+                <Group gap={8}>
                   <ThemeIcon color="red" radius="xl" size="sm">
                     <IconCircleCheckFilled size={14} />
                   </ThemeIcon>
@@ -266,7 +266,7 @@ const PurchasableRewardListItem = ({
         });
       }}
     >
-      <Group spacing="xl" align="start">
+      <Group gap="xl" align="start">
         {image && (
           <ImageCSSAspectRatioWrap
             aspectRatio={constants.purchasableRewards.coverImageAspectRatio}
@@ -295,8 +295,8 @@ const PurchasableRewardListItem = ({
             </ImageGuard2>
           </ImageCSSAspectRatioWrap>
         )}
-        <Stack style={{ flex: 1 }} spacing={0}>
-          <Group noWrap position="apart">
+        <Stack style={{ flex: 1 }} gap={0}>
+          <Group wrap="nowrap" justify="space-between">
             <Text size="xs" color="dimmed">
               Added on {formatDate(purchasableReward.createdAt)}
             </Text>
@@ -380,13 +380,13 @@ const PurchasableRewardCard = ({
               </ImageGuard2>
             </ImageCSSAspectRatioWrap>
           )}
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text size="xs" color="dimmed">
               Added on {formatDate(purchasableReward.createdAt)}
             </Text>
             <Text size="xl">{purchasableReward.title}</Text>
           </Stack>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             {purchasableReward.availableCount && (
               <Text size="sm" color="dimmed">
                 {purchasableReward.availableCount - purchasableReward._count.purchases} out of{' '}
@@ -441,12 +441,12 @@ export function PurchasableRewards() {
 
   return (
     <Stack>
-      <Stack spacing={4}>
+      <Stack gap={4}>
         <Title order={2}>Deals &amp; Coupons</Title>
         <Text>{`Spend some Buzz to get special deals and coupons`}</Text>
       </Stack>
       <Chip.Group
-        spacing={8}
+        gap={8}
         value={filters.mode}
         onChange={(mode: PurchasableRewardViewMode) => {
           setFilters((f) => ({
@@ -495,7 +495,7 @@ export function PurchasableRewards() {
           )}
 
           {pagination && pagination.totalPages > 1 && (
-            <Group position="apart">
+            <Group justify="space-between">
               <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
               <Pagination
                 page={filters.page}

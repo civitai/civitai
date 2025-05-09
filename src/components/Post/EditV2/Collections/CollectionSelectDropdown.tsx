@@ -102,7 +102,7 @@ export const CollectionSelectDropdown = () => {
   );
 
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <Divider label="Collection details for this post" />
       {!post?.publishedAt && collectionId && selectedCollection?.metadata.termsOfServicesUrl && (
         <Alert color="blue">
@@ -178,7 +178,7 @@ export const CollectionSelectDropdown = () => {
       ) : selectedCollection ? (
         <Stack>
           <Alert color="gray">
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text size="sm">
                 This post has been created for the{' '}
                 <Text component="span" weight="bold">
@@ -222,7 +222,7 @@ export const CollectionSelectDropdown = () => {
 
           {selectedCollection && !collectionItemExists && (
             <Alert color="red">
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Text size="sm">
                   We could not find a link to the entry record for this post. This post might have
                   been removed from the{' '}

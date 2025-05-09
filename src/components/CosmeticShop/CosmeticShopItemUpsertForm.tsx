@@ -52,7 +52,7 @@ type CosmeticSearchSelectItemProps = { name: string; description: string } & Sel
 const CosmeticSearchSelectItem = forwardRef<HTMLDivElement, CosmeticSearchSelectItemProps>(
   ({ name, description, ...others }: CosmeticSearchSelectItemProps, ref) => (
     <div ref={ref} {...others}>
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Text size="sm">{name}</Text>
         <Text size="xs" color="dimmed">
           {description}
@@ -162,8 +162,8 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing="md">
-        <Stack spacing="md">
+      <Stack gap="md">
+        <Stack gap="md">
           {!shopItem && (
             <CosmeticSearch
               cosmetic={cosmetic ?? undefined}
@@ -174,8 +174,8 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             <InputSwitch
               name="archived"
               label={
-                <Stack spacing={4}>
-                  <Group spacing={4}>
+                <Stack gap={4}>
+                  <Group gap={4}>
                     <Text inline>Archived</Text>
                   </Group>
                   <Text size="xs" color="dimmed">
@@ -195,7 +195,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
                 <Divider mx="-md" />
                 <Group>
                   <CosmeticSample cosmetic={cosmetic} />
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text>{cosmetic.name}</Text>
                     <Text color="dimmed" size="sm">
                       {cosmetic.description}
@@ -226,7 +226,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             description="The link to the YouTube video that walks through how this cosmetic was made :D"
             placeholder="e.g., https://www.youtube.com/watch?v=dQw4w9WgXcQ"
           />
-          <Group spacing="md" grow>
+          <Group gap="md" grow>
             <InputNumber
               name="unitAmount"
               label="Price"
@@ -251,7 +251,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
               available items less than the number of purchases.
             </Text>
           )}
-          <Group spacing="md" grow>
+          <Group gap="md" grow>
             <InputDatePicker
               name="availableFrom"
               label="Available From"
@@ -284,7 +284,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
                 dropdownItemLimit={25}
               />
 
-              <Group mx="auto" position="apart">
+              <Group mx="auto" justify="space-between">
                 {paidToUserIds?.map((userId) => (
                   <Box style={{ position: 'relative' }} key={userId} w={455}>
                     <ActionIcon
@@ -314,7 +314,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
           </Input.Wrapper>
         </Stack>
         <Stack>
-          <Group position="right">
+          <Group justify="flex-end">
             {onCancel && (
               <Button
                 loading={upsertingShopItem}

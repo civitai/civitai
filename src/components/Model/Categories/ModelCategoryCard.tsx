@@ -325,7 +325,7 @@ export function ModelCategoryCard({
                       </Menu.Dropdown>
                     </Menu>
                   )}
-                  <Group spacing={4} className={classes.cardBadges}>
+                  <Group gap={4} className={classes.cardBadges}>
                     <ImageGuard2.BlurToggle />
                     {modelBadges}
                   </Group>
@@ -350,15 +350,15 @@ export function ModelCategoryCard({
             </ImageGuard2>
           )}
 
-          <Stack className={classes.info} spacing={8}>
+          <Stack className={classes.info} gap={8}>
             <Group
               mx="xs"
-              position="apart"
+              justify="space-between"
               sx={{
                 zIndex: 10,
               }}
             >
-              <Group spacing={8}>
+              <Group gap={8}>
                 <CivitaiLinkManageButton
                   modelId={id}
                   modelName={name}
@@ -393,7 +393,7 @@ export function ModelCategoryCard({
                       </ThemeIcon>
                     </HoverCard.Target>
                     <HoverCard.Dropdown>
-                      <Stack spacing={4}>
+                      <Stack gap={4}>
                         <Text size="sm" weight="bold">
                           Available for generation
                         </Text>
@@ -435,12 +435,12 @@ export function ModelCategoryCard({
               )}
             </Group>
 
-            <Stack className={classes.content} spacing={6} p="xs">
-              <Group position="left" spacing={4}>
+            <Stack className={classes.content} gap={6} p="xs">
+              <Group position="left" gap={4}>
                 {modelText}
               </Group>
-              <Group position="apart" spacing={4}>
-                <Group spacing={4} align="center">
+              <Group justify="space-between" gap={4}>
+                <Group gap={4} align="center">
                   {modelLikes}
                   {modelComments}
                   {modelDownloads}

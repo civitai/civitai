@@ -61,8 +61,8 @@ function UserPostsPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer p={0}>
-          <Stack spacing="xs">
-            <Group spacing={8} position="apart">
+          <Stack gap="xs">
+            <Group gap={8} justify="space-between">
               {selfView && (
                 <FeedContentToggle
                   size="xs"
@@ -73,7 +73,7 @@ function UserPostsPage() {
                   }}
                 />
               )}
-              <Group spacing={8} ml="auto" noWrap>
+              <Group gap={8} ml="auto" wrap="nowrap">
                 <SortFilter
                   type="posts"
                   value={sort}
@@ -82,8 +82,7 @@ function UserPostsPage() {
                 <PostFiltersDropdown
                   query={{ ...query, period, followed }}
                   onChange={(filters) => replace(filters)}
-                  size="sm"
-                  compact
+                  size="compact-sm"
                 />
               </Group>
             </Group>

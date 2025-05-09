@@ -19,13 +19,13 @@ const BuzzWithdrawalRequestHistory = ({
         </ActionIcon>
       </Popover.Target>
       <Popover.Dropdown>
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Text size="sm" weight={500}>
             History
           </Text>
           {history.map((record) => (
             <Stack key={record.id}>
-              <Group noWrap position="apart">
+              <Group wrap="nowrap" justify="space-between">
                 {'updatedBy' in record ? (
                   <UserAvatar
                     user={record.updatedBy}

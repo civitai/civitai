@@ -60,8 +60,8 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
+    <Stack gap="lg">
+      <Stack gap="md">
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
         {query?.period && onChange ? (
           <PeriodFilter

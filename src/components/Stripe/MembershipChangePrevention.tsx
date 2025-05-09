@@ -80,7 +80,7 @@ export const DowngradeFeedbackModal = ({
               setDowngradeReason(value);
             }}
             withAsterisk
-            spacing="xs"
+            gap="xs"
           >
             {downgradeReasons.map((item) => (
               <Paper key={item} withBorder radius="md" p="md">
@@ -175,7 +175,7 @@ export function CancelMembershipFeedbackModal() {
               setCancelReason(value);
             }}
             withAsterisk
-            spacing="xs"
+            gap="xs"
           >
             {cancelReasons.map((item) => (
               <Paper key={item} withBorder radius="md" p="md">
@@ -377,7 +377,7 @@ export const VaultStorageDowngrade = ({
         </Center>
       ) : (
         <Stack>
-          <Group noWrap position="center">
+          <Group wrap="nowrap" justify="center">
             {shownItems.map((item) => (
               <Image
                 key={item.id}
@@ -389,7 +389,7 @@ export const VaultStorageDowngrade = ({
               />
             ))}
           </Group>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text align="center">
               You have{' '}
               <Text component="span" weight="bold">

@@ -73,7 +73,7 @@ export function CollectionHitList() {
     const NotFound = (
       <Box>
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
               <Text color="dimmed">
                 {hiddenCount} collections have been hidden due to your settings.

@@ -80,7 +80,7 @@ export default function ImageTags() {
             <ModerationControls images={images} filters={filters} />
           </Paper>
 
-          <Stack spacing={0} mb="lg">
+          <Stack gap={0} mb="lg">
             <Title order={1}>Tags Needing Review</Title>
             <Text color="dimmed">
               These are images with moderation tags that users have voted to remove.
@@ -202,7 +202,7 @@ function ModerationControls<T extends { id: number }>({
   };
 
   return (
-    <Group noWrap spacing="xs">
+    <Group wrap="nowrap" gap="xs">
       <ButtonTooltip label="Select all" {...tooltipProps}>
         <ActionIcon variant="outline" onClick={handleSelectAll}>
           <IconSquareCheck size="1.25rem" />

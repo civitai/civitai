@@ -112,12 +112,12 @@ export function ImageMeta({
   const canCreate = flags.imageGeneration && !!resourceCoverage && !!meta.prompt;
 
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       {metas.hasRegular ? (
         <>
           {metas.long.map(({ label, value }) => (
-            <Stack key={label} spacing={0}>
-              <Group spacing={4} align="center">
+            <Stack key={label} gap={0}>
+              <Group gap={4} align="center">
                 <Text size="sm" weight={500}>
                   {label}
                 </Text>
@@ -174,7 +174,7 @@ export function ImageMeta({
           {metas.medium
             .filter(({ value }) => typeof value !== 'object')
             .map(({ label, value }) => (
-              <Group key={label} position="apart">
+              <Group key={label} justify="space-between">
                 <Text size="sm" mr="xs" weight={500}>
                   {label}
                 </Text>
@@ -189,7 +189,7 @@ export function ImageMeta({
             {metas.short
               .filter(({ value }) => typeof value !== 'object')
               .map(({ label, value }) => (
-                <Group key={label} spacing="xs">
+                <Group key={label} gap="xs">
                   <Text size="sm" mr="xs" weight={500}>
                     {label}
                   </Text>
@@ -235,9 +235,9 @@ export function ImageMeta({
         <>
           <Divider mx="-md" label="External Data" labelPosition="center" />
           {!!metas.external.source && (
-            <Group spacing="xs">
+            <Group gap="xs">
               {Object.entries(metas.external.source).map(([label, value]) => (
-                <Group key={label} spacing="xs" sx={{ flexGrow: 1 }}>
+                <Group key={label} gap="xs" sx={{ flexGrow: 1 }}>
                   <Text size="sm" mr="xs" weight={500}>
                     {titleCase(label === 'name' ? 'Source' : label)}
                   </Text>
@@ -249,7 +249,7 @@ export function ImageMeta({
             </Group>
           )}
           {!!metas.external.referenceUrl && (
-            <Group spacing="xs">
+            <Group gap="xs">
               <Text size="sm" mr="xs" weight={500}>
                 Source URL
               </Text>
@@ -259,7 +259,7 @@ export function ImageMeta({
             </Group>
           )}
           {!!metas.external.createUrl && (
-            <Group spacing="xs">
+            <Group gap="xs">
               <Text size="sm" mr="xs" weight={500}>
                 Create URL
               </Text>
@@ -275,7 +275,7 @@ export function ImageMeta({
               </Text>
               <SimpleGrid cols={2} verticalSpacing="xs">
                 {Object.entries(metas.external.details).map(([k, v]) => (
-                  <Group key={k} spacing="xs">
+                  <Group key={k} gap="xs">
                     <Text size="sm" mr="xs" weight={500}>
                       {titleCase(k)}
                     </Text>
@@ -309,7 +309,7 @@ function ComfyNodes({ meta }: { meta: ImageMetaProps }) {
   return (
     <Group
       onClick={() => copy(JSON.stringify(workflow))}
-      spacing={4}
+      gap={4}
       sx={{ justifyContent: 'flex-end', cursor: 'pointer' }}
       data-activity="copy:workflow"
     >
@@ -339,7 +339,7 @@ function GenerationDataButton({
       w={!iconOnly ? '100%' : undefined}
       data-activity="copy:image-meta"
     >
-      <Group spacing={4}>
+      <Group gap={4}>
         {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
         {!iconOnly && label}
       </Group>

@@ -83,8 +83,8 @@ export function BountyEditForm({ bounty }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing="xl">
-        <Group spacing="md" noWrap>
+      <Stack gap="xl">
+        <Group gap="md" wrap="nowrap">
           <BackButton url={`/bounties/${bounty.id}`} />
           <Title className={classes.title}>Editing {bounty.name} Bounty</Title>
         </Group>
@@ -98,7 +98,7 @@ export function BountyEditForm({ bounty }: Props) {
         />
         {!alreadyStarted && (
           <Stack>
-            <Group spacing="xl" grow>
+            <Group gap="xl" grow>
               <InputDatePicker
                 className={classes.fluid}
                 name="startsAt"
@@ -185,7 +185,7 @@ export function BountyEditForm({ bounty }: Props) {
         {files && files.length > 0 && (
           <InputCheckbox name="ownRights" label="I own the rights to these files" mt="xs" />
         )}
-        <Group position="right">
+        <Group justify="flex-end">
           <Button type="submit" loading={updating}>
             Save
           </Button>

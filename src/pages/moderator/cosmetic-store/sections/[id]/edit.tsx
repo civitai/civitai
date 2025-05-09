@@ -79,7 +79,7 @@ export default function SectionEdit({
   return (
     <Container size="md">
       <Stack>
-        <Group spacing="md" noWrap>
+        <Group gap="md" wrap="nowrap">
           <BackButton url="/moderator/cosmetic-store/sections" />
           <Title>Update shop section: {cosmeticShopSection.title}</Title>
         </Group>

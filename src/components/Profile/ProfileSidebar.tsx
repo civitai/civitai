@@ -187,9 +187,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   );
 
   return (
-    <Stack className={className} spacing={sizeOpts.spacing} p="md">
-      <Group noWrap position="apart">
-        <Group align="flex-start" position="apart" w={!isMobile ? '100%' : undefined}>
+    <Stack className={className} gap={sizeOpts.spacing} p="md">
+      <Group wrap="nowrap" justify="space-between">
+        <Group align="flex-start" justify="space-between" w={!isMobile ? '100%' : undefined}>
           <UserAvatar
             avatarSize={sizeOpts.avatar}
             user={{ ...user, cosmetics: equippedCosmetics }}
@@ -206,7 +206,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           )}
         </Group>
         {isMobile && (
-          <Group noWrap spacing={4}>
+          <Group wrap="nowrap" gap={4}>
             {muted ? mutedAlert : editProfileBtn}
             {!user?.bannedAt && (
               <>
@@ -221,7 +221,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         )}
       </Group>
       <RankBadge rank={user.rank} size={sizeOpts.rankBadge} withTitle />
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Username {...user} cosmetics={equippedCosmetics} size="xl" />
         <Text color="dimmed" size="sm">
           Joined {formatDate(user.createdAt)}
@@ -232,7 +232,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               <Popover.Target>
                 <UnstyledButton>
                   <Badge color="red">
-                    <Group spacing={0}>
+                    <Group gap={0}>
                       <Text>{user?.banReason ? `Banned: ${user?.banReason}` : 'Banned'}</Text>
                       {user?.bannedReasonDetails && (
                         <IconInfoCircle size={16} style={{ marginLeft: 4 }} />
@@ -254,7 +254,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       </Stack>
 
       {profile.location && !muted && (
-        <Group spacing="sm" noWrap>
+        <Group gap="sm" wrap="nowrap">
           <IconMapPin size={16} style={{ flexShrink: 0 }} />
           <Text color="dimmed" truncate size={sizeOpts.text}>
             {profile.location}
@@ -267,7 +267,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         </ContentClamp>
       )}
       {!muted && (
-        <Group spacing={4}>
+        <Group gap={4}>
           {sortDomainLinks(user.links).map((link, index) => (
             <ActionIcon
               key={index}
@@ -307,11 +307,11 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       {(!isCurrentUser || shouldDisplayStats) && <Divider my={sizeOpts.spacing} />}
 
       {badges.length > 0 && (
-        <Stack spacing={sizeOpts.spacing}>
+        <Stack gap={sizeOpts.spacing}>
           <Text size={sizeOpts.text} color="dimmed" weight={590}>
             Badges
           </Text>
-          <Group spacing="xs">
+          <Group gap="xs">
             {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
               const data = (award.data ?? {}) as BadgeCosmetic['data'];
               const url = (data.url ?? '') as string;
@@ -357,7 +357,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                     )}
                   </Popover.Target>
                   <Popover.Dropdown>
-                    <Stack spacing={0}>
+                    <Stack gap={0}>
                       <Text size="sm" align="center" weight={500}>
                         {award.name}
                       </Text>

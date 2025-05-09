@@ -162,7 +162,7 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
         <>
           <Divider labelPosition="center" label="Danger zone" color="red" />
           <Paper className={classes.feedContainer}>
-            <Stack spacing="lg">
+            <Stack gap="lg">
               <Title order={3}>Delete this club</Title>
               <Text>
                 By deleting this club, all resources in it will be automatically be made publicly
@@ -201,11 +201,11 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
   return (
     <AppLayout>
       <Container size="xl">
-        <Stack spacing="md">
-          <Stack spacing="md">
+        <Stack gap="md">
+          <Stack gap="md">
             <Link legacyBehavior href={`/clubs/${club.id}`} passHref shallow>
               <Anchor size="sm">
-                <Group spacing={4}>
+                <Group gap={4}>
                   <IconArrowLeft />
                   <Text inherit>Back to clubs feed page</Text>
                 </Group>

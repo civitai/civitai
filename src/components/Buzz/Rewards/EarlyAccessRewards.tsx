@@ -119,7 +119,7 @@ export const EarlyAccessRewards = () => {
     <Paper withBorder className={classes.tileCard} h="100%">
       <Stack p="md">
         <Title order={3}>Your early access models</Title>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text>
             As a member of the Civitai Creator Program, your models in early access will award you
             Buzz per unique download.

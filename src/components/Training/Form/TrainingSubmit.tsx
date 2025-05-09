@@ -356,7 +356,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   runs.length > 1 ? 'these training runs' : 'this training run'
                 } is: `}
               </Text>
-              <Group spacing={2}>
+              <Group gap={2}>
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
                 <Text span inline>
                   {totalBuzzCost.toLocaleString()}
@@ -545,7 +545,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       <Switch
         label={
-          <Group spacing={4}>
+          <Group gap={4}>
             <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
               Submit up to {maxRuns} training runs at once.
               <br />
@@ -563,13 +563,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       />
 
       <Stack className={classes.sticky} sx={!multiMode ? { display: 'none' } : {}}>
-        <Group mt="md" position="apart" noWrap>
+        <Group mt="md" justify="space-between" wrap="nowrap">
           <Title order={5}>Training Runs</Title>
-          <Group spacing="xs" ml="sm">
+          <Group gap="xs" ml="sm">
             <Button
               color="green"
               variant="light"
-              compact
+              size="compact-md"
               leftIcon={<IconPlus size={16} />}
               disabled={runs.length >= maxRuns}
               onClick={() => {
@@ -587,7 +587,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             <Button
               color="cyan"
               variant="light"
-              compact
+              size="compact-md"
               leftIcon={<IconCopy size={16} />}
               disabled={runs.length >= maxRuns}
               onClick={() => {
@@ -605,7 +605,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             <Button
               color="red"
               variant="light"
-              compact
+              size="compact-md"
               leftIcon={<IconX size={16} />}
               disabled={runs.length <= 1}
               onClick={() => {
@@ -662,7 +662,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             color="yellow"
             mt="sm"
           >
-            <Group spacing="sm" position="apart" noWrap>
+            <Group gap="sm" justify="space-between" wrap="nowrap">
               <Text>
                 You have &quot;tagged&quot; files, but{' '}
                 {selectedRun.base in trainingModelInfo ? (
@@ -690,7 +690,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             color="yellow"
             mt="sm"
           >
-            <Group spacing="sm" position="apart" noWrap>
+            <Group gap="sm" justify="space-between" wrap="nowrap">
               <Text>
                 You have &quot;captioned&quot; files, but{' '}
                 {selectedRun.base in trainingModelInfo ? (
@@ -717,7 +717,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           color="yellow"
           mt="sm"
         >
-          <Group spacing="sm" position="apart" noWrap>
+          <Group gap="sm" justify="space-between" wrap="nowrap">
             <Text>Video training requires that all files are labeled.</Text>
             <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
           </Group>
@@ -740,7 +740,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               {!isValidRapid(selectedRun.baseType, selectedRun.params.engine) && (
                 <Switch
                   label={
-                    <Group spacing={4} noWrap>
+                    <Group gap={4} wrap="nowrap">
                       <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
                         Jump to the front of the training queue and ensure that your training run is
                         uninterrupted.
@@ -784,9 +784,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               alignSelf: 'flex-end',
             }}
           >
-            <Group spacing="sm">
+            <Group gap="sm">
               <Badge>
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   <Text>Queue</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
                     <Text size="sm">How many jobs are in the queue before you</Text>
@@ -803,7 +803,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               <Divider orientation="vertical" />
 
               <Badge>
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   <Text>ETA</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
                     <Text size="sm">How long your job is expected to run</Text>
@@ -846,7 +846,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       <Divider mt="md" />
 
-      <Group mt="lg" position="right">
+      <Group mt="lg" justify="flex-end">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
         </Button>

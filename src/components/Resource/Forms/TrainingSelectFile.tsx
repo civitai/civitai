@@ -100,11 +100,11 @@ const EpochRow = ({
       onClick={() => setSelectedFile(epoch.modelUrl)}
     >
       <Stack>
-        <Group position="apart" className={classes.epochRow}>
+        <Group justify="space-between" className={classes.epochRow}>
           <Text fz="md" fw={700}>
             Epoch #{epoch.epochNumber}
           </Text>
-          <Group spacing={8} noWrap>
+          <Group gap={8} wrap="nowrap">
             <DownloadButton
               onClick={(e) => e.stopPropagation()}
               component="a"
@@ -134,7 +134,7 @@ const EpochRow = ({
               loading={loading}
               onClick={() => onPublishClick(epoch.modelUrl)}
             >
-              <Group spacing={4} noWrap>
+              <Group gap={4} wrap="nowrap">
                 Continue
                 <IconArrowRight size={20} />
               </Group>
@@ -410,7 +410,7 @@ export default function TrainingSelectFile({
       ) : noEpochs ? (
         <Stack p="xl" align="center">
           <Loader />
-          <Stack spacing="sm" align="center">
+          <Stack gap="sm" align="center">
             <Text>
               Models are currently training{' '}
               {modelVersion.trainingDetails?.params?.maxTrainEpochs
@@ -425,7 +425,7 @@ export default function TrainingSelectFile({
           {modelVersion.trainingStatus === TrainingStatus.Processing && (
             <Stack p="xl" align="center">
               <Loader />
-              <Stack spacing="sm" align="center">
+              <Stack gap="sm" align="center">
                 <Text>
                   Models are currently training{' '}
                   {modelVersion.trainingDetails?.params?.maxTrainEpochs
@@ -518,7 +518,7 @@ export default function TrainingSelectFile({
         </>
       )}
 
-      <Group mt="xl" position="right">
+      <Group mt="xl" justify="flex-end">
         <Button onClick={() => handleSubmit()} disabled={resultsLoading} loading={awaitInvalidate}>
           Next
         </Button>

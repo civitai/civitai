@@ -335,7 +335,7 @@ export default function UserTrainingModels() {
                     }}
                   >
                     <td>
-                      <Group spacing={4}>
+                      <Group gap={4}>
                         <Text>{mv.model.name}</Text>
                         {mv.name !== mv.model.name && <Text>({mv.name})</Text>}
                       </Group>
@@ -356,13 +356,13 @@ export default function UserTrainingModels() {
                     </td>
                     <td>
                       {mv.trainingStatus ? (
-                        <Group spacing="sm">
+                        <Group gap="sm">
                           <HoverCard shadow="md" width={300} zIndex={100} withArrow>
                             <HoverCard.Target>
                               <Badge
                                 color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}
                               >
-                                <Group spacing={6} noWrap>
+                                <Group gap={6} wrap="nowrap">
                                   {splitUppercase(
                                     mv.trainingStatus === TrainingStatus.InReview
                                       ? 'Ready'
@@ -412,7 +412,7 @@ export default function UserTrainingModels() {
                                 e.stopPropagation();
                               }}
                             >
-                              <Group noWrap spacing={6}>
+                              <Group wrap="nowrap" gap={6}>
                                 Open Support Ticket <IconExternalLink size={12} />
                               </Group>
                             </Button>
@@ -438,13 +438,13 @@ export default function UserTrainingModels() {
                       <Text>{startStr}</Text>
                     </td>
                     <td>
-                      <Group spacing={8} noWrap>
+                      <Group gap={8} wrap="nowrap">
                         {!hasFiles || !hasTrainingParams ? (
                           <IconAlertCircle color="orange" />
                         ) : (
                           <IconCircleCheck color="green" />
                         )}
-                        <Stack spacing={4}>
+                        <Stack gap={4}>
                           {/* technically this step 1 alert should never happen */}
                           {/*{!hasVersion && <Text inherit>Needs basic model data (Step 1)</Text>}*/}
                           {!hasFiles && <Text inherit>Needs training files (Step 2)</Text>}
@@ -457,15 +457,14 @@ export default function UserTrainingModels() {
                       </Group>
                     </td>
                     <td>
-                      <Group position="right" spacing={8} pr="xs" noWrap>
+                      <Group justify="flex-end" gap={8} pr="xs" wrap="nowrap">
                         {mv.trainingStatus === TrainingStatus.InReview && (
                           <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
                             <Button
                               component="a"
                               radius="xl"
-                              size="sm"
                               onClick={(e) => e.stopPropagation()}
-                              compact
+                              size="compact-sm"
                             >
                               Review
                             </Button>
@@ -521,7 +520,7 @@ export default function UserTrainingModels() {
         </Table>
       </ScrollArea>
       {pagination.totalPages > 1 && (
-        <Group position="apart">
+        <Group justify="space-between">
           <Text>Total {pagination.totalItems} items</Text>
           <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
         </Group>
@@ -555,7 +554,7 @@ export default function UserTrainingModels() {
             {
               label: 'Job ID',
               value: (
-                <Group spacing="xs">
+                <Group gap="xs">
                   <Text>{jobId ?? 'Unknown'}</Text>
                   {!!jobId && (
                     <ButtonTooltip withinPortal withArrow label="Copy - send this to support!">
@@ -570,7 +569,7 @@ export default function UserTrainingModels() {
             {
               label: 'History',
               value: (
-                <Stack spacing={5}>
+                <Stack gap={5}>
                   {modalData.file?.metadata?.trainingResults?.history
                     ? (modalData.file?.metadata?.trainingResults?.history || []).map((h) => (
                         <Group key={h.time}>

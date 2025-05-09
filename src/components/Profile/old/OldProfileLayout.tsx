@@ -398,7 +398,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //           <>
 //             <Box className={classes.banner} mb="md">
 //               <Container size="sm" p={0}>
-//                 <Stack className={classes.wrapper} spacing="md" align="center">
+//                 <Stack className={classes.wrapper} gap="md" align="center">
 //                   {user.image && (
 //                     <div className={classes.outsideImage}>
 //                       <AspectRatio ratio={1} className={classes.image}>
@@ -412,7 +412,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                     </div>
 //                   )}
 //                   <Card radius="sm" className={classes.card} withBorder shadow="sm">
-//                     <Group noWrap>
+//                     <Group wrap="nowrap">
 //                       {user.image && (
 //                         <div className={classes.insideImage}>
 //                           <AspectRatio ratio={1} className={classes.image}>
@@ -425,9 +425,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                           </AspectRatio>
 //                         </div>
 //                       )}
-//                       <Stack spacing="xs" sx={{ flexGrow: 1 }}>
-//                         <Group position="apart" spacing={8} align="flex-start">
-//                           <Stack spacing={0}>
+//                       <Stack gap="xs" sx={{ flexGrow: 1 }}>
+//                         <Group justify="space-between" gap={8} align="flex-start">
+//                           <Stack gap={0}>
 //                             <Title
 //                               className={classes.username}
 //                               order={2}
@@ -441,14 +441,14 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                               {`Joined ${formatDate(user.createdAt)}`}
 //                             </Text>
 //                           </Stack>
-//                           <Group className={classes.userActions} spacing={8} noWrap>
+//                           <Group className={classes.userActions} gap={8} wrap="nowrap">
 //                             <TipBuzzButton toUserId={user.id} size="md" compact />
 //                             <ChatUserButton user={user} size="md" compact />
 //                             <FollowUserButton userId={user.id} size="md" compact />
 //                             {user.username && <UserContextMenu username={user.username} />}
 //                           </Group>
 //                         </Group>
-//                         <Group spacing={8}>
+//                         <Group gap={8}>
 //                           <RankBadge rank={user.rank} size="lg" />
 //                           {stats && (
 //                             <UserStatBadges
@@ -461,7 +461,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                           )}
 //                         </Group>
 //                         {!!user.links?.length && (
-//                           <Group spacing={4}>
+//                           <Group gap={4}>
 //                             {sortDomainLinks(user.links).map((link, index) => (
 //                               <ActionIcon
 //                                 key={index}
@@ -479,7 +479,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                       </Stack>
 //                     </Group>
 //                   </Card>
-//                   <Tabs.List position="center">
+//                   <Tabs.List justify="center">
 //                     <Tabs.Tab value="/models" icon={<IconCategory size="1rem" />}>
 //                       Models
 //                     </Tabs.Tab>

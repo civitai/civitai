@@ -42,7 +42,7 @@ export function VotableTagAdd({ addTag, autosuggest }: VotableTagAddProps) {
 
   return (
     <Badge radius="xs" className={classes.badge} px={5} onClick={!adding ? open : undefined}>
-      <Group spacing={4}>
+      <Group gap={4}>
         <IconPlus size={14} strokeWidth={2.5} />
         {!adding ? (
           <span>Tag</span>
@@ -59,7 +59,6 @@ export function VotableTagAdd({ addTag, autosuggest }: VotableTagAddProps) {
                 name: getDisplayName(tag.name),
               })) ?? []
             }
-            nothingFound={isFetching ? 'Searching...' : 'Nothing found'}
             placeholder="Type to search..."
             onItemSubmit={(item) => {
               addTag(item.value);

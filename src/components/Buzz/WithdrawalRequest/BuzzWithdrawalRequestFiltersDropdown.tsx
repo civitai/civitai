@@ -76,7 +76,7 @@ export function BuzzWithdrawalRequestFilterDropdown({
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <IconFilter size={16} />
           Filters
         </Group>
@@ -85,11 +85,11 @@ export function BuzzWithdrawalRequestFilterDropdown({
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
+    <Stack gap="lg">
+      <Stack gap="md">
         <Divider label="Request Status" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={filters.status ?? []}
           onChange={(status: BuzzWithdrawalRequestStatus[]) => {
             setFilters({

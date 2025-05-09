@@ -92,7 +92,7 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
                       <Text>{invite.permissions.map((p) => getDisplayName(p)).join(', ')}</Text>
                     </td>
                     <td>
-                      <Group position="right">
+                      <Group justify="flex-end">
                         <CopyButton
                           value={`${env.NEXT_PUBLIC_BASE_URL}/clubs/invites/${invite.id}`}
                         >
@@ -136,7 +136,7 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
               })}
             </tbody>
             {pagination && pagination.totalPages > 1 && (
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                 <Pagination
                   page={filters.page}

@@ -19,7 +19,7 @@ export function DescriptionTable({
       typeof item.label === 'string' ? <Text weight="500">{item.label}</Text> : item.label;
     if (item.info) {
       labelEl = (
-        <Group spacing={4}>
+        <Group gap={4}>
           {labelEl}
           <InfoPopover size="xs" withArrow iconProps={{ size: 16 }}>
             {item.info}

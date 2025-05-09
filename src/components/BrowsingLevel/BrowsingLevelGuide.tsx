@@ -25,7 +25,7 @@ export default function BrowsingLevelGuide() {
                 <Stack>
                   <Text>{browsingLevelDescriptions[browsingLevel]}</Text>
                   {!!tags.length && (
-                    <Group spacing="xs">
+                    <Group gap="xs">
                       {tags.map((tag) => (
                         <Badge key={tag.id}>{tag.name}</Badge>
                       ))}

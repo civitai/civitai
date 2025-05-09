@@ -77,7 +77,7 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
             <Box w={86}>
               <LogoBadge />
             </Box>
-            <Stack spacing={0} mt={-5}>
+            <Stack gap={0} mt={-5}>
               <Title sx={{ lineHeight: 1 }}>Welcome!</Title>
               <Text>{`Let's setup your account`}</Text>
             </Stack>

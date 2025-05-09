@@ -2,6 +2,7 @@
 import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import packageJson from './package.json' assert { type: 'json' };
+import path from 'node:path';
 
 const isProd = process.env.NODE_ENV === 'production';
 const isDev = process.env.NODE_ENV === 'development';
@@ -246,5 +247,9 @@ export default defineNextConfig(
       ];
     },
     output: 'standalone',
+    sassOptions: {
+      implementation: 'sass-embedded',
+    additionalData: `@use "${path.join(process.cwd(), '_mantine').replace(/\\/g, '/')}" as mantine;`,
+      }
   })
 );

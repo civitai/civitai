@@ -1,11 +1,4 @@
-import {
-  Box,
-  createStyles,
-  Group,
-  SegmentedControl,
-  SegmentedControlProps,
-  Stack,
-} from '@mantine/core';
+import { Box, Group, SegmentedControl, SegmentedControlProps, Stack } from '@mantine/core';
 import { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -29,18 +22,9 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Availability, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
+import styles from './models.module.scss';
 
 type SectionTypes = 'published' | 'private' | 'draft' | 'training';
-
-const useStyles = createStyles(() => ({
-  filtersWrapper: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-
-      '> *': { flexGrow: 1 },
-    },
-  },
-}));
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx }) => {
@@ -57,7 +41,6 @@ export const getServerSideProps = createServerSideProps({
 function UserModelsPage() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const { classes } = useStyles();
   const { set, section: querySection, ...queryFilters } = useModelQueryParams();
   const period = queryFilters.period ?? MetricTimeframe.AllTime;
   const sort = queryFilters.sort ?? ModelSort.Newest;
@@ -95,8 +78,8 @@ function UserModelsPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer p={0}>
-          <Stack spacing="xs">
-            <Group spacing={8}>
+          <Stack gap="xs">
+            <Group gap={8}>
               {selfView && (
                 <ContentToggle
                   size="xs"
@@ -109,13 +92,13 @@ function UserModelsPage() {
               )}
               {viewingPublished && (
                 <>
-                  <Group className={classes.filtersWrapper} spacing="xs" ml="auto">
+                  <Group className={styles.filtersWrapper} gap="xs" ml="auto">
                     <SortFilter
                       type="models"
                       value={sort}
                       onChange={(x) => set({ sort: x as ModelSort })}
                     />
-                    <ModelFiltersDropdown filterMode="query" position="left" size="sm" compact />
+                    <ModelFiltersDropdown filterMode="query" position="left" size="compact-sm" />
                   </Group>
                 </>
               )}
@@ -206,7 +189,7 @@ function ContentToggle({
     <SegmentedControl
       {...props}
       value={value}
-      onChange={onChange}
+      onChange={(value: string) => onChange(value as SectionTypes)}
       data={tabs}
       className="sm:w-full md:w-auto"
     />

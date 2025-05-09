@@ -48,7 +48,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
     <div className="flex flex-col gap-1.5">
       <Text className="text-lg font-semibold">Resources used</Text>
       {isLoading ? (
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Skeleton height={16} radius="md" />
           <Skeleton height={16} radius="md" />
         </Stack>

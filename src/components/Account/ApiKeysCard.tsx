@@ -46,14 +46,14 @@ export function ApiKeysCard() {
   return (
     <>
       <Card withBorder>
-        <Stack spacing={0}>
-          <Group align="start" position="apart">
+        <Stack gap={0}>
+          <Group align="start" justify="space-between">
             <Title order={2}>API Keys</Title>
             <Button
               variant="outline"
               leftIcon={<IconPlus size={14} stroke={1.5} />}
               onClick={() => toggle()}
-              compact
+              size="compact-md"
             >
               Add API key
             </Button>
@@ -66,7 +66,7 @@ export function ApiKeysCard() {
         <Box mt="md" sx={{ position: 'relative' }}>
           <LoadingOverlay visible={isLoading} />
           {apiKeys.length > 0 ? (
-            <Table highlightOnHover withBorder>
+            <Table highlightOnHover withTableBorder>
               <thead>
                 <tr>
                   <th>Name</th>
@@ -78,13 +78,13 @@ export function ApiKeysCard() {
                 {apiKeys.map((apiKey, index) => (
                   <tr key={index}>
                     <td>
-                      <Group spacing={4}>
+                      <Group gap={4}>
                         <Text>{apiKey.name}</Text>
                       </Group>
                     </td>
                     <td>{formatDate(apiKey.createdAt)}</td>
                     <td>
-                      <Group position="right">
+                      <Group justify="flex-end">
                         <ActionIcon color="red" onClick={() => handleDeleteApiKey(apiKey.id)}>
                           <IconTrash size="16" stroke={1.5} />
                         </ActionIcon>
@@ -97,7 +97,7 @@ export function ApiKeysCard() {
           ) : (
             <Paper radius="md" mt="lg" p="lg" sx={{ position: 'relative' }} withBorder>
               <Center>
-                <Stack spacing={2}>
+                <Stack gap={2}>
                   <Text weight="bold">There are no API keys in your account</Text>
                   <Text size="sm" color="dimmed">
                     Start by creating your first API Key to connect your apps.

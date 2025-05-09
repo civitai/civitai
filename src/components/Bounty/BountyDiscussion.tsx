@@ -31,7 +31,7 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
           <Stack>
             <ReturnToRootThread />
             {activeComment && (
-              <Stack spacing="xl">
+              <Stack gap="xl">
                 <Divider />
                 <Text size="sm" color="dimmed">
                   Viewing thread for
@@ -49,7 +49,7 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
                   {!!remaining && !showMore && (
                     <Divider
                       label={
-                        <Group spacing="xs" align="center">
+                        <Group gap="xs" align="center">
                           <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                             Show {remaining} More
                           </Text>

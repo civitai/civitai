@@ -14,7 +14,7 @@ export const AvailableBuzzBadge = () => {
           theme.colorScheme === 'dark' ? theme.fn.rgba('#000', 0.31) : theme.colors.gray[0],
       })}
     >
-      <Group spacing={4} noWrap>
+      <Group gap={4} wrap="nowrap">
         <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
           Available Buzz
         </Text>

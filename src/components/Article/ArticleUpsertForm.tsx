@@ -197,8 +197,8 @@ export function ArticleUpsertForm({ article }: Props) {
       <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this article."} />
       <ContainerGrid gutter="xl">
         <ContainerGrid.Col xs={12} md={8}>
-          <Stack spacing="xl">
-            <Group spacing={8} noWrap>
+          <Stack gap="xl">
+            <Group gap={8} wrap="nowrap">
               <BackButton url="/articles" />
               <Title>{article?.id ? 'Editing article' : 'Create an Article'}</Title>
               <FeatureIntroductionHelpButton
@@ -231,7 +231,7 @@ export function ArticleUpsertForm({ article }: Props) {
           </Stack>
         </ContainerGrid.Col>
         <ContainerGrid.Col xs={12} md={4}>
-          <Stack className={classes.sidebar} spacing="xl">
+          <Stack className={classes.sidebar} gap="xl">
             <ActionButtons
               article={article}
               saveButtonProps={{
@@ -250,7 +250,7 @@ export function ArticleUpsertForm({ article }: Props) {
               name="userNsfwLevel"
               data={browsingLevelSelectOptions}
               label={
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   Maturity Level
                   <ActionIcon
                     radius="xl"
@@ -273,7 +273,7 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputSelect
               name="categoryId"
               label={
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   <Input.Label required>Category</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -292,7 +292,7 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputTags
               name="tags"
               label={
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   <Input.Label>Tags</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -310,7 +310,7 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputMultiFileUpload
               name="attachments"
               label={
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   <Input.Label>Attachments</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -335,7 +335,7 @@ export function ArticleUpsertForm({ article }: Props) {
               }}
               renderItem={(file, onRemove) => (
                 <Paper key={file.id} radius="sm" p={0} w="100%">
-                  <Group position="apart">
+                  <Group justify="space-between">
                     {article && file.id ? (
                       <Anchor href={`/api/download/attachments/${file.id}`} lineClamp={1} download>
                         {file.name}
@@ -385,7 +385,7 @@ function ActionButtons({
   ...stackProps
 }: ActionButtonProps) {
   return (
-    <Stack spacing={8} {...stackProps}>
+    <Stack gap={8} {...stackProps}>
       {article?.publishedAt ? (
         <Button
           {...(article.status !== ArticleStatus.Published ? publishButtonProps : saveButtonProps)}

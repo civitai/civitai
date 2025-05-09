@@ -39,8 +39,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             {({ copy, copied, Icon, color }) => (
               <Button
                 color={color}
-                size="xs"
-                compact
+                size="compact-xs"
                 className="rounded-lg"
                 classNames={{ label: 'flex items-center gap-1' }}
                 onClick={copy}

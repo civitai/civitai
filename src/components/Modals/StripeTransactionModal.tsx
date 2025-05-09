@@ -99,7 +99,7 @@ const StripeTransactionModal = ({
   if (success) {
     return (
       <Stack>
-        <Group position="apart" noWrap>
+        <Group justify="space-between" wrap="nowrap">
           <Text size="lg" weight={700}>
             Complete your transaction
           </Text>
@@ -121,7 +121,7 @@ const StripeTransactionModal = ({
   if (successTransactionButError) {
     return (
       <Stack>
-        <Group position="apart" noWrap>
+        <Group justify="space-between" wrap="nowrap">
           <Text size="lg" weight={700}>
             Complete your transaction
           </Text>
@@ -159,8 +159,8 @@ const StripeTransactionModal = ({
           }).catch(() => undefined);
       }}
     >
-      <Stack spacing="md">
-        <Group position="apart" noWrap>
+      <Stack gap="md">
+        <Group justify="space-between" wrap="nowrap">
           <Text size="lg" weight={700}>
             Complete your transaction
           </Text>
@@ -172,7 +172,7 @@ const StripeTransactionModal = ({
           <Stack>
             <Divider mx="-lg" />
             <Text weight="bold">Saved payment methods</Text>
-            <Stack spacing="sm">
+            <Stack gap="sm">
               {supportedUserPaymentMethods.map((paymentMethod) => (
                 <PaymentMethodItem key={paymentMethod.id} paymentMethod={paymentMethod}>
                   <Button
@@ -220,7 +220,7 @@ const StripeTransactionModal = ({
 
         <RecaptchaNotice />
 
-        <Group position="right">
+        <Group justify="flex-end">
           <Button
             variant="filled"
             color="gray"

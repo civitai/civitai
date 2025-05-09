@@ -253,7 +253,7 @@ export default function ImageSelectModal({
               <CloseButton onClick={handleClose} />
             </div>
 
-            <Group position="apart">
+            <Group justify="space-between">
               <Group>
                 <Button onClick={handleSelect} disabled={!selected.length}>{`Import${
                   selected.length > 0 ? ` (${selected.length})` : ''
@@ -442,7 +442,7 @@ const ImageGridImage = ({
         label: 'Status',
         value: trainingStatus ? (
           <Badge color={trainingStatusFields[trainingStatus]?.color ?? 'gray'}>
-            <Group spacing={6} noWrap>
+            <Group gap={6} wrap="nowrap">
               {splitUppercase(
                 trainingStatus === TrainingStatus.InReview ? 'Ready' : trainingStatus
               )}
@@ -469,7 +469,7 @@ const ImageGridImage = ({
       {
         label: 'Files',
         value: (
-          <Group spacing="xs">
+          <Group gap="xs">
             <IconBadge color="pink" icon={<IconHash size={14} />} tooltip="Number of files">
               {metadata?.numImages || 0}
             </IconBadge>
@@ -499,7 +499,7 @@ const ImageGridImage = ({
               type: 'Training Data',
             })}
             color="cyan"
-            compact
+            size="compact-md"
             leftIcon={<IconDownload size={16} />}
           >
             <Text align="center">{`Download (${formatKBytes(sizeKB)})`}</Text>
@@ -516,7 +516,7 @@ const ImageGridImage = ({
             trainingModelInfo[baseModel as TrainingDetailsBaseModelList].pretty
           ) : isAir(baseModel) ? (
             <Text component="a" href={getAirModelLink(baseModel)} target="_blank" variant="link">
-              <Group spacing="xs">
+              <Group gap="xs">
                 <Text>Custom</Text>
                 <IconExternalLink size={14} />
               </Group>
@@ -592,7 +592,7 @@ const ImageGridImage = ({
             className="flex cursor-pointer flex-col gap-2 p-3 text-black dark:text-white"
             onClick={onChange}
           >
-            <Group noWrap position="apart">
+            <Group wrap="nowrap" justify="space-between">
               <Text size="sm" weight={700}>
                 {img.modelVersion.model.name} ({img.modelVersion.name})
               </Text>

@@ -44,7 +44,7 @@ export function ChatUserButton({
         sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.success[2] }}
         {...buttonProps}
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <IconMessage2 size={14} />
           {label ?? 'Chat'}
         </Group>

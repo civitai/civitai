@@ -281,8 +281,8 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
         <ContainerGrid.Col span={12}>
           <Stack>
             <InputText name="name" label="Name" placeholder="Name" withAsterisk />
-            <Stack spacing={5}>
-              <Group spacing="sm" grow>
+            <Stack gap={5}>
+              <Group gap="sm" grow>
                 <InputSelect
                   name="type"
                   label="Type"
@@ -345,7 +345,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
             <InputTags
               name="tagsOnModels"
               label={
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   <Input.Label>Tags</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -393,7 +393,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
             <Paper radius="md" p="xl" withBorder>
               <ContainerGrid gutter="xs">
                 <ContainerGrid.Col xs={12} sm={6}>
-                  <Stack spacing="xs">
+                  <Stack gap="xs">
                     <Text size="md" weight={500} sx={{ lineHeight: 1.2 }} mb="xs">
                       {`When using this model, I give permission for users to:`}
                     </Text>
@@ -419,9 +419,9 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   </Stack>
                 </ContainerGrid.Col>
                 <ContainerGrid.Col xs={12} sm={6}>
-                  <Stack spacing="xs">
-                    <Stack spacing={4}>
-                      <Group spacing={4} noWrap>
+                  <Stack gap="xs">
+                    <Stack gap={4}>
+                      <Group gap={4} wrap="nowrap">
                         <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
                           Commercial Use
                         </Text>
@@ -437,7 +437,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                       </Text>
                     </Stack>
                     <Checkbox.Group
-                      spacing="xs"
+                      gap="xs"
                       value={allowCommercialUse}
                       defaultValue={defaultValues.allowCommercialUse}
                       onChange={(v: CommercialUse[]) => {
@@ -480,7 +480,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               </ContainerGrid>
             </Paper>
             <Paper radius="md" p="xl" withBorder>
-              <Stack spacing="xs">
+              <Stack gap="xs">
                 <Text size="md" weight={500}>
                   This resource:
                 </Text>
@@ -543,7 +543,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
             {hasPoiInNsfw && (
               <>
                 <Alert color="red" pl={10}>
-                  <Group noWrap spacing={10}>
+                  <Group wrap="nowrap" gap={10}>
                     <ThemeIcon color="red">
                       <IconExclamationMark />
                     </ThemeIcon>
@@ -561,7 +561,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
             {hasSfwOnlyNsfw && (
               <>
                 <Alert color="red" pl={10}>
-                  <Group noWrap spacing={10}>
+                  <Group wrap="nowrap" gap={10}>
                     <ThemeIcon color="red">
                       <IconExclamationMark />
                     </ThemeIcon>
@@ -586,7 +586,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
             {isTrained && isDraft && features.privateModels && (
               <InputChipGroup
                 grow
-                spacing="sm"
+                gap="sm"
                 name="availability"
                 onChangeCapture={async (event) => {
                   // @ts-ignore eslint-disable-next-line
@@ -647,7 +647,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   return (
                     <Wrap key={type}>
                       <Chip value={type} {...chipProps}>
-                        <Stack spacing={4} align="center" w="100%" px="sm">
+                        <Stack gap={4} align="center" w="100%" px="sm">
                           {details.icon}
                           <Text weight="bold">{details.label}</Text>
                           <Text className="text-wrap text-center">{details.description}</Text>
@@ -715,13 +715,13 @@ export const PrivateModelAutomaticSetup = ({
 
   return (
     <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
-      <Group position="apart" mb="md">
+      <Group justify="space-between" mb="md">
         <Text size="lg" weight="bold">
           You are about to create a private model
         </Text>
       </Group>
       <Divider mx="-lg" mb="md" />
-      <Stack spacing="md">
+      <Stack gap="md">
         <Text>
           Private models are only visible to you and are not publicly accessible. You can Publish a
           private model at any time. By continuing, the model setup wizard will complete, and you

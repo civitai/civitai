@@ -43,7 +43,7 @@ export default function CivitaiNewsroom() {
       <Meta title="Civitai Newsroom" description="The latest news and updates from Civitai" />
       <div className={classes.hero}>
         <Container size="md">
-          <Stack align="center" spacing={0}>
+          <Stack align="center" gap={0}>
             <Title className={classes.heroTitle}>Civitai Newsroom</Title>
             <Text ta="center" className={classes.heroText}>
               The latest news and updates from Civitai.

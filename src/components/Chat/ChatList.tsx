@@ -224,8 +224,8 @@ export function ChatList() {
   };
 
   return (
-    <Stack spacing={0} h="100%">
-      <Group p="sm" position="apart" align="center">
+    <Stack gap={0} h="100%">
+      <Group p="sm" justify="space-between" align="center">
         <Group>
           <Text>Chats</Text>
           <Menu withArrow position="bottom">
@@ -333,7 +333,7 @@ export function ChatList() {
             <IconCloudOff size={36} />
           </Stack>
         ) : (
-          <Stack p="xs" spacing={4}>
+          <Stack p="xs" gap={4}>
             <LazyMotion features={loadMotion}>
               {filteredData.map((d) => {
                 const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
@@ -351,7 +351,7 @@ export function ChatList() {
                   <PGroup
                     key={d.id}
                     component={div}
-                    noWrap
+                    wrap="nowrap"
                     className={cx(classes.selectChat, {
                       [classes.selectedChat]: d.id === state.existingChatId,
                     })}
@@ -380,7 +380,7 @@ export function ChatList() {
                         )}
                       </Box>
                     </Indicator>
-                    <Stack sx={{ overflow: 'hidden' }} spacing={0}>
+                    <Stack sx={{ overflow: 'hidden' }} gap={0}>
                       <Highlight
                         size="sm"
                         fw={500}
@@ -410,7 +410,7 @@ export function ChatList() {
                         </Text>
                       )}
                     </Stack>
-                    <Group sx={{ marginLeft: 'auto' }} noWrap spacing={6}>
+                    <Group sx={{ marginLeft: 'auto' }} wrap="nowrap" gap={6}>
                       {isModSender && (
                         <Tooltip
                           withArrow={false}

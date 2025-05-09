@@ -132,8 +132,8 @@ export function NewChat() {
   }
 
   return (
-    <Stack spacing={0} h="100%">
-      <Group p="sm" position="apart">
+    <Stack gap={0} h="100%">
+      <Group p="sm" justify="space-between">
         <Text>New Chat</Text>
         <ChatActions />
       </Group>
@@ -191,7 +191,7 @@ export function NewChat() {
         )}
       </Box>
       <Divider />
-      <Group p="sm" position="center">
+      <Group p="sm" justify="center">
         <Button
           disabled={isCreating}
           variant="light"

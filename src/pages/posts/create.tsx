@@ -135,7 +135,7 @@ export default Page(
             </div>
           </div>
           {tagId && (tag || tagLoading) && (
-            <Group spacing="xs">
+            <Group gap="xs">
               {tagLoading && <Loader size="sm" />}
               <Text size="sm" color="dimmed">
                 Posting to{' '}
@@ -146,7 +146,7 @@ export default Page(
             </Group>
           )}
           {modelVersionId && (version || loading) && (
-            <Group spacing="xs">
+            <Group gap="xs">
               {loading && <Loader size="sm" />}
               <Text size="sm" color="dimmed">
                 Posting to{' '}
@@ -179,7 +179,7 @@ export default Page(
               {({ modelId, modelVersionId, modelName, userReview }) => (
                 <>
                   <Card p="sm" withBorder>
-                    <Stack spacing={8}>
+                    <Stack gap={8}>
                       <Text size="md" weight={600}>
                         What did you think of this resource?
                       </Text>

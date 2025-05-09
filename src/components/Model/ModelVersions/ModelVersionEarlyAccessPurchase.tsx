@@ -106,7 +106,7 @@ export const ModelVersionEarlyAccessPurchase = ({
           </Text>
           <Stack>
             {supportsDownloadPurchase && (
-              <Stack spacing="xs">
+              <Stack gap="xs">
                 <BuzzTransactionButton
                   type="submit"
                   label="Get Download Access"
@@ -122,7 +122,7 @@ export const ModelVersionEarlyAccessPurchase = ({
             )}
 
             {supportsGenerationPurchase && (
-              <Stack spacing="xs">
+              <Stack gap="xs">
                 <BuzzTransactionButton
                   type="submit"
                   label="Get Generation Access"

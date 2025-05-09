@@ -97,11 +97,11 @@ export function CollectionCard({ data }: Props) {
           </Text>
           <div className="flex flex-nowrap gap-1">
             <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconLayoutGrid size={14} stroke={2.5} />
                 <Text size="xs">{abbreviateNumber(itemCount)}</Text>
               </Group>
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconUser size={14} stroke={2.5} />
                 <Text size="xs">{abbreviateNumber(contributorCount)}</Text>
               </Group>
@@ -125,8 +125,8 @@ function CollectionCardHeader({
   const { classes, cx } = useCardStyles({ aspectRatio: 7 / 9 });
 
   return (
-    <Group spacing={4} position="apart" className={cx(classes.contentOverlay, classes.top)} noWrap>
-      <Group spacing="xs">
+    <Group gap={4} justify="space-between" className={cx(classes.contentOverlay, classes.top)} wrap="nowrap">
+      <Group gap="xs">
         {withinImageGuard && <ImageGuard2.BlurToggle className={classes.chip} radius="xl" />}
         <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
           <Text color="white" size="xs" transform="capitalize">

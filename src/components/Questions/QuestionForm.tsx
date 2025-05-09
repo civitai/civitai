@@ -110,7 +110,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
 
   return (
     <Container>
-      <Group spacing="lg" mb="lg">
+      <Group gap="lg" mb="lg">
         <ActionIcon variant="outline" size="lg" onClick={() => router.back()}>
           <IconArrowLeft size={20} stroke={1.5} />
         </ActionIcon>
@@ -146,7 +146,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
                   clearable
                   searchable
                 />
-                <Group position="right" noWrap>
+                <Group justify="flex-end" wrap="nowrap">
                   <Button
                     variant="outline"
                     onClick={() => form.reset()}

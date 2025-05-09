@@ -110,7 +110,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
   }
 
   return (
-    <Stack spacing={4}>
+    <Stack gap={4}>
       {FilterBox}
       <ScrollArea>{Collections}</ScrollArea>
     </Stack>

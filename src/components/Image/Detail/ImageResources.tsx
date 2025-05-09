@@ -123,9 +123,9 @@ export function ImageResources({ imageId }: { imageId: number }) {
   };
 
   return (
-    <Stack spacing={4}>
+    <Stack gap={4}>
       {isLoading ? (
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Skeleton height={16} radius="md" />
           <Skeleton height={16} radius="md" />
         </Stack>
@@ -146,8 +146,8 @@ export function ImageResources({ imageId }: { imageId: number }) {
                   }}
                   withBorder
                 >
-                  <Stack spacing="xs">
-                    <Group spacing={4} position="apart" noWrap>
+                  <Stack gap="xs">
+                    <Group gap={4} justify="space-between" wrap="nowrap">
                       <Text size="sm" weight={500} lineClamp={1}>
                         {resource.modelName ?? resource.name}
                       </Text>
@@ -156,7 +156,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                           Unavailable
                         </Badge>
                       )}
-                      <Group spacing={4} noWrap>
+                      <Group gap={4} wrap="nowrap">
                         {resource.modelType && (
                           <Badge radius="sm" size="sm">
                             {getDisplayName(resource.modelType)}
@@ -195,13 +195,13 @@ export function ImageResources({ imageId }: { imageId: number }) {
                       </Group>
                     </Group>
                     {isAvailable && (
-                      <Group spacing={8} position="apart" noWrap>
+                      <Group gap={8} justify="space-between" wrap="nowrap">
                         {resource.modelVersionName && (
                           <Text color="dimmed" size="sm" lineClamp={1}>
                             {resource.modelVersionName}
                           </Text>
                         )}
-                        <Group spacing={4} ml="auto" noWrap>
+                        <Group gap={4} ml="auto" wrap="nowrap">
                           <IconBadge
                             className={classes.statBadge}
                             icon={
@@ -244,7 +244,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
       {resources.length > LIMIT && (
         <Divider
           label={
-            <Group spacing="xs" align="center">
+            <Group gap="xs" align="center">
               <Text variant="link" sx={{ cursor: 'pointer' }} onClick={() => setShowAll((x) => !x)}>
                 {!showAll ? 'Show more' : 'Show less'}
               </Text>

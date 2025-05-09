@@ -42,7 +42,7 @@ export default function Contests() {
     <>
       <Meta title="Contests - Settings" deIndex />
       <Container size="md">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Contests</Title>
           <Text size="sm" color="dimmed">
             Manage our contests &amp; banned users{' '}
@@ -77,7 +77,7 @@ export default function Contests() {
                   {flatData.map((collection) => (
                     <tr key={collection.id}>
                       <td>
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           <Text>{collection.name}</Text>
                         </Group>
                       </td>

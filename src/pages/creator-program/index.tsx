@@ -97,7 +97,7 @@ function CreatorsClubV1() {
     <>
       <Meta title="Creator Program | Civitai" />
       <Container>
-        <Stack spacing="lg">
+        <Stack gap="lg">
           <Title size={sizing.header.title} className={classes.highlightColor} lh={1} mb="sm">
             <Text component="span" size={32} weight={700}>
               Introducing the
@@ -120,7 +120,7 @@ function CreatorsClubV1() {
                 h="100%"
               >
                 <Stack>
-                  <Group position="apart" noWrap>
+                  <Group justify="space-between" wrap="nowrap">
                     <Title order={3} color="yellow.8">
                       Turn your Buzz into earnings!{' '}
                       {!availability.isAvailable && (
@@ -129,7 +129,7 @@ function CreatorsClubV1() {
                         </>
                       )}
                     </Title>
-                    <Group spacing={0} noWrap>
+                    <Group gap={0} wrap="nowrap">
                       <IconBolt
                         style={{ fill: theme.colors.yellow[7] }}
                         size={40}
@@ -182,7 +182,7 @@ const HowItWorksSection = () => {
 
   return (
     <Stack className={classes.section}>
-      <Stack spacing={0} mb="sm">
+      <Stack gap={0} mb="sm">
         <Title size={sizing.sections.title} order={2} className={classes.highlightColor}>
           How it Works
         </Title>
@@ -203,16 +203,16 @@ const HowItWorksSection = () => {
         <Grid.Col span={12}>
           <Paper withBorder className={cx(classes.card)} h="100%">
             <Group grow>
-              <Stack spacing="xs" maw="unset">
+              <Stack gap="xs" maw="unset">
                 <Title order={3} className={classes.highlightColor}>
                   The Basics
                 </Title>
-                <Group noWrap w="100%">
+                <Group wrap="nowrap" w="100%">
                   <IconUserPlus size={24} className="flex-none" />
                   <Text>If you meet the program requirements, join!</Text>
                 </Group>
                 <Divider />
-                <Group noWrap w="100%">
+                <Group wrap="nowrap" w="100%">
                   <IconPercentage10 size={24} className="flex-none" />
                   <Text>
                     Each month Civitai allocates a Creator Compensation Pool from a portion of our
@@ -220,7 +220,7 @@ const HowItWorksSection = () => {
                   </Text>
                 </Group>
                 <Divider />
-                <Group noWrap w="100%">
+                <Group wrap="nowrap" w="100%">
                   <IconPig size={24} className="flex-none" />
                   <Text>
                     During the Banking Phase, you Bank Buzz to secure your share of the Compensation
@@ -228,7 +228,7 @@ const HowItWorksSection = () => {
                   </Text>
                 </Group>
                 <Divider />
-                <Group noWrap w="100%">
+                <Group wrap="nowrap" w="100%">
                   <IconLogout size={24} className="flex-none" />
                   <Text>
                     During the Extraction Phase, you can choose to keep Buzz in the Bank to get paid
@@ -236,7 +236,7 @@ const HowItWorksSection = () => {
                   </Text>
                 </Group>
                 <Divider />
-                <Group noWrap w="100%">
+                <Group wrap="nowrap" w="100%">
                   <IconMoneybag size={24} className="flex-none" />
                   <Text fw={700}>Get paid!</Text>
                 </Group>
@@ -260,7 +260,7 @@ const FunStatsSection = () => {
 
   return (
     <Stack className={classes.section}>
-      <Stack spacing={0} mb="sm">
+      <Stack gap={0} mb="sm">
         <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
           Highlights from last month&rsquo;s cycle{' '}
         </Title>
@@ -417,7 +417,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
 
   return (
     <Stack className={classes.section}>
-      <Stack spacing={0} mb="sm">
+      <Stack gap={0} mb="sm">
         <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
           How do I join?
         </Title>
@@ -425,7 +425,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
       <Grid>
         <Grid.Col xs={12} sm={4}>
           <Paper withBorder className={cx(classes.card)} h="100%">
-            <Stack spacing="sm" h="100%">
+            <Stack gap="sm" h="100%">
               <Text mb="lg" className={classes.highlightColor} size="lg">
                 Program requirements:
               </Text>
@@ -509,11 +509,11 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
         </Grid.Col>
         <Grid.Col xs={12} sm={4}>
           <Paper withBorder className={cx(classes.card)} h="100%">
-            <Stack spacing="sm">
+            <Stack gap="sm">
               <Text mb="sm" className={classes.highlightColor} size="lg">
                 <strong>Want to know more? Check out the full Guide!</strong>
               </Text>
-              <Group noWrap w="100%">
+              <Group wrap="nowrap" w="100%">
                 <IconBook size={24} />
                 <Anchor
                   href="https://education.civitai.com/civitais-guide-to-earning-with-the-creator-program/"
@@ -523,7 +523,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                   Earning with the Creator Program
                 </Anchor>
               </Group>
-              <Group noWrap w="100%">
+              <Group wrap="nowrap" w="100%">
                 <IconBook size={24} />
                 <Anchor href="/content/creator-program-v2-tos">Terms of Service</Anchor>
               </Group>
@@ -586,7 +586,7 @@ const FAQ = () => {
           {faq.map(({ q, a }, index) => (
             <Accordion.Item key={index} value={`q${index}`}>
               <Accordion.Control>
-                <Group spacing={8}>
+                <Group gap={8}>
                   <Text size="lg" weight={700}>
                     {q}
                   </Text>
@@ -606,7 +606,7 @@ const CreatorCapsSection = () => {
 
   return (
     <Stack className={classes.section}>
-      <Stack spacing={0} mb="sm">
+      <Stack gap={0} mb="sm">
         <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
           Creator Banking Caps
         </Title>

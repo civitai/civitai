@@ -37,8 +37,7 @@ export const DailyBoostRewardClaim = () => {
 
   return (
     <Button
-      compact
-      size="xs"
+      size="compact-xs"
       color="blue.4"
       loading={isLoading}
       onClick={() => mutate()}

@@ -361,7 +361,7 @@ const ResourceHeader = () => {
         </InfoPopover>
       </div>
       {canAdd ? (
-        <Group spacing="xs">
+        <Group gap="xs">
           <Box className="hidden group-hover:block">
             <InfoPopover
               type="hover"
@@ -394,8 +394,7 @@ const ResourceHeader = () => {
                 excludeIds: image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined),
               }}
               buttonProps={{
-                size: 'sm',
-                compact: true,
+                size: 'compact-sm',
                 className: 'text-sm',
                 loading: isAddingResource,
                 disabled: cantAdd,
@@ -516,7 +515,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   };
 
   return !!modelId && !!modelVersionId ? (
-    <Group spacing="xs" noWrap mt={i === 0 ? 4 : undefined}>
+    <Group gap="xs" wrap="nowrap" mt={i === 0 ? 4 : undefined}>
       {!detected && (
         <Tooltip label="Manually-added" withArrow>
           <ThemeIcon color="cyan" variant="light" radius="xl" size="sm">
@@ -536,7 +535,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
               {modelVersionName}
             </Text>
           </Text>
-          <Group spacing={2}>
+          <Group gap={2}>
             <Badge color="gray" size="md" variant="filled">
               {getDisplayName(modelType ?? 'unknown')}
             </Badge>
@@ -545,7 +544,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
       </Link>
 
       {!detected && (
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           {!otherAvailableIDs.length ? (
             <></>
           ) : (
@@ -585,7 +584,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
           {modelVersionName}
         </Text>
       </Text>
-      <Group spacing={4}>
+      <Group gap={4}>
         <Badge color="gray" size="md" variant="filled">
           {getDisplayName(modelType ?? 'unknown')}
         </Badge>
@@ -656,9 +655,8 @@ function EditDetail() {
                       <Button
                         variant="light"
                         color="blue"
-                        compact
+                        size="compact-sm"
                         classNames={{ label: 'flex gap-1' }}
-                        size="sm"
                         onClick={onEditMetaClick}
                         className="text-sm"
                       >
@@ -713,8 +711,7 @@ function EditDetail() {
                     <Button
                       variant="light"
                       color="blue"
-                      compact
-                      size="sm"
+                      size="compact-sm"
                       onClick={onEditMetaClick}
                       className="text-sm"
                     >
@@ -724,8 +721,7 @@ function EditDetail() {
                       <Button
                         variant={hideMeta ? 'filled' : 'light'}
                         color="blue"
-                        compact
-                        size="sm"
+                        size="compact-sm"
                         classNames={{ label: 'flex gap-1 text-sm' }}
                         onClick={toggleHidePrompt}
                         loading={isUpdating}
@@ -779,8 +775,7 @@ function EditDetail() {
                     <Button
                       variant="light"
                       color="blue"
-                      compact
-                      size="sm"
+                      size="compact-sm"
                       classNames={{ label: 'flex gap-1' }}
                       onClick={() => setShowMoreResources((o) => !o)}
                     >
@@ -869,7 +864,7 @@ function EditDetail() {
                     hideClick={true}
                     variant="transparent"
                     size="sm"
-                    position="right"
+                    justify="flex-end"
                     iconProps={{ size: 20 }}
                   >
                     Traditional or generative AI programs, platforms or websites used to create this
@@ -882,8 +877,7 @@ function EditDetail() {
                     // @ts-ignore eslint-disable-next-line
                     variant="light"
                     color="blue"
-                    compact
-                    size="sm"
+                    size="compact-sm"
                     classNames={{ label: 'flex gap-1' }}
                     onClick={() => undefined}
                     className="text-sm"
@@ -933,8 +927,7 @@ function EditDetail() {
                     // @ts-ignore eslint-disable-next-line
                     variant="light"
                     color="blue"
-                    compact
-                    size="sm"
+                    size="compact-sm"
                     classNames={{ label: 'flex gap-1' }}
                     onClick={() => undefined}
                     className="text-sm"
@@ -979,7 +972,7 @@ function EditDetail() {
                       hideClick={true}
                       variant="transparent"
                       size="sm"
-                      position="right"
+                      justify="flex-end"
                       iconProps={{ size: 20 }}
                     >
                       The thumbnail is the image that represents your post. It is the first thing
@@ -988,7 +981,6 @@ function EditDetail() {
                   </div>
                   <Button
                     className="text-sm uppercase"
-                    size="sm"
                     variant="light"
                     onClick={() => {
                       const metadata = image.metadata as VideoMetadata;
@@ -1005,7 +997,7 @@ function EditDetail() {
                         },
                       });
                     }}
-                    compact
+                    size="compact-sm"
                   >
                     Select
                   </Button>

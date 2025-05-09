@@ -125,7 +125,7 @@ export function LoginContent(args: {
             wrapper: 'items-center',
           }}
         >
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text
               size="md"
               // sx={{ lineHeight: 1.1 }}

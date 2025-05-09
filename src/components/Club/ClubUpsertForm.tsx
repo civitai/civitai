@@ -102,11 +102,11 @@ export function ClubUpsertForm({
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={32}>
+      <Stack gap={32}>
         <Grid gutter="xl">
           <Grid.Col xs={12} md={8}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
+            <Stack gap={32}>
+              <Stack gap="xl">
                 <InputText
                   name="name"
                   label="Title"
@@ -121,7 +121,7 @@ export function ClubUpsertForm({
                   withAsterisk
                   stickyToolbar
                 />
-                <Group grow noWrap>
+                <Group grow wrap="nowrap">
                   {avatar && (
                     <div style={{ position: 'relative', width: 124, flexGrow: 0 }}>
                       <Avatar
@@ -160,7 +160,7 @@ export function ClubUpsertForm({
                     style={{ maxWidth: '100%' }}
                   />
                 </Group>
-                <Group grow noWrap>
+                <Group grow wrap="nowrap">
                   {coverImage && (
                     <div style={{ position: 'relative', width: 124, flexGrow: 0 }}>
                       <Avatar
@@ -215,8 +215,8 @@ export function ClubUpsertForm({
               <InputSwitch
                 name="nsfw"
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Mature theme</Text>
 
                       <ActionIcon
@@ -238,8 +238,8 @@ export function ClubUpsertForm({
               <InputSwitch
                 name="unlisted"
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Unlisted</Text>
                     </Group>
                     <Text size="xs" color="dimmed">
@@ -252,8 +252,8 @@ export function ClubUpsertForm({
                 <InputSwitch
                   name="billing"
                   label={
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
+                    <Stack gap={4}>
+                      <Group gap={4}>
                         <Text inline>Renew Memberships Monthly</Text>
                         <Tooltip
                           label="By disabling billing, people will keep their memberships but won't be charged monthly. This is useful if you're not planning to add content for a while."
@@ -282,7 +282,7 @@ export function ClubUpsertForm({
             </Stack>
           </Grid.Col>
         </Grid>
-        <Group position="right">
+        <Group justify="flex-end">
           <Button loading={upserting} type="submit">
             Save
           </Button>

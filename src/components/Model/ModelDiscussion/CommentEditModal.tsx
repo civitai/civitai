@@ -88,7 +88,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
     >
       <LoadingOverlay visible={loadingComment} />
       <Form form={form} onSubmit={handleSaveComment}>
-        <Stack spacing="md">
+        <Stack gap="md">
           <InputRTE
             name="content"
             placeholder="Type your thoughts..."
@@ -98,7 +98,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
             inputClasses="break-all"
             // withLinkValidation
           />
-          <Group position="apart">
+          <Group justify="space-between">
             <Button variant="default" onClick={handleClose}>
               Cancel
             </Button>

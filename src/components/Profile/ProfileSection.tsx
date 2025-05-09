@@ -151,7 +151,7 @@ export const ProfileSectionPreview = ({
     widthGrid: '280px',
   });
   return (
-    <Stack spacing="md" w="100%" style={{ overflow: 'hidden' }}>
+    <Stack gap="md" w="100%" style={{ overflow: 'hidden' }}>
       <Skeleton width="33%" height={22} />
       <div className={classes.grid}>
         {Array.from({ length: rowCount * columnCount }).map((_, i) => {
@@ -168,8 +168,8 @@ export const ProfileSectionPreview = ({
 export const ProfileSection = ({ children, title, icon, action }: Props) => {
   const { theme, classes } = useProfileSectionStyles({});
   return (
-    <Stack spacing="md">
-      <Group position="apart" align="center">
+    <Stack gap="md">
+      <Group justify="space-between" align="center">
         <Group>
           <ThemeIcon size="xl" color="dark" variant="default">
             {icon}

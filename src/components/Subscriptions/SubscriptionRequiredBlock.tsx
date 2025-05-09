@@ -17,7 +17,7 @@ const data: Record<
   'private-models': {
     title: 'Private models require a Civitai Subscription',
     content: (
-      <Stack spacing="xs">
+      <Stack gap="xs">
         <Text>
           Want to create and use private models in our generator? You&rsquo;ll need a Civitai
           Subscription!
@@ -44,7 +44,7 @@ const SubscriptionRequiredModal = ({ feature }: { feature: keyof typeof data }) 
         {typeof title === 'string' ? <Text weight="bold">{title}</Text> : title}
         {typeof content === 'string' ? <Text>{content}</Text> : content}
 
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Button onClick={handleClose} component={NextLink} href="/pricing" color="blue" fullWidth>
             View Subscription Plans
           </Button>

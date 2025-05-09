@@ -511,8 +511,8 @@ function Rater() {
                 </Badge>
               </HoverCard.Target>
               <HoverCard.Dropdown px="xs" py={3} color="gray">
-                <Stack spacing={0}>
-                  <Group spacing={4}>
+                <Stack gap={0}>
+                  <Group gap={4}>
                     <Text size="xs" color="blue.4" weight="bold" tt="uppercase">
                       next level
                     </Text>
@@ -520,7 +520,7 @@ function Rater() {
                       {progression.ratingsInLevel} / {progression.ratingsForNextLevel}
                     </Text>
                   </Group>
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <Text size="xs" color="blue.4" weight="bold" tt="uppercase">
                       Total ratings
                     </Text>
@@ -535,7 +535,7 @@ function Rater() {
           {!loading && (
             <HoverCard withArrow>
               <HoverCard.Target>
-                <Group spacing={4}>
+                <Group gap={4}>
                   {Array.from({ length: 3 }).map((_, i) => (
                     <ThemeIcon
                       key={i}
@@ -572,7 +572,7 @@ function Rater() {
 
         {isSane && !loading && (
           <>
-            <Group ml="auto" spacing={4} className={classes.browsing}>
+            <Group ml="auto" gap={4} className={classes.browsing}>
               <Text weight="bold" size="xs">
                 Show:{' '}
               </Text>
@@ -590,7 +590,7 @@ function Rater() {
                   </Chip>
                 ))}
             </Group>
-            <Stack spacing="xs" align="center" className={classes.actionBar}>
+            <Stack gap="xs" align="center" className={classes.actionBar}>
               <Card
                 id="waitIndicator"
                 withBorder
@@ -601,7 +601,7 @@ function Rater() {
               >
                 Wait...
               </Card>
-              <Group spacing={4}>
+              <Group gap={4}>
                 <Tooltip label="Undo" position="top" withArrow>
                   <Button
                     onClick={undoRating}
@@ -638,7 +638,7 @@ function Rater() {
                   Skip
                 </Button>
               </Group>
-              <Group w="100%" spacing={5}>
+              <Group w="100%" gap={5}>
                 <Text size="xs" mr="auto">
                   <Kbd>1-6</Kbd> to rate, <Kbd>Space</Kbd> to skip, <Kbd>Ctrl</Kbd>+<Kbd>Z</Kbd> to
                   undo

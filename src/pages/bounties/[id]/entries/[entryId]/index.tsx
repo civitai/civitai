@@ -270,7 +270,7 @@ export default function BountyEntryDetailsPage({
 
   const awardSection = benefactor && benefactor.awardedToId === bountyEntry.id && (
     <Alert color="yellow" radius={0}>
-      <Group spacing="xs">
+      <Group gap="xs">
         <ThemeIcon
           // @ts-ignore: transparent variant does work
           variant="transparent"
@@ -284,7 +284,7 @@ export default function BountyEntryDetailsPage({
   );
 
   const shareSection = (
-    <Group spacing={8} noWrap>
+    <Group gap={8} wrap="nowrap">
       {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
         <Link
           legacyBehavior
@@ -292,15 +292,14 @@ export default function BountyEntryDetailsPage({
           passHref
         >
           <Button
-            size="md"
             radius="xl"
             color="gray"
             variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-            compact
+            size="compact-md"
             fullWidth
             component="a"
           >
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               <IconPencilMinus size={14} />
               <Text size="xs">Edit</Text>
             </Group>
@@ -309,11 +308,10 @@ export default function BountyEntryDetailsPage({
       )}
       {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
         <Button
-          size="md"
           radius="xl"
           color="gray"
           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-          compact
+          size="compact-md"
           fullWidth
           onClick={(e) => {
             e.preventDefault();
@@ -339,7 +337,7 @@ export default function BountyEntryDetailsPage({
             });
           }}
         >
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <IconTrash size={14} />
             <Text size="xs">Delete</Text>
           </Group>
@@ -353,15 +351,14 @@ export default function BountyEntryDetailsPage({
         {({ onClick, isLoading }) => (
           <Button
             disabled={isLoading}
-            size="md"
+            size="compact-md"
             radius="xl"
             color="gray"
             variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-            compact
             fullWidth
             onClick={onClick}
           >
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               <ThemeIcon
                 // @ts-ignore: transparent variant does work
                 variant="transparent"
@@ -378,14 +375,13 @@ export default function BountyEntryDetailsPage({
       </AwardBountyAction>
       <ShareButton url={router.asPath} title={bounty.name}>
         <Button
-          size="md"
+          size="compact-md"
           radius="xl"
           color="gray"
           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-          compact
           fullWidth
         >
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <IconShare3 size={14} />
             <Text size="xs">Share</Text>
           </Group>
@@ -445,26 +441,26 @@ export default function BountyEntryDetailsPage({
         })}
       >
         <Accordion.Control>
-          <Group position="apart">
+          <Group justify="space-between">
             {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
           </Group>
         </Accordion.Control>
         <Accordion.Panel>
-          <Stack spacing={2}>
+          <Stack gap={2}>
             {isLoadingFiles ? (
               <Center p="md">
                 <Loader size="md" variant="bars" />
               </Center>
             ) : filesCount > 0 ? (
               <ScrollArea.Autosize maxHeight={300}>
-                <SimpleGrid cols={1} spacing={2}>
+                <SimpleGrid cols={1} gap={2}>
                   {files.map((file) => {
                     const isLocked = !file.url;
                     return (
                       <Paper key={file.id} radius={0} p={8} w="100%" bg="dark.4">
                         <Stack>
-                          <Group position="apart" noWrap>
-                            <Group noWrap>
+                          <Group justify="space-between" wrap="nowrap">
+                            <Group wrap="nowrap">
                               {isLocked ? (
                                 <Tooltip
                                   label="This file has not been unlocked yet"
@@ -478,7 +474,7 @@ export default function BountyEntryDetailsPage({
                               ) : (
                                 <IconLockOpen style={{ minWidth: '24px' }} />
                               )}
-                              <Stack spacing={0}>
+                              <Stack gap={0}>
                                 {file.url && !isLocked ? (
                                   <Anchor
                                     href={`/api/download/attachments/${file.id}`}
@@ -498,7 +494,7 @@ export default function BountyEntryDetailsPage({
                                 </Text>
                               </Stack>
                             </Group>
-                            <Group spacing={0} noWrap>
+                            <Group gap={0} wrap="nowrap">
                               {file.metadata.benefactorsOnly && (
                                 <Tooltip
                                   label="Only users who award this entry will have access to this file"

@@ -71,11 +71,11 @@ export const CreateWithdrawalRequest = () => {
 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="md">
-      <Group position="apart" mb="md">
+      <Group justify="space-between" mb="md">
         <Text size="lg" weight="bold">
           Get Paid
         </Text>
-        <Group spacing="sm" noWrap>
+        <Group gap="sm" wrap="nowrap">
           <AvailableBuzzBadge />
 
           <ActionIcon onClick={handleClose}>
@@ -85,7 +85,7 @@ export const CreateWithdrawalRequest = () => {
       </Group>
       <Divider mx="-lg" mb="md" />
       <Stack>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text>
             As a member of the Civitai creator&rsquo;s program, you are elegible to get paid for
             your hard earned Buzz.
@@ -103,7 +103,7 @@ export const CreateWithdrawalRequest = () => {
             )}
             <Paper withBorder radius="md" px="md" py="xs" className={classes.tileCard}>
               <Stack>
-                <Group spacing="xs">
+                <Group gap="xs">
                   <IconMoodDollar />
                   <Text weight="bold">Enter Buzz amount</Text>
                 </Group>
@@ -125,22 +125,22 @@ export const CreateWithdrawalRequest = () => {
                   />
 
                   {amount && (
-                    <Stack spacing={4}>
+                    <Stack gap={4}>
                       <Text weight="bold">Payment</Text>
                       <Divider variant="dashed" />
-                      <Group position="apart">
+                      <Group justify="space-between">
                         <Text color="dimmed">USD</Text>
                         <Text>${formatCurrencyForDisplay(dollarAmount, Currency.USD)}</Text>
                       </Group>
                       <Divider variant="dashed" />
-                      <Group position="apart">
+                      <Group justify="space-between">
                         <Text color="dimmed">
                           Platform fee ({constants.buzz.platformFeeRate / 100}%)
                         </Text>
                         <Text>${formatCurrencyForDisplay(platformFee, Currency.USD)}</Text>
                       </Group>
                       <Divider variant="dashed" />
-                      <Group position="apart">
+                      <Group justify="space-between">
                         <Text color="green.4" weight="bold">
                           You&rsquo;ll receive
                         </Text>

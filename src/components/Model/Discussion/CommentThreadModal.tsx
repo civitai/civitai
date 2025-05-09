@@ -90,7 +90,7 @@ export default function CommentThreadModal({
         <Alert>Comment could not be found</Alert>
       ) : (
         <Stack>
-          <Group position="apart" align="flex-start" noWrap>
+          <Group justify="space-between" align="flex-start" wrap="nowrap">
             <UserAvatar
               user={comment.user}
               subText={<DaysFromNow date={comment.createdAt} />}
@@ -103,11 +103,11 @@ export default function CommentThreadModal({
                 ) : null
               }
               size="lg"
-              spacing="xs"
+              gap="xs"
               withUsername
               linkToProfile
             />
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               <CommentDiscussionMenu comment={comment} />
               <CloseButton onClick={dialog.onClose} />
             </Group>
@@ -118,7 +118,7 @@ export default function CommentThreadModal({
               moderators.
             </AlertWithIcon>
           )}
-          <Stack spacing="xl">
+          <Stack gap="xl">
             <RenderHtml html={comment.content} withMentions />
             <ReactionPicker
               reactions={reactions}

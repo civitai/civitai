@@ -31,12 +31,12 @@ export function ClubCard({ data }: Props) {
               {({ safe }) => (
                 <>
                   <Group
-                    spacing={4}
-                    position="apart"
+                    gap={4}
+                    justify="space-between"
                     className={cx(classes.contentOverlay, classes.top)}
-                    noWrap
+                    wrap="nowrap"
                   >
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <ImageGuard.ToggleConnect position="static" />
                     </Group>
                     {data.nsfw && (
@@ -72,7 +72,7 @@ export function ClubCard({ data }: Props) {
         /> */}
         <Stack
           className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
-          spacing="sm"
+          gap="sm"
         >
           {user ? (
             user?.id !== -1 && (
@@ -92,7 +92,7 @@ export function ClubCard({ data }: Props) {
             <UserAvatar user={user} />
           )}
 
-          <Group position="apart" align="start" spacing={8}>
+          <Group justify="space-between" align="start" gap={8}>
             <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
               {name}
             </Text>
@@ -105,7 +105,7 @@ export function ClubCard({ data }: Props) {
                   </ThemeIcon>
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text color="yellow" weight={590}>
                       Pending scan
                     </Text>
@@ -118,7 +118,7 @@ export function ClubCard({ data }: Props) {
               </HoverCard>
             )}
           </Group>
-          <Group spacing={8} position="apart">
+          <Group gap={8} justify="space-between">
             <Badge
               className={classes.chip}
               sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
@@ -126,7 +126,7 @@ export function ClubCard({ data }: Props) {
               px={8}
               variant="filled"
             >
-              <Group spacing="xs" noWrap>
+              <Group gap="xs" wrap="nowrap">
                 <IconBadge
                   icon={<IconUsers size={14} />}
                   color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}

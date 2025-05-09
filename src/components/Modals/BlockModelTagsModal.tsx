@@ -50,8 +50,8 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
               Select the tags you want to add to your blocking list
             </Text>
             <Chip.Group
-              spacing={4}
-              position="center"
+              gap={4}
+              justify="center"
               value={selectedTags}
               onChange={setSelectedTags}
               multiple
@@ -71,7 +71,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
                 );
               })}
             </Chip.Group>
-            <Group position="apart">
+            <Group justify="space-between">
               <Button variant="default" onClick={context.close}>
                 Cancel
               </Button>
@@ -83,7 +83,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
         ) : (
           <>
             <Text>{`This model doesn't have any tags`}</Text>
-            <Group position="right">
+            <Group justify="flex-end">
               <Button variant="default" onClick={context.close}>
                 Close
               </Button>

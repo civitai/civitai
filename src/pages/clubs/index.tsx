@@ -90,9 +90,9 @@ export default function ClubsPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer>
-          <Stack spacing="xs">
-            <Group position="apart" spacing={8}>
-              <Group className={classes.filtersWrapper} spacing={8} noWrap>
+          <Stack gap="xs">
+            <Group justify="space-between" gap={8}>
+              <Group className={classes.filtersWrapper} gap={8} wrap="nowrap">
                 {!query.engagement && (
                   <FeatureIntroduction
                     feature="clubs"
@@ -108,7 +108,7 @@ export default function ClubsPage() {
               </Group>
             </Group>
             {query.engagement && (
-              <Stack spacing="xl" align="flex-start">
+              <Stack gap="xl" align="flex-start">
                 <Title>My Clubs</Title>
                 {/* <SegmentedControl
                   classNames={classes}

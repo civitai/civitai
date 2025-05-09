@@ -95,7 +95,7 @@ const useStyles = createStyles((theme) => ({
 function openLinkWhitelistRequestModal() {
   return openModal({
     title: (
-      <Group spacing="xs">
+      <Group gap="xs">
         <IconAlertTriangle color="gold" />
         <Text size="lg">Blocked URL</Text>
       </Group>

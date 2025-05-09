@@ -98,14 +98,13 @@ export function Setup() {
             Rounds
           </Text>
           <Button
-            size="xs"
             ml="auto"
-            compact
+            size="compact-xs"
             variant="light"
             onClick={addRound}
             disabled={!canAddRounds}
           >
-            <Group spacing={4}>
+            <Group gap={4}>
               <IconPlus size={14} strokeWidth={2.5} />
               Add
             </Group>
@@ -122,7 +121,7 @@ export function Setup() {
           {newGameState.themeIds.map((themeId, i) => {
             return (
               <Card.Section key={i} withBorder pr="xs">
-                <Group spacing={0}>
+                <Group gap={0}>
                   <Select
                     size="md"
                     data={themeOptions}
@@ -150,9 +149,8 @@ export function Setup() {
             Judges
           </Text>
           <Button
-            size="xs"
             ml="auto"
-            compact
+            size="compact-xs"
             variant="light"
             pl={4}
             color={newGameState.includeAudio ? 'blue' : 'gray'}
@@ -160,7 +158,7 @@ export function Setup() {
               setNewGameState((state) => ({ ...state, includeAudio: !state.includeAudio }))
             }
           >
-            <Group spacing={4}>
+            <Group gap={4}>
               {newGameState.includeAudio ? (
                 <IconCheck size={14} strokeWidth={2.5} />
               ) : (
@@ -184,7 +182,7 @@ export function Setup() {
               <Card.Section key={judge.id} withBorder px="xs" py="xs">
                 <Group>
                   <EdgeMedia src={judge.avatar} width={48} />
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text weight={500}>{judge.name}</Text>
                     <Text size="xs" color="dimmed">
                       {judge.shortDescription}
@@ -211,15 +209,14 @@ export function Setup() {
             Are you going to play?
           </Text>
           <Button
-            size="lg"
             ml="auto"
-            compact
+            size="compact-lg"
             variant="light"
             pl={4}
             color={newGameState.viewOnly ? 'gray' : 'blue'}
             onClick={() => setNewGameState((state) => ({ ...state, viewOnly: !state.viewOnly }))}
           >
-            <Group spacing={4}>
+            <Group gap={4}>
               {newGameState.viewOnly ? <IconX /> : <IconCheck />}
               {newGameState.viewOnly ? 'No' : 'Yes'}
             </Group>

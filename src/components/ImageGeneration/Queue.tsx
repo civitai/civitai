@@ -35,10 +35,10 @@ export function Queue() {
   if (!data.length)
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
-        <Stack spacing="xs" align="center" py="16">
+        <Stack gap="xs" align="center" py="16">
           <IconInbox size={64} stroke={1} />
           {filters.marker && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text size={32} align="center">
                 No results found
               </Text>
@@ -46,7 +46,7 @@ export function Queue() {
             </Stack>
           )}
           {!filters.marker && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text size="md" align="center">
                 The queue is empty
               </Text>

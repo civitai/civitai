@@ -204,7 +204,7 @@ export function SimpleImageUpload({
           // maxSize={maxSize}
         >
           <Dropzone.Accept>
-            <Group position="center" spacing="xs">
+            <Group justify="center" gap="xs">
               <IconUpload
                 size={32}
                 stroke={1.5}
@@ -214,7 +214,7 @@ export function SimpleImageUpload({
             </Group>
           </Dropzone.Accept>
           <Dropzone.Reject>
-            <Group position="center" spacing="xs">
+            <Group justify="center" gap="xs">
               <IconX
                 size={32}
                 stroke={1.5}
@@ -224,7 +224,7 @@ export function SimpleImageUpload({
             </Group>
           </Dropzone.Reject>
           <Dropzone.Idle>
-            <Group position="center" spacing="xs">
+            <Group justify="center" gap="xs">
               <IconPhoto size={32} stroke={1.5} />
               <Text color="dimmed">{`Drop image here, should not exceed ${formatBytes(
                 maxSize

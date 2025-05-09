@@ -59,7 +59,7 @@ export function VerifiedText({ file, iconOnly }: Props) {
   const scannedDate = !scannedAt ? null : dayjs(scannedAt);
 
   return (
-    <Group spacing={4} noWrap>
+    <Group gap={4} wrap="nowrap">
       <ThemeIcon color={color} size="xs">
         {icon}
       </ThemeIcon>

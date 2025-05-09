@@ -41,14 +41,14 @@ export const PaymentMethodItem = ({
 }) => {
   const { type } = paymentMethod;
   const groupProps: GroupProps = {
-    position: 'apart',
+    justify: 'space-between',
   };
 
   switch (type) {
     case 'card':
       return (
         <Group {...groupProps}>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text size="xs" color="dimmed">
               Card
             </Text>
@@ -69,7 +69,7 @@ export const PaymentMethodItem = ({
     case 'sepa_debit':
       return (
         <Group {...groupProps}>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text size="xs" color="dimmed">
               SEPA Debit
             </Text>
@@ -87,7 +87,7 @@ export const PaymentMethodItem = ({
     case 'link':
       return (
         <Group {...groupProps}>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text size="xs" color="dimmed">
               Link
             </Text>
@@ -105,7 +105,7 @@ export const PaymentMethodItem = ({
     default:
       return (
         <Group {...groupProps}>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text size="xs" transform="capitalize" color="dimmed">
               {type.replace(/_/gi, ' ')}
             </Text>
@@ -202,7 +202,7 @@ const StripePaymentMethods = () => {
         <Accordion variant="default" px={0}>
           <Accordion.Item value="paymentMethod">
             <Accordion.Control py={8} px={0}>
-              <Group spacing={8}>
+              <Group gap={8}>
                 <IconCreditCard size={24} />
                 <Text size="lg" weight={700}>
                   Add new payment method

@@ -10,7 +10,7 @@ export function ArticleFeedFilters({ ...groupProps }: GroupProps) {
   const currentUser = useCurrentUser();
 
   return (
-    <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
+    <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser && (
         <FollowedFilter
           type="articles"
@@ -19,7 +19,7 @@ export function ArticleFeedFilters({ ...groupProps }: GroupProps) {
         />
       )}
       <SortFilter type="articles" className={classes.subnavDropdown} />
-      <ArticleFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
+      <ArticleFiltersDropdown w="100%" size="compact-sm" className={classes.subnavDropdown} />
     </Group>
   );
 }

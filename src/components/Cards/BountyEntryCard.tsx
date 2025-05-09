@@ -70,7 +70,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
             [awardedStyles.awardedBanner]: isAwarded,
           })}
         >
-          <Group position="apart" noWrap>
+          <Group justify="space-between" wrap="nowrap">
             {user ? (
               user?.id !== -1 && (
                 <UnstyledButton
@@ -158,7 +158,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
         </div>
         <Stack
           className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
-          spacing="sm"
+          gap="sm"
         >
           <Reactions
             entityId={data.id}

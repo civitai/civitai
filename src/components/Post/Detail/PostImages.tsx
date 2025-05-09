@@ -100,7 +100,7 @@ export function PostImages({
               <ImageGuard2 image={image} connectType="post" connectId={postId}>
                 {(safe) => (
                   <>
-                    <Group spacing={4} className="absolute left-2 top-2 z-10">
+                    <Group gap={4} className="absolute left-2 top-2 z-10">
                       <ImageGuard2.BlurToggle />
                       {showImageCollectionBadge && (
                         <Badge variant="filled" color="gray">

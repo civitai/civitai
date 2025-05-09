@@ -41,7 +41,7 @@ export function QuestionAnswerComments({
             ))}
 
             {!!remaining && !showMore && (
-              <Group spacing="xs" align="center" p="sm" pb={0}>
+              <Group gap="xs" align="center" p="sm" pb={0}>
                 <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                   Show {remaining} More
                 </Text>

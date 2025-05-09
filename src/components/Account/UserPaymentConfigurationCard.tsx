@@ -65,7 +65,7 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
 
   return (
     <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
-      <Group position="apart" mb="md">
+      <Group justify="space-between" mb="md">
         <Text size="lg" weight="bold">
           Civitai Creator Program Code of Conduct
         </Text>
@@ -76,7 +76,7 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
           <Loader />
         </Center>
       ) : (
-        <Stack spacing="md">
+        <Stack gap="md">
           <ScrollArea.Autosize maxHeight={500}>
             <Stack>
               <CustomMarkdown rehypePlugins={[rehypeRaw]}>{data.content}</CustomMarkdown>
@@ -214,7 +214,7 @@ const StripeConnectConfigurationCard = () => {
     // True as of now, we don't support stripe anymore
     return (
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <Title order={3}>Stripe Connect</Title>
         </Group>
 
@@ -229,7 +229,7 @@ const StripeConnectConfigurationCard = () => {
   return (
     <>
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <Title order={3}>Stripe Connect</Title>
           <ActionIcon
             onClick={() => {
@@ -279,7 +279,7 @@ const TipaltiConfigurationCard = () => {
     // True as of now, we don't support stripe anymore
     return (
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <Title order={3}>Tipalti Account</Title>
         </Group>
 
@@ -295,7 +295,7 @@ const TipaltiConfigurationCard = () => {
   return (
     <>
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <Title order={3}>Tipalti Account</Title>
         </Group>
       </Stack>

@@ -149,12 +149,12 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   const isEditing = editComment?.id === comment.id;
 
   return (
-    <Group align="flex-start" position="apart" noWrap>
-      <Group align="flex-start" sx={{ flex: '1 1 0' }} noWrap>
+    <Group align="flex-start" justify="space-between" wrap="nowrap">
+      <Group align="flex-start" sx={{ flex: '1 1 0' }} wrap="nowrap">
         <UserAvatar user={comment.user} size="md" linkToProfile />
-        <Stack spacing="xs" sx={{ flex: '1 1 0' }}>
-          <Stack spacing={0}>
-            <Group spacing={8} align="center">
+        <Stack gap="xs" sx={{ flex: '1 1 0' }}>
+          <Stack gap={0}>
+            <Group gap={8} align="center">
               {!comment.user.deletedAt ? (
                 <Link legacyBehavior href={`/user/${comment.user.username}`} passHref>
                   <Anchor variant="text" size="sm" weight="bold">
@@ -193,7 +193,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             )}
           </Stack>
           {!isEditing ? (
-            <Group spacing={4}>
+            <Group gap={4}>
               <ReactionPicker
                 reactions={reactions}
                 onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}
@@ -201,12 +201,11 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               {currentUser && !isOwner && !comment.locked && !isMuted && (
                 <Button
                   variant="subtle"
-                  size="xs"
                   radius="xl"
                   onClick={() => onReplyClick(comment)}
-                  compact
+                  size="compact-xs"
                 >
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconArrowBackUp size={14} />
                     Reply
                   </Group>
@@ -214,7 +213,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               )}
             </Group>
           ) : (
-            <Group position="right">
+            <Group justify="flex-end">
               <Button variant="default" size="xs" onClick={() => setEditComment(null)}>
                 Cancel
               </Button>

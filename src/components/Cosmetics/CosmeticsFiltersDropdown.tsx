@@ -66,7 +66,7 @@ export function CosmeticsFiltersDropdown({ filters, setFilters, ...buttonProps }
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <IconFilter size={16} />
           Filters
         </Group>
@@ -75,11 +75,11 @@ export function CosmeticsFiltersDropdown({ filters, setFilters, ...buttonProps }
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
+    <Stack gap="lg">
+      <Stack gap="md">
         <Divider label="Cosmetic Types" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={filters.types ?? []}
           onChange={(types: CosmeticType[]) => {
             setFilters({

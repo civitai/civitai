@@ -45,13 +45,13 @@ export function ExplainHiddenImages({
   };
 
   return (
-    <Stack spacing="sm" align="center">
+    <Stack gap="sm" align="center">
       {showHiddenBrowsingLevels && (
-        <Stack spacing={4}>
+        <Stack gap={4}>
           <Text size="sm" color="dimmed" ta="center">
             Hidden by your browsing level:
           </Text>
-          <Group spacing="xs" position="center">
+          <Group gap="xs" justify="center">
             {hiddenByBrowsingLevel.map(({ browsingLevel, count }) => (
               <Badge
                 key={browsingLevel}
@@ -69,11 +69,11 @@ export function ExplainHiddenImages({
         </Stack>
       )}
       {!showHiddenBrowsingLevels && currentUser && totalHiddenByTags > 0 && (
-        <Stack spacing={4}>
+        <Stack gap={4}>
           <Text size="sm" color="dimmed" ta="center">
             Hidden by your tag preferences:
           </Text>
-          <Group spacing="xs" position="center">
+          <Group gap="xs" justify="center">
             {hiddenByTags.map(({ tagId, count }) => (
               <Badge key={tagId} rightSection={count} variant="outline" classNames={classes}>
                 {data?.hiddenTags.find((x) => x.id === Number(tagId))?.name}

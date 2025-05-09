@@ -27,7 +27,7 @@ export function StarRating({ value, count = 5, size = 20, fractions = 10 }: Prop
   const { classes } = useStyles();
 
   return (
-    <Group spacing={2} align="center" h={size} noWrap>
+    <Group gap={2} align="center" h={size} wrap="nowrap">
       {Array.from({ length: Math.floor(count) }).map((_, index) => {
         const rounded = Math.floor(value);
         const isFilled = index < rounded;

@@ -122,7 +122,7 @@ export function ShareButton({
                 p={0}
                 onClick={onClick}
               >
-                <Stack spacing={6} align="center" p={6}>
+                <Stack gap={6} align="center" p={6}>
                   <div style={{ height: 60, width: 60 }}>{render}</div>
                   {type}
                 </Stack>

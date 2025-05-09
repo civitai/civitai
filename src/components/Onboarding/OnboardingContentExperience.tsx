@@ -19,7 +19,7 @@ export function OnboardingContentExperience() {
 
   return (
     <Container size="xs" px={0}>
-      <Stack spacing="xl">
+      <Stack gap="xl">
         {!isReturningUser ? (
           <>
             <StepperTitle
@@ -28,7 +28,7 @@ export function OnboardingContentExperience() {
             />
             <Card withBorder className={classes.newsletterCard}>
               <Card.Section withBorder inheritPadding py="xs">
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text weight={500}>Send me the Civitai Newsletter!</Text>
                   <NewsletterToggle>
                     {({ subscribed, setSubscribed, isLoading: subscriptionLoading }) => (
@@ -75,7 +75,7 @@ export function OnboardingContentExperience() {
           </Text>
         </Stack>
 
-        <Group position="apart">
+        <Group justify="space-between">
           <OnboardingAbortButton size="lg">Sign Out</OnboardingAbortButton>
           <Button size="lg" onClick={handleStepComplete} loading={isLoading}>
             Save

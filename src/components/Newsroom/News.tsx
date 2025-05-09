@@ -6,7 +6,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function News({ articles }: { articles: CivitaiNewsItem[] }) {
   return (
-    <Stack spacing="md">
+    <Stack gap="md">
       {articles.map((article) => (
         <NewsItem key={article.id} article={article} />
       ))}

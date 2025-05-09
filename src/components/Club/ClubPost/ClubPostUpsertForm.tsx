@@ -126,8 +126,8 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing="md">
-        <Stack spacing="md">
+      <Stack gap="md">
+        <Stack gap="md">
           <InputSimpleImageUpload
             name="coverImage"
             label="Post cover image"
@@ -192,8 +192,8 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
           <InputSwitch
             name="membersOnly"
             label={
-              <Stack spacing={4}>
-                <Group spacing={4}>
+              <Stack gap={4}>
+                <Group gap={4}>
                   <Text inline>Members only</Text>
                 </Group>
                 <Text size="xs" color="dimmed">
@@ -204,7 +204,7 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
             }
           />
         </Stack>
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button
               loading={upsertingClubPost}

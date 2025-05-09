@@ -156,10 +156,10 @@ const AutoTagSection = ({
   });
 
   return (
-    <Stack spacing="md">
+    <Stack gap="md">
       <Input.Wrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Existing Tags</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               How to handle tags that have already been provided
@@ -190,7 +190,7 @@ const AutoTagSection = ({
 
       <NumberInputWrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Max Tags</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Maximum number of tags to add for each file
@@ -206,7 +206,7 @@ const AutoTagSection = ({
       />
       <NumberInputWrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Min Threshold</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Minimum confidence threshold acceptable for each tag
@@ -229,7 +229,7 @@ const AutoTagSection = ({
           setAutoTagging(modelId, mediaType, { blacklist: event.currentTarget.value });
         }}
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Blacklist</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Comma-separated list of tags to exclude from results
@@ -244,7 +244,7 @@ const AutoTagSection = ({
           setAutoTagging(modelId, mediaType, { prependTags: event.currentTarget.value });
         }}
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Prepend Tags</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Comma-separated list of tags to prepend to all results
@@ -259,7 +259,7 @@ const AutoTagSection = ({
           setAutoTagging(modelId, mediaType, { appendTags: event.currentTarget.value });
         }}
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Append Tags</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Comma-separated list of tags to append to all results
@@ -269,7 +269,7 @@ const AutoTagSection = ({
         placeholder="minor, details"
       />
 
-      <Group position="right" mt="xl">
+      <Group justify="flex-end" mt="xl">
         <Button variant="light" color="gray" onClick={handleClose}>
           Cancel
         </Button>
@@ -305,7 +305,7 @@ const AutoCaptionSection = ({
   });
 
   return (
-    <Stack spacing="md">
+    <Stack gap="md">
       {!disabled ? (
         <AlertWithIcon
           title="Long run times"
@@ -338,7 +338,7 @@ const AutoCaptionSection = ({
       )}
       <Input.Wrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Existing Captions</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               How to handle captions that have already been provided
@@ -372,7 +372,7 @@ const AutoCaptionSection = ({
 
       <NumberInputWrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Temperature</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Higher temperatures encourage diverse and creative responses. Lower temperatures
@@ -392,7 +392,7 @@ const AutoCaptionSection = ({
       />
       <NumberInputWrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Max New Tokens</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Gives guidance for how long descriptions will be. Tokens are approximately 3/4 a word
@@ -409,7 +409,7 @@ const AutoCaptionSection = ({
         disabled={disabled}
       />
 
-      <Group position="right" mt="xl">
+      <Group justify="flex-end" mt="xl">
         <Button variant="light" color="gray" onClick={handleClose}>
           Cancel
         </Button>

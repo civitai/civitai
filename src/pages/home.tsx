@@ -118,7 +118,7 @@ export function Home() {
                 <MasonryContainer py={32}>
                   {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
                     <IsClient>
-                      <Group mb="md" position="apart">
+                      <Group mb="md" justify="space-between">
                         <Group>
                           <Title
                             sx={(theme) => ({
@@ -183,7 +183,7 @@ export function Home() {
                 <MasonryContainer py={32}>
                   {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
                     <IsClient>
-                      <Group mb="md" position="apart">
+                      <Group mb="md" justify="space-between">
                         <Group>
                           <Title
                             sx={(theme) => ({

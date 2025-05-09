@@ -158,15 +158,14 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         return items.filter(isDefined);
       }}
     >
-      <Stack spacing="xs">
+      <Stack gap="xs">
         <IsClient>
           {!isContestCollection && (
             <>
-              <Group position="right" spacing={4}>
+              <Group justify="flex-end" gap={4}>
                 <SortFilter
                   type="models"
                   value={sort}
-                  compact={false}
                   onChange={(x) => set({ sort: x as ModelSort })}
                 />
                 <ModelFiltersDropdown
@@ -292,15 +291,14 @@ const ImageCollection = ({
         );
       }}
     >
-      <Stack spacing="xs">
+      <Stack gap="xs">
         <IsClient>
           {!isContestCollection && (
             <>
-              <Group position="right" spacing={4}>
+              <Group justify="flex-end" gap={4}>
                 <SortFilter
                   type="images"
                   value={sort}
-                  compact={false}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                   options={imageCollectionSortOptions.map((x) => ({ label: x, value: x }))}
                 />
@@ -324,7 +322,7 @@ const ImageCollection = ({
             />
           )}
           {isContestCollection && (
-            <Group position="right">
+            <Group justify="flex-end">
               <AdaptiveFiltersDropdown
                 // Small hack to make the dropdown visible when the dropdown is open
                 dropdownProps={{ className: toolSearchOpened ? '!overflow-visible' : undefined }}
@@ -394,15 +392,14 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
 
   // For contest collections, we need to keep the filters clean from outside intervention.
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <IsClient>
         {!isContestCollection && (
           <>
-            <Group position="right" spacing={4}>
+            <Group justify="flex-end" gap={4}>
               <SortFilter
                 type="posts"
                 value={sort}
-                compact={false}
                 onChange={(sort) => replace({ sort: sort as PostSort })}
               />
               <PostFiltersDropdown query={filters} onChange={(value) => replace(value)} />
@@ -447,15 +444,14 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
       };
 
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <IsClient>
         {!isContestCollection && (
           <>
-            <Group position="right" spacing={4}>
+            <Group justify="flex-end" gap={4}>
               <SortFilter
                 type="articles"
                 value={sort}
-                compact={false}
                 onChange={(x) => replace({ sort: x as ArticleSort })}
               />
               <ArticleFiltersDropdown query={filters} onChange={(value) => replace(value)} />
@@ -491,7 +487,7 @@ export function Collection({
   if (!isLoading && (!collection || isBlocked)) {
     return (
       <Stack w="100%" align="center">
-        <Stack spacing="md" align="center" maw={800}>
+        <Stack gap="md" align="center" maw={800}>
           <Title order={1} inline>
             Whoops!
           </Title>
@@ -532,7 +528,7 @@ export function Collection({
           </ActionIcon>
         </Popover.Target>
         <Popover.Dropdown maw={468} p="md" w="100%">
-          <Stack spacing="xs">
+          <Stack gap="xs">
             {metadata.submissionStartDate && (
               <Text size="sm">
                 Submission start date: {formatDate(metadata.submissionStartDate)}
@@ -578,8 +574,8 @@ export function Collection({
             maxSingleColumnWidth={450}
           >
             <MasonryContainer {...containerProps} p={0}>
-              <Stack spacing="xl" w="100%">
-                <Group spacing="xl">
+              <Stack gap="xl" w="100%">
+                <Group gap="xl">
                   {collection?.image && (
                     <Box
                       w={220}
@@ -612,8 +608,8 @@ export function Collection({
                       </AspectRatio>
                     </Box>
                   )}
-                  <Stack spacing={8} sx={{ flex: 1 }}>
-                    <Stack spacing={0}>
+                  <Stack gap={8} sx={{ flex: 1 }}>
+                    <Stack gap={0}>
                       <Group>
                         <Title
                           order={1}
@@ -641,7 +637,7 @@ export function Collection({
                       )}
                     </Stack>
                     {collection && (
-                      <Group spacing={4} noWrap>
+                      <Group gap={4} wrap="nowrap">
                         {collection.user.id !== -1 && (
                           <UserAvatar user={collection.user} withUsername linkToProfile />
                         )}
@@ -657,7 +653,7 @@ export function Collection({
                   </Stack>
                   {collection && permissions && (
                     <Stack>
-                      <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
+                      <Group gap={4} ml="auto" sx={{ alignSelf: 'flex-start' }} wrap="nowrap">
                         {collection.mode === CollectionMode.Contest &&
                         // Respect the submission period:
                         (!metadata.submissionEndDate ||
@@ -775,7 +771,7 @@ export function Collection({
                             );
 
                           return (
-                            <Stack spacing={0}>
+                            <Stack gap={0}>
                               <Progress
                                 size="xl"
                                 sections={[
@@ -865,7 +861,7 @@ export function Collection({
                 )}
                 {!collectionType && !isLoading && (
                   <Center py="xl">
-                    <Stack spacing="xs">
+                    <Stack gap="xs">
                       <Text size="lg" weight="700" align="center">
                         Whoops!
                       </Text>

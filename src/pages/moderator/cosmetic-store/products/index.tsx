@@ -65,7 +65,7 @@ export default function CosmeticStoreProducts() {
     openConfirmModal({
       title: 'Delete Item',
       children: (
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text size="sm">Are you sure you want to delete this Shop item?</Text>
           <Text size="xs" color="dimmed">
             Items with purchases cannot be deleted. Instead, please mark them as archived.
@@ -85,7 +85,7 @@ export default function CosmeticStoreProducts() {
     <>
       <Meta title="Cosmetic Shop Products" deIndex />
       <Container size="lg">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Group>
             <BackButton url="/moderator/cosmetic-store" />
             <Title order={1}>Cosmetic Shop Products</Title>
@@ -98,7 +98,7 @@ export default function CosmeticStoreProducts() {
             </Anchor>
           </Text>
         </Stack>
-        <Group position="apart" mb="md">
+        <Group justify="space-between" mb="md">
           <Group align="flex-end">
             <Button component={Link} href="/moderator/cosmetic-store/products/create" radius="xl">
               <IconPlus />
@@ -153,7 +153,7 @@ export default function CosmeticStoreProducts() {
                   return (
                     <tr key={shopItem.id}>
                       <td>
-                        <Stack spacing={0} maw={350}>
+                        <Stack gap={0} maw={350}>
                           <Text weight="bold">{shopItem.title}</Text>
                           {shopItem.description && (
                             <ContentClamp maxHeight={200}>
@@ -163,7 +163,7 @@ export default function CosmeticStoreProducts() {
                         </Stack>
                       </td>
                       <td>
-                        <Stack spacing={0} maw={350} align="flex-start">
+                        <Stack gap={0} maw={350} align="flex-start">
                           <Text>{shopItem.cosmetic.name}</Text>
                         </Stack>
                       </td>
@@ -189,7 +189,7 @@ export default function CosmeticStoreProducts() {
                       </td>{' '}
                       <td>{shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}</td>
                       <td>
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           <ActionIcon
                             component={Link}
                             href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
@@ -206,7 +206,7 @@ export default function CosmeticStoreProducts() {
                 })}
               </tbody>
               {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                   <Pagination
                     page={filters.page}

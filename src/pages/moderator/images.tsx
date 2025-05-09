@@ -381,13 +381,13 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           )}
         </Card.Section>
         {hasReport && (
-          <Stack spacing={8} p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-            <Group position="apart" noWrap>
-              <Stack spacing={2}>
+          <Stack gap={8} p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
+            <Group justify="space-between" wrap="nowrap">
+              <Stack gap={2}>
                 <Text size="xs" color="dimmed" inline>
                   Reported by
                 </Text>
-                <Group spacing={4}>
+                <Group gap={4}>
                   <Link legacyBehavior href={`/user/${image.report?.user.username}`} passHref>
                     <Anchor size="xs" target="_blank" lineClamp={1} inline>
                       {image.report?.user.username}
@@ -400,7 +400,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   )}
                 </Group>
               </Stack>
-              <Stack spacing={2} align="flex-end">
+              <Stack gap={2} align="flex-end">
                 <Text size="xs" color="dimmed" inline>
                   Reported for
                 </Text>
@@ -451,7 +451,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         )}
         {image.needsReview === 'poi' && !!image.names?.length && (
           <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-            <Group spacing={4}>
+            <Group gap={4}>
               {image.names.map((name) => (
                 <Badge key={name} size="sm">
                   {name}
@@ -462,7 +462,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         )}
         {image.needsReview === 'tag' && !!image.tags && (
           <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-            <Group spacing={4}>
+            <Group gap={4}>
               {image.tags
                 .filter((x) => x.nsfwLevel === NsfwLevel.Blocked)
                 .map(({ name }) => (
@@ -475,9 +475,9 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         )}
         {image.needsReview === 'appeal' && hasAppeal && (
           <Card.Section p="xs">
-            <Stack spacing={8} sx={{ cursor: 'auto', color: 'initial' }}>
-              <Group position="apart" noWrap>
-                <Stack spacing={2}>
+            <Stack gap={8} sx={{ cursor: 'auto', color: 'initial' }}>
+              <Group justify="space-between" wrap="nowrap">
+                <Stack gap={2}>
                   <Text size="xs" color="dimmed" inline>
                     Appealed by
                   </Text>
@@ -487,7 +487,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     </Anchor>
                   </Link>
                 </Stack>
-                <Stack spacing={2} align="flex-end">
+                <Stack gap={2} align="flex-end">
                   <Text size="xs" color="dimmed" inline>
                     Created at
                   </Text>
@@ -497,8 +497,8 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 </Stack>
               </Group>
               {image.appeal?.moderator && (
-                <Group position="apart" noWrap>
-                  <Stack spacing={2}>
+                <Group justify="space-between" wrap="nowrap">
+                  <Stack gap={2}>
                     <Text size="xs" color="dimmed" inline>
                       Moderated by
                     </Text>
@@ -506,7 +506,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                       {image.appeal?.moderator.username}
                     </Text>
                   </Stack>
-                  <Stack spacing={2} align="flex-end">
+                  <Stack gap={2} align="flex-end">
                     <Text size="xs" color="dimmed" inline>
                       Removed at
                     </Text>
@@ -731,7 +731,7 @@ function ModerationControls({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <Group noWrap spacing="xs">
+      <Group wrap="nowrap" gap="xs">
         <ButtonTooltip label="Select all" {...tooltipProps}>
           <ActionIcon
             variant="outline"
@@ -825,7 +825,7 @@ function ModerationControls({
           </ActionIcon>
         </ButtonTooltip>
       </Group>
-      <BrowsingLevelsGrouped spacing={4} size="xs" />
+      <BrowsingLevelsGrouped gap={4} size="xs" />
     </div>
   );
 }
@@ -948,7 +948,7 @@ function ConfirmResolvedAppeal({
   error?: string;
 }) {
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <Text size="sm">
         Are you sure you want to {status === AppealStatus.Approved ? 'approve' : 'reject'}{' '}
         {itemCount} image(s)?

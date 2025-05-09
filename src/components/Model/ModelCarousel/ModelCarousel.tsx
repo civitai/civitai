@@ -101,7 +101,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                       <>
                         <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                         <Stack
-                          spacing="xs"
+                          gap="xs"
                           align="flex-end"
                           className="absolute right-2 top-2 z-10"
                         >

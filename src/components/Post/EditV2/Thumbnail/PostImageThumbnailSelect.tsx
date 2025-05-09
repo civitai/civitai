@@ -84,7 +84,7 @@ export function PostImageThumbnailSelect({
     <Modal title="Select Thumbnail" size="xl" {...dialog}>
       <div className="flex flex-col gap-8">
         <SimpleGrid
-          spacing="md"
+          gap="md"
           breakpoints={[
             { minWidth: 'xs', cols: 1 },
             { minWidth: 'sm', cols: 2 },

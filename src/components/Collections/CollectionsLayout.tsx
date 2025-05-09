@@ -97,7 +97,7 @@ const MyCollectionsDrawer = ({
         pr={8}
         variant="default"
       >
-        <Group spacing={4}>
+        <Group gap={4}>
           <IconLayoutSidebarLeftExpand />
           My Collections
         </Group>
@@ -115,8 +115,8 @@ const MyCollectionsDrawer = ({
       >
         <MyCollections onSelect={() => close()} sortOrder={sortOrder}>
           {({ FilterBox, Collections }) => (
-            <Stack spacing={4}>
-              <Group spacing="xs" noWrap px="sm">
+            <Stack gap={4}>
+              <Group gap="xs" wrap="nowrap" px="sm">
                 <div style={{ flex: 1 }}>{FilterBox}</div>
                 <Tooltip
                   label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
@@ -166,7 +166,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
           p="xs"
           style={{ marginLeft: showSidebar ? 0 : -250 - 16 }}
         >
-          <Tooltip label="Toggle Sidebar" position="right" openDelay={500}>
+          <Tooltip label="Toggle Sidebar" justify="flex-end" openDelay={500}>
             <ActionIcon
               onClick={() => setShowSidebar((val) => !val)}
               className={classes.sidebarToggle}
@@ -175,7 +175,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
             </ActionIcon>
           </Tooltip>
           <Card.Section py="md" inheritPadding>
-            <Group position="apart" noWrap>
+            <Group justify="space-between" wrap="nowrap">
               <Text weight={500}>My Collections</Text>
               <Button
                 onClick={() => {
@@ -184,8 +184,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                   });
                 }}
                 variant="subtle"
-                size="sm"
-                compact
+                size="compact-sm"
                 rightIcon={<IconPlus size={14} />}
               >
                 Create
@@ -197,7 +196,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
               {({ FilterBox, Collections, isLoading }) => (
                 <>
                   <Card.Section withBorder mb="xs" px="xs" py="xs">
-                    <Group spacing="xs" noWrap>
+                    <Group gap="xs" wrap="nowrap">
                       <div style={{ flex: 1 }}>{FilterBox}</div>
                       <Tooltip
                         label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}

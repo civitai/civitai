@@ -70,7 +70,7 @@ export function VerifiedShield({ file, ...props }: Props) {
         {pickleScanMessage && (
           <CustomMarkdown className="popover-markdown">{pickleScanMessage}</CustomMarkdown>
         )}
-        <Group position="apart">
+        <Group justify="space-between">
           {scannedDate && (
             <Text size="xs" color="dimmed">
               Scanned: <abbr title={scannedDate.format()}>{scannedDate.fromNow()}</abbr>

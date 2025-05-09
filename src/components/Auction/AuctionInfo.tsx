@@ -99,7 +99,7 @@ const QuickBid = ({
     <Tooltip label={label} position="top" withinPortal>
       <Button
         variant="subtle"
-        compact
+        size="compact-md"
         className="underline underline-offset-2"
         fz="xs"
         onClick={onClick}
@@ -152,11 +152,11 @@ export const AuctionTopSection = ({
   const minDate = new Date('2025-03-10');
 
   return (
-    <Group position="apart" className="max-sm:justify-center">
+    <Group justify="space-between" className="max-sm:justify-center">
       <Group position="left">
         {showHistory && (
           <Tooltip label="View History">
-            <Group spacing={6}>
+            <Group gap={6}>
               <ActionIcon
                 disabled={(date ?? today).getTime() <= minDate.getTime()}
                 className="disabled:opacity-50"
@@ -221,7 +221,7 @@ export const AuctionTopSection = ({
           </Tooltip>
         )}
       </Group>
-      <Group position="right">
+      <Group justify="flex-end">
         {(!connected ||
           (selectedAuction?.id &&
             !registeredTopics.includes(`${SignalTopic.Auction}:${selectedAuction?.id}`))) && (
@@ -249,7 +249,7 @@ export const AuctionTopSection = ({
             </Text>
           </HoverCard.Target>
           <HoverCard.Dropdown maw="100%">
-            <Stack spacing="xs">
+            <Stack gap="xs">
               <Text size="sm" align="center">
                 Perks of Winning
               </Text>
@@ -278,7 +278,7 @@ export const AuctionTopSection = ({
           variant="default"
           data-tour="auction:nav"
         >
-          <Group spacing={4}>
+          <Group gap={4}>
             <IconLayoutBottombarExpand size={18} />
             <Text>Auctions</Text>
           </Group>
@@ -451,7 +451,7 @@ export const AuctionInfo = () => {
     !allCheckpointBaseModels.has(selectedModel.baseModel);
 
   return (
-    <Stack w="100%" spacing="sm">
+    <Stack w="100%" gap="sm">
       <AuctionTopSection refreshFunc={refetchAuction} date={dateToUse} />
       {isErrorAuctionData ? (
         <Center>
@@ -483,9 +483,9 @@ export const AuctionInfo = () => {
             className="w-full cursor-default bg-gray-0 dark:bg-dark-6"
             data-tour="auction:info"
           >
-            <Group spacing="sm" className="max-md:justify-between max-md:gap-1">
+            <Group gap="sm" className="max-md:justify-between max-md:gap-1">
               <Tooltip label={`Maximum # of entities that can win.`}>
-                <Group spacing="sm" className="max-md:w-full">
+                <Group gap="sm" className="max-md:w-full">
                   <Badge className="max-md:w-[80px]">
                     <Text>Spots</Text>
                   </Badge>
@@ -497,7 +497,7 @@ export const AuctionInfo = () => {
               <Divider orientation="vertical" />
 
               <Tooltip label={`Minimum Buzz cost to place.`}>
-                <Group spacing="sm" className="max-md:w-full">
+                <Group gap="sm" className="max-md:w-full">
                   <Badge className="max-md:w-[80px]">
                     <Text>Min ⚡</Text>
                   </Badge>
@@ -515,7 +515,7 @@ export const AuctionInfo = () => {
               <Tooltip
                 label={
                   auctionData ? (
-                    <Stack spacing={4} align="end">
+                    <Stack gap={4} align="end">
                       <Text>Winning resources will be featured:</Text>
                       <Text>
                         From: {formatDate(auctionData.validFrom, 'MMM DD, YYYY h:mm:ss a')}
@@ -525,7 +525,7 @@ export const AuctionInfo = () => {
                   ) : undefined
                 }
               >
-                <Group spacing="sm" className="max-md:w-full">
+                <Group gap="sm" className="max-md:w-full">
                   <Badge className="max-md:w-[80px]">
                     <Text>Featured</Text>
                   </Badge>
@@ -545,7 +545,7 @@ export const AuctionInfo = () => {
               <Tooltip
                 label={
                   auctionData ? (
-                    <Stack spacing={4} align="end">
+                    <Stack gap={4} align="end">
                       <Text>
                         Start: {formatDate(auctionData.startAt, 'MMM DD, YYYY h:mm:ss a')}
                       </Text>
@@ -554,7 +554,7 @@ export const AuctionInfo = () => {
                   ) : undefined
                 }
               >
-                <Group spacing="sm" className="max-md:w-full">
+                <Group gap="sm" className="max-md:w-full">
                   <Badge className="max-md:w-[80px]">
                     <Text>Ends In</Text>
                   </Badge>
@@ -589,7 +589,7 @@ export const AuctionInfo = () => {
                 <Stack
                   align="center"
                   justify="center"
-                  spacing={2}
+                  gap={2}
                   className="absolute inset-x-0 z-20 m-auto h-full"
                 >
                   <Text weight={500}>Cannot bid on a past auction.</Text>
@@ -626,10 +626,10 @@ export const AuctionInfo = () => {
 
                 {!mobile && <Divider orientation="vertical" />}
 
-                <Stack spacing={4} className="max-md:w-full">
-                  <Group position="apart">
+                <Stack gap={4} className="max-md:w-full">
+                  <Group justify="space-between">
                     <Text size="xs">Bid:</Text>
-                    <Group spacing={4} position="right">
+                    <Group gap={4} justify="flex-end">
                       <QuickBid
                         label="Bid for the top spot"
                         disabled={
@@ -747,7 +747,7 @@ export const AuctionInfo = () => {
                 />
               </Group>
             </CosmeticCard>
-            <Group position="right" align="center" spacing={8}>
+            <Group justify="flex-end" align="center" gap={8}>
               <Checkbox
                 label="Make this recurring until:"
                 size="xs"
@@ -795,7 +795,7 @@ export const AuctionInfo = () => {
           <Divider />
 
           {/* View bids */}
-          <Group position="apart">
+          <Group justify="space-between">
             <Title order={5} data-tour="auction:bid-results">
               Active Bids
             </Title>

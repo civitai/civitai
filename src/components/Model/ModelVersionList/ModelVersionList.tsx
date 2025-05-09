@@ -131,7 +131,7 @@ export function ModelVersionList({
           <IconChevronLeft />
         </ActionIcon>
       </Box>
-      <Group spacing={4} noWrap>
+      <Group gap={4} wrap="nowrap">
         {versions.map((version) => {
           const active = selected === version.id;
           const isTraining = !!version.trainingStatus;
@@ -206,7 +206,7 @@ export function ModelVersionList({
                   </ThemeIcon>
                 ) : undefined
               }
-              compact
+              size="compact-md"
               style={
                 isEarlyAccess
                   ? {
@@ -216,7 +216,7 @@ export function ModelVersionList({
                   : undefined
               }
             >
-              <Group spacing={8} noWrap>
+              <Group gap={8} wrap="nowrap">
                 {features.imageGeneration && version.canGenerate && (
                   <ThemeIcon
                     title="This version is available for image generation"
@@ -236,7 +236,7 @@ export function ModelVersionList({
 
           if (!showExtraIcons)
             return (
-              <Group key={version.id} spacing={0} noWrap>
+              <Group key={version.id} gap={0} wrap="nowrap">
                 {versionButton} {isEarlyAccess && earlyAccessButton}
               </Group>
             );

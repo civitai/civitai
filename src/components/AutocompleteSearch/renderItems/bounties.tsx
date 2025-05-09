@@ -36,7 +36,7 @@ export const BountiesSearchItem = forwardRef<
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
   return (
-    <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
+    <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
       <Center
         sx={{
           width: 64,
@@ -71,14 +71,14 @@ export const BountiesSearchItem = forwardRef<
           <Skeleton width="100px" height="100px" />
         )}
       </Center>
-      <Stack spacing={8} sx={{ flex: '1 !important' }}>
+      <Stack gap={8} sx={{ flex: '1 !important' }}>
         <Text>
           <Highlight attribute="name" hit={hit} classNames={classes} />
         </Text>
         <UserAvatar size="xs" user={user} withUsername />
 
         {stats && (
-          <Group spacing={4}>
+          <Group gap={4}>
             <CurrencyBadge
               currency={Currency.BUZZ}
               unitAmount={stats.unitAmountCountAllTime || 0}

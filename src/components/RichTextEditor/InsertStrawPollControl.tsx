@@ -40,7 +40,7 @@ export function InsertStrawPollControl(props: Props) {
       title: controlTitle,
       children: (
         <Form form={form} onSubmit={handleSubmit}>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <InputText
               label="StrawPoll URL"
               name="url"

@@ -10,7 +10,7 @@ export function PostFeedFilters({ ...groupProps }: GroupProps) {
   const currentUser = useCurrentUser();
 
   return (
-    <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
+    <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser && (
         <FollowedFilter
           type="posts"
@@ -19,7 +19,7 @@ export function PostFeedFilters({ ...groupProps }: GroupProps) {
         />
       )}
       <SortFilter type="posts" className={classes.subnavDropdown} />
-      <PostFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
+      <PostFiltersDropdown w="100%" size="compact-sm" className={classes.subnavDropdown} />
     </Group>
   );
 }

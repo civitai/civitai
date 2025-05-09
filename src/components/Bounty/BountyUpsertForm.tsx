@@ -374,8 +374,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this bounty."} />
-      <Stack spacing={32}>
-        <Group spacing="md" noWrap>
+      <Stack gap={32}>
+        <Group gap="md" wrap="nowrap">
           <BackButton url="/bounties" />
           <Title className={classes.title}>
             {bounty ? `Editing ${bounty.name} bounty` : 'Create a new bounty'}
@@ -393,8 +393,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         )}
         <ContainerGrid gutter="xl">
           <ContainerGrid.Col xs={12} md={8}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
+            <Stack gap={32}>
+              <Stack gap="xl">
                 {!alreadyStarted && (
                   <>
                     <InputText
@@ -403,12 +403,12 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                       placeholder="e.g.:LoRA for XYZ"
                       withAsterisk
                     />
-                    <Group spacing="md" grow>
+                    <Group gap="md" grow>
                       <InputSelect
                         className={classes.fluid}
                         name="type"
                         label={
-                          <Group spacing={4} noWrap>
+                          <Group gap={4} wrap="nowrap">
                             <Input.Label required>Type</Input.Label>
                             <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                               <Text>
@@ -490,7 +490,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 </Input.Wrapper>
                 {images.length > 0 && (
                   <SimpleGrid
-                    spacing="sm"
+                    gap="sm"
                     breakpoints={[
                       { minWidth: 'xs', cols: 1 },
                       { minWidth: 'sm', cols: 3 },
@@ -597,7 +597,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 )}
                 {!alreadyStarted && (
                   <Stack>
-                    <Group spacing="md" grow>
+                    <Group gap="md" grow>
                       <InputDatePicker
                         className={classes.fluid}
                         name="startsAt"
@@ -638,7 +638,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Stack>
                 )}
 
-                <Stack spacing={4}>
+                <Stack gap={4}>
                   <Divider label="Bounty rewards" />
                   <Text size="xs" color="dimmed">
                     Learn more about the rewards and Buzz system{' '}
@@ -677,7 +677,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         ))}
                       </InputRadioGroup>
                     )}
-                    <Group spacing="md" grow>
+                    <Group gap="md" grow>
                       <InputNumber
                         className={classes.fluid}
                         name="unitAmount"
@@ -724,7 +724,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   />
                 )}
               </Stack>
-              <Stack spacing="xl">
+              <Stack gap="xl">
                 {bountyEntryModeEnabled && (
                   <InputRadioGroup name="entryMode" label="Entry Mode" withAsterisk>
                     {Object.values(BountyEntryMode).map((value) => (
@@ -806,7 +806,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
             <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
-                <Stack spacing="xl">
+                <Stack gap="xl">
                   <Input.Wrapper
                     className={classes.fluid}
                     label="Preferred model format"
@@ -841,7 +841,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               <InputTags
                 name="tags"
                 label={
-                  <Group spacing={4} noWrap>
+                  <Group gap={4} wrap="nowrap">
                     <Input.Label>Tags</Input.Label>
                     <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                       <Text>
@@ -858,8 +858,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 disabled={isLocked('poi')}
                 description={isLockedDescription('poi')}
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Depicts an actual person</Text>
                     </Group>
                     <Text size="xs" color="dimmed">
@@ -900,7 +900,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 </Anchor>
                 .
               </Text>
-              <List size="xs" spacing={8}>
+              <List size="xs" gap={8}>
                 <List.Item>
                   <b>Real People Images</b>: Images of real people are not permitted.
                 </List.Item>
@@ -918,7 +918,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
             </Stack>
           </ContainerGrid.Col>
         </ContainerGrid>
-        <Group position="right">
+        <Group justify="flex-end">
           <NavigateBack url="/bounties">
             {({ onClick }) => (
               <Button variant="light" color="gray" onClick={onClick}>
@@ -948,7 +948,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
 type RadioItemProps = { label: string; description: string };
 const RadioItem = ({ label, description }: RadioItemProps) => (
-  <Stack spacing={4}>
+  <Stack gap={4}>
     <Text inline>{label}</Text>
     <Text size="xs" color="dimmed">
       {description}

@@ -73,7 +73,7 @@ export function HomeStyleSegmentedControl({
     label: (
       <Link legacyBehavior href={value.url} passHref>
         <Anchor variant="text">
-          <Group align="center" spacing={8} noWrap>
+          <Group align="center" gap={8} wrap="nowrap">
             <ThemeIcon
               size={30}
               color={activePath === key ? theme.colors.dark[7] : 'transparent'}

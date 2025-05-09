@@ -125,7 +125,7 @@ export function NumberSlider({
       {...inputWrapperProps}
       label={
         hasPresets ? (
-          <Group spacing={8} position="apart" noWrap>
+          <Group gap={8} justify="space-between" wrap="nowrap">
             {label}
             <PresetOptions
               disabled={disabled}

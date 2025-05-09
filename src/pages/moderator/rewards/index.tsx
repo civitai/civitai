@@ -43,13 +43,13 @@ export default function Rewards() {
     <>
       <Meta title="Rewards" deIndex />
       <Container size="lg">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Purchasable Rewards</Title>
           <Text size="sm" color="dimmed">
             Manage the rewards that users can purchase with their Buzz.
           </Text>
         </Stack>
-        <Group position="apart" mb="md">
+        <Group justify="space-between" mb="md">
           <Group>
             <Button
               component={Link}
@@ -132,7 +132,7 @@ export default function Rewards() {
                 })}
               </tbody>
               {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                   <Pagination
                     page={filters.page}

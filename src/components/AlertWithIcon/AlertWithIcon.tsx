@@ -1,5 +1,13 @@
-import { Alert, AlertProps, Group, MantineColor, ThemeIcon, Text, Stack } from '@mantine/core';
-import { MantineNumberSize } from '@mantine/styles';
+import {
+  Alert,
+  AlertProps,
+  Group,
+  MantineColor,
+  ThemeIcon,
+  Text,
+  Stack,
+  MantineSize,
+} from '@mantine/core';
 import { ReactNode } from 'react';
 
 export const AlertWithIcon = ({
@@ -13,11 +21,11 @@ export const AlertWithIcon = ({
 }: AlertWithIconProps) => {
   return (
     <Alert radius="sm" pl={10} {...props}>
-      <Group spacing="xs" noWrap>
+      <Group gap="xs" wrap="nowrap">
         <ThemeIcon color={iconColor} size={iconSize}>
           {icon}
         </ThemeIcon>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           {title && (
             <Text
               size={titleSize[size]}
@@ -41,10 +49,10 @@ type AlertWithIconProps = AlertProps & {
   icon: ReactNode;
   iconColor?: MantineColor;
   size?: 'xs' | 'sm' | 'md' | 'lg';
-  iconSize?: MantineNumberSize;
+  iconSize?: MantineSize;
 };
 
-const titleSize: Record<NonNullable<AlertWithIconProps['size']>, MantineNumberSize> = {
+const titleSize: Record<NonNullable<AlertWithIconProps['size']>, MantineSize> = {
   xs: 'sm',
   sm: 'md',
   md: 'lg',

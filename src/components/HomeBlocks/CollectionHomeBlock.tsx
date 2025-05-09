@@ -109,9 +109,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   const Icon = icons[itemType];
 
   const MetaDataTop = (
-    <Stack spacing="sm">
-      <Group spacing="xs" position="apart" className={homeBlockClasses.header}>
-        <Group noWrap>
+    <Stack gap="sm">
+      <Group gap="xs" justify="space-between" className={homeBlockClasses.header}>
+        <Group wrap="nowrap">
           <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
             {metadata.title ?? collection?.name ?? 'Collection'}{' '}
           </Title>
@@ -140,7 +140,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
                 {metadata.link && (
                   <Link legacyBehavior href={metadata.link} passHref>
                     <Anchor size="sm">
-                      <Group spacing={4}>
+                      <Group gap={4}>
                         <Text inherit>{metadata.linkText ?? 'View All'} </Text>
                         <IconArrowRight size={16} />
                       </Group>

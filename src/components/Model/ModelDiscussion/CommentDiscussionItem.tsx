@@ -75,7 +75,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
 
   return (
     <Card radius="md" p="md" withBorder>
-      <Group align="flex-start" position="apart" noWrap mb="xs">
+      <Group align="flex-start" justify="space-between" wrap="nowrap" mb="xs">
         <UserAvatar
           user={comment.user}
           subText={<DaysFromNow date={comment.createdAt} />}
@@ -102,13 +102,13 @@ export function CommentDiscussionItem({ data: comment }: Props) {
         />
       </ContentClamp>
 
-      <Group mt="sm" align="flex-start" position="apart" noWrap>
+      <Group mt="sm" align="flex-start" justify="space-between" wrap="nowrap">
         <ReactionPicker
           reactions={reactions}
           onSelect={handleReactionClick}
           disabled={toggleReactionMutation.isLoading}
         />
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           {currentUser?.isModerator && comment.tosViolation && (
             <Tooltip label="Has TOS Violation">
               <ThemeIcon color="orange" size="xs">
@@ -122,15 +122,14 @@ export function CommentDiscussionItem({ data: comment }: Props) {
             </ThemeIcon>
           )}
           <Button
-            size="xs"
             radius="xl"
             variant="subtle"
             onClick={() =>
               triggerRoutedDialog({ name: 'commentThread', state: { commentId: comment.id } })
             }
-            compact
+            size="compact-xs"
           >
-            <Group spacing={2} noWrap>
+            <Group gap={2} wrap="nowrap">
               <IconMessageCircle2 size={14} />
               <Text>{abbreviateNumber(commentCount)}</Text>
             </Group>

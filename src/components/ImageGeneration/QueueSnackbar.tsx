@@ -220,7 +220,7 @@ export function QueueSnackbar() {
                 You can queue {requestLimit} jobs at once
               </div>
             </Text>
-            <Button compact color="dark" radius="xl" component={Link} href="/pricing">
+            <Button size="compact-md" color="dark" radius="xl" component={Link} href="/pricing">
               <Text color="yellow">Increase</Text>
             </Button>
           </div>

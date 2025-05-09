@@ -43,13 +43,13 @@ const ClubImagePosts = () => {
   return (
     <>
       <Stack mb="sm">
-        <Group position="apart" spacing={0}>
+        <Group justify="space-between" gap={0}>
           <SortFilter
             type="posts"
             value={filters.sort as PostSort}
             onChange={(x) => setFilters((f) => ({ ...f, sort: x as PostSort }))}
           />
-          <Group spacing="xs">
+          <Group gap="xs">
             <PostFiltersDropdown
               query={filters}
               onChange={(updated) => setFilters((f) => ({ ...f, ...updated }))}

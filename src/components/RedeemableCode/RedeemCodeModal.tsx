@@ -64,7 +64,7 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
               Code redeemed successfully
             </Text>
           </SuccessAnimation>
-          <Group position="right">
+          <Group justify="flex-end">
             <Button className={classes.submitButton} onClick={dialog.onClose}>
               Close
             </Button>
@@ -80,7 +80,7 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
               maxLength={12}
               autoFocus
             />
-            <Group position="right">
+            <Group justify="flex-end">
               <Button
                 className={classes.cancelButton}
                 variant="light"

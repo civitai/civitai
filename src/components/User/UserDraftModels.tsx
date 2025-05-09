@@ -122,12 +122,12 @@ export function UserDraftModels() {
                 return (
                   <tr key={model.id}>
                     <td>
-                      <Stack spacing={0}>
+                      <Stack gap={0}>
                         <Text lineClamp={2}> {model.name}</Text>
                         <Divider my={4} />
                         <Link legacyBehavior href={getModelWizardUrl(model)} passHref>
                           <Anchor target="_blank" lineClamp={2}>
-                            <Group spacing="xs" noWrap>
+                            <Group gap="xs" wrap="nowrap">
                               <Text size="xs">Continue Wizard</Text>{' '}
                               <IconExternalLink size={16} stroke={1.5} />
                             </Group>
@@ -135,7 +135,7 @@ export function UserDraftModels() {
                         </Link>
                         <Link legacyBehavior href={`/models/${model.id}`} passHref>
                           <Anchor target="_blank" lineClamp={2}>
-                            <Group spacing="xs" noWrap>
+                            <Group gap="xs" wrap="nowrap">
                               <Text size="xs">Go to model page</Text>
                               <IconExternalLink size={16} stroke={1.5} />
                             </Group>
@@ -156,7 +156,7 @@ export function UserDraftModels() {
                         {(!hasVersion || !hasFiles || !hasPosts) && (
                           <IconAlertCircle size={16} color="orange" />
                         )}
-                        <Stack spacing={4}>
+                        <Stack gap={4}>
                           {!hasVersion && <Text inherit>Needs model version</Text>}
                           {!hasFiles && <Text inherit>Needs model files</Text>}
                           {!hasPosts && <Text inherit>Needs model post</Text>}
@@ -164,7 +164,7 @@ export function UserDraftModels() {
                       </Group>
                     </td>
                     <td>
-                      <Group position="right" pr="xs">
+                      <Group justify="flex-end" pr="xs">
                         <ActionIcon
                           color="red"
                           variant="subtle"
@@ -191,7 +191,7 @@ export function UserDraftModels() {
         </Table>
       </ScrollArea>
       {pagination.totalPages > 1 && (
-        <Group position="apart">
+        <Group justify="space-between">
           <Text>Total {pagination.totalItems} items</Text>
           <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
         </Group>

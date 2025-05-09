@@ -178,7 +178,7 @@ const maxHeight = 2048;
 
 export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
   tag: (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       <Text>Short, comma-separated descriptions.</Text>
       <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
       <Text mt="sm">
@@ -188,7 +188,7 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
     </Stack>
   ),
   caption: (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       <Text>Natural language, long-form sentences.</Text>
       <Text fs="italic">
         Ex: &quot;There is a dolphin in the ocean. It is jumping out against a gorgeous backdrop of
@@ -242,22 +242,22 @@ const LabelSelectModal = ({
       size="md"
       radius="md"
       title={
-        <Group spacing="xs">
+        <Group gap="xs">
           <IconInfoCircle />
           <Text size="lg">Found label files</Text>
         </Group>
       }
     >
       <Stack>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text>You&apos;ve included some labeling (.txt) files.</Text>{' '}
           <Text>Which type are they?</Text>
         </Stack>
-        <Group spacing="xs">
+        <Group gap="xs">
           <Text size="sm">Current type: </Text>
           <Badge>{labelType}</Badge>
         </Group>
-        <Group spacing="xs">
+        <Group gap="xs">
           <Text size="sm">Estimated type: </Text>
           <Badge color={labelType === estimatedType ? 'blue' : 'red'}>{estimatedType}</Badge>
         </Group>
@@ -274,7 +274,7 @@ const LabelSelectModal = ({
         <Paper shadow="xs" radius="xs" p="md" withBorder>
           <Text>{labelDescriptions[labelValue]}</Text>
         </Paper>
-        <Group position="right" mt="xl">
+        <Group justify="flex-end" mt="xl">
           <Button onClick={handleSelect}>OK</Button>
         </Group>
       </Stack>
@@ -1196,7 +1196,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       if (imageList.filter((i) => i.label.length > 0).length === 0 && !triggerWord.length) {
         return openConfirmModal({
           title: (
-            <Group spacing="xs">
+            <Group gap="xs">
               <IconAlertTriangle color="gold" />
               <Text size="lg">Missing labels</Text>
             </Group>
@@ -1278,7 +1278,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       for more info.
                     </Text>
 
-                    <Group mt="xs" position="center" grow>
+                    <Group mt="xs" justify="center" grow>
                       <Button
                         variant="light"
                         onClick={() => {
@@ -1375,7 +1375,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             <Divider />
 
             {imageList.length > 0 && (
-              <Group my="md" position="apart">
+              <Group my="md" justify="space-between">
                 <Paper
                   shadow="xs"
                   radius="sm"
@@ -1399,8 +1399,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     {`${totalLabeled} / ${imageList.length} labeled`}
                   </Text>
                 </Paper>
-                <Group spacing="xs">
-                  <Button compact color="indigo" onClick={() => setIsZoomed((z) => !z)}>
+                <Group gap="xs">
+                  <Button size="compact-md" color="indigo" onClick={() => setIsZoomed((z) => !z)}>
                     {isZoomed ? <IconZoomOut size={16} /> : <IconZoomIn size={16} />}
                     <Text inline ml={4}>
                       Zoom {isZoomed ? 'Out' : 'In'}
@@ -1411,7 +1411,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     disabled={connected}
                   >
                     <Button
-                      compact
+                      size="compact-md"
                       color="violet"
                       disabled={autoLabeling.isRunning || !connected}
                       style={!connected ? { pointerEvents: 'initial' } : undefined}
@@ -1422,7 +1422,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         })
                       }
                     >
-                      <Group spacing={4}>
+                      <Group gap={4}>
                         <IconTags size={16} />
                         <Text>Auto Label</Text>
                         {Date.now() < new Date('2024-09-27').getTime() && (
@@ -1434,7 +1434,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     </Button>
                   </Tooltip>
                   <Button
-                    compact
+                    size="compact-md"
                     color="cyan"
                     loading={zipping}
                     onClick={() => handleNextAfterCheck(true)}
@@ -1446,7 +1446,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   </Button>
 
                   <Button
-                    compact
+                    size="compact-md"
                     color="red"
                     disabled={autoLabeling.isRunning}
                     onClick={() => {
@@ -1522,7 +1522,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             {imageList.length > 0 && (
               <Paper px="md" py="xs" shadow="xs" radius="sm" withBorder>
                 <Group>
-                  <Group spacing={4} noWrap>
+                  <Group gap={4} wrap="nowrap">
                     <Text>Trigger Word</Text>
                     <InfoPopover size="xs" iconProps={{ size: 16 }}>
                       Word that serves as an &quot;activator&quot; for your LoRA during generation.
@@ -1635,7 +1635,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       >
                         <Card.Section mb="xs">
                           <div className={classes.imgOverlay}>
-                            <Group spacing={4} className={cx(classes.trash, 'trashIcon')}>
+                            <Group gap={4} className={cx(classes.trash, 'trashIcon')}>
                               <Tooltip label="Remove labels">
                                 <ActionIcon
                                   color="violet"
@@ -1824,7 +1824,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           </div>
         </Paper>
       </Stack>
-      <Group position="right">
+      <Group justify="flex-end">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
         </Button>

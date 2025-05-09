@@ -15,9 +15,9 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId, withCopy = 
   if (!urn) return null;
 
   return (
-    <Group spacing={4}>
+    <Group gap={4}>
       <Group
-        spacing={0}
+        gap={0}
         sx={{
           code: {
             borderRadius: 0,
@@ -97,7 +97,7 @@ export function URNExplanation({ size }: { size?: number }) {
         <IconInfoSquareRounded size={size ?? 16} style={{ cursor: 'pointer', opacity: 0.7 }} />
       </Popover.Target>
       <Popover.Dropdown>
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Text size="sm" weight={500}>
             What is an AIR?
           </Text>
@@ -105,7 +105,7 @@ export function URNExplanation({ size }: { size?: number }) {
             AIR stands for Artificial Intelligence Resource. It is a comprehensive unique
             identifier, and is composed of the following parts:
           </Text>
-          <Stack spacing={4}>
+          <Stack gap={4}>
             {urnParts.map(({ name, description }) => (
               <Text size="xs" key={name}>
                 <Code color="blue">{name}</Code> {description}

@@ -167,7 +167,7 @@ export default function EventPageDetails({
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/events/${event}`, rel: 'canonical' }]}
       />
       <Container size="md">
-        <Stack spacing={48}>
+        <Stack gap={48}>
           <Paper
             radius="md"
             sx={(theme) => ({
@@ -189,7 +189,7 @@ export default function EventPageDetails({
             })}
           >
             <Stack
-              spacing={0}
+              gap={0}
               pt={60}
               pb="sm"
               px="md"
@@ -201,7 +201,7 @@ export default function EventPageDetails({
               <Title color="white" className="hide-mobile">
                 {eventData.title}
               </Title>
-              <Group spacing="xs" position="apart">
+              <Group gap="xs" justify="space-between">
                 <Text color="white" size="sm" className="hide-mobile">
                   {formatDate(eventData.startDate, 'MMMM D, YYYY')} -{' '}
                   {formatDate(eventData.endDate, 'MMMM D, YYYY')}
@@ -221,7 +221,7 @@ export default function EventPageDetails({
               </Group>
             </Stack>
           </Paper>
-          <Stack className="show-mobile" spacing={0} mt={-40}>
+          <Stack className="show-mobile" gap={0} mt={-40}>
             <Title sx={{ fontSize: '28px' }}>{eventData.title}</Title>
             <Text size="sm">
               {formatDate(eventData.startDate, 'MMMM D, YYYY')} -{' '}
@@ -243,7 +243,7 @@ export default function EventPageDetails({
                       force
                       animated
                     />
-                    <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg}>
+                    <Stack gap={0} align="center" mt="lg" mb={theme.spacing.lg}>
                       <Text size="xl" weight={590}>
                         Your Garland
                       </Text>
@@ -280,7 +280,7 @@ export default function EventPageDetails({
                       </Popover>
                     </Stack>
                     {eventCosmetic.available && !ended && (
-                      <Stack spacing="sm" w="100%">
+                      <Stack gap="sm" w="100%">
                         <Button
                           component={Link}
                           href="/challenges"
@@ -290,7 +290,7 @@ export default function EventPageDetails({
                           fullWidth
                           disabled={cosmeticData?.lights >= 12}
                         >
-                          <Group spacing={4} noWrap>
+                          <Group gap={4} wrap="nowrap">
                             <IconBulb size={18} />
                             Earn more lights
                           </Group>
@@ -302,7 +302,7 @@ export default function EventPageDetails({
                           onClick={handleFocusDonateInput}
                           fullWidth
                         >
-                          <Group spacing={4} noWrap>
+                          <Group gap={4} wrap="nowrap">
                             <IconBolt size={18} />
                             Make them brighter
                           </Group>
@@ -320,19 +320,19 @@ export default function EventPageDetails({
                     style={{ display: 'flex', alignItems: 'center' }}
                   >
                     <Stack w="100%">
-                      <Stack spacing={0} align="center">
+                      <Stack gap={0} align="center">
                         <Text size="sm" weight={590}>
                           Total Team Donations
                         </Text>
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           <CurrencyIcon currency={Currency.BUZZ} />
                           <Text size={32} weight={590} sx={{ fontVariantNumeric: 'tabular-nums' }}>
                             {numberWithCommas(totalTeamScores)}
                           </Text>
                         </Group>
                       </Stack>
-                      <Stack spacing={8} sx={{ ['&>*']: { flexGrow: 1 } }}>
-                        <Group spacing={8} position="apart">
+                      <Stack gap={8} sx={{ ['&>*']: { flexGrow: 1 } }}>
+                        <Group gap={8} justify="space-between">
                           <Text size="sm" weight={590}>
                             Team Rank
                           </Text>
@@ -347,8 +347,8 @@ export default function EventPageDetails({
 
                           return (
                             <Fragment key={teamScore.team}>
-                              <Group spacing={8} position="apart">
-                                <Group spacing={4} noWrap>
+                              <Group gap={8} justify="space-between">
+                                <Group gap={4} wrap="nowrap">
                                   <Text size="xl" weight={590}>
                                     {teamScore.rank}
                                   </Text>
@@ -362,7 +362,7 @@ export default function EventPageDetails({
                                     {color} Team
                                   </Text>
                                 </Group>
-                                <Group spacing={4} noWrap>
+                                <Group gap={4} wrap="nowrap">
                                   <CurrencyIcon currency={Currency.BUZZ} />
                                   <Text
                                     size="xl"
@@ -400,9 +400,9 @@ export default function EventPageDetails({
                     h="100%"
                     style={{ display: 'flex', alignItems: 'center' }}
                   >
-                    <Stack align="center" w="100%" spacing="lg">
+                    <Stack align="center" w="100%" gap="lg">
                       <Lightbulb variant="star" color={userTeam} size={80} />
-                      <Stack spacing={4} align="center">
+                      <Stack gap={4} align="center">
                         <Text size={24} weight={600} align="center" inline>
                           Your rank in {userTeam} team
                         </Text>
@@ -421,7 +421,7 @@ export default function EventPageDetails({
                         radius="xl"
                         fullWidth
                       >
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           <IconClipboard size={18} />
                           Team leaderboard
                         </Group>
@@ -433,7 +433,7 @@ export default function EventPageDetails({
                         onClick={handleFocusDonateInput}
                         fullWidth
                       >
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           <IconBolt size={18} />
                           Boost your rank
                         </Group>
@@ -447,7 +447,7 @@ export default function EventPageDetails({
               <SectionCard
                 title={
                   ended ? (
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <CurrencyIcon currency={Currency.BUZZ} size={32} />
                       <Text>
                         {abbreviateNumber(totalTeamScores).toUpperCase()} Buzz donated to charity!
@@ -469,12 +469,12 @@ export default function EventPageDetails({
                     <Loader variant="bars" />
                   </Center>
                 ) : (
-                  <Stack spacing={40} w="100%" align="center">
+                  <Stack gap={40} w="100%" align="center">
                     <Line options={options} data={{ datasets }} />
-                    <Group spacing="md">
+                    <Group gap="md">
                       {teamScores.length > 0 &&
                         teamScores.map((teamScore) => (
-                          <Group key={teamScore.team} spacing={4} noWrap>
+                          <Group key={teamScore.team} gap={4} wrap="nowrap">
                             <ThemeIcon color={teamScore.team.toLowerCase()} radius="xl" size={12}>
                               {null}
                             </ThemeIcon>
@@ -511,7 +511,7 @@ export default function EventPageDetails({
           {(equipped || ended) && (
             <>
               <Divider w="80px" mx="auto" />
-              <Stack spacing={20}>
+              <Stack gap={20}>
                 <Title
                   order={2}
                   align="center"
@@ -608,7 +608,7 @@ const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, 
   };
 
   return (
-    <Group spacing={8} noWrap>
+    <Group gap={8} wrap="nowrap">
       <NumberInput
         ref={ref}
         placeholder="Your donation"
@@ -665,7 +665,7 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
               <div className={classes.partnerLogo}>
                 <EdgeMedia src={partner.image} alt={`${partner.title} logo`} width={120} />
               </div>
-              <Stack spacing={0} align="center">
+              <Stack gap={0} align="center">
                 <Text size={20} weight={600}>
                   {partner.title}
                 </Text>
@@ -676,7 +676,7 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
             </a>
           ))}
         </div>
-        <Group position="center">
+        <Group justify="center">
           <Button
             component="a"
             size="md"

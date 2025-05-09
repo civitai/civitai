@@ -80,7 +80,7 @@ export function AdaptiveFiltersDropdown({
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <IconFilter size={16} />
           Filters
         </Group>
@@ -88,7 +88,7 @@ export function AdaptiveFiltersDropdown({
     </Indicator>
   );
 
-  const dropdown = <Stack spacing="lg">{children}</Stack>;
+  const dropdown = <Stack gap="lg">{children}</Stack>;
 
   if (mobile)
     return (

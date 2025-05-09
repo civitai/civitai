@@ -42,7 +42,7 @@ export const LeaderHomeBlockCreatorItem = ({
         <Box sx={{ cursor: 'pointer' }}>
           <ContainerGrid align="center">
             <ContainerGrid.Col span={8}>
-              <Group spacing="xs" noWrap>
+              <Group gap="xs" wrap="nowrap">
                 <UserAvatar
                   avatarProps={{
                     radius: 'xl',
@@ -51,7 +51,7 @@ export const LeaderHomeBlockCreatorItem = ({
                   textSize="lg"
                   size="md"
                 />
-                <Stack spacing={4} style={{ overflow: 'hidden' }}>
+                <Stack gap={4} style={{ overflow: 'hidden' }}>
                   <Text
                     style={{
                       whiteSpace: 'nowrap',
@@ -61,7 +61,7 @@ export const LeaderHomeBlockCreatorItem = ({
                   >
                     {user.username}
                   </Text>
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconTrophy size={12} />
                     <Text size="xs">{abbreviateNumber(score)}</Text>
                   </Group>

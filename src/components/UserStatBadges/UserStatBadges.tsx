@@ -36,7 +36,7 @@ export function UserStatBadges({
   const theme = useMantineTheme();
 
   return (
-    <Group spacing={8} position="apart">
+    <Group gap={8} justify="space-between">
       <Badge
         size="lg"
         radius="xl"
@@ -49,7 +49,7 @@ export function UserStatBadges({
         }
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
       >
-        <Group spacing="xs" noWrap>
+        <Group gap="xs" wrap="nowrap">
           {uploads != null ? (
             <IconBadge
               p={0}
@@ -165,7 +165,7 @@ const BadgedIcon = ({
   icon: React.ReactNode;
   textSize?: MantineSize;
 } & Omit<BadgeProps, 'leftSection'>) => (
-  <Group spacing={0} noWrap sx={{ position: 'relative' }}>
+  <Group gap={0} wrap="nowrap" sx={{ position: 'relative' }}>
     <Tooltip label={label}>
       <Box pos="relative" sx={{ zIndex: 2, overflow: 'hidden' }} h={32}>
         <Image src="/images/base-badge.png" alt={`${label} - ${value}`} width={32} height={32} />
@@ -211,7 +211,7 @@ export function UserStatBadgesV2({
   reactions,
 }: Props) {
   return (
-    <Group spacing={4} noWrap>
+    <Group gap={4} wrap="nowrap">
       {uploads != null ? (
         <BadgedIcon icon={<IconUpload size={18} color="white" />} label="Uploads" value={uploads} />
       ) : null}

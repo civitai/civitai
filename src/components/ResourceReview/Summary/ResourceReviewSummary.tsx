@@ -73,7 +73,7 @@ ResourceReviewSummary.Header = function Header({
   const roundedRating = roundRating(rating ?? initialRating ?? 0);
 
   return (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       {showSkeleton ? (
         <>
           <Skeleton height={12.8} my={6} />
@@ -103,7 +103,7 @@ ResourceReviewSummary.Totals = function Totals() {
   const { totals, count, loading } = useSummaryContext();
 
   return loading ? (
-    <Stack spacing={4}>
+    <Stack gap={4}>
       {ratings.map((r) => (
         <Skeleton height={12} my={6} key={r} />
       ))}
@@ -143,7 +143,7 @@ ResourceReviewSummary.Simple = function Simple({
   }
 
   return (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       <IconBadge
         radius="sm"
         color="gray"

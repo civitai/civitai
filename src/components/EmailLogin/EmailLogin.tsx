@@ -85,7 +85,7 @@ export const EmailLogin = ({
           wrapper: 'items-center',
         }}
       >
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text
             size="md"
             // sx={{ lineHeight: 1.1 }}
@@ -98,7 +98,7 @@ export const EmailLogin = ({
     );
 
   return (
-    <Stack spacing="sm">
+    <Stack gap="sm">
       <Form form={form} onSubmit={handleEmailLogin} className="flex flex-col gap-3">
         <InputText
           name="email"

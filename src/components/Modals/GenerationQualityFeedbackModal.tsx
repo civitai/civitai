@@ -76,8 +76,8 @@ export function TextToImageQualityFeedbackModal({
 
   return (
     <Modal {...dialog} withCloseButton={false} centered radius="lg">
-      <Stack spacing="md">
-        <Group spacing={8} position="apart">
+      <Stack gap="md">
+        <Group gap={8} justify="space-between">
           <Group>
             <ThemeIcon size="lg" color="red" radius="xl">
               <IconThumbDown size={18} />
@@ -91,7 +91,7 @@ export function TextToImageQualityFeedbackModal({
         </Group>
         <Divider mx="-lg" />
         <Form form={form} onSubmit={handleSubmit} style={{ position: 'static' }}>
-          <Stack spacing="md">
+          <Stack gap="md">
             <InputTextArea
               name="message"
               inputWrapperOrder={['input', 'description']}
@@ -102,7 +102,7 @@ export function TextToImageQualityFeedbackModal({
               description={`${message?.length ?? 0}/${MAX_MESSAGE_LENGTH} characters`}
               autosize
             />
-            <Group className={classes.actions} position="right">
+            <Group className={classes.actions} justify="flex-end">
               <Button
                 className={classes.submitButton}
                 type="submit"

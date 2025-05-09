@@ -604,7 +604,7 @@ function ResourceHitList({
     return (
       <div className="p-3 py-5">
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
               <Text color="dimmed">
                 {hiddenCount} models have been hidden due to your settings.
@@ -921,7 +921,7 @@ function ResourceSelectCard({
     {
       label: 'Stats',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           <IconBadge radius="xs" icon={<IconDownload size={14} />}>
             <Text>{(selectedVersion.metrics?.downloadCount ?? 0).toLocaleString()}</Text>
           </IconBadge>
@@ -975,7 +975,7 @@ function ResourceSelectCard({
     {
       label: 'Training',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           {selectedVersion.steps && (
             <Badge size="sm" radius="sm" color="teal">
               Steps: {selectedVersion.steps.toLocaleString()}
@@ -993,7 +993,7 @@ function ResourceSelectCard({
     {
       label: 'Usage Tips',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           {selectedVersion.clipSkip && (
             <Badge size="sm" radius="sm" color="cyan">
               Clip Skip: {selectedVersion.clipSkip.toLocaleString()}
@@ -1020,7 +1020,7 @@ function ResourceSelectCard({
     },
     {
       label: (
-        <Group spacing="xs">
+        <Group gap="xs">
           <Text weight={500}>AIR</Text>
           <URNExplanation size={20} />
         </Group>
@@ -1196,7 +1196,7 @@ function ResourceSelectCard({
           <Text size="sm" weight={700} lineClamp={1} lh={1}>
             {data.name}
           </Text>
-          <Group noWrap position="apart">
+          <Group wrap="nowrap" justify="space-between">
             <Select
               onClick={(e) => {
                 e.preventDefault();

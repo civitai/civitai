@@ -76,7 +76,7 @@ export default function UserLists() {
     <Container size="xs">
       <ContainerGrid gutter="xl">
         <ContainerGrid.Col span={12}>
-          <Group spacing="xl">
+          <Group gap="xl">
             <Link legacyBehavior href={`/user/${username}`} passHref>
               <ActionIcon component="a">
                 <IconArrowLeft />
@@ -125,9 +125,9 @@ export default function UserLists() {
                         <List.Item key={user.id} p={8}>
                           <Link legacyBehavior href={`/user/${user.username}`} passHref>
                             <Anchor variant="text">
-                              <Group position="apart">
+                              <Group justify="space-between">
                                 <UserAvatar user={user} withUsername />
-                                <FollowUserButton userId={user.id} compact />
+                                <FollowUserButton userId={user.id} size="compact-md" />
                               </Group>
                             </Anchor>
                           </Link>
@@ -157,9 +157,9 @@ export default function UserLists() {
                         <List.Item key={user.id} p={8}>
                           <Link legacyBehavior href={`/user/${user.username}`} passHref>
                             <Anchor variant="text">
-                              <Group position="apart">
+                              <Group justify="space-between">
                                 <UserAvatar user={user} withUsername />
-                                <FollowUserButton userId={user.id} compact />
+                                <FollowUserButton userId={user.id} size="compact-md" />
                               </Group>
                             </Anchor>
                           </Link>
@@ -191,9 +191,9 @@ export default function UserLists() {
                             <List.Item key={user.id} p={8}>
                               <Link legacyBehavior href={`/user/${user.username}`} passHref>
                                 <Anchor variant="text">
-                                  <Group position="apart">
+                                  <Group justify="space-between">
                                     <UserAvatar user={user} withUsername />
-                                    <HideUserButton userId={user.id} compact />
+                                    <HideUserButton userId={user.id} size="compact-md" />
                                   </Group>
                                 </Anchor>
                               </Link>
@@ -223,9 +223,9 @@ export default function UserLists() {
                             <List.Item key={user.id} p={8}>
                               <Link legacyBehavior href={`/user/${user.username}`} passHref>
                                 <Anchor variant="text">
-                                  <Group position="apart">
+                                  <Group justify="space-between">
                                     <Text>{user.username}</Text>
-                                    <BlockUserButton userId={user.id} compact />
+                                    <BlockUserButton userId={user.id} size="compact-md" />
                                   </Group>
                                 </Anchor>
                               </Link>

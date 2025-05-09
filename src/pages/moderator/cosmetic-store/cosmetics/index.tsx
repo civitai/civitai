@@ -88,7 +88,7 @@ export const CosmeticPreview = ({
       }
 
       return (
-        <Stack spacing="xl">
+        <Stack gap="xl">
           <Text weight="bold" align="center">
             Preview
           </Text>
@@ -102,7 +102,7 @@ export const CosmeticPreview = ({
 
       return (
         <Stack>
-          <Stack spacing="xl">
+          <Stack gap="xl">
             <Text weight="bold" align="center">
               Preview
             </Text>
@@ -116,7 +116,7 @@ export const CosmeticPreview = ({
               image={images[activeImageIndex]}
             />
           </Box>
-          <Group spacing="xs" position="center">
+          <Group gap="xs" justify="center">
             {images.map((image, index) => {
               const isSelected = index === activeImageIndex;
               return (
@@ -165,7 +165,7 @@ export default function CosmeticStoreProducts() {
     <>
       <Meta title="Cosmetics" deIndex />
       <Container size="lg">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Available Cosmetics</Title>
           <Text size="sm" color="dimmed">
             You can view manage all available cosmetics here, and create new shop items from this
@@ -176,7 +176,7 @@ export default function CosmeticStoreProducts() {
             (TM).
           </Text>
         </Stack>
-        <Group position="apart" mb="md">
+        <Group justify="space-between" mb="md">
           <TextInput
             label="Filter by name"
             value={filters.name ?? ''}
@@ -214,7 +214,7 @@ export default function CosmeticStoreProducts() {
                   return (
                     <tr key={cosmetic.id}>
                       <td>
-                        <Stack spacing={0} maw={350}>
+                        <Stack gap={0} maw={350}>
                           <Text>{cosmetic.name}</Text>
                           <Text color="dimmed" size="sm">
                             {cosmetic.description}
@@ -240,7 +240,7 @@ export default function CosmeticStoreProducts() {
                 })}
               </tbody>
               {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                   <Pagination
                     page={filters.page}

@@ -95,7 +95,7 @@ export function TagsInput({
 
   return (
     <Input.Wrapper {...props}>
-      <Group mt={5} spacing={8}>
+      <Group mt={5} gap={8}>
         {value.map((tag, index) => (
           <Badge
             key={tag.id ?? index}

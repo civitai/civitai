@@ -34,8 +34,8 @@ export function MatureContentSettings() {
         </ToggleList.Item>
       </ToggleList>
       {showNsfw && (
-        <Stack spacing={4}>
-          <Stack spacing={0}>
+        <Stack gap={4}>
+          <Stack gap={0}>
             <Text weight={500}>Browsing Levels</Text>
             {/* <Text size="sm">Pick browsing levels for the type of content you want to see.</Text> */}
           </Stack>

@@ -60,7 +60,7 @@ export function NotificationList({
   }
 
   return (
-    <SimpleGrid cols={1} spacing={0}>
+    <SimpleGrid cols={1} gap={0}>
       {fullItems.map((notification) => {
         const notificationDetails = notification.details;
         const details = notification.fullDetails;
@@ -106,8 +106,8 @@ export function NotificationList({
             data-unread={!notification.read}
             className={classes.listItem}
           >
-            <Group spacing="xl" position="apart" align="start" noWrap>
-              <Group spacing="md" align="start" noWrap>
+            <Group gap="xl" justify="space-between" align="start" wrap="nowrap">
+              <Group gap="md" align="start" wrap="nowrap">
                 {systemNotification ? (
                   <ThemeIcon variant="light" size="xl" radius="xl" color="red">
                     <IconAlertOctagon stroke={1.5} />
@@ -123,11 +123,11 @@ export function NotificationList({
                     <IconBell stroke={1.5} />
                   </ThemeIcon>
                 )}
-                <Stack spacing={0}>
+                <Stack gap={0}>
                   <Text size={textSize} weight="bold" lineClamp={truncate ? 3 : undefined}>
                     {details.message}
                   </Text>
-                  <Group spacing={2} noWrap>
+                  <Group gap={2} wrap="nowrap">
                     {notificationDetails?.content && (
                       <>
                         <Text size="xs" color="dimmed" lineClamp={1}>

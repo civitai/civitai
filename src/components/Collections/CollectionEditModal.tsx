@@ -146,7 +146,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
         </Center>
       ) : canEdit || isCreate ? (
         <Form form={form} onSubmit={handleSubmit}>
-          <Stack spacing="sm">
+          <Stack gap="sm">
             <InputSimpleImageUpload name="image" label="Cover Image" />
             <InputText
               name="name"
@@ -213,7 +213,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       description="Makes it so that you can add managers to the collection by sharing a link with them."
                     />
                     {metadata?.inviteUrlEnabled && (
-                      <Stack spacing={4}>
+                      <Stack gap={4}>
                         <Text weight={500} size="sm">
                           Here is your Invite Link:
                         </Text>
@@ -234,7 +234,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                               </Code>
                             </Box>
                           )}
-                        </CopyButton> 
+                        </CopyButton>
                       </Stack>
                     )}
 
@@ -307,7 +307,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                     <InputTags
                       name="tags"
                       label={
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           <Input.Label>Tags</Input.Label>
                           <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                             <Text>
@@ -409,7 +409,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
 
             <Divider label="Extras" />
             <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
-            <Group position="right">
+            <Group justify="flex-end">
               <Button type="submit" loading={upsertCollectionMutation.isLoading}>
                 Save
               </Button>

@@ -76,12 +76,12 @@ export function AutocompleteDropdown({ children, ...props }: Props) {
 
   return (
     <div {...props}>
-      <Stack spacing={0}>
-        <Chip.Group spacing="xs" py="sm" px="md" defaultValue="models" noWrap>
+      <Stack gap={0}>
+        <Chip.Group gap="xs" py="sm" px="md" defaultValue="models" wrap="nowrap">
           {filterOptions.map((option) => {
             return (
               <Chip key={option} classNames={classes} value={option} radius="sm">
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   {titleCase(option)}
                   {option !== 'all' && (
                     <HoverCard withinPortal withArrow width={300} shadow="sm" openDelay={500}>

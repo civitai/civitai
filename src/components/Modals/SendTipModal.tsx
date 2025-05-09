@@ -211,12 +211,12 @@ export default function SendTipModal({
 
   return (
     <Modal {...dialog} fullScreen={isMobile} withCloseButton={false} radius="lg" centered>
-      <Stack spacing="md">
-        <Group position="apart" noWrap>
+      <Stack gap="md">
+        <Group justify="space-between" wrap="nowrap">
           <Text size="lg" weight={700}>
             Tip
           </Text>
-          <Group spacing="sm" noWrap>
+          <Group gap="sm" wrap="nowrap">
             <Badge
               radius="xl"
               variant="filled"
@@ -228,7 +228,7 @@ export default function SendTipModal({
                   theme.colorScheme === 'dark' ? theme.fn.rgba('#000', 0.31) : theme.colors.gray[0],
               })}
             >
-              <Group spacing={4} noWrap>
+              <Group gap={4} wrap="nowrap">
                 <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
                   Available Buzz
                 </Text>
@@ -241,8 +241,8 @@ export default function SendTipModal({
         <Divider mx="-lg" />
         <Text>How much Buzz do you want to tip?</Text>
         <Form form={form} onSubmit={handleSubmit} style={{ position: 'static' }}>
-          <Stack spacing="md">
-            <InputChipGroup className={classes.chipGroup} name="amount" spacing={8}>
+          <Stack gap="md">
+            <InputChipGroup className={classes.chipGroup} name="amount" gap={8}>
               {presets.map((preset) => (
                 <Chip
                   classNames={classes}
@@ -250,14 +250,14 @@ export default function SendTipModal({
                   key={preset.label}
                   value={preset.amount}
                 >
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     {preset.amount === amount && <IconBolt size={16} fill="currentColor" />}
                     {preset.amount}
                   </Group>
                 </Chip>
               ))}
               <Chip classNames={classes} variant="filled" value="-1">
-                <Group spacing={4}>
+                <Group gap={4}>
                   {amount === '-1' && <IconBolt size={16} fill="currentColor" />}
                   Other
                 </Group>
@@ -291,7 +291,7 @@ export default function SendTipModal({
               maxLength={100}
               description={`${description?.length ?? 0}/100 characters`}
             />
-            <Group className={classes.actions} position="right" mt="xl">
+            <Group className={classes.actions} justify="flex-end" mt="xl">
               <Button
                 className={classes.cancelButton}
                 variant="light"

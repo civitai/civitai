@@ -16,7 +16,7 @@ const HomeBlockHeaderMeta = ({ metadata, htmlMode }: Props) => {
     <>
       {metadata?.title && (
         <Group
-          position="apart"
+          justify="space-between"
           align="center"
           pb="md"
           sx={(theme) => ({
@@ -25,7 +25,7 @@ const HomeBlockHeaderMeta = ({ metadata, htmlMode }: Props) => {
             },
           })}
           className={homeBlockClasses.header}
-          noWrap
+          wrap="nowrap"
         >
           <Title className={homeBlockClasses.title}>{metadata?.title}</Title>
           {metadata.link && (

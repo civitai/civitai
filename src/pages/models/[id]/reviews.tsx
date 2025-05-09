@@ -118,7 +118,7 @@ export default function ModelReviews() {
   const Model = loadingModel ? (
     <Skeleton height={44} />
   ) : model ? (
-    <Group spacing="xs" noWrap>
+    <Group gap="xs" wrap="nowrap">
       <BackButton url={`/models/${model.id}?modelVersionId=${modelVersionId}`} />
       <Title lineClamp={1}>{model.name} Reviews</Title>
     </Group>
@@ -146,7 +146,7 @@ export default function ModelReviews() {
     <UserResourceReviewComposite modelId={model.id} modelVersionId={modelVersionId}>
       {({ modelId, modelVersionId, modelName, userReview }) => (
         <Card p="sm" style={{ position: 'sticky', top: 24 }} withBorder>
-          <Stack spacing={8}>
+          <Stack gap={8}>
             <Text size="md" weight={510}>
               Did you like this resource?
             </Text>
@@ -195,7 +195,7 @@ export default function ModelReviews() {
       <Container size="xl">
         <ContainerGrid gutter={48}>
           <ContainerGrid.Col sm={12} md={7} offsetMd={2} orderMd={1}>
-            <Group spacing={8} position="apart">
+            <Group gap={8} justify="space-between">
               {Model}
               {Versions}
             </Group>
@@ -208,7 +208,7 @@ export default function ModelReviews() {
             ) : model?.locked ? (
               <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
                 <Center>
-                  <Group spacing="xs">
+                  <Group gap="xs">
                     <ThemeIcon color="gray" size="xl" radius="xl">
                       <IconMessageCircleOff />
                     </ThemeIcon>
@@ -275,18 +275,18 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
 
   return (
     <Card className={classes.card} shadow="sm" radius="md" w="100%" p="xl" withBorder>
-      <Stack spacing="sm">
+      <Stack gap="sm">
         {(review.exclude || isCreator) && (
           <Group position="left">
             <Badge color="red">Excluded from count</Badge>
           </Group>
         )}
 
-        <Group position="apart" noWrap>
+        <Group justify="space-between" wrap="nowrap">
           <UserAvatar
             user={review.user}
             subText={
-              <Group mt={4} spacing={8} noWrap>
+              <Group mt={4} gap={8} wrap="nowrap">
                 <Text size="sm" lineClamp={1}>
                   <DaysFromNow date={review.createdAt} />
                 </Text>
@@ -329,11 +329,11 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
             subTextForce
             avatarSize={40}
             size="lg"
-            spacing="md"
+            gap="md"
             withUsername
             linkToProfile
           />
-          <Group className={classes.actionsWrapper} noWrap>
+          <Group className={classes.actionsWrapper} wrap="nowrap">
             <RoutedDialogLink
               name="resourceReview"
               state={{ reviewId: review.id }}

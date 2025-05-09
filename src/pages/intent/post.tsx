@@ -253,7 +253,7 @@ export default function IntentPost() {
                 status: 'success',
                 errors: [],
                 msg: (
-                  <Stack spacing={6}>
+                  <Stack gap={6}>
                     <Text>Success!</Text>
                     <Text>Found 1 image ({formatBytes(bytes)})</Text>
                   </Stack>
@@ -301,7 +301,7 @@ export default function IntentPost() {
                 status: 'success',
                 errors: [],
                 msg: (
-                  <Stack spacing={6}>
+                  <Stack gap={6}>
                     <Text>Success!</Text>
                     <Text>Found 1 video ({formatBytes(bytes)})</Text>
                   </Stack>
@@ -392,10 +392,10 @@ export default function IntentPost() {
                     // color={color}
                   >
                     <Group position="left" align="start">
-                      <Stack mt="xs" spacing={6}>
+                      <Stack mt="xs" gap={6}>
                         {p.errors.length > 0 ? (
                           p.errors.map((e, idx) => (
-                            <Group noWrap key={idx}>
+                            <Group wrap="nowrap" key={idx}>
                               <IconX color="red" size={16} style={{ flex: '0 0 auto' }} />
                               {e}
                             </Group>
@@ -409,7 +409,7 @@ export default function IntentPost() {
                         )}
                       </Stack>
                       {p.title === 'Checking media' && !!previewUrl && (
-                        <Group position="center" style={{ flexGrow: 1 }}>
+                        <Group justify="center" style={{ flexGrow: 1 }}>
                           <EdgeMedia
                             width={150}
                             src={previewUrl.url}
@@ -427,7 +427,7 @@ export default function IntentPost() {
               })}
             </Timeline>
           </Paper>
-          <Group position="right">
+          <Group justify="flex-end">
             <Button
               disabled={!readyData || !!hasError}
               loading={!!creatingPost}

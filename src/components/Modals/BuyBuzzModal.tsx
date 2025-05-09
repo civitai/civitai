@@ -36,12 +36,12 @@ export default function BuyBuzzModal({
       radius="lg"
       fullScreen={isMobile}
     >
-      <Stack spacing="lg">
-        <Group position="apart" noWrap>
+      <Stack gap="lg">
+        <Group justify="space-between" wrap="nowrap">
           <Text size="lg" weight={700}>
             Buy Buzz
           </Text>
-          <Group spacing="sm" noWrap>
+          <Group gap="sm" wrap="nowrap">
             <AvailableBuzzBadge />
             <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
           </Group>

@@ -98,9 +98,9 @@ export default function CosmeticShopMain() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]}
       />
       <Container size="xl" p="sm">
-        <Stack spacing="xl">
-          <Stack spacing={0}>
-            <Group noWrap position="apart">
+        <Stack gap="xl">
+          <Stack gap={0}>
+            <Group wrap="nowrap" justify="space-between">
               <Title>Civitai Cosmetic Shop</Title>
 
               <Group>
@@ -109,9 +109,9 @@ export default function CosmeticShopMain() {
                   onClick={() => {
                     openUserProfileEditModal({});
                   }}
-                  sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+                  style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
                   radius="xl"
-                  compact
+                  size="compact-md"
                 >
                   Customize profile
                 </Button>
@@ -230,7 +230,7 @@ function MerchShowcaseSection({
         </Text>
       </div> */}
       <SimpleGrid
-        spacing="md"
+        gap="md"
         breakpoints={[
           { minWidth: 'xs', cols: 1 },
           { minWidth: 'sm', cols: 3 },

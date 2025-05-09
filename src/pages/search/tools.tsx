@@ -70,7 +70,7 @@ export function ToolHitList() {
     const NotFound = (
       <Box>
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
             </ThemeIcon>

@@ -115,7 +115,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
         </Box>
       )}
       <Stack className={classes.stack}>
-        <Group spacing="md" noWrap>
+        <Group gap="md" wrap="nowrap">
           {announcement.emoji && !image && (
             <Card className={classes.emojiCard} radius="lg" p="sm" withBorder>
               <Text size={28} p={0}>

@@ -175,7 +175,7 @@ export default function Auctions({
               key={a.id}
               p={itemSize}
               label={
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text weight={500} className="shrink basis-2/3">
                     {a.auctionBase.name}
                   </Text>

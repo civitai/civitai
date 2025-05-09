@@ -115,7 +115,7 @@ export function AssociatedModels({
                 itemId={(x) => x.id}
               />
             ) : (
-              <Group spacing="xs" mt="xs">
+              <Group gap="xs" mt="xs">
                 <ThemeIcon color="gray" size="xl" radius="xl">
                   <IconRocketOff />
                 </ThemeIcon>

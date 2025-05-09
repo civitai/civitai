@@ -130,14 +130,14 @@ export function CommentContent({
     <Group
       id={`comment-${comment.id}`}
       align="flex-start"
-      noWrap
+      wrap="nowrap"
       {...groupProps}
-      spacing="sm"
+      gap="sm"
       className={cx(groupProps.className, classes.groupWrap, {
         [classes.highlightedComment]: highlightProp || isHighlighted,
       })}
     >
-      <Group spacing="xs">
+      <Group gap="xs">
         {/* {replyCount > 0 && !viewOnly && !isExpanded && (
           <UnstyledButton onClick={onToggleReplies}>
             <IconArrowsMaximize size={16} />
@@ -146,10 +146,10 @@ export function CommentContent({
         <UserAvatar user={comment.user} size="sm" linkToProfile />
       </Group>
 
-      <Stack spacing={0} style={{ flex: 1 }}>
-        <Group position="apart">
+      <Stack gap={0} style={{ flex: 1 }}>
+        <Group justify="space-between">
           {/* AVATAR */}
-          <Group spacing={8} align="center">
+          <Group gap={8} align="center">
             <UserAvatar
               user={comment.user}
               size="md"
@@ -246,7 +246,7 @@ export function CommentContent({
           </Menu>
         </Group>
         {/* COMMENT / EDIT COMMENT */}
-        <Stack style={{ flex: 1 }} spacing={4}>
+        <Stack style={{ flex: 1 }} gap={4}>
           {!editing ? (
             <>
               <Box my={5}>
@@ -259,18 +259,17 @@ export function CommentContent({
                 </LineClamp>
               </Box>
               {/* COMMENT INTERACTION */}
-              <Group spacing={4}>
+              <Group gap={4}>
                 <CommentReactions comment={comment} />
                 {canReply && !viewOnly && (
                   <Button
                     variant="subtle"
-                    size="xs"
                     radius="xl"
                     onClick={() => setReplying(true)}
-                    compact
+                    size="compact-xs"
                     color="gray"
                   >
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <IconArrowBackUp size={14} />
                       Reply
                     </Group>
@@ -297,7 +296,7 @@ export function CommentContent({
         {replyCount > 0 && !viewOnly && !isExpanded && (
           <Divider
             label={
-              <Group spacing="xs" align="center">
+              <Group gap="xs" align="center">
                 <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onToggleReplies}>
                   Show {replyCount} More
                 </Text>

@@ -44,7 +44,7 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
 
   return (
     <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
-      <Stack spacing="md">
+      <Stack gap="md">
         <Text size="lg" weight="bold">
           Publish this model?
         </Text>

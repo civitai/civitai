@@ -70,7 +70,7 @@ export const AuctionMyBids = () => {
   );
 
   return (
-    <Stack w="100%" spacing="sm">
+    <Stack w="100%" gap="sm">
       <AuctionTopSection showHistory={false} />
 
       <Title order={3}>My Bids</Title>
@@ -103,7 +103,7 @@ export const AuctionMyBids = () => {
         </Center>
       ) : !activeBids.length ? (
         <Center my="lg">
-          <Stack spacing="xs" className="text-center">
+          <Stack gap="xs" className="text-center">
             <Text>No active bids.</Text>
             <Text>Choose an auction in the list to get started.</Text>
           </Stack>

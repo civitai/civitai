@@ -24,7 +24,7 @@ export default function CivitaiLinkSuccessModal({ context, id }: ContextModalPro
 
   return (
     <Stack p="xl">
-      <Stack spacing={0} justify="center" align="center">
+      <Stack gap={0} justify="center" align="center">
         <ThemeIcon color="green" size="xl" radius="xl">
           <IconCheck />
         </ThemeIcon>

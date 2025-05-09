@@ -416,7 +416,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   return (
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
-      <Group className={classes.wrapper} spacing={0} noWrap>
+      <Group className={classes.wrapper} gap={0} wrap="nowrap">
         <Select
           classNames={{
             root: classes.targetSelectorRoot,
@@ -448,7 +448,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           type="search"
           nothingFound={
             !canPerformQuery ? (
-              <Stack spacing={0} align="center">
+              <Stack gap={0} align="center">
                 <Text>
                   Due to your current browsing settings, searching for people of interest has been
                   disabled.
@@ -458,12 +458,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Text>
               </Stack>
             ) : searchErrorState ? (
-              <Stack spacing={0} align="center">
+              <Stack gap={0} align="center">
                 <Text>There was an error while performing your request&hellip;</Text>
                 <Text size="xs">Please try again later</Text>
               </Stack>
             ) : query && !hits.length ? (
-              <Stack spacing={0} align="center">
+              <Stack gap={0} align="center">
                 <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
               </Stack>
             ) : undefined

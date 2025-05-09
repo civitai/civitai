@@ -106,11 +106,11 @@ export const ModelVersionPopularity = ({
   return (
     <Tooltip multiline withinPortal label={<Text>{closestPopularityInfo.description}</Text>}>
       <Group
-        spacing={4}
+        gap={4}
         style={{
           color: popColors[closestPopularityInfo.name],
         }}
-        noWrap
+        wrap="nowrap"
         className="cursor-default"
       >
         <IconTemperature size={16} />

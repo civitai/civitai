@@ -108,7 +108,7 @@ const UpdateBuzzWithdrawalRequest = ({
 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="md">
-      <Group position="apart" mb="md">
+      <Group justify="space-between" mb="md">
         <Text size="lg" weight="bold">
           Confirm the status change
         </Text>
@@ -126,7 +126,7 @@ const UpdateBuzzWithdrawalRequest = ({
           </Text>
           .
         </Text>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Textarea
             name="note"
             label="Add a note (optional)"
@@ -269,7 +269,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
 
   return (
     <Container size="lg">
-      <Stack spacing={0} mb="xl">
+      <Stack gap={0} mb="xl">
         <Title order={1}>User Buzz Withdrawal Requests</Title>
         <Text size="sm" color="dimmed">
           Review and approve or decline user withdrawal requests. You can also view a
@@ -281,7 +281,6 @@ export default function ModeratorBuzzWithdrawalRequests() {
           <SortFilter
             type="buzzWithdrawalRequests"
             value={filters.sort}
-            compact={false}
             disabled={selectionEnabled}
             onChange={(x) => setFilters({ ...filters, sort: x as BuzzWithdrawalRequestSort })}
           />
@@ -326,7 +325,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
             </Group>
           )}
         </Group>
-        <Group position="apart">
+        <Group justify="space-between">
           <Group>
             <DatePicker
               label="From"
@@ -434,7 +433,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                 return (
                   <tr key={request.id}>
                     <td>
-                      <Stack spacing={0}>
+                      <Stack gap={0}>
                         <UserAvatar size="sm" user={request.user} withUsername linkToProfile />
                         {request.requestedToProvider ===
                           UserPaymentConfigurationProvider.Tipalti && (
@@ -443,7 +442,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                             rel="noopener noreferrer"
                             target="_blank"
                           >
-                            <Group spacing={2} noWrap>
+                            <Group gap={2} wrap="nowrap">
                               <IconExternalLink size={16} /> <Text size="sm">Tipalti Account</Text>
                             </Group>
                           </Anchor>
@@ -472,7 +471,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                       </Text>
                     </td>
                     <td>
-                      <Group spacing="xs" noWrap>
+                      <Group gap="xs" wrap="nowrap">
                         <Text>{request.requestedToProvider}</Text>
                         {request.requestedToProvider ===
                           UserPaymentConfigurationProvider.Tipalti && (
@@ -511,7 +510,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                           radius="lg"
                         />
                       ) : (
-                        <Group noWrap>
+                        <Group wrap="nowrap">
                           {buttons}
                           <BuzzWithdrawalRequestHistory history={request.history} />
                         </Group>
@@ -522,7 +521,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
               })}
             </tbody>
             {pagination && pagination.totalPages > 1 && (
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                 <Pagination
                   page={filters.page}

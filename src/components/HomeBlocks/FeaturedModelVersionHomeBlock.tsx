@@ -79,9 +79,9 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
   const useGrid = metadata.description && !currentUser;
 
   const MetaDataTop = (
-    <Stack spacing="sm">
-      <Group spacing="xs" position="apart" className={homeBlockClasses.header}>
-        <Group noWrap>
+    <Stack gap="sm">
+      <Group gap="xs" justify="space-between" className={homeBlockClasses.header}>
+        <Group wrap="nowrap">
           <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
             {title}{' '}
           </Title>
@@ -107,10 +107,10 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
                     </CustomMarkdown>
                   </Text>
                 )}
-                <Group spacing="sm">
+                <Group gap="sm">
                   <Link legacyBehavior href="/models" passHref>
                     <Anchor size="sm">
-                      <Group spacing={4}>
+                      <Group gap={4}>
                         <Text inherit>Explore all models</Text>
                         <IconArrowRight size={16} />
                       </Group>
@@ -119,7 +119,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
                   {features.auctions && (
                     <Link legacyBehavior href="/auctions" passHref>
                       <Anchor size="sm">
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           <Text inherit>View auctions</Text>
                           <IconArrowRight size={16} />
                         </Group>
@@ -170,7 +170,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
         </Text>
       )}
       <div>
-        <Group spacing="sm">
+        <Group gap="sm">
           <Link legacyBehavior href="/models" passHref>
             <Button
               size="md"

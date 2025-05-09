@@ -49,8 +49,8 @@ export default function QuestionsList() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/questions`, rel: 'canonical' }]}
       />
       <Container pb="xl">
-        <Stack spacing="md">
-          <Group position="apart">
+        <Stack gap="md">
+          <Group justify="space-between">
             <Title style={{ position: 'relative' }}>
               Questions{' '}
               <Badge color="yellow" size="xs" style={{ position: 'absolute', top: 5, right: -45 }}>
@@ -74,9 +74,9 @@ export default function QuestionsList() {
             </Text>
           </Alert>
           <Questions>
-            <Group position="apart">
+            <Group justify="space-between">
               <Questions.Sort />
-              <Group spacing="xs">
+              <Group gap="xs">
                 <Questions.Period />
                 <Questions.Filter />
               </Group>

@@ -198,13 +198,13 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
       <SensitiveShield contentNsfwLevel={bounty.nsfwLevel}>
         <TrackView entityId={bounty.id} entityType="Bounty" type="BountyView" />
         <Container size="xl" mb={32}>
-          <Stack spacing="xs" mb="xl">
-            <Group position="apart" className={classes.titleWrapper} noWrap>
-              <Group spacing="xs">
+          <Stack gap="xs" mb="xl">
+            <Group justify="space-between" className={classes.titleWrapper} wrap="nowrap">
+              <Group gap="xs">
                 <Title weight="bold" className={classes.title} lineClamp={2} order={1}>
                   {bounty.name}
                 </Title>
-                <Group spacing={8}>
+                <Group gap={8}>
                   <CurrencyBadge
                     size="lg"
                     radius="sm"
@@ -281,7 +281,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
               </Group>
               <BountyContextMenu bounty={bounty} position="bottom-end" />
             </Group>
-            <Group spacing={8}>
+            <Group gap={8}>
               <Text color="dimmed" size="xs">
                 {isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started'}:{' '}
                 {formatDate(bounty.startsAt, undefined, true)}
@@ -318,7 +318,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
               <BountySidebar bounty={bounty} />
             </ContainerGrid.Col>
             <ContainerGrid.Col xs={12} md={8} orderMd={1}>
-              <Stack spacing="xs">
+              <Stack gap="xs">
                 <ImageCarousel
                   images={bounty.images}
                   connectId={bounty.id}
@@ -333,7 +333,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                   About this bounty
                 </Title>
                 <article>
-                  <Stack spacing={4}>
+                  <Stack gap={4}>
                     {bounty.description && (
                       <ContentClamp maxHeight={200}>
                         <RenderHtml html={bounty.description} />
@@ -347,8 +347,8 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
         </Container>
         <BountyEntries bounty={bounty} />
         <Container ref={discussionSectionRef} size="xl" mt={32}>
-          <Stack spacing="xl">
-            <Group position="apart">
+          <Stack gap="xl">
+            <Group justify="space-between">
               <Title id="comments" order={2} size={28} weight={600}>
                 Discussion
               </Title>
@@ -479,7 +479,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     {
       label: 'Model Preferences',
       value: (
-        <Group spacing={8}>
+        <Group gap={8}>
           {meta?.modelFormat && (
             <Badge radius="xl" color="gray">
               {meta?.modelFormat}
@@ -516,7 +516,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   const benefactorDetails: DescriptionTableProps['items'] = bounty.benefactors.map((b) => ({
     label: (
-      <Group spacing={4} position="apart">
+      <Group gap={4} justify="space-between">
         <UserAvatar
           user={b.user}
           badge={
@@ -543,7 +543,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
       </Group>
     ),
     value: (
-      <Group spacing={4} style={{ float: 'right' }}>
+      <Group gap={4} style={{ float: 'right' }}>
         <CurrencyIcon currency={currency} size={20} />
         <Text weight={590} td={b.awardedToId ? 'line-through' : undefined}>
           {formatCurrencyForDisplay(b.unitAmount, currency)}
@@ -557,12 +557,12 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const hasEntries = flatEntries.length > 0;
 
   return (
-    <Stack spacing="md">
-      <Group spacing={8} noWrap>
+    <Stack gap="md">
+      <Group gap={8} wrap="nowrap">
         {addToBountyEnabled && (
           <Group
             color="gray"
-            position="apart"
+            justify="space-between"
             h={36}
             py={2}
             px={4}
@@ -572,10 +572,10 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               flexGrow: 1,
               borderRadius: theme.radius.xs,
             })}
-            noWrap
+            wrap="nowrap"
           >
             <Tooltip label="Minimum amount to add">
-              <Group spacing={2}>
+              <Group gap={2}>
                 <CurrencyIcon currency={currency} size={20} />
                 <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
               </Group>
@@ -603,7 +603,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               title="Support this bounty"
             >
               <Stack>
-                <Stack spacing="xs">
+                <Stack gap="xs">
                   <NumberInput
                     min={minUnitAmount}
                     step={5}
@@ -630,7 +630,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                     </Text>
                   )}
                 </Stack>
-                <Group position="right">
+                <Group justify="flex-end">
                   <Button variant="default" onClick={() => setAddToBountyModalOpen(false)}>
                     Cancel
                   </Button>
@@ -656,7 +656,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             </Modal>
           </Group>
         )}
-        <Group spacing={8} noWrap>
+        <Group gap={8} wrap="nowrap">
           <Tooltip label={isTracked ? 'Stop tracking' : 'Track'} position="top">
             <div>
               <LoginRedirect reason="perform-action">
@@ -709,7 +709,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
       {bounty.complete && !loadingEntries && (
         <Alert color="yellow">
           {hasEntries ? (
-            <Group spacing={8} align="center" noWrap>
+            <Group gap={8} align="center" wrap="nowrap">
               <ThemeIcon color="yellow.7" variant="light">
                 <IconTrophy size={20} fill="currentColor" />
               </ThemeIcon>
@@ -753,7 +753,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
       >
         <Accordion.Item value="details">
           <Accordion.Control>
-            <Group position="apart">Overview</Group>
+            <Group justify="space-between">Overview</Group>
           </Accordion.Control>
           <Accordion.Panel>
             <DescriptionTable
@@ -773,7 +773,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         </Accordion.Item>
         <Accordion.Item value="benefactors">
           <Accordion.Control>
-            <Group position="apart">Supporters</Group>
+            <Group justify="space-between">Supporters</Group>
           </Accordion.Control>
           <Accordion.Panel>
             <ScrollArea.Autosize maxHeight={500}>
@@ -802,15 +802,15 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             })}
           >
             <Accordion.Control>
-              <Group position="apart">
+              <Group justify="space-between">
                 {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
               </Group>
             </Accordion.Control>
             <Accordion.Panel>
               <ScrollArea.Autosize maxHeight={300}>
-                <Stack spacing={2}>
+                <Stack gap={2}>
                   {filesCount > 0 ? (
-                    <SimpleGrid cols={1} spacing={2}>
+                    <SimpleGrid cols={1} gap={2}>
                       {files.map((file) => (
                         <AttachmentCard key={file.id} {...file} />
                       ))}
@@ -904,7 +904,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
       })}
     >
       <Container size="xl">
-        <Stack spacing="md" py={32}>
+        <Stack gap="md" py={32}>
           <Group>
             <Title order={2}>Entries</Title>
             {displaySubmitAction && (
@@ -941,7 +941,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   if (!filteredEntries?.length) {
     return (
       <Wrapper>
-        <Group spacing="xs">
+        <Group gap="xs">
           <ThemeIcon color="gray" size="xl" radius="xl">
             <IconTournament />
           </ThemeIcon>
@@ -964,7 +964,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   return (
     <Wrapper>
       <SimpleGrid
-        spacing="sm"
+        gap="sm"
         breakpoints={[
           { minWidth: 'xs', cols: 1 },
           { minWidth: 'sm', cols: 2 },

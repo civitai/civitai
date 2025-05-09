@@ -122,8 +122,8 @@ export function NewsletterDialog() {
           },
         }}
       />
-      <Stack spacing="md" p="md">
-        <Stack spacing={4}>
+      <Stack gap="md" p="md">
+        <Stack gap={4}>
           <Text size="md" weight={600}>
             Stay in the loop!
           </Text>
@@ -134,7 +134,7 @@ export function NewsletterDialog() {
         </Stack>
 
         <Form form={form} onSubmit={handleSubscribe}>
-          <Group spacing={8} align="flex-start" position="right">
+          <Group gap={8} align="flex-start" justify="flex-end">
             <InputText
               placeholder="hello@civitai.com"
               name="email"

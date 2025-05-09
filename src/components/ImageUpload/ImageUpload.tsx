@@ -153,7 +153,7 @@ export function ImageUpload({
           disabled={dropzoneDisabled}
           // loading={loading}
         >
-          <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
+          <Group justify="center" gap="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
             <Dropzone.Accept>
               <IconUpload
                 size={50}
@@ -305,7 +305,7 @@ function UploadedImage({
       {showLoading && (
         <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <Overlay blur={2} zIndex={10} color="#000" />
-          <Stack spacing="xs" sx={{ zIndex: 11 }} align="center">
+          <Stack gap="xs" sx={{ zIndex: 11 }} align="center">
             <Loader size="lg" />
             {image.message && <Text weight={600}>{image.message}...</Text>}
           </Stack>
@@ -327,7 +327,7 @@ function UploadedImage({
                 zIndex: 11,
               }}
             >
-              <Group spacing={4} noWrap position="center">
+              <Group gap={4} wrap="nowrap" justify="center">
                 <IconAlertTriangle size={20} strokeWidth={2.5} />
                 <Text sx={{ lineHeight: 1.1 }} weight={500}>
                   Will be reviewed
@@ -355,9 +355,9 @@ function UploadedImage({
           zIndex: 11,
         })}
         align="center"
-        position="right"
+        justify="flex-end"
         p={4}
-        spacing={4}
+        gap={4}
       >
         {!showLoading && (!image.status || image.status === 'complete') && (
           <>
@@ -573,7 +573,7 @@ function UploadedImage({
 //         </Tabs> */}
 //         <Title order={4}>Generation details</Title>
 //         {generationParams}
-//         <Group position="right" spacing={4} pt="sm">
+//         <Group justify="flex-end" gap={4} pt="sm">
 //           <Button fullWidth onClick={handleSubmit}>
 //             Save
 //           </Button>

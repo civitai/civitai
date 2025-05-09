@@ -90,11 +90,11 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
     <>
       <Meta title={`Claim Buzz | Civitai`} deIndex />
       <Container size="xs" mb="lg">
-        <Stack spacing={0}>
+        <Stack gap={0}>
           {claim.status !== 'unavailable' && (
             <Center>
               <Alert radius="sm" color="blue" sx={{ zIndex: 10 }}>
-                <Group spacing="xs" noWrap position="center">
+                <Group gap="xs" wrap="nowrap" justify="center">
                   <Text size="md" weight={500}>{`🎉 You've received a Buzz Reward! 🎉`}</Text>
                 </Group>
               </Alert>
@@ -110,7 +110,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
             h={120}
             my="lg"
           >
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text size={64} weight={500} ml={-30} color={color} component="span">
                 <Icon
                   color={color}
@@ -142,7 +142,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
           <Center mt="xl">
             {claim.status === 'unavailable' ? (
               <Alert radius="sm" color="red" sx={{ zIndex: 10 }}>
-                <Group spacing="xs" noWrap position="center">
+                <Group gap="xs" wrap="nowrap" justify="center">
                   <Text size="lg">🥲 {claim.reason}</Text>
                 </Group>
               </Alert>
@@ -154,7 +154,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
               </Center>
             ) : claim.status === 'claimed' ? (
               <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-                <Group spacing="xs" noWrap position="center">
+                <Group gap="xs" wrap="nowrap" justify="center">
                   <ThemeIcon color="green" size="lg">
                     <IconCircleCheck />
                   </ThemeIcon>

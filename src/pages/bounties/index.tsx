@@ -69,9 +69,9 @@ function BountiesPage() {
       />
 
       <MasonryContainer>
-        <Stack spacing="xs">
+        <Stack gap="xs">
           {query.engagement && (
-            <Stack spacing="xl" align="flex-start">
+            <Stack gap="xl" align="flex-start">
               <Title>My Bounties</Title>
               <SegmentedControl
                 classNames={classes}

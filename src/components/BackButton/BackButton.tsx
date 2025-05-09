@@ -52,7 +52,7 @@ export function BackButton({
   return (
     <NavigateBack url={url} as={as} options={options}>
       {({ onClick }) => (
-        <Group spacing="xs" onClick={onClick}>
+        <Group gap="xs" onClick={onClick}>
           <ActionIcon>
             <IconArrowLeft />
           </ActionIcon>

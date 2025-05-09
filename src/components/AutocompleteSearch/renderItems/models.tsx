@@ -31,7 +31,7 @@ export const ModelSearchItem = forwardRef<
   const alt = coverImage.name;
 
   return (
-    <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
+    <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
       <Center
         sx={{
           width: 64,
@@ -68,8 +68,8 @@ export const ModelSearchItem = forwardRef<
           </ThemeIcon>
         )}
       </Center>
-      <Stack spacing={4} sx={{ flex: '1 !important' }}>
-        <Group spacing={8}>
+      <Stack gap={4} sx={{ flex: '1 !important' }}>
+        <Group gap={8}>
           <Text>
             <Highlight attribute="name" hit={hit} classNames={classes} />
           </Text>
@@ -79,7 +79,7 @@ export const ModelSearchItem = forwardRef<
             </ThemeIcon>
           )}
         </Group>
-        <Group spacing={8}>
+        <Group gap={8}>
           <UserAvatar size="xs" user={user} withUsername />
           {nsfw && (
             <Badge size="xs" color="red">
@@ -89,7 +89,7 @@ export const ModelSearchItem = forwardRef<
           <Badge size="xs">{getDisplayName(type)}</Badge>
           {category && category.name && <Badge size="xs">{getDisplayName(category.name)}</Badge>}
         </Group>
-        <Group spacing={4}>
+        <Group gap={4}>
           <IconBadge icon={<ThumbsUpIcon size={12} />}>
             {abbreviateNumber(metrics.thumbsUpCount)}
           </IconBadge>

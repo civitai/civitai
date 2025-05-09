@@ -67,7 +67,7 @@ export function CreateVariantsModal({ onClose, ...props }: Props) {
             </Paper>
           </Group>
         </Input.Wrapper>
-        <Group spacing={8} align="flex-end" grow>
+        <Group gap={8} align="flex-end" grow>
           {/* <NumberInput label="Quantity" defaultValue={state.quantity} min={1} max={100} /> */}
           <Button onClick={handleClose}>Go</Button>
         </Group>

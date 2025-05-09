@@ -89,7 +89,7 @@ export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
       opened={opened}
       onClose={onClose}
       title={
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Title order={3}>Rearrange versions</Title>
           <Text size="sm" color="dimmed">
             Drag and drop the versions to set their order
@@ -123,7 +123,7 @@ export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
           </SortableContext>
         </DndContext>
       )}
-      <Group position="right" mt="xl">
+      <Group justify="flex-end" mt="xl">
         <Button variant="default" onClick={onClose}>
           Cancel
         </Button>

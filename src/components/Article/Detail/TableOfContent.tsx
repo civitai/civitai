@@ -30,7 +30,7 @@ function Heading({
   const labelSize = isFirstLevel ? 'md' : 'sm';
 
   return (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       <Anchor
         href={`#${heading.id}`}
         variant="text"

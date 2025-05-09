@@ -148,7 +148,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const tags = article.tags.filter((tag) => !tag.isCategory);
 
   const actionButtons = (
-    <Group spacing={4} align="center" noWrap>
+    <Group gap={4} align="center" wrap="nowrap">
       <InteractiveTipBuzzButton toUserId={article.user.id} entityType="Article" entityId={id}>
         <IconBadge
           radius="sm"
@@ -226,17 +226,17 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
         <Container size="xl" pos="relative">
           <LoadingOverlay visible={isRefetching || upsertArticleMutation.isLoading} />
-          <Stack spacing={8} mb="xl">
-            <Group position="apart" noWrap>
+          <Stack gap={8} mb="xl">
+            <Group justify="space-between" wrap="nowrap">
               <Title weight="bold" className={classes.title} order={1}>
                 {article.title}
               </Title>
-              <Group align="center" className={classes.titleWrapper} noWrap>
+              <Group align="center" className={classes.titleWrapper} wrap="nowrap">
                 {!mobile && actionButtons}
                 <ArticleContextMenu article={article} />
               </Group>
             </Group>
-            <Group spacing={8}>
+            <Group gap={8}>
               <UserAvatar user={article.user} withUsername linkToProfile />
               <Divider orientation="vertical" />
               <Text color="dimmed" size="sm">
@@ -297,7 +297,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           </Stack>
           <Grid gutter="xl">
             <Grid.Col xs={12} md={8}>
-              <Stack spacing="xs">
+              <Stack gap="xs">
                 {image && (
                   <AspectRatio
                     ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
@@ -353,7 +353,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </article>
                 )}
                 <Divider />
-                <Group position="apart">
+                <Group justify="space-between">
                   <Reactions
                     entityType="article"
                     reactions={article.reactions}

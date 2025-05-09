@@ -123,7 +123,7 @@ function QuestionsList() {
       <Loader size="xl" />
     </Center>
   ) : !!questions?.items.length ? (
-    <Stack spacing="sm">
+    <Stack gap="sm">
       {questions.items.map((question) => (
         <Link
           key={question.id}
@@ -131,19 +131,19 @@ function QuestionsList() {
           passHref
         >
           <Paper withBorder p="sm">
-            <Stack spacing="xs">
+            <Stack gap="xs">
               <Title order={3} className={classes.title}>
                 {question.title}
               </Title>
-              <Group position="apart" spacing="sm">
-                <Group spacing={4}>
+              <Group justify="space-between" gap="sm">
+                <Group gap={4}>
                   {question.tags.map((tag, index) => (
                     <Badge key={index} size="xs">
                       {tag.name}
                     </Badge>
                   ))}
                 </Group>
-                <Group spacing={4}>
+                <Group gap={4}>
                   <Badge
                     variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
                     color={question.rank.heartCount ? 'pink' : 'gray'}
@@ -175,7 +175,7 @@ function QuestionsList() {
         </Link>
       ))}
       {questions.totalPages > 1 && (
-        <Group position="apart">
+        <Group justify="space-between">
           <Text>Total {questions.totalItems} items</Text>
 
           <Pagination

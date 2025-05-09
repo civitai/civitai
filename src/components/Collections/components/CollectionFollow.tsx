@@ -76,7 +76,7 @@ const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Prop
           }
         }}
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <FollowBtnIcon size={18} />
           {followBtnLabel}
         </Group>

@@ -27,7 +27,7 @@ export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
   } = query;
 
   return (
-    <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
+    <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser && (
         <FollowedFilter
           type="images"
@@ -45,7 +45,6 @@ export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
       />
       <MediaFiltersDropdown
         className={classes.subnavDropdown}
-        size="sm"
         w="100%"
         filterType="images"
         query={{
@@ -63,7 +62,7 @@ export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
         hideMediaTypes
         hideTools
         isFeed
-        compact
+        size="compact-sm"
       />
     </Group>
   );

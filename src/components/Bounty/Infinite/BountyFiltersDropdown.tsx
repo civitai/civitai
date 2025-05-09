@@ -86,15 +86,15 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
+    <Stack gap="lg">
+      <Stack gap="md">
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
         <PeriodFilter type="bounties" variant="chips" />
       </Stack>
-      <Stack spacing="md">
+      <Stack gap="md">
         <Divider label="Bounty type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={filters.types ?? []}
           onChange={(types: BountyType[]) => {
             const clearBaseModelFilter = !checkSupportsBaseModel(types);
@@ -113,10 +113,10 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
         </Chip.Group>
       </Stack>
       {showBaseModelFilter && (
-        <Stack spacing="md">
+        <Stack gap="md">
           <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
           <Chip.Group
-            spacing={8}
+            gap={8}
             value={filters.baseModels ?? []}
             onChange={(baseModels: BaseModel[]) => setFilters({ baseModels })}
             multiple
@@ -130,9 +130,9 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
         </Stack>
       )}
       {/* TODO.bounty: turn this on once we accept split bounties */}
-      {/* <Stack spacing="md">
+      {/* <Stack gap="md">
         <Divider label="Bounty mode" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group spacing={8}>
+        <Group gap={8}>
           {Object.values(BountyMode).map((mode, index) => (
             <Chip
               {...chipProps}
@@ -145,9 +145,9 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
           ))}
         </Group>
       </Stack> */}
-      <Stack spacing="md">
+      <Stack gap="md">
         <Divider label="Bounty status" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group spacing={8}>
+        <Group gap={8}>
           {Object.values(BountyStatus).map((status, index) => (
             <FilterChip
               key={index}

@@ -126,7 +126,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     return (
       <Input.Wrapper {...inputWrapperProps} descriptionProps={{ mb: 8 }} ref={ref}>
-        <Stack spacing="md" mb={inputWrapperProps.error ? 5 : undefined}>
+        <Stack gap="md" mb={inputWrapperProps.error ? 5 : undefined}>
           {sortedGroups.map((group, index) => {
             return (
               <React.Fragment key={group.type}>
@@ -139,7 +139,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
                   }
                   labelProps={{ mb: 8 }}
                 >
-                  <Stack spacing={8}>
+                  <Stack gap={8}>
                     {group.resources.map((resource) => (
                       <ResourceSelectCard
                         key={resource.id}

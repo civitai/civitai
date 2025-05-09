@@ -99,11 +99,11 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
           </ImageCSSAspectRatioWrap>
         )} */}
         <Stack style={{ flex: 1 }}>
-          <Group position="apart">
+          <Group justify="space-between">
             <Stack>
               <Group>
                 <Title order={3}>{clubTier.name}</Title>
-                <Group spacing={0}>
+                <Group gap={0}>
                   <IconUser />
                   <Text color="dimmed">
                     {numberWithCommas(clubTier._count?.memberships ?? 0) || 0}

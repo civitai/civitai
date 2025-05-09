@@ -37,7 +37,7 @@ export default function Onboard() {
           </Text>
           <SegmentedControl
             value={type}
-            onChange={(v: 'setup' | 'paymentHistory') => setType(v)}
+            onChange={(v) => setType(v as 'setup' | 'paymentHistory')}
             data={[
               { label: 'Onboarding / Setup', value: 'setup' },
               { label: 'Payment History', value: 'paymentHistory' },

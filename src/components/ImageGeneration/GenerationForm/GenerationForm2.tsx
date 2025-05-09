@@ -593,7 +593,7 @@ export function GenerationFormContent() {
 
                                       <Button
                                         component="span"
-                                        compact
+                                        size="compact-md"
                                         variant="light"
                                         onClick={(e) => {
                                           e.preventDefault();
@@ -760,7 +760,7 @@ export function GenerationFormContent() {
                                 h="100%"
                                 py={0}
                               >
-                                <Stack spacing={0} h="100%">
+                                <Stack gap={0} h="100%">
                                   <Text weight="bold" size="sm" mt={2}>
                                     Remixing
                                   </Text>
@@ -777,7 +777,7 @@ export function GenerationFormContent() {
                                           that this generation will be treated as a new image rather
                                           than a remix
                                         </Text>
-                                        <Group spacing="xs" grow noWrap>
+                                        <Group gap="xs" grow wrap="nowrap">
                                           <Button
                                             variant="default"
                                             onClick={() => {
@@ -931,10 +931,9 @@ export function GenerationFormContent() {
                                     {({ copied, copy, Icon, color }) => (
                                       <Button
                                         variant="subtle"
-                                        size="xs"
                                         color={color ?? 'blue.5'}
                                         onClick={copy}
-                                        compact
+                                        size="compact-xs"
                                         classNames={{ inner: 'flex gap-1' }}
                                       >
                                         {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
@@ -1572,14 +1571,14 @@ const getAspectRatioControls = (
 ) => {
   return aspectRatios.map(({ label, width, height }, index) => ({
     label: (
-      <Stack spacing={2}>
+      <Stack gap={2}>
         <Center>
           <Paper
             withBorder
             sx={{ borderWidth: 2, aspectRatio: `${width}/${height}`, height: 20 }}
           />
         </Center>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text size="xs">{label}</Text>
           <Text size={10} color="dimmed">{`${width}x${height}`}</Text>
         </Stack>

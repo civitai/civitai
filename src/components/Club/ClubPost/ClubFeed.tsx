@@ -252,7 +252,7 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
         <Title order={3} className={classes.title} ref={ref}>
           {title}
         </Title>
-        <Group position="apart">
+        <Group justify="space-between">
           <UserAvatar
             user={clubPost.createdBy}
             subText={clubPost.createdAt ? `Created at ${formatDate(clubPost.createdAt)}` : ''}

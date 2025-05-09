@@ -191,8 +191,8 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this entry."} />
-      <Stack spacing="xl">
-        <Group spacing="md">
+      <Stack gap="xl">
+        <Group gap="md">
           <BackButton url={`/bounties/${bounty.id}`} />
           <Title inline>{bountyEntry ? 'Update' : 'Submit new'} entry</Title>
           <FeatureIntroductionHelpButton
@@ -226,7 +226,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
         </Input.Wrapper>
         {images.length > 0 && (
           <SimpleGrid
-            spacing="sm"
+            gap="sm"
             breakpoints={[
               { minWidth: 'xs', cols: 1 },
               { minWidth: 'sm', cols: 3 },
@@ -328,11 +328,11 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               ))}
           </SimpleGrid>
         )}
-        <Group spacing="md" align="flex-start" sx={{ '& > *': { flexGrow: 1 } }}>
+        <Group gap="md" align="flex-start" sx={{ '& > *': { flexGrow: 1 } }}>
           <InputMultiFileUpload
             name="sampleFiles"
             label={
-              <Group spacing={8} noWrap>
+              <Group gap={8} wrap="nowrap">
                 <Text size="xl">Sample Files</Text>
                 <HoverCard width={300}>
                   <HoverCard.Target>
@@ -341,7 +341,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     </ThemeIcon>
                   </HoverCard.Target>
                   <HoverCard.Dropdown>
-                    <Stack spacing={4}>
+                    <Stack gap={4}>
                       <Text size="md" color="yellow">
                         What&apos;s this?
                       </Text>
@@ -365,8 +365,8 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               return (
                 <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
                   <Stack>
-                    <Group position="apart" noWrap>
-                      <Stack spacing={0}>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Stack gap={0}>
                         {bountyEntry && file.id ? (
                           <Anchor
                             href={`/api/download/attachments/${file.id}`}
@@ -455,7 +455,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               };
             }}
             label={
-              <Group spacing={8} noWrap>
+              <Group gap={8} wrap="nowrap">
                 <Text size="xl">Bounty Files</Text>
                 <HoverCard width={300}>
                   <HoverCard.Target>
@@ -464,7 +464,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     </ThemeIcon>
                   </HoverCard.Target>
                   <HoverCard.Dropdown>
-                    <Stack spacing={4}>
+                    <Stack gap={4}>
                       <Text size="md" color="yellow">
                         What&apos;s this?
                       </Text>
@@ -491,8 +491,8 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               return (
                 <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
                   <Stack>
-                    <Group position="apart" noWrap>
-                      <Stack spacing={0}>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Stack gap={0}>
                         {bountyEntry && file.id ? (
                           <Anchor
                             href={`/api/download/attachments/${file.id}`}
@@ -613,7 +613,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             />
           </>
         )}
-        <Group mt="xl" position="right">
+        <Group mt="xl" justify="flex-end">
           <NavigateBack url={`/bounties/${bounty.id}`}>
             {({ onClick }) => (
               <Button variant="light" color="gray" onClick={onClick}>

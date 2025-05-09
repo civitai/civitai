@@ -70,8 +70,8 @@ export default function UserBanModal({ username, userId }: Props) {
 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} centered>
-      <Stack spacing={32}>
-        <Group align="flex-start" position="apart" spacing="xs" noWrap>
+      <Stack gap={32}>
+        <Group align="flex-start" justify="space-between" gap="xs" wrap="nowrap">
           <Title order={4} color="gray.1">
             Are you sure you want to ban this user?
           </Title>
@@ -111,7 +111,7 @@ export default function UserBanModal({ username, userId }: Props) {
           hideToolbar
         />
 
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Button color="red" onClick={handleBan} loading={toggleBanMutation.isLoading}>
             Ban this user
           </Button>

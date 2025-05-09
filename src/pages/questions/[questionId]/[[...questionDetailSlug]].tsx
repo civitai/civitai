@@ -119,7 +119,7 @@ export default function QuestionPage(
           <QuestionDetails question={question} />
           {!!answers?.length && (
             <div className={classes.fullWidth}>
-              <Group noWrap>
+              <Group wrap="nowrap">
                 <Title order={2}>
                   {answers.length} {answers.length === 1 ? 'Answer' : 'Answers'}
                 </Title>

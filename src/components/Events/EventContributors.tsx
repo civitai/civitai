@@ -41,8 +41,8 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
     <Grid gutter={48}>
       <Grid.Col xs={12} sm="auto">
         <Card p={32} radius="lg" h="100%" className={classes.card}>
-          <Stack spacing="xl">
-            <Stack spacing={0}>
+          <Stack gap="xl">
+            <Stack gap={0}>
               <Text size={32} weight="bold">
                 Top Donors All Time
               </Text>
@@ -55,15 +55,15 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
             </Stack>
             {loading ? (
               Array.from({ length: 4 }).map((_, index) => (
-                <Group key={index} spacing={8} noWrap>
+                <Group key={index} gap={8} wrap="nowrap">
                   <Skeleton height={40} circle />
                   <Skeleton height={44} />
                 </Group>
               ))
             ) : topAllTimeContributors.length > 0 ? (
               topAllTimeContributors.map((contributor) => (
-                <Group key={contributor.userId} spacing="md" position="apart">
-                  <Group spacing={8}>
+                <Group key={contributor.userId} gap="md" justify="space-between">
+                  <Group gap={8}>
                     <UserAvatar
                       userId={contributor.userId}
                       user={contributor.user}
@@ -73,7 +73,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                       linkToProfile
                     />
                   </Group>
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <CurrencyIcon currency={Currency.BUZZ} />
                     <Text size="xl" weight={500} color="dimmed">
                       {abbreviateNumber(contributor.amount ?? 0)}
@@ -88,7 +88,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                 </Center>
               </Paper>
             )}
-            <Group position="right">
+            <Group justify="flex-end">
               <Link href={`/leaderboard/${event}:all-time`}>
                 <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
                   View All
@@ -101,8 +101,8 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
       {!ended && (
         <Grid.Col xs={12} sm="auto">
           <Card p={32} radius="lg" h="100%" className={classes.card}>
-            <Stack spacing="xl">
-              <Stack spacing={0}>
+            <Stack gap="xl">
+              <Stack gap={0}>
                 <Text size={32} weight="bold">
                   Top Donors Today
                 </Text>
@@ -115,14 +115,14 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
               </Stack>
               {loading ? (
                 Array.from({ length: 4 }).map((_, index) => (
-                  <Group key={index} spacing={8} noWrap>
+                  <Group key={index} gap={8} wrap="nowrap">
                     <Skeleton height={40} circle />
                     <Skeleton height={44} />
                   </Group>
                 ))
               ) : topDayContributors.length > 0 ? (
                 topDayContributors.map((contributor) => (
-                  <Group key={contributor.userId} spacing="md" position="apart">
+                  <Group key={contributor.userId} gap="md" justify="space-between">
                     <UserAvatar
                       userId={contributor.userId}
                       user={contributor.user}
@@ -131,7 +131,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                       withUsername
                       linkToProfile
                     />
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <CurrencyIcon currency={Currency.BUZZ} />
                       <Text size="xl" weight={500} color="dimmed">
                         {abbreviateNumber(contributor.amount ?? 0)}
@@ -146,7 +146,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                   </Center>
                 </Paper>
               )}
-              <Group position="right">
+              <Group justify="flex-end">
                 <Link href={`/leaderboard/${event}:day`}>
                   <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
                     View All
@@ -161,7 +161,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
         <Card p={32} radius="lg" className={classes.card}>
           <Grid gutter="xl">
             <Grid.Col span={12}>
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Text size={32} weight="bold">
                   Top Donors by Team
                 </Text>
@@ -180,13 +180,13 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
             ) : (
               topTeamContributors.map(([team, contributors]) => (
                 <Grid.Col key={team} xs={12} sm="auto">
-                  <Stack spacing="xl" h="100%">
+                  <Stack gap="xl" h="100%">
                     <Text size={24} weight="bold">
                       {team} Team
                     </Text>
 
                     {contributors.length > 0 ? (
-                      <Stack spacing="sm">
+                      <Stack gap="sm">
                         {contributors.map((contributor) => (
                           <UserAvatar
                             key={contributor.userId}
@@ -205,7 +205,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                       </Paper>
                     )}
 
-                    <Group position="right" mt="auto">
+                    <Group justify="flex-end" mt="auto">
                       <Link href={`/leaderboard/${event}:${team.toLowerCase()}`}>
                         <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
                           View All

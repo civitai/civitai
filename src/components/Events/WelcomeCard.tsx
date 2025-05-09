@@ -60,14 +60,14 @@ export function WelcomeCard({
           </Text>
         </Grid.Col>
         <Grid.Col xs={12} sm="auto">
-          <Stack spacing={32}>
-            <Group spacing="lg" noWrap>
+          <Stack gap={32}>
+            <Group gap="lg" wrap="nowrap">
               <IconMoodPlus size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
                 Join the event to get your holiday garland and lights.
               </Text>
             </Group>
-            <Group spacing="lg" noWrap>
+            <Group gap="lg" wrap="nowrap">
               <IconBulb size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
                 Earn a lightbulb for each{' '}
@@ -77,13 +77,13 @@ export function WelcomeCard({
                 you participate in.
               </Text>
             </Group>
-            <Group spacing="lg" noWrap>
+            <Group gap="lg" wrap="nowrap">
               <IconBolt size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
                 Make those lights shine by boosting your team&apos;s Spirit Bank with Buzz.
               </Text>
             </Group>
-            <Group spacing="lg" noWrap>
+            <Group gap="lg" wrap="nowrap">
               <IconHeartHandshake size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
                 All Buzz purchased and put into the Spirit Bank will be donated to All Hands and

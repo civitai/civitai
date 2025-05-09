@@ -78,7 +78,7 @@ export default function MetadataTester() {
               <Card withBorder p="sm">
                 {(meta.resources as any[]).map((resource) => (
                   <Card.Section key={resource.id} inheritPadding py="xs" withBorder>
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <Text size="sm" weight={500}>
                         {resource.name}
                       </Text>

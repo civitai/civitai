@@ -70,7 +70,7 @@ const Feed = () => {
       ) : !!clubPosts.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <Stack spacing="md" mt="md" align="center">
+          <Stack gap="md" mt="md" align="center">
             {clubPosts.map((clubPost) => (
               <ClubPostItem key={clubPost.id} clubPost={clubPost} />
             ))}
@@ -91,7 +91,7 @@ const Feed = () => {
               <Divider
                 size="sm"
                 label={
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconClock size={16} stroke={1.5} />
                     You are all caught up
                   </Group>
@@ -113,7 +113,7 @@ const Feed = () => {
               <Divider
                 size="sm"
                 label={
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconClubs size={16} stroke={1.5} />
                     This club has a total of {club?.stats?.clubPostCountAllTime} posts.
                   </Group>
@@ -122,7 +122,7 @@ const Feed = () => {
                 labelProps={{ size: 'sm' }}
               />
               <Center>
-                <Stack spacing={0} align="center">
+                <Stack gap={0} align="center">
                   <Text size="sm" color="dimmed">
                     If you cannot see posts, it means you are not a member of this club or your
                     settings are hiding some of these posts.
@@ -135,7 +135,7 @@ const Feed = () => {
               <Divider
                 size="sm"
                 label={
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconClubs size={16} stroke={1.5} />
                     Looks like this club has not posted anything yet
                   </Group>
@@ -144,7 +144,7 @@ const Feed = () => {
                 labelProps={{ size: 'sm' }}
               />
               <Center>
-                <Stack spacing={0} align="center">
+                <Stack gap={0} align="center">
                   <Text size="sm" color="dimmed">
                     Check back later and the owner might have posted something
                   </Text>
@@ -289,10 +289,10 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
               />
             </ImageCSSAspectRatioWrap>
           )} */}
-          <Stack spacing="md" mt="md">
+          <Stack gap="md" mt="md">
             <Grid>
               <Grid.Col xs={12} md={9}>
-                <Stack spacing="lg">
+                <Stack gap="lg">
                   <Title order={1}>{club.name}</Title>
                   {club.description && (
                     <ContentClamp maxHeight={500}>

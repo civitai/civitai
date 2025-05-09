@@ -61,7 +61,7 @@ export const ClubRequirementNotice = ({
     // This is a user that can't see clubs yet, so we don't want to show them the club requirement notice
     return (
       <Alert color="blue">
-        <Stack spacing={4}>
+        <Stack gap={4}>
           <ThemeIcon radius="xl">
             <IconClubs />
           </ThemeIcon>
@@ -85,7 +85,7 @@ export const ClubRequirementNotice = ({
 
   return (
     <Alert color="blue">
-      <Stack spacing={4}>
+      <Stack gap={4}>
         <ThemeIcon radius="xl">
           <IconClubs />
         </ThemeIcon>
@@ -99,7 +99,7 @@ export const ClubRequirementNotice = ({
               of a creator&rsquo;s club. If you&rsquo;d like to access this{' '}
               {getDisplayName(entityType)} you can sign up for one of the following clubs:
             </Text>
-            <List size="xs" spacing={8}>
+            <List size="xs" gap={8}>
               {clubs.map((club) => {
                 const requirement = clubRequirement.clubs.find((c) => c.clubId === club.id);
 
@@ -113,7 +113,7 @@ export const ClubRequirementNotice = ({
 
                 return (
                   <List.Item key={club.id}>
-                    <Stack spacing={0}>
+                    <Stack gap={0}>
                       <LoginPopover>
                         <Anchor
                           onClick={(e) => {
@@ -266,7 +266,7 @@ export const ClubRequirementButton = ({
                 // });
               }}
             >
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Text>
                   {club.name} by {club.user.username}{' '}
                 </Text>

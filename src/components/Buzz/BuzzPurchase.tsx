@@ -284,13 +284,13 @@ export const BuzzPurchase = ({
   return (
     <Grid>
       <Grid.Col span={12} md={canUpgradeMembership ? 6 : 12}>
-        <Stack spacing="md">
+        <Stack gap="md">
           {message && (
             <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" size="md">
               {message}
             </AlertWithIcon>
           )}
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text>Buy Buzz as a one-off purchase. No commitment, no strings attached.</Text>
           </Stack>
           {isLoading || processing ? (
@@ -299,7 +299,7 @@ export const BuzzPurchase = ({
             </Center>
           ) : (
             <Input.Wrapper error={error}>
-              <Stack spacing="xl" mb={error ? 5 : undefined}>
+              <Stack gap="xl" mb={error ? 5 : undefined}>
                 <Chip.Group
                   className={classes.chipGroup}
                   value={selectedPrice?.id ?? ''}
@@ -330,12 +330,12 @@ export const BuzzPurchase = ({
                         }}
                         disabled={disabled}
                       >
-                        <Group spacing="sm" align="center">
+                        <Group gap="sm" align="center">
                           <Text color="accent.5">
                             <BuzzTierIcon tier={index + 1} />
                           </Text>
                           {price ? (
-                            <Group spacing={8} position="apart" sx={{ flexGrow: 1 }}>
+                            <Group gap={8} justify="space-between" sx={{ flexGrow: 1 }}>
                               <Text size={20} weight={510} color="accent.5">
                                 {buzzAmount.toLocaleString()} Buzz
                               </Text>
@@ -370,20 +370,20 @@ export const BuzzPurchase = ({
                 >
                   <Accordion.Item value="customAmount">
                     <Accordion.Control px="md" py={8}>
-                      <Group spacing={8}>
+                      <Group gap={8}>
                         <IconMoodDollar size={24} />
                         <Text>I&apos;ll enter my own amount</Text>
                       </Group>
                     </Accordion.Control>
                     <Accordion.Panel>
                       <Group
-                        spacing={8}
+                        gap={8}
                         align="flex-end"
                         sx={{
                           ['& > *']: { flexGrow: 1 },
                         }}
                         className="flex-col items-center"
-                        noWrap
+                        wrap="nowrap"
                       >
                         <NumberInputWrapper
                           label="Buzz"
@@ -440,9 +440,9 @@ export const BuzzPurchase = ({
               </Stack>
             </Input.Wrapper>
           )}
-          <Stack spacing="md" mt="md">
+          <Stack gap="md" mt="md">
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
-            <Group spacing="xs" mt="md" noWrap>
+            <Group gap="xs" mt="md" wrap="nowrap">
               <BuzzPurchasePaymentButton
                 unitAmount={unitAmount}
                 buzzAmount={buzzAmount}
@@ -485,7 +485,7 @@ const BuzzTierIcon = ({ tier }: { tier: number }) => {
   const { classes } = useBuzzButtonStyles();
 
   return (
-    <Group spacing={-4} noWrap>
+    <Group gap={-4} wrap="nowrap">
       {Array.from({ length: 3 }).map((_, i) => (
         <IconBolt
           key={i}

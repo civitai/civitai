@@ -111,8 +111,8 @@ const RadioImg = ({
   isNew?: boolean;
 }) => {
   const caption = (
-    <Stack spacing={0}>
-      <Group position="center" spacing="xs" className="!items-center !justify-center align-middle">
+    <Stack gap={0}>
+      <Group justify="center" gap="xs" className="!items-center !justify-center align-middle">
         <Text fz="lg" fw={500}>
           {value}
         </Text>
@@ -384,7 +384,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
                     // label={videoNotAllowed ? 'Currently available to subscribers only' : undefined}
                     label="Temporarily disabled - check back soon!"
                   >
-                    <Group spacing="xs" position="center">
+                    <Group gap="xs" justify="center">
                       {mt === 'video' ? <IconVideo size={18} /> : <IconPhoto size={16} />}
                       <Text>{titleCase(mt)}</Text>
                       {mt === 'video' && new Date() < new Date('2025-04-30') && (
@@ -435,7 +435,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           would find all training models and spawn a new version
           instead of creating a new model
        */}
-      <Group mt="xl" position="right">
+      <Group mt="xl" justify="flex-end">
         <Button
           type="submit"
           loading={

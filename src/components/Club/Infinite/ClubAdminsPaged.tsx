@@ -97,7 +97,7 @@ export function ClubAdminsPaged({ clubId }: Props) {
                       <Text>{admin.permissions.map((p) => getDisplayName(p)).join(', ')}</Text>
                     </td>
                     <td>
-                      <Group position="right">
+                      <Group justify="flex-end">
                         <ActionIcon
                           variant="transparent"
                           aria-label="Update invite"
@@ -129,7 +129,7 @@ export function ClubAdminsPaged({ clubId }: Props) {
               })}
             </tbody>
             {pagination && pagination.totalPages > 1 && (
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                 <Pagination
                   page={filters.page}

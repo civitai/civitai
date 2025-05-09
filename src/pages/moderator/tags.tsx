@@ -165,7 +165,7 @@ export default function Tags() {
         Cell: ({ row }) => {
           const tag = row.original;
           return (
-            <Group noWrap spacing={5}>
+            <Group wrap="nowrap" gap={5}>
               {tag.target.includes(TagTarget.Image) && (
                 <Link href={`/images?tags=${row.id}&view=feed`} target="_blank">
                   <IconBadge icon={<IconPhoto size={14} />}>
@@ -203,7 +203,7 @@ export default function Tags() {
         Cell: ({ row }) => {
           const tag = row.original;
           return (
-            <Group spacing={5}>
+            <Group gap={5}>
               {tag.tags.map((t) => (
                 <Badge
                   key={t.id ?? t.name}
@@ -211,7 +211,7 @@ export default function Tags() {
                   color={tagColor[t.relationship]}
                   pr={0}
                 >
-                  <Group spacing={0}>
+                  <Group gap={0}>
                     {t.name}
                     <ActionIcon
                       size="sm"
@@ -243,7 +243,7 @@ export default function Tags() {
   return (
     <Container size="xl">
       <Stack>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Title order={1}>Tags</Title>
         </Stack>
 
@@ -307,7 +307,7 @@ export default function Tags() {
               });
 
             return (
-              <Group noWrap spacing="xs">
+              <Group wrap="nowrap" gap="xs">
                 <Tooltip label="Add parent">
                   <div>
                     <ActionIconSelect

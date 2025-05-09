@@ -9,7 +9,7 @@ export function OnboardingAbortButton({
   const { logout } = useAccountContext();
 
   return (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       <Button {...props} variant="default" onClick={() => logout()}>
         {children}
       </Button>

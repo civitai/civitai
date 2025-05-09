@@ -167,7 +167,7 @@ export const ShopItem = ({
       )}
       {(available !== null || availableTo) && (
         <Badge color="grape" className={classes.availability} px={6}>
-          <Group position="apart" noWrap spacing={4}>
+          <Group justify="space-between" wrap="nowrap" gap={4}>
             {remaining === 0 ? (
               <Text>Out of Stock</Text>
             ) : (
@@ -208,7 +208,7 @@ export const ShopItem = ({
       )}
 
       <Stack h="100%">
-        <Stack spacing="md">
+        <Stack gap="md">
           <UnstyledButton
             onClick={() => {
               if (!currentUser) {
@@ -229,7 +229,7 @@ export const ShopItem = ({
               </Text>
             </div>
           </UnstyledButton>
-          <Stack spacing={4} align="flex-start">
+          <Stack gap={4} align="flex-start">
             <CurrencyBadge
               currency={Currency.BUZZ}
               unitAmount={item.unitAmount}
@@ -245,7 +245,7 @@ export const ShopItem = ({
             </ContentClamp>
           )}
         </Stack>
-        <Stack mt="auto" spacing={4}>
+        <Stack mt="auto" gap={4}>
           <LoginRedirect reason="shop">
             <Button
               color="gray"

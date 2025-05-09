@@ -46,7 +46,7 @@ export function ImpersonateButton() {
   return (
     <Tooltip
       label={
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text>
             You are currently acting as {currentUser.username} ({currentUser.id}).
           </Text>

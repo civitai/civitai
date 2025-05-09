@@ -203,18 +203,17 @@ function CollectionListForm({
   return (
     <Stack>
       <ReadOnlyAlert />
-      <Stack spacing="xl">
-        <Stack spacing={4}>
-          <Group spacing="xs" position="apart" noWrap>
+      <Stack gap="xl">
+        <Stack gap={4}>
+          <Group gap="xs" justify="space-between" wrap="nowrap">
             <Text size="sm" weight="bold">
               Your collections
             </Text>
             <Button
               variant="subtle"
-              size="xs"
               leftIcon={<IconPlus size={16} />}
               onClick={onNewClick}
-              compact
+              size="compact-xs"
             >
               New collection
             </Button>
@@ -227,7 +226,7 @@ function CollectionListForm({
             <>
               <ScrollArea.Autosize maxHeight={200}>
                 {ownedCollections.length > 0 ? (
-                  <Stack spacing={4}>
+                  <Stack gap={4}>
                     {ownedCollections.map((collection) => {
                       const Icon = collectionReadPrivacyData[collection.read].icon;
                       const selectedItem = selectedCollections.find(
@@ -239,7 +238,7 @@ function CollectionListForm({
                       );
 
                       return (
-                        <Stack key={collection.id} className={classes.contentWrap} spacing={0}>
+                        <Stack key={collection.id} className={classes.contentWrap} gap={0}>
                           <Checkbox
                             classNames={classes}
                             key={selectedItem?.collectionId}
@@ -262,7 +261,7 @@ function CollectionListForm({
                               }
                             }}
                             label={
-                              <Group spacing="xs" position="apart" w="100%" noWrap>
+                              <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
                                 <Text lineClamp={1} inherit>
                                   {collection.name}
                                 </Text>
@@ -315,7 +314,7 @@ function CollectionListForm({
                     Collections you contribute to
                   </Text>
                   <ScrollArea.Autosize maxHeight={200}>
-                    <Stack spacing={4}>
+                    <Stack gap={4}>
                       {contributingCollections.map((collection) => {
                         const Icon = collectionReadPrivacyData[collection.read].icon;
                         const selectedItem = selectedCollections.find(
@@ -327,7 +326,7 @@ function CollectionListForm({
                         );
 
                         return (
-                          <Stack key={collection.id} className={classes.contentWrap} spacing={0}>
+                          <Stack key={collection.id} className={classes.contentWrap} gap={0}>
                             <Checkbox
                               classNames={classes}
                               key={selectedItem?.collectionId}
@@ -352,7 +351,7 @@ function CollectionListForm({
                                 }
                               }}
                               label={
-                                <Group spacing="xs" position="apart" w="100%" noWrap>
+                                <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
                                   <Text lineClamp={1} inherit>
                                     {collection.name}
                                   </Text>
@@ -401,7 +400,7 @@ function CollectionListForm({
           )}
         </Stack>
 
-        <Group position="right">
+        <Group justify="flex-end">
           <Button
             disabled={!features.canWrite}
             loading={addCollectionItemMutation.isLoading}
@@ -486,18 +485,17 @@ function NewCollectionForm({
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing="xl">
-        <Stack spacing={4}>
-          <Group position="apart">
+      <Stack gap="xl">
+        <Stack gap={4}>
+          <Group justify="space-between">
             <Text size="sm" weight="bold">
               New Collection
             </Text>
             <Button
               variant="subtle"
-              size="xs"
               leftIcon={<IconArrowLeft size={16} />}
               onClick={onBack}
-              compact
+              size="compact-xs"
             >
               Back to selection
             </Button>
@@ -565,7 +563,7 @@ function NewCollectionForm({
           )}
           <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
         </Stack>
-        <Group position="right">
+        <Group justify="flex-end">
           <Button type="submit" loading={upsertCollectionMutation.isLoading}>
             Create
           </Button>
@@ -579,7 +577,7 @@ const SelectItem = forwardRef<HTMLDivElement, PrivacyData>(
   ({ label, description, icon: Icon, ...otherProps }, ref) => {
     return (
       <div ref={ref} {...otherProps}>
-        <Group align="center" noWrap>
+        <Group align="center" wrap="nowrap">
           <Icon size={18} />
           <div>
             <Text size="sm">{label}</Text>

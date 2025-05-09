@@ -146,7 +146,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
     {
       label: <div className="font-bold">Base Cost</div>,
       value: (
-        <Group spacing={4} position="right" className="font-bold" noWrap>
+        <Group gap={4} justify="flex-end" className="font-bold" wrap="nowrap">
           {baseCost ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -156,7 +156,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
     {
       label: 'Additional Resource Cost',
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {workflowCost.fixed?.additionalNetworks}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -167,7 +167,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
     {
       label: 'Priority Pricing',
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {workflowCost.fixed?.priority}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -198,7 +198,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
         </div>
       ),
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {`${Math.ceil((baseCost * creatorTip) / 100)}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -209,7 +209,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
     {
       label: 'Creator Tip',
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {`${workflowCost.tips?.creators}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -241,7 +241,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
         </div>
       ),
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {`${Math.ceil((baseCost * civitaiTip) / 100)}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -252,7 +252,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
     {
       label: 'Civitai Tip',
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {baseCost ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>

@@ -34,9 +34,9 @@ export default function CivitaiVault() {
         description="Civitai Vault is a place to store your favorite models forever. Even if a model is removed from the site, you can still access it here."
       />
       <Container size="md" mb="lg">
-        <Stack spacing={40}>
-          <Group position="apart">
-            <Stack spacing={12}>
+        <Stack gap={40}>
+          <Group justify="space-between">
+            <Stack gap={12}>
               <Title className={classes.heroTitle}>Civitai Vault</Title>
               {isMember ? (
                 <Text className={classes.heroText} sx={{ lineHeight: 1.25 }}>
@@ -70,7 +70,7 @@ export default function CivitaiVault() {
             />
             <Box className={classes.gradientBox} />
           </Box>
-          <Stack spacing={12}>
+          <Stack gap={12}>
             <Title className={classes.heading3} order={3}>
               Keep Your Favorite Models Forever
             </Title>
@@ -78,13 +78,13 @@ export default function CivitaiVault() {
               {`Civitai Vault is your secure, cloud-based storage solution for your most cherished AI models. Even if a creator removes a model, it remains safely stored in your personal vault. Free up valuable disk space and have peace of mind knowing your models are always accessible.`}
             </Text>
           </Stack>
-          <Stack spacing={60}>
-            <Group noWrap>
+          <Stack gap={60}>
+            <Group wrap="nowrap">
               <ThemeIcon size={72} variant="light" color="green" radius={1000}>
                 <IconCloudPlus size={40} />
               </ThemeIcon>
 
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Title className={classes.heading4} order={4}>
                   Effortlessly Save Models
                 </Title>
@@ -94,12 +94,12 @@ export default function CivitaiVault() {
                 </Text>
               </Stack>
             </Group>
-            <Group noWrap>
+            <Group wrap="nowrap">
               <ThemeIcon size={72} variant="light" color="blue" radius={1000}>
                 <IconMapSearch size={40} />
               </ThemeIcon>
 
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Title className={classes.heading4} order={4}>
                   Intuitive Organization Tools
                 </Title>
@@ -110,12 +110,12 @@ export default function CivitaiVault() {
                 </Text>
               </Stack>
             </Group>
-            <Group noWrap>
+            <Group wrap="nowrap">
               <ThemeIcon size={72} variant="light" color="green" radius={1000}>
                 <IconDownload size={40} />
               </ThemeIcon>
 
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Title className={classes.heading4} order={4}>
                   Download on Demand
                 </Title>
@@ -125,12 +125,12 @@ export default function CivitaiVault() {
                 </Text>
               </Stack>
             </Group>
-            <Group noWrap>
+            <Group wrap="nowrap">
               <ThemeIcon size={72} variant="light" color="blue" radius={1000}>
                 <IconRadar2 size={40} />
               </ThemeIcon>
 
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Title className={classes.heading4} order={4}>
                   Automatic Updates{' '}
                   <Text color="dimmed" component="span" size="xs">
@@ -168,7 +168,7 @@ export default function CivitaiVault() {
           >
             {buttonData.text}
           </Button>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text
               size="xs"
               color="dimmed"

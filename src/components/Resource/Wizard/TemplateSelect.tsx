@@ -35,8 +35,8 @@ export function TemplateSelect({ userId, onSelect }: Props) {
   } = trpc.model.getAllInfiniteSimple.useQuery({ userId, query }, { keepPreviousData: true });
 
   return (
-    <Stack spacing={0}>
-      <Stack spacing={8} px="sm" pt={8}>
+    <Stack gap={0}>
+      <Stack gap={8} px="sm" pt={8}>
         <Text size="sm" weight={600}>
           Your models
         </Text>
@@ -51,7 +51,7 @@ export function TemplateSelect({ userId, onSelect }: Props) {
       <Divider mx={-4} mt="sm" />
       {models.length ? (
         <ScrollArea.Autosize maxHeight={300}>
-          <Stack spacing={0} mt={4}>
+          <Stack gap={0} mt={4}>
             {models.map((model) => (
               <Link key={model.id} href={`?templateId=${model.id}`} shallow>
                 <UnstyledButton

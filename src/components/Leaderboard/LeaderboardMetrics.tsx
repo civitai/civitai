@@ -222,14 +222,14 @@ export function LeaderboardMetrics({
   const { theme } = useStyles();
 
   return (
-    <Group spacing={4}>
+    <Group gap={4}>
       <IconBadge
         size="lg"
         color="gray"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         icon={<IconTrophy {...iconProps} />}
         tooltip={
-          <Stack spacing={0} align="center">
+          <Stack gap={0} align="center">
             {delta && delta != 0 && (
               <Text size="xs" color={delta > 0 ? 'green' : 'red'}>
                 {delta > 0 ? '+' : ''}

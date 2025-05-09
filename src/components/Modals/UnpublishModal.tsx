@@ -84,7 +84,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: n
               error={error}
               withAsterisk={reason === 'other'}
             />
-            <Group position="right">
+            <Group justify="flex-end">
               <Button onClick={handleUnpublish} loading={loading}>
                 Unpublish
               </Button>

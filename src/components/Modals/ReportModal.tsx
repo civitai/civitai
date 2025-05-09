@@ -257,8 +257,8 @@ export default function ReportModal({
   return (
     <Modal {...dialog} withCloseButton={false}>
       <Stack>
-        <Group position="apart" noWrap>
-          <Group spacing={4}>
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap={4}>
             {!!reason && (
               <ActionIcon onClick={() => setReason(undefined)}>
                 <IconArrowLeft size={16} />

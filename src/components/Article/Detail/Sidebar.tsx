@@ -67,7 +67,7 @@ export function Sidebar({ articleId, attachments, creator }: Props) {
                     Attachments
                   </Accordion.Control>
                   <Accordion.Panel>
-                    <SimpleGrid cols={1} spacing={2}>
+                    <SimpleGrid cols={1} gap={2}>
                       {attachments.map((attachment) => (
                         <AttachmentCard key={attachment.id} {...attachment} />
                       ))}

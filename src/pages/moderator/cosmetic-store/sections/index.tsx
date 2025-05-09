@@ -128,7 +128,7 @@ export default function CosmeticStoreSections() {
     openConfirmModal({
       title: 'Delete Shop Section',
       children: (
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text size="sm">Are you sure you want to delete this Shop Section?</Text>
           <Text size="xs" color="dimmed">
             Shop items will not be deleted by performing this action.
@@ -148,7 +148,7 @@ export default function CosmeticStoreSections() {
     <>
       <Meta title="Cosmetic Shop Sections" deIndex />
       <Container size="md">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Group>
             <BackButton url="/moderator/cosmetic-store" />
             <Title order={1}>Cosmetic Shop Sections</Title>
@@ -161,7 +161,7 @@ export default function CosmeticStoreSections() {
             </Anchor>
           </Text>
         </Stack>
-        <Group position="apart" mb="md">
+        <Group justify="space-between" mb="md">
           <Group align="flex-end">
             <Button component={Link} href="/moderator/cosmetic-store/sections/create" radius="xl">
               <IconPlus />
@@ -225,8 +225,8 @@ export default function CosmeticStoreSections() {
                             </ImageGuard2>
                           </ImageCSSAspectRatioWrap>
                         )}
-                        <Group position="apart" noWrap pos="relative">
-                          <Stack spacing={0}>
+                        <Group justify="space-between" wrap="nowrap" pos="relative">
+                          <Stack gap={0}>
                             <Group>
                               <Text size="lg" weight={700}>
                                 {section.title}

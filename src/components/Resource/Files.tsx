@@ -87,7 +87,7 @@ export function Files() {
           '&[data-reject]': { background: theme.colors.dark[5], borderColor: theme.colors.dark[4] },
         })}
       >
-        <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
+        <Group justify="center" gap="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
           {/* <Dropzone.Accept>
             <IconUpload
               size={50}
@@ -107,7 +107,7 @@ export function Files() {
           </Dropzone.Idle> */}
 
           <IconFileUpload size={50} stroke={1.5} />
-          <Stack spacing={8}>
+          <Stack gap={8}>
             <Text size="xl" inline>
               Drop your files here or click to select
             </Text>
@@ -180,8 +180,8 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
 
   return (
     <Card sx={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder>
-      <Stack spacing={4} pb="xs">
-        <Group position="apart" spacing={4} noWrap>
+      <Stack gap={4} pb="xs">
+        <Group justify="space-between" gap={4} wrap="nowrap">
           <Text
             lineClamp={1}
             color={failedUpload ? 'red' : undefined}
@@ -204,7 +204,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
         </Group>
         {versionFile.isUploading ? (
           <>
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text size="sm" weight="bold">
                 File Type
               </Text>
@@ -218,7 +218,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
             </Stack>
             {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' ? (
               <>
-                <Stack spacing={0}>
+                <Stack gap={0}>
                   <Text size="sm" weight="bold">
                     Model size
                   </Text>
@@ -226,7 +226,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
                     {versionFile.size ?? 'undefined'}
                   </Text>
                 </Stack>
-                <Stack spacing={0}>
+                <Stack gap={0}>
                   <Text size="sm" weight="bold">
                     Floating point
                   </Text>
@@ -235,7 +235,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
                   </Text>
                 </Stack>
                 {versionFile.name.endsWith('.zip') && (
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text size="sm" weight="bold">
                       Format
                     </Text>
@@ -267,7 +267,7 @@ function TrackedFile({ uuid: versionFileUuid }: { uuid: string }) {
   return (
     <>
       <Divider />
-      <Group spacing="xs" py="md" px="sm" sx={{ width: '100%' }}>
+      <Group gap="xs" py="md" px="sm" sx={{ width: '100%' }}>
         <TrackedFileStatus trackedFile={trackedFile} versionFileUuid={versionFileUuid} />
       </Group>
     </>
@@ -303,10 +303,10 @@ function TrackedFileStatus({
   switch (status) {
     case 'uploading':
       return (
-        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
+        <Group justify="space-between" wrap="nowrap" gap="xs" sx={{ width: '100%' }}>
           <IconCloudUpload color={theme.colors.blue[theme.fn.primaryShade()]} />
-          <Stack spacing={4} sx={{ flex: '1 !important' }}>
-            <Group spacing={4}>
+          <Stack gap={4} sx={{ flex: '1 !important' }}>
+            <Group gap={4}>
               <Progress
                 size="xl"
                 radius="xs"
@@ -329,7 +329,7 @@ function TrackedFileStatus({
                 </ActionIcon>
               </Tooltip>
             </Group>
-            <Group position="apart" noWrap>
+            <Group justify="space-between" wrap="nowrap">
               <Text color="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
               <Text color="dimmed" size="xs">{`${formatSeconds(timeRemaining)} remaining`}</Text>
             </Group>
@@ -338,8 +338,8 @@ function TrackedFileStatus({
       );
     case 'aborted':
       return (
-        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
-          <Group spacing="xs">
+        <Group justify="space-between" wrap="nowrap" gap="xs" sx={{ width: '100%' }}>
+          <Group gap="xs">
             <IconBan color="red" />
             <Text size="sm">Aborted upload</Text>
           </Group>
@@ -352,8 +352,8 @@ function TrackedFileStatus({
       );
     case 'error':
       return (
-        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
-          <Group spacing="xs">
+        <Group justify="space-between" wrap="nowrap" gap="xs" sx={{ width: '100%' }}>
+          <Group gap="xs">
             <IconBan color="red" />
             <Text size="sm">Failed to upload</Text>
           </Group>
@@ -373,8 +373,8 @@ function TrackedFileStatus({
       );
     case 'pending':
       return (
-        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
-          <Group spacing="xs">
+        <Group justify="space-between" wrap="nowrap" gap="xs" sx={{ width: '100%' }}>
+          <Group gap="xs">
             <IconCloudUpload />
             <Text size="sm">Pending upload</Text>
           </Group>
@@ -539,7 +539,7 @@ export function UploadStepActions({ onBackClick, onNextClick }: ActionProps) {
   const { startUpload, files, hasPending } = useFilesContext();
 
   return (
-    <Group mt="xl" position="right">
+    <Group mt="xl" justify="flex-end">
       <Button variant="default" onClick={onBackClick}>
         Back
       </Button>
@@ -553,7 +553,7 @@ export function UploadStepActions({ onBackClick, onNextClick }: ActionProps) {
           if (showConfirmModal) {
             return openConfirmModal({
               title: (
-                <Group spacing="xs">
+                <Group gap="xs">
                   <IconAlertTriangle color="gold" />
                   <Text size="lg">Missing files</Text>
                 </Group>

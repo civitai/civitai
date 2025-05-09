@@ -148,8 +148,8 @@ export function UserAvatar({
             }
           : undefined
       }
-      spacing={spacing}
-      noWrap
+      gap={spacing}
+      wrap="nowrap"
     >
       {includeAvatar && (
         <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
@@ -230,10 +230,10 @@ export function UserAvatar({
         </UserProfileLink>
       )}
       {withUsername || subText ? (
-        <Stack spacing={0} align="flex-start">
+        <Stack gap={0} align="flex-start">
           {withUsername && (
             <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
-              <Group spacing={4} align="center">
+              <Group gap={4} align="center">
                 <Username
                   username={avatarUser.username}
                   deletedAt={avatarUser.deletedAt}

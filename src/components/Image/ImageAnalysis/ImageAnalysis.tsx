@@ -19,13 +19,13 @@ export function ImageAnalysis({
 }) {
   const nsfwScore = (nsfwScan.porn + nsfwScan.hentai + nsfwScan.sexy / 2) * 100;
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       {faces?.map((face, i) => {
         return (
           <React.Fragment key={i}>
             <Divider label={`Face ${i + 1}`} />
             <SimpleGrid cols={2} verticalSpacing="xs">
-              <Group spacing="xs">
+              <Group gap="xs">
                 <Text size="sm" mr="xs" weight={500}>
                   Age
                 </Text>
@@ -36,7 +36,7 @@ export function ImageAnalysis({
                   {face.age.toFixed(2)}
                 </Code>
               </Group>
-              <Group spacing="xs">
+              <Group gap="xs">
                 <Text size="sm" mr="xs" weight={500}>
                   Gender
                 </Text>
@@ -53,7 +53,7 @@ export function ImageAnalysis({
       })}
       <Divider label="NSFW Asessment" />
       <SimpleGrid cols={2} verticalSpacing="xs">
-        <Group spacing="xs">
+        <Group gap="xs">
           <Text size="sm" mr="xs" weight={500}>
             NSFW
           </Text>
@@ -67,7 +67,7 @@ export function ImageAnalysis({
         {Object.entries(nsfwScan)
           .sort(([, v1], [, v2]) => v2 - v1)
           .map(([label, value]) => (
-            <Group key={label} spacing="xs">
+            <Group key={label} gap="xs">
               <Text size="sm" mr="xs" weight={500}>
                 {capitalize(label)}
               </Text>

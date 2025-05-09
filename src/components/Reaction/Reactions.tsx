@@ -55,9 +55,9 @@ export function PostReactions({
   if (total === 0 && imageCount === 0) return null;
 
   return (
-    <Group spacing="xs" sx={{ cursor: 'default' }} {...groupProps}>
+    <Group gap="xs" sx={{ cursor: 'default' }} {...groupProps}>
       {imageCount && (
-        <Group spacing={4} align="center">
+        <Group gap={4} align="center">
           <IconPhoto size={20} strokeWidth={2} />
           <Text size="sm" weight={500}>
             {imageCount}
@@ -65,7 +65,7 @@ export function PostReactions({
         </Group>
       )}
       {total > 0 && (
-        <Group spacing={4} align="center">
+        <Group gap={4} align="center">
           <IconHeart size={20} strokeWidth={2} />
           <Text size="sm" weight={500} pr={2}>
             {total}
@@ -149,11 +149,10 @@ export function Reactions({
         {!initialShowAll && !hasAllReactions && !readonly && (
           <Button
             variant="subtle"
-            size="xs"
             color="gray"
             radius="xs"
             px={0}
-            compact
+            size="compact-xs"
             onClick={() => setShowAll((s) => !s)}
             classNames={{ inner: 'flex gap-0.5' }}
             {...(buttonStyling ? buttonStyling('AddReaction') : {})}
@@ -269,7 +268,6 @@ function ReactionBadge({
   const { hideReactionCount, buttonStyling } = useReactionSettingsContext();
   return (
     <Button
-      size="xs"
       radius="xs"
       variant={hasReacted ? 'light' : 'subtle'}
       sx={(theme) => ({
@@ -287,7 +285,7 @@ function ReactionBadge({
       pl={2}
       pr={3}
       color={color}
-      compact
+      size="compact-xs"
       classNames={{ label: 'flex gap-1' }}
       {...buttonStyling?.(reaction, hasReacted)}
     >

@@ -125,7 +125,7 @@ export function UserDraftArticles() {
                   <td>{article.createdAt ? formatDate(article.createdAt) : 'N/A'}</td>
                   <td>{article.updatedAt ? formatDate(article.updatedAt) : 'N/A'}</td>
                   <td>
-                    <Group position="right" pr="xs">
+                    <Group justify="flex-end" pr="xs">
                       <ActionIcon
                         color="red"
                         variant="subtle"
@@ -151,7 +151,7 @@ export function UserDraftArticles() {
         </Table>
       </ScrollArea>
       {pagination.totalPages > 1 && (
-        <Group position="apart">
+        <Group justify="space-between">
           <Text>Total {pagination.totalItems} items</Text>
           <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
         </Group>

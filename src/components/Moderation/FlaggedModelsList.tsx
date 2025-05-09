@@ -116,14 +116,13 @@ export function FlaggedModelsList() {
         mantineTableBodyCellProps: { align: 'right' },
         Cell: ({ row: { original } }) => (
           <Button
-            size="sm"
             onClick={() =>
               dialogStore.trigger({
                 component: DetailsModal,
                 props: { model: original.model, details: original.details },
               })
             }
-            compact
+            size="compact-sm"
           >
             Resolve
           </Button>
@@ -171,11 +170,10 @@ export function FlaggedModelsList() {
       renderToolbarInternalActions={({ table }) =>
         table.getSelectedRowModel().rows.length > 0 ? (
           <Button
-            size="sm"
             ml="auto"
             onClick={() => handleResolveSelectedModels(table)}
             loading={resolveFlaggedModelMutation.isLoading}
-            compact
+            size="compact-md"
           >
             Resolve Selected
           </Button>
@@ -293,7 +291,7 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
               withAsterisk
             />
             <Paper radius="md" p="xl" withBorder>
-              <Stack spacing="xs">
+              <Stack gap="xs">
                 <Text size="md" weight={500}>
                   This resource:
                 </Text>

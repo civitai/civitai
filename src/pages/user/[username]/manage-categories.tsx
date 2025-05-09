@@ -14,7 +14,8 @@ import {
   Table,
   Text,
   ThemeIcon,
-  createStyles,
+  useMantineColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconChevronDown, IconExclamationMark, IconExternalLink } from '@tabler/icons-react';
@@ -33,6 +34,8 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { postgresSlugify, slugit, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '~/components/Meta/Meta';
+import styles from '/manage-categories.module.css';
+import clsx from 'clsx';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -50,47 +53,16 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const useStyles = createStyles((theme) => ({
-  header: {
-    position: 'sticky',
-    top: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    transition: 'box-shadow 150ms ease',
-    zIndex: 10,
-
-    '&::after': {
-      content: '""',
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2]
-      }`,
-    },
-  },
-
-  scrolled: {
-    boxShadow: theme.shadows.sm,
-  },
-  rowSelected: {
-    backgroundColor:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors[theme.primaryColor][7], 0.2)
-        : theme.colors[theme.primaryColor][0],
-  },
-}));
-
 export default function ManageCategories({
   username,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { classes, cx, theme } = useStyles();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
   const [selection, setSelection] = useState<number[]>([]);
+  const { colorScheme } = useMantineColorScheme();
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
     categories: true,
@@ -162,16 +134,15 @@ export default function ManageCategories({
       items.map((model) => {
         const selected = selection.includes(model.id);
         return (
-          <tr key={model.id} className={cx({ [classes.rowSelected]: selected })}>
+          <tr key={model.id} className={clsx({ [styles.rowSelected]: selected })}>
             <td style={{ maxWidth: '2.5rem' }}>
               <Checkbox
                 checked={selection.includes(model.id)}
                 onChange={() => toggleRow(model.id)}
-                transitionDuration={0}
               />
             </td>
             <td>
-              <Group spacing={8}>
+              <Group gap={8}>
                 {(!model.tags.length || model.tags.length > 1) && (
                   <ThemeIcon size="sm" color="yellow">
                     <IconExclamationMark />
@@ -185,7 +156,7 @@ export default function ManageCategories({
               </Group>
             </td>
             <td>
-              <Group spacing={4} position="right">
+              <Group gap={4} justify="flex-end">
                 {model.tags.length > 0 ? (
                   <Collection
                     items={model.tags}
@@ -194,14 +165,14 @@ export default function ManageCategories({
                       <Badge
                         key={tag.id}
                         color="gray"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
+                        variant={colorScheme === 'dark' ? 'filled' : undefined}
                       >
                         {tag.name}
                       </Badge>
                     )}
                   />
                 ) : (
-                  <Badge color="gray" variant={theme.colorScheme === 'dark' ? 'filled' : undefined}>
+                  <Badge color="gray" variant={colorScheme === 'dark' ? 'filled' : undefined}>
                     N/A
                   </Badge>
                 )}
@@ -210,7 +181,7 @@ export default function ManageCategories({
           </tr>
         );
       }),
-    [classes.rowSelected, cx, items, selection, theme.colorScheme]
+    [styles.rowSelected, items, selection, colorScheme]
   );
 
   const isSameUser = !!currentUser && postgresSlugify(currentUser?.username) === username;
@@ -227,18 +198,18 @@ export default function ManageCategories({
             style={{ height: 500 }}
             onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
           >
-            <Table verticalSpacing="sm" fontSize="sm">
-              <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
+            <Table verticalSpacing="sm" fz="sm">
+              <thead className={clsx(styles.header, { [styles.scrolled]: scrolled })}>
                 <tr>
                   <th style={{ maxWidth: 30 }}>
                     <BackButton url={`/user/${username}`} />
                   </th>
                   <th colSpan={3}>
-                    <Group position="apart">
-                      <Group spacing={4}>
+                    <Group justify="space-between">
+                      <Group gap={4}>
                         <Text size="lg">Model Category Manager</Text>
                       </Group>
-                      <Group spacing={4}>
+                      <Group gap={4}>
                         {selection.length > 0 && (
                           <Button
                             size="xs"
@@ -295,9 +266,9 @@ export default function ManageCategories({
             </Table>
           </ScrollArea>
           {pagination.totalPages > 1 && (
-            <Group position="apart">
+            <Group justify="space-between">
               <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
-              <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
+              <Pagination value={page} onChange={setPage} total={pagination.totalPages} />
             </Group>
           )}
         </Stack>

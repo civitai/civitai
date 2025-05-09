@@ -136,8 +136,8 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
       <Grid.Col xs={12} md={7} sm={6}>
         <Stack h="100%">
           <Paper withBorder p="lg" radius="md" className={classes.tileCard} h="100%">
-            <Stack spacing="xl" h="100%">
-              <Stack spacing={0} mb="auto">
+            <Stack gap="xl" h="100%">
+              <Stack gap={0} mb="auto">
                 <Title order={3}>Current Buzz</Title>
                 <Group>
                   <UserBuzz
@@ -159,7 +159,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                     </Popover.Target>
                     <Popover.Dropdown>
                       <Stack>
-                        <Group noWrap>
+                        <Group wrap="nowrap">
                           <Text>
                             <Text component="span" weight="bold" color="yellow.7">
                               <IconBolt
@@ -267,7 +267,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
           className={classes.tileCard}
           style={{ flex: 1 }}
         >
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <Title order={3}>Recent Transactions</Title>
             <SegmentedControl
               value={transactionType}
@@ -278,22 +278,22 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
               ]}
             />
             <Text component="a" variant="link" href={`/user/transactions`} size="xs">
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconArrowRight size={18} />
                 <span>View all</span>
               </Group>
             </Text>
             {transactions.length ? (
               <ScrollArea.Autosize maxHeight={480} mt="md" key={transactionType}>
-                <Stack spacing={8} mr={14}>
+                <Stack gap={8} mr={14}>
                   {transactions.map((transaction, index) => {
                     const { amount, date } = transaction;
                     const isDebit = amount < 0;
 
                     return (
-                      <Stack key={index + '@' + date.toISOString()} spacing={4}>
-                        <Group position="apart" noWrap align="flex-start">
-                          <Stack spacing={0}>
+                      <Stack key={index + '@' + date.toISOString()} gap={4}>
+                        <Group justify="space-between" wrap="nowrap" align="flex-start">
+                          <Stack gap={0}>
                             <Text size="sm" weight="500" lh={1.2}>
                               {INCLUDE_DESCRIPTION.includes(transaction.type) &&
                               transaction.description ? (
@@ -307,7 +307,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                             </Text>
                           </Stack>
                           <Text color={isDebit ? 'red' : 'green'}>
-                            <Group spacing={2} noWrap>
+                            <Group gap={2} wrap="nowrap">
                               <IconBolt size={16} fill="currentColor" />
                               <Text size="lg" sx={{ fontVariantNumeric: 'tabular-nums' }} span>
                                 {amount.toLocaleString()}

@@ -33,7 +33,7 @@ export function Username({
   badgeSize ??= mapSizeToImageWidth[size];
 
   return (
-    <Group spacing={8} noWrap align="center">
+    <Group gap={8} wrap="nowrap" align="center">
       <Text
         size={size}
         weight={500}

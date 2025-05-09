@@ -158,7 +158,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       color: 'green',
       styles: { root: { alignItems: 'flex-start' } },
       message: (
-        <Stack spacing={4}>
+        <Stack gap={4}>
           <Text size="sm" color="dimmed">
             Your version has been published and is now available to the public.
           </Text>
@@ -224,7 +224,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         title: `Finished uploading ${result.name}`,
         styles: { root: { alignItems: 'flex-start' } },
         message: !stillUploading ? (
-          <Stack spacing={4}>
+          <Stack gap={4}>
             {isVersionPublished ? (
               <>
                 <Text size="sm" color="dimmed">

@@ -1,4 +1,4 @@
-import { ActionIcon, Autocomplete, Badge, Card, Loader, Stack, Text } from '@mantine/core';
+import { ActionIcon, Autocomplete, Badge, Card, Loader, Portal, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
@@ -50,26 +50,31 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
         </Card.Section>
       )}
       <Card.Section withBorder sx={{ marginTop: -1 }}>
-        <Autocomplete
-          name="tag"
-          ref={searchInputRef}
-          placeholder="Search tags to hide"
-          data={modelTags}
-          value={search}
-          onChange={setSearch}
-          icon={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
-          onItemSubmit={(item: { value: string; id: number }) => {
-            handleToggleBlockedTag({ id: item.id, name: item.value });
-            searchInputRef.current?.focus();
-          }}
-          withinPortal
-          variant="unstyled"
-          zIndex={400}
-          limit={10}
-        />
+        <Portal reuseTargetNode>
+          <Autocomplete
+            name="tag"
+            ref={searchInputRef}
+            placeholder="Search tags to hide"
+            data={modelTags}
+            value={search}
+            onChange={setSearch}
+            leftSection={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
+            onOptionSubmit={(value: string) => {
+              const record = modelTags.find((x) => x.value === value);
+              if (!record) return;
+              handleToggleBlockedTag({ id: record.id, name: record.value });
+              searchInputRef.current?.focus();
+            }}
+            variant="unstyled"
+            style={{
+              zIndex: 400,
+            }}
+            limit={10}
+          />
+        </Portal>
       </Card.Section>
       <Card.Section inheritPadding py="md">
-        <Stack spacing={5}>
+        <Stack gap={5}>
           <BasicMasonryGrid
             items={hiddenTags}
             render={TagBadge}

@@ -41,16 +41,16 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
           setSort,
           activeComment,
         }) => (
-          <Stack mt="xl" spacing="xl">
-            <Stack spacing={0}>
-              <Group position="apart">
-                <Group spacing="md">
+          <Stack mt="xl" gap="xl">
+            <Stack gap={0}>
+              <Group justify="space-between">
+                <Group gap="md">
                   <Title order={2} id="comments">
                     Comments
                   </Title>
                   {hiddenCount > 0 && !isLoading && (
-                    <Button variant="subtle" size="xs" onClick={() => setOpened(true)} compact>
-                      <Group spacing={4} position="center">
+                    <Button variant="subtle" onClick={() => setOpened(true)} size="compact-xs">
+                      <Group gap={4} justify="center">
                         <IconMessageCancel size={16} />
                         <Text inherit inline>
                           {`See ${hiddenCount} more hidden ${
@@ -76,7 +76,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
             ) : (
               <>
                 {activeComment && (
-                  <Stack spacing="xl">
+                  <Stack gap="xl">
                     <Divider />
                     <Text size="sm" color="dimmed">
                       Viewing thread for
@@ -85,7 +85,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
                   </Stack>
                 )}
                 <Stack
-                  spacing="xl"
+                  gap="xl"
                   className={activeComment ? classes.rootCommentReplyInset : undefined}
                 >
                   <CreateComment />
@@ -95,7 +95,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
                   {!!remaining && !showMore && (
                     <Divider
                       label={
-                        <Group spacing="xs" align="center">
+                        <Group gap="xs" align="center">
                           <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                             Show {remaining} More
                           </Text>
@@ -143,7 +143,7 @@ const HiddenCommentsModal = ({ opened, onClose, entityId, userId }: HiddenCommen
       withCloseButton
     >
       <Divider mx="-md" />
-      <Stack mt="md" spacing="xl">
+      <Stack mt="md" gap="xl">
         <AlertWithIcon icon={<IconAlertCircle />}>
           Some comments may be hidden by the author or moderators to ensure a positive and inclusive
           environment. Moderated for respectful and relevant discussions.
@@ -162,14 +162,14 @@ const HiddenCommentsModal = ({ opened, onClose, entityId, userId }: HiddenCommen
                   <Loader variant="bars" />
                 </Center>
               ) : !!data?.length ? (
-                <Stack spacing="xl">
+                <Stack gap="xl">
                   {data?.map((comment) => (
                     <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
                   ))}
                   {!!remaining && !showMore && (
                     <Divider
                       label={
-                        <Group spacing="xs" align="center">
+                        <Group gap="xs" align="center">
                           <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                             Show {remaining} More
                           </Text>

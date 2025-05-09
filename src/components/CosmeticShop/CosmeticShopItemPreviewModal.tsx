@@ -77,8 +77,8 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="lg">
-      <Stack spacing="xl" px="md">
-        <Group position="apart">
+      <Stack gap="xl" px="md">
+        <Group justify="space-between">
           <Text className={classes.text}>You got a shiny new thing!</Text>
           <CloseButton onClick={dialog.onClose} />
         </Group>
@@ -87,7 +87,7 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
           <CosmeticPreview cosmetic={cosmetic} />
         </Box>
 
-        <Stack spacing={4}>
+        <Stack gap={4}>
           {cosmetic.type === CosmeticType.ContentDecoration && (
             <Text size="xs" color="dimmed" align="center">
               This decoration is now available to apply to your content. You can select which piece
@@ -178,8 +178,8 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
     >
       <Grid m={0}>
         <Grid.Col span={12} md={5} className={classes.sample}>
-          <Stack spacing="lg" px="md" h="100%">
-            <Group position="apart" noWrap>
+          <Stack gap="lg" px="md" h="100%">
+            <Group justify="space-between" wrap="nowrap">
               <Text className={classes.text} size="sm">
                 {getDisplayName(cosmetic.type)}
               </Text>
@@ -209,7 +209,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
                     color="yellow.7"
                   />
                 ) : (
-                  <Stack spacing={4}>
+                  <Stack gap={4}>
                     <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>
                       Equip now
                     </Button>
@@ -221,7 +221,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
               </>
             )}
             {cosmetic.type === CosmeticType.ContentDecoration && (
-              <Group spacing="xs" noWrap>
+              <Group gap="xs" wrap="nowrap">
                 <Text color="yellow">
                   <IconAlertTriangleFilled />
                 </Text>
@@ -235,7 +235,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
           </Stack>
         </Grid.Col>
         <Grid.Col span={12} md={7} className={classes.preview}>
-          <Stack spacing={0} h={0} align="flex-end" className="hide-mobile">
+          <Stack gap={0} h={0} align="flex-end" className="hide-mobile">
             <CloseButton onClick={dialog.onClose} />
           </Stack>
           <Stack px="md" h="100%" justify="center">

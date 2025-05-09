@@ -106,7 +106,7 @@ export const TrainingImagesCaptionViewer = ({
     <Accordion variant="contained" transitionDuration={0}>
       <Accordion.Item value="caption-viewer">
         <Accordion.Control>
-          <Group spacing="xs">
+          <Group gap="xs">
             <Text>Caption Viewer</Text>
             <Badge color="indigo" leftSection={<IconPhoto size={14} />}>
               {numImages}

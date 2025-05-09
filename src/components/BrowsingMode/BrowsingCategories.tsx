@@ -61,7 +61,7 @@ export function BrowsingCategories() {
 
   //       return (
   //         <Group
-  //           position="apart"
+  //           justify="space-between"
   //           key={category.title}
   //           className={cx({ [classes.active]: checked })}
   //           py="sm"

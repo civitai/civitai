@@ -116,7 +116,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
   const actionStates: Record<ClaimStatus, React.ReactNode> = {
     unavailable: (
       <Alert radius="sm" color="red" sx={{ zIndex: 10 }}>
-        <Group spacing="xs" noWrap position="center">
+        <Group gap="xs" wrap="nowrap" justify="center">
           <ThemeIcon color="red" size="lg">
             <IconX strokeWidth={3} />
           </ThemeIcon>
@@ -138,7 +138,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
     ),
     equipped: (
       <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-        <Group spacing="xs" noWrap position="center">
+        <Group gap="xs" wrap="nowrap" justify="center">
           <ThemeIcon color="green" size="lg">
             <IconCircleCheck />
           </ThemeIcon>
@@ -157,11 +157,11 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
         deIndex
       />
       <Container size="xs" mb="lg">
-        <Stack spacing={0}>
+        <Stack gap={0}>
           {cosmeticAvailable && status !== 'unavailable' && (
             <Center>
               <Alert radius="sm" color="blue" sx={{ zIndex: 10 }}>
-                <Group spacing="xs" noWrap position="center">
+                <Group gap="xs" wrap="nowrap" justify="center">
                   <Text size="md" weight={500}>{`🎉 You've received a cosmetic! 🎉`}</Text>
                 </Group>
               </Alert>
@@ -208,7 +208,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
           <Center mt="xl">
             {!cosmeticAvailable ? (
               <Alert radius="sm" color="red" sx={{ zIndex: 10 }}>
-                <Group spacing="xs" noWrap position="center">
+                <Group gap="xs" wrap="nowrap" justify="center">
                   <Text size="lg">🥲 This cosmetic is no longer available to claim</Text>
                 </Group>
               </Alert>

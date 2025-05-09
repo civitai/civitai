@@ -44,7 +44,7 @@ export function UploadTracker() {
       </Popover.Target>
 
       <Popover.Dropdown p={0}>
-        <Group position="apart" p="sm">
+        <Group justify="space-between" p="sm">
           <Text weight="bold" size="sm">
             Files
           </Text>
@@ -55,11 +55,11 @@ export function UploadTracker() {
           </Tooltip>
         </Group>
         <Divider />
-        <Stack spacing={8} p="sm" sx={{ overflow: 'auto', maxWidth: '100%', maxHeight: 250 }}>
+        <Stack gap={8} p="sm" sx={{ overflow: 'auto', maxWidth: '100%', maxHeight: 250 }}>
           {uploadingItems.map(({ uuid, name, progress, speed, timeRemaining, status }) => (
-            <Stack key={uuid} spacing="xs">
-              <Group spacing="xs" noWrap>
-                <Group noWrap>
+            <Stack key={uuid} gap="xs">
+              <Group gap="xs" wrap="nowrap">
+                <Group wrap="nowrap">
                   <IconCloudUpload
                     color={
                       status === 'uploading'
@@ -84,7 +84,7 @@ export function UploadTracker() {
                   </ActionIcon>
                 </Tooltip>
               </Group>
-              <Stack spacing={4} sx={{ flex: 1 }}>
+              <Stack gap={4} sx={{ flex: 1 }}>
                 <Progress
                   size="xl"
                   radius="xs"
@@ -94,7 +94,7 @@ export function UploadTracker() {
                   striped
                   animate
                 />
-                <Group position="apart" noWrap>
+                <Group justify="space-between" wrap="nowrap">
                   <Text color="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
                   <Text color="dimmed" size="xs">{`${formatSeconds(
                     timeRemaining

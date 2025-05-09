@@ -451,8 +451,7 @@ const BankBuzzCard = () => {
           </Tooltip>
         </div>
         <Button
-          compact
-          size="xs"
+          size="compact-xs"
           variant="outline"
           disabled={toBank === maxBankable}
           onClick={() => setToBank(maxBankable)}

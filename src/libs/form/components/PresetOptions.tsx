@@ -30,7 +30,7 @@ export function PresetOptions({ options, disabled, ...chipGroupProps }: Props) {
   if (options.length === 0) return null;
 
   return (
-    <Chip.Group {...chipGroupProps} multiple={false} spacing={4}>
+    <Chip.Group {...chipGroupProps} multiple={false} gap={4}>
       {options.map(({ label, ...chipProps }, index) => (
         <Chip
           {...chipProps}

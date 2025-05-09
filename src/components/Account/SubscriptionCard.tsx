@@ -22,12 +22,12 @@ export function SubscriptionCard() {
   return (
     <Card withBorder>
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <Title id="manage-subscription" order={2}>
             Membership
           </Title>
           <Button
-            compact
+            size="compact-md"
             radius="xl"
             color="gray"
             rightIcon={<IconSettings size={16} />}
@@ -43,8 +43,8 @@ export function SubscriptionCard() {
           </Center>
         ) : subscription ? (
           <>
-            <Group position="apart">
-              <Group noWrap>
+            <Group justify="space-between">
+              <Group wrap="nowrap">
                 {image && (
                   <Center>
                     <Box w={40}>
@@ -54,7 +54,7 @@ export function SubscriptionCard() {
                 )}
                 {product && <Text>{product.name}</Text>}
               </Group>
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 {price && (
                   <Text>
                     {getStripeCurrencyDisplay(price.unitAmount, price.currency) +

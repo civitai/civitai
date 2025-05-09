@@ -91,7 +91,7 @@ const ModelSelector = ({
   if (!versions.length) return null;
 
   return (
-    <Group spacing="lg">
+    <Group gap="lg">
       <Indicator
         disabled={!isNew}
         inline
@@ -109,7 +109,7 @@ const ModelSelector = ({
           data={versions.map(([k, v]) => {
             return {
               label: v.isNew ? (
-                <Group noWrap spacing={6}>
+                <Group wrap="nowrap" gap={6}>
                   <Text>{v.label}</Text>
                   <Badge size="xs" color="green">
                     NEW
@@ -139,8 +139,7 @@ const ModelSelector = ({
           <ResourceSelect
             buttonLabel="Select custom model"
             buttonProps={{
-              size: 'md',
-              compact: true,
+              size: 'compact-md',
               styles: { label: { fontSize: 12 } },
             }}
             options={{
@@ -270,7 +269,7 @@ export const ModelSelect = ({
 
   return (
     <>
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Title mt="md" order={5}>
           Base Model for Training{' '}
           <Text span color="red">
@@ -292,7 +291,7 @@ export const ModelSelect = ({
       <Input.Wrapper>
         <Card withBorder mt={8} p="sm">
           <Card.Section inheritPadding withBorder py="sm">
-            <Stack spacing="xs">
+            <Stack gap="xs">
               {mediaType === 'image' && (
                 <>
                   <ModelSelector

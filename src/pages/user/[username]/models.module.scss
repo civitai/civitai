@@ -1,0 +1,9 @@
+.filtersWrapper {
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    width: 100%;
+
+    >* {
+      flex-grow: 1;
+    }
+  }
+}

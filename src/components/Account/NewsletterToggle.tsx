@@ -51,21 +51,21 @@ export function NewsletterToggle({
   if (children) return children({ subscribed, setSubscribed, isLoading });
 
   return (
-    <Group spacing="sm" noWrap align="flex-start">
+    <Group gap="sm" wrap="nowrap" align="flex-start">
       <Switch
         checked={subscribed}
         disabled={isLoading}
         onChange={({ target }) => setSubscribed(target.checked)}
       />
-      <Stack spacing={0}>
-        <Group spacing="sm">
+      <Stack gap={0}>
+        <Group gap="sm">
           <Text size="sm">{label ?? 'Newsletter'}</Text>
           <Popover width={300} withArrow withinPortal shadow="sm">
             <Popover.Target>
               <IconInfoSquareRounded size={16} style={{ cursor: 'pointer', opacity: 0.7 }} />
             </Popover.Target>
             <Popover.Dropdown>
-              <Stack spacing="xs">
+              <Stack gap="xs">
                 <Text size="sm" weight={500}>
                   {`What's the Civitai Newsletter?`}
                 </Text>

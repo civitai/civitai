@@ -106,7 +106,7 @@ export function ResourceReviewThumbActions({
           fullWidth
         >
           <Text color="success.5" size="xs" inline>
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
               {withCount && !loadingTotals && abbreviateNumber(totals?.up ?? 0)}
             </Group>

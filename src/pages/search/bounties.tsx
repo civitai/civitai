@@ -79,7 +79,7 @@ export function BountyHitList() {
     const NotFound = (
       <Box>
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
               <Text color="dimmed">
                 {hiddenCount} bounties have been hidden due to your settings.

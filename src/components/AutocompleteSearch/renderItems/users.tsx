@@ -17,7 +17,7 @@ export const UserSearchItem = forwardRef<
   const { image, username, metrics } = hit;
 
   return (
-    <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
+    <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
       {image ? (
         <Image
           src={getEdgeUrl(image, { width: 96 })}
@@ -31,12 +31,12 @@ export const UserSearchItem = forwardRef<
           <IconUser size={18} stroke={2.5} />
         </ThemeIcon>
       )}
-      <Stack spacing={4}>
+      <Stack gap={4}>
         <Text size="md" lineClamp={1}>
           <Username {...hit} inherit />
         </Text>
         {metrics && (
-          <Group spacing={4}>
+          <Group gap={4}>
             <ActionIconBadge icon={<IconUpload size={12} stroke={2.5} />}>
               {abbreviateNumber(metrics.uploadCount)}
             </ActionIconBadge>

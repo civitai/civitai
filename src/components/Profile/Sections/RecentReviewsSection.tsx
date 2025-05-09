@@ -84,13 +84,13 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                         }}
                       >
                         <Stack>
-                          <Group align="flex-start" position="apart" noWrap>
+                          <Group align="flex-start" justify="space-between" wrap="nowrap">
                             <UserAvatar
                               user={reviewer}
                               withUsername
                               size="lg"
                               avatarSize={40}
-                              spacing="md"
+                              gap="md"
                               linkToProfile
                               subText={
                                 <Text color="dimmed" size="sm">
@@ -118,7 +118,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                 />
                               </ContentClamp>
                             )}
-                            <Group spacing="xs">
+                            <Group gap="xs">
                               {review.model && (
                                 <Button
                                   px={4}
@@ -129,7 +129,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                   size="xs"
                                   style={{ height: '26px' }}
                                 >
-                                  <Group spacing={2}>
+                                  <Group gap={2}>
                                     <IconCategory size={15} />
                                     <span>{review.model.name}</span>
                                   </Group>
@@ -137,7 +137,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                               )}
                               {/* {review.helper && (review.helper?.imageCount ?? 0) > 0 && (
                               <Badge px={4} py={2} radius="sm" style={{ height: '26px' }}>
-                                <Group spacing={2}>
+                                <Group gap={2}>
                                   <IconPhoto size={15} />{' '}
                                   <span>{abbreviateNumber(review.helper.imageCount)}</span>
                                 </Group>

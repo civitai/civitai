@@ -90,12 +90,12 @@ export function PurchasableRewardUpsertForm({
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={32}>
+      <Stack gap={32}>
         <Grid gutter="xl">
           <Grid.Col xs={12} md={8}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
-                <Group grow noWrap>
+            <Stack gap={32}>
+              <Stack gap="xl">
+                <Group grow wrap="nowrap">
                   {coverImage && (
                     <div style={{ position: 'relative', width: 124, flexGrow: 0 }}>
                       <Avatar
@@ -208,7 +208,7 @@ export function PurchasableRewardUpsertForm({
                   autosize
                 />
                 <Divider label="Optional details" />
-                <Group spacing="xl" grow>
+                <Group gap="xl" grow>
                   <InputDatePicker
                     name="availableFrom"
                     label="Available From (optional)"
@@ -242,8 +242,8 @@ export function PurchasableRewardUpsertForm({
               <InputSwitch
                 name="archived"
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Archived</Text>
                     </Group>
                     <Text size="xs" color="dimmed">
@@ -255,7 +255,7 @@ export function PurchasableRewardUpsertForm({
             </Stack>
           </Grid.Col>
         </Grid>
-        <Group position="right">
+        <Group justify="flex-end">
           <Button loading={upsertingPurchasableReward} type="submit">
             Save
           </Button>

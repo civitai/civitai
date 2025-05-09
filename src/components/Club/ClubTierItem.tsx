@@ -81,7 +81,7 @@ export const ClubMembershipStatus = ({ clubId }: { clubId: number }) => {
         </Alert>
       ) : membership?.nextBillingAt ? (
         <Alert color="yellow">
-          <Stack spacing={4}>
+          <Stack gap={4}>
             <Text size="sm">You are a member of this club.</Text>
             {membership?.unitAmount > 0 && (
               <>
@@ -396,7 +396,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
       <Stack style={{ flex: 1 }}>
         <TierCoverImage clubTier={clubTier} />
 
-        <Stack align="center" spacing={4}>
+        <Stack align="center" gap={4}>
           <Title order={4}>{clubTier.name}</Title>
           <CurrencyBadge
             size="lg"
@@ -416,7 +416,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 Active on {formatDate(membership.nextBillingAt)}
               </Button>
             ) : isTierMember ? (
-              <Stack spacing={4}>
+              <Stack gap={4}>
                 <Button
                   loading={updating}
                   radius="md"

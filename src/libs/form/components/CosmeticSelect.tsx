@@ -61,7 +61,7 @@ export function CosmeticSelect<TData extends CosmeticItem>({
   return (
     <Input.Wrapper {...props}>
       <SimpleGrid
-        spacing={16}
+        gap={16}
         breakpoints={[
           { cols: 3, maxWidth: 'xs' },
           { cols: 4, minWidth: 'xs' },
@@ -73,7 +73,7 @@ export function CosmeticSelect<TData extends CosmeticItem>({
         {shopUrl && (
           <Link href={shopUrl}>
             <UnstyledButton p="sm" className={classes.decoration} onClick={onShopClick}>
-              <Stack spacing={4} align="center" justify="center">
+              <Stack gap={4} align="center" justify="center">
                 <IconBuildingStore size={24} />
                 <Text size="sm" weight={500}>
                   Shop

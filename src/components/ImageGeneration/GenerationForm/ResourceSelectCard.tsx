@@ -77,11 +77,11 @@ function CheckpointInfo({
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
 
   return (
-    <Group spacing="xs" position={groupPosition ?? 'apart'} noWrap>
-      <Group spacing={4} noWrap>
+    <Group gap="xs" position={groupPosition ?? 'apart'} wrap="nowrap">
+      <Group gap={4} wrap="nowrap">
         {unavailable ? (
           <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
-            <Group spacing={4}>
+            <Group gap={4}>
               <IconAlertTriangle size={16} strokeWidth={3} />
               <Text size="xs" weight={500}>
                 Unavailable
@@ -104,7 +104,7 @@ function CheckpointInfo({
             />
           </Paper>
         ) : null}
-        <Stack spacing={2}>
+        <Stack gap={2}>
           <Text
             component={Link}
             sx={(theme) => ({
@@ -139,8 +139,8 @@ function CheckpointInfo({
           <IconX size={20} />
         </ActionIcon>
       ) : (
-        <Button variant="light" radius="xl" size="sm" onClick={onSwap} compact>
-          <Group spacing={4} noWrap>
+        <Button variant="light" radius="xl" onClick={onSwap} size="compact-sm">
+          <Group gap={4} wrap="nowrap">
             <IconReplace size={16} />
             <Text size="sm" weight={500}>
               Swap
@@ -159,13 +159,13 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
   const theme = useMantineTheme();
 
   return (
-    <Group spacing="xs" position="apart" noWrap>
-      <Stack spacing={4} w="100%">
-        <Group spacing={4} position="apart" noWrap>
-          <Group spacing={4} noWrap>
+    <Group gap="xs" justify="space-between" wrap="nowrap">
+      <Stack gap={4} w="100%">
+        <Group gap={4} justify="space-between" wrap="nowrap">
+          <Group gap={4} wrap="nowrap">
             {unavailable && (
               <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
-                <Group spacing={4}>
+                <Group gap={4}>
                   <IconAlertTriangle size={16} strokeWidth={3} />
                   <Text size="xs" weight={500}>
                     Unavailable

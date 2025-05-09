@@ -1,4 +1,4 @@
-import { ActionIcon, Autocomplete, Badge, Card, Loader, Stack, Text } from '@mantine/core';
+import { ActionIcon, Autocomplete, Badge, Card, Loader, Portal, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
@@ -41,24 +41,27 @@ export function HiddenUsersSection() {
         <Text weight={500}>Hidden Users</Text>
       </Card.Section>
       <Card.Section withBorder sx={{ marginTop: -1 }}>
-        <Autocomplete
-          name="tag"
-          ref={searchInputRef}
-          placeholder="Search users to hide"
-          data={options}
-          value={search}
-          onChange={setSearch}
-          icon={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
-          onItemSubmit={({ id, value: username }: { value: string; id: number }) => {
-            handleToggleBlocked({ id, username });
-            searchInputRef.current?.focus();
-          }}
-          withinPortal
-          variant="unstyled"
-        />
+        <Portal reuseTargetNode>
+          <Autocomplete
+            name="tag"
+            ref={searchInputRef}
+            placeholder="Search users to hide"
+            data={options}
+            value={search}
+            onChange={setSearch}
+            leftSection={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
+            onOptionSubmit={(value: string) => {
+              const { id } = options.find((x) => x.value === value) ?? {};
+              if (!id) return;
+              handleToggleBlocked({ id, username: value });
+              searchInputRef.current?.focus();
+            }}
+            variant="unstyled"
+          />
+        </Portal>
       </Card.Section>
       <Card.Section inheritPadding py="md">
-        <Stack spacing={5}>
+        <Stack gap={5}>
           <BasicMasonryGrid
             items={hiddenUsers}
             render={UserBadge}

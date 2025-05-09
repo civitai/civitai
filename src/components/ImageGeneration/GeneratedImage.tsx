@@ -459,7 +459,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
 function BlockedBlock({ title, message }: { title: string; message: string }) {
   return (
     <Center px="md">
-      <Stack spacing="xs">
+      <Stack gap="xs">
         <Text color="red" weight="bold" align="center" size="sm">
           {title}
         </Text>

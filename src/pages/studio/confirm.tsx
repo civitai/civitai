@@ -56,7 +56,7 @@ export default function Confirm() {
       <Stack>
         <Text size="xl" weight={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
         <Text>{`To complete your application, please enter the email that you used when you applied for the Artist in Residence program`}</Text>
-        <Stack spacing={5}>
+        <Stack gap={5}>
           <TextInput
             placeholder="Email"
             value={email}
@@ -84,7 +84,7 @@ export default function Confirm() {
       <Stack>
         <Text size="xl" weight={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
         <Alert color="green" my="lg">
-          <Group noWrap>
+          <Group wrap="nowrap">
             <ThemeIcon size={46} color="green">
               <IconCircleCheck size={30} />
             </ThemeIcon>

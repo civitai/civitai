@@ -6,7 +6,7 @@ export function StepperTitle({
   ...props
 }: { title: React.ReactNode; description?: React.ReactNode } & Omit<StackProps, 'title'>) {
   return (
-    <Stack spacing={4} {...props}>
+    <Stack gap={4} {...props}>
       <Title order={3} sx={{ lineHeight: 1.1 }}>
         {title}
       </Title>

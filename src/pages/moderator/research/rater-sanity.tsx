@@ -296,7 +296,7 @@ function Controls({ images }: { images: SanityImage[] }) {
   const handleClearAll = () => deselectAll();
 
   return (
-    <Group noWrap spacing="xs">
+    <Group wrap="nowrap" gap="xs">
       <ButtonTooltip label="Select all" {...tooltipProps}>
         <ActionIcon
           variant="outline"
@@ -330,7 +330,7 @@ function Controls({ images }: { images: SanityImage[] }) {
           </ActionIcon>
         </Popover.Target>
         <Popover.Dropdown px="xs">
-          <Stack spacing={4}>
+          <Stack gap={4}>
             <Textarea ref={textareaRef} placeholder="Add a link or id per line" autosize />
             <Button fullWidth onClick={() => handleAdd()}>
               Add to Sanity Images

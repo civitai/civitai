@@ -66,16 +66,16 @@ export function ProfileCard() {
         }}
       >
         <Stack>
-          <Group position="apart">
+          <Group justify="space-between">
             <Title order={2}>Account Info</Title>
             <Button
               leftIcon={<IconPencilMinus size={16} />}
               onClick={() => {
                 openUserProfileEditModal({});
               }}
-              sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+              style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
               radius="xl"
-              compact
+              size="compact-md"
             >
               Customize profile
             </Button>
@@ -86,14 +86,14 @@ export function ProfileCard() {
             </Alert>
           )}
           <Grid>
-            <Grid.Col xs={12}>
+            <Grid.Col span={12}>
               <InputText name="username" label="Name" required />
             </Grid.Col>
-            <Grid.Col xs={12}>
+            <Grid.Col span={12}>
               <TextInput
                 value={currentUser?.email ?? ''}
                 label={
-                  <Group spacing="sm">
+                  <Group gap="sm">
                     <Text size="sm">Account Email</Text>
                     <Popover width={300} withArrow withinPortal shadow="sm">
                       <Popover.Target>
@@ -103,7 +103,7 @@ export function ProfileCard() {
                         />
                       </Popover.Target>
                       <Popover.Dropdown>
-                        <Stack spacing="xs">
+                        <Stack gap="xs">
                           <Text size="sm" weight={500}>
                             What is this email?
                           </Text>

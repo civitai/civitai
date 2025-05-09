@@ -43,7 +43,7 @@ export const EntityCollaboratorList = ({
           isInvitee && collaborator.status === EntityCollaboratorStatus.Pending;
 
         return (
-          <Stack key={collaborator.user.id} spacing={0}>
+          <Stack key={collaborator.user.id} gap={0}>
             {collaborator.status !== EntityCollaboratorStatus.Pending && isOwnerOrMod && (
               <Text size="xs" color="dimmed">
                 {collaborator.status === EntityCollaboratorStatus.Approved
@@ -63,7 +63,7 @@ export const EntityCollaboratorList = ({
                     });
                   }}
                   loading={actioningEntityCollaborator}
-                  compact
+                  size="compact-md"
                   w="100%"
                 >
                   Accept invite
@@ -78,7 +78,7 @@ export const EntityCollaboratorList = ({
                     });
                   }}
                   loading={actioningEntityCollaborator}
-                  compact
+                  size="compact-md"
                   variant="outline"
                   w="100%"
                 >
@@ -87,7 +87,7 @@ export const EntityCollaboratorList = ({
               </Button.Group>
             )}
             {isOwnerOrMod && (
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Button
                   onClick={() => {
                     removeEntityCollaborator({
@@ -97,7 +97,7 @@ export const EntityCollaboratorList = ({
                     });
                   }}
                   loading={removingEntityCollaborator}
-                  compact
+                  size="compact-md"
                   color="red"
                   mt="xs"
                 >

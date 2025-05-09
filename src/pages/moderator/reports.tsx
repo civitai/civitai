@@ -125,8 +125,8 @@ export default function Reports() {
         accesorKey: 'id',
         header: '',
         Cell: ({ row: { original: report } }) => (
-          <Group spacing="xs" noWrap>
-            <Button compact size="xs" onClick={() => setSelected(report.id)}>
+          <Group gap="xs" wrap="nowrap">
+            <Button size="compact-xs" onClick={() => setSelected(report.id)}>
               Details
             </Button>
             <Tooltip label="Open reported item" withArrow>
@@ -344,7 +344,7 @@ function ReportDrawer({
           {href && (
             <Link legacyBehavior href={href} passHref>
               <Anchor size="sm" target="_blank">
-                <Group spacing={4}>
+                <Group gap={4}>
                   <Text inherit>View {type}</Text>
                   <IconExternalLink size={14} stroke={1.5} />
                 </Group>
@@ -369,7 +369,7 @@ function ReportDrawer({
                 minRows={2}
                 autosize
               />
-              <Group position="right">
+              <Group justify="flex-end">
                 <Button type="submit" disabled={!isDirty} loading={updateReportMutation.isLoading}>
                   Save
                 </Button>
@@ -400,7 +400,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
         return {
           label,
           value: (
-            <Stack spacing="xs">
+            <Stack gap="xs">
               {value.map((cuid, i) => {
                 if (typeof cuid !== 'string') return null;
                 return (

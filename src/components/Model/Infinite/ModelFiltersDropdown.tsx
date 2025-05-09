@@ -156,8 +156,8 @@ export function DumbModelFiltersDropdown({
   );
 
   const dropdown = (
-    <Stack spacing={8} p="md">
-      <Stack spacing={0}>
+    <Stack gap={8} p="md">
+      <Stack gap={0}>
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
         {!localMode ? (
           <PeriodFilter
@@ -175,7 +175,7 @@ export function DumbModelFiltersDropdown({
           />
         )}
       </Stack>
-      <Stack spacing={0}>
+      <Stack gap={0}>
         {currentUser?.isModerator && (
           <>
             <Divider
@@ -185,7 +185,7 @@ export function DumbModelFiltersDropdown({
             />
 
             <Chip.Group
-              spacing={8}
+              gap={8}
               value={mergedFilters.availability}
               mb={8}
               onChange={(availability: Availability) =>
@@ -205,7 +205,7 @@ export function DumbModelFiltersDropdown({
         <Divider label="Model status" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
         {currentUser?.isModerator && (
           <Chip.Group
-            spacing={8}
+            gap={8}
             value={mergedFilters.status ?? []}
             mb={8}
             onChange={(status: ModelStatus[]) => handleChange({ status })}
@@ -219,7 +219,7 @@ export function DumbModelFiltersDropdown({
           </Chip.Group>
         )}
 
-        <Group spacing={8} mb={4}>
+        <Group gap={8} mb={4}>
           <FilterChip
             checked={mergedFilters.earlyAccess}
             onChange={(checked) => handleChange({ earlyAccess: checked })}
@@ -248,10 +248,10 @@ export function DumbModelFiltersDropdown({
           </FilterChip>
         </Group>
       </Stack>
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Divider label="Model types" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={mergedFilters.types ?? []}
           onChange={(types: ModelType[]) => handleChange({ types })}
           multiple
@@ -266,11 +266,11 @@ export function DumbModelFiltersDropdown({
       </Stack>
       {showCheckpointType ? (
         <>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Divider label="Checkpoint type" labelProps={{ weight: 'bold', size: 'sm' }} />
             <Chip.Group
               my={4}
-              spacing={8}
+              gap={8}
               value={mergedFilters.checkpointType ?? 'all'}
               onChange={(value: CheckpointType | 'all') =>
                 handleChange({ checkpointType: value !== 'all' ? value : undefined })
@@ -283,10 +283,10 @@ export function DumbModelFiltersDropdown({
               ))}
             </Chip.Group>
           </Stack>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Divider label="File format" labelProps={{ weight: 'bold', size: 'sm' }} />
             <Chip.Group
-              spacing={8}
+              gap={8}
               value={mergedFilters.fileFormats ?? []}
               onChange={(fileFormats: typeof availableFileFormats) => handleChange({ fileFormats })}
               multiple
@@ -301,10 +301,10 @@ export function DumbModelFiltersDropdown({
           </Stack>
         </>
       ) : null}
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={(mergedFilters.baseModels as string[]) ?? []}
           onChange={(baseModels: BaseModel[]) => handleChange({ baseModels })}
           multiple
@@ -318,9 +318,9 @@ export function DumbModelFiltersDropdown({
         </Chip.Group>
       </Stack>
 
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
-        <Group spacing={8}>
+        <Group gap={8}>
           {currentUser && isFeed && (
             <>
               <FilterChip

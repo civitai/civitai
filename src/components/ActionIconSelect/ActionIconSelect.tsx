@@ -129,7 +129,7 @@ export function ActionIconSelect<T>({
         <Divider />
         <Box style={{ width: 300, maxHeight: 400, overflowY: 'auto' }} ref={setDropdown}>
           {!!filteredData?.length && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               {filteredData.map((item, index) => (
                 <Group
                   key={item.label}

@@ -23,7 +23,7 @@ export function FlagInput({ flag, value = 0, spacing, label, mapLabel, onChange 
   const options = flagOptions[flag];
 
   return (
-    <Stack spacing={spacing}>
+    <Stack gap={spacing}>
       {typeof label === 'string' ? <Input.Label>{label}</Input.Label> : label}
       {options.map((option) => {
         const checked = Flags.hasFlag(value, option.value);

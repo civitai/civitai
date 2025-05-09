@@ -44,12 +44,12 @@ export function SupportContent() {
   return (
     <Grid gutter="xl">
       <Grid.Col xs={12} md={6}>
-        <Stack spacing="lg">
+        <Stack gap="lg">
           {SUPPORT_OPTIONS.map((option) => (
             <Card key={option.title} shadow="xs" radius={12} p="md" pr="lg">
-              <Group align="flex-start" noWrap>
+              <Group align="flex-start" wrap="nowrap">
                 <div style={{ minWidth: 32 }}>{option.icon({ size: 32 })}</div>
-                <Stack spacing="sm">
+                <Stack gap="sm">
                   <Text size="sm" weight={500}>
                     {option.description}
                   </Text>

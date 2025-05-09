@@ -244,7 +244,7 @@ export function HomeTabs() {
             data-active={moreOpened}
             className={classes.moreButton}
           >
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               More
               <IconCaretDown size={16} fill="currentColor" />
             </Group>
@@ -267,7 +267,7 @@ export function HomeTabs() {
                       .filter(isDefined)
                   )}
                 >
-                  <Group spacing={8} noWrap>
+                  <Group gap={8} wrap="nowrap">
                     <Text tt="capitalize">{getDisplayName(value.key)}</Text>
                   </Group>
                 </Menu.Item>

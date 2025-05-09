@@ -89,7 +89,7 @@ export function VotableTags({
 
   const showAddibles = !collapsible || showAll;
   return (
-    <Group spacing={4} {...props}>
+    <Group gap={4} {...props}>
       {(nsfwLevel || currentUser?.isModerator) && type === 'image' && (
         <BrowsingLevelBadge
           radius="xs"

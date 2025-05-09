@@ -1,4 +1,4 @@
-import { MantineNumberSize, MantineSize } from '@mantine/core';
+import { MantineSize } from '@mantine/core';
 
 export const mantineContainerSizes: Record<MantineSize, number> = {
   xs: 576,
@@ -9,12 +9,12 @@ export const mantineContainerSizes: Record<MantineSize, number> = {
 };
 
 export const containerQuery = {
-  largerThan: (size: MantineNumberSize, containerName?: string) => {
+  largerThan: (size: MantineSize | number, containerName?: string) => {
     const value = typeof size === 'string' ? mantineContainerSizes[size] : size;
     if (containerName) return `@container ${containerName} (width >= ${value}px)`;
     return `@container (width >=  ${value}px)`;
   },
-  smallerThan: (size: MantineNumberSize, containerName?: string) => {
+  smallerThan: (size: MantineSize | number, containerName?: string) => {
     const value = typeof size === 'string' ? mantineContainerSizes[size] : size;
     if (containerName) return `@container ${containerName} (width < ${value}px)`;
     return `@container (width < ${value}px)`;

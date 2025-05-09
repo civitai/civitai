@@ -130,7 +130,7 @@ export function ImageDetailByProps({
                       <Loader variant="bars" />
                     </Center>
                   ) : (
-                    <Group position="apart" spacing={8} noWrap>
+                    <Group justify="space-between" gap={8} wrap="nowrap">
                       <UserAvatar
                         user={user}
                         avatarProps={{ size: 32 }}
@@ -150,8 +150,8 @@ export function ImageDetailByProps({
                         withUsername
                         linkToProfile
                       />
-                      <Group spacing="md">
-                        <FollowUserButton userId={user.id} size="md" compact />
+                      <Group gap="md">
+                        <FollowUserButton userId={user.id} size="compact-md" />
                         <CloseButton
                           size="md"
                           radius="xl"
@@ -169,26 +169,24 @@ export function ImageDetailByProps({
                   withBorder
                   inheritPadding
                 >
-                  <Group position="apart" spacing={8}>
-                    <Group spacing={8}>
+                  <Group justify="space-between" gap={8}>
+                    <Group gap={8}>
                       {image.postId && (
                         <Button
                           component={NextLink}
                           href={`/posts/${image.postId}`}
-                          size="md"
                           radius="xl"
                           color="gray"
                           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                          compact
+                          size="compact-md"
                         >
-                          <Group spacing={4}>
+                          <Group gap={4}>
                             <IconEye size={14} />
                             <Text size="xs">View post</Text>
                           </Group>
                         </Button>
                       )}
                       <Button
-                        size="md"
                         radius="xl"
                         color="gray"
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
@@ -198,9 +196,9 @@ export function ImageDetailByProps({
                             type: CollectionType.Image,
                           })
                         }
-                        compact
+                        size="compact-md"
                       >
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           <IconBookmark size={14} />
                           <Text size="xs">Save</Text>
                         </Group>
@@ -213,7 +211,7 @@ export function ImageDetailByProps({
                   style={{ flex: 1, position: 'relative' }}
                   classNames={{ viewport: classes.scrollViewport }}
                 >
-                  <Stack spacing="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
+                  <Stack gap="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
                     {image.needsReview && (
                       <AlertWithIcon
                         icon={<IconAlertTriangle />}
@@ -246,7 +244,7 @@ export function ImageDetailByProps({
                         }}
                       />
                       <Paper p="sm" radius={0}>
-                        <Stack spacing={8}>
+                        <Stack gap={8}>
                           <Reactions
                             entityId={image.id}
                             entityType="image"
@@ -264,7 +262,7 @@ export function ImageDetailByProps({
                         </Stack>
                       </Paper>
                     </div>
-                    <Stack spacing="md" mt="auto">
+                    <Stack gap="md" mt="auto">
                       <Divider label="Resources Used" labelPosition="center" />
 
                       <Box px="md">

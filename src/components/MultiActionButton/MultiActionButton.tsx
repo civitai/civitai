@@ -43,7 +43,7 @@ const _MultiActionButton = forwardRef<HTMLButtonElement, Props>(
     );
 
     return (
-      <Group spacing={0} noWrap>
+      <Group gap={0} wrap="nowrap">
         <Button
           ref={ref}
           variant={variant}

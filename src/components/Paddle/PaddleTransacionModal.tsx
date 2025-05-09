@@ -176,7 +176,7 @@ export default function PaddleTransactionModal({
   ) {
     return (
       <Modal {...dialog} {...modalProps}>
-        <Stack spacing="md">
+        <Stack gap="md">
           <Center>
             <TimeoutLoader
               renderTimeout={() => (
@@ -227,7 +227,7 @@ export default function PaddleTransactionModal({
     return (
       <Modal {...dialog} {...modalProps}>
         <Stack>
-          <Group position="apart" noWrap>
+          <Group justify="space-between" wrap="nowrap">
             <Text size="lg" weight={700}>
               Complete your transaction
             </Text>
@@ -254,8 +254,8 @@ export default function PaddleTransactionModal({
   // Wanna keep the component live for the event listeners
   return (
     <Modal {...dialog} {...modalProps}>
-      <Stack spacing="md">
-        <Group position="apart" noWrap>
+      <Stack gap="md">
+        <Group justify="space-between" wrap="nowrap">
           <Text size="lg" weight={700}>
             Complete your transaction
           </Text>
@@ -263,7 +263,7 @@ export default function PaddleTransactionModal({
         </Group>
         <Divider mx="-lg" />
         {message && <>{message}</>}
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text size="sm" color="dimmed">
             Transaction details
           </Text>
@@ -274,8 +274,8 @@ export default function PaddleTransactionModal({
             withBorder
             className="border-yellow-6 bg-gray-2 dark:bg-dark-9"
           >
-            <Group spacing="sm" align="center">
-              <Group spacing={8} position="apart" sx={{ flexGrow: 1 }}>
+            <Group gap="sm" align="center">
+              <Group gap={8} justify="space-between" sx={{ flexGrow: 1 }}>
                 <Text size={20} weight={510} color="yellow.6">
                   {numberWithCommas(unitAmount * 10)} Buzz
                 </Text>
@@ -292,7 +292,7 @@ export default function PaddleTransactionModal({
           </Paper>
         </Stack>
         <Text>How would you like to pay for your transaction?</Text>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Stack>
             <Button
               onClick={() => {

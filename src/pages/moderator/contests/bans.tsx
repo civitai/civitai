@@ -62,7 +62,7 @@ function ContestBanUserModal() {
   return (
     <Modal {...dialog} size="sm" withCloseButton={false} radius="md">
       <Stack>
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Text size="md" weight={500}>
             Select user to ban
           </Text>
@@ -187,7 +187,7 @@ export default function ContestsBans() {
                   {users.map((user) => (
                     <tr key={user.id}>
                       <td>
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           <Text>{user.username}</Text>
                         </Group>
                       </td>

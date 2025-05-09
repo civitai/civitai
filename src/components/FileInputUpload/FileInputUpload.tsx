@@ -104,7 +104,7 @@ export function FileInputUpload({
 
   return (
     <Stack className={cx(stackUploadProgress && classes.stackedProgress, grow && classes.grow)}>
-      <Group spacing="xs" align="flex-end" noWrap>
+      <Group gap="xs" align="flex-end" wrap="nowrap">
         <FileInput
           {...props}
           error={error ?? fileTypeError}
@@ -150,7 +150,7 @@ export function FileInputUpload({
                   striped
                   animate
                 />
-                <Group position="apart" className={classes.stackedProgressStatus}>
+                <Group justify="space-between" className={classes.stackedProgressStatus}>
                   <Text className={classes.stackedProgressStatusText}>{`${formatBytes(
                     speed
                   )}/s`}</Text>
@@ -160,7 +160,7 @@ export function FileInputUpload({
                 </Group>
               </Box>
             ) : (
-              <Stack spacing={2}>
+              <Stack gap={2}>
                 <Progress
                   sx={{ width: '100%' }}
                   size="xl"
@@ -170,7 +170,7 @@ export function FileInputUpload({
                   striped
                   animate
                 />
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
                   <Text size="xs" color="dimmed">{`${formatSeconds(
                     timeRemaining

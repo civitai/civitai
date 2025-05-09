@@ -139,7 +139,7 @@ export default function Leaderboard() {
         key={item.id}
         p={itemSize}
         label={
-          <Group position="apart">
+          <Group justify="space-between">
             <Text weight={500}>{item.title}</Text>
             <UserPosition
               position={leaderboardPositions[item.id]}
@@ -186,8 +186,8 @@ export default function Leaderboard() {
           </ContainerGrid.Col>
 
           <ContainerGrid.Col xs={12} sm={8} display="flex" sx={{ justifyContent: 'center' }}>
-            <Stack spacing={0} maw={600} w="100%">
-              <Group spacing={8} noWrap>
+            <Stack gap={0} maw={600} w="100%">
+              <Group gap={8} wrap="nowrap">
                 <Title className={classes.title}>{selectedLeaderboard?.title}</Title>
                 {hasLegends && <LegendsToggle className={classes.legendsToggleSm} />}
                 <ActionIcon
@@ -200,7 +200,7 @@ export default function Leaderboard() {
                 </ActionIcon>
               </Group>
               {hasLegends && <LegendsToggle className={classes.legendsToggle} />}
-              <Group spacing={5}>
+              <Group gap={5}>
                 <Text className={classes.slogan} color="dimmed" size="lg">
                   {selectedLeaderboard?.description}
                 </Text>
@@ -212,7 +212,7 @@ export default function Leaderboard() {
                   </Popover.Target>
                   <Popover.Dropdown>
                     {board === 'season' ? (
-                      <Stack spacing={4}>
+                      <Stack gap={4}>
                         <Text weight={500}>Rank is calculated based on:</Text>
                         <Code block color="blue">
                           {selectedLeaderboard?.scoringDescription}
@@ -222,7 +222,7 @@ export default function Leaderboard() {
                         </Text>
                       </Stack>
                     ) : board === 'legend' ? (
-                      <Stack spacing={4}>
+                      <Stack gap={4}>
                         <Text weight={500}>Score is calculated based on:</Text>
                         <Code block color="blue">
                           {`Diamond - 1st place: ${

@@ -374,11 +374,11 @@ export function InteractiveTipBuzzButton({
               <IconX size={20} />
             </ActionIcon>
           )}
-          <Stack spacing={2} align="center">
+          <Stack gap={2} align="center">
             <Text color="yellow.7" weight={500} size="xs" opacity={0.8}>
               Tipping
             </Text>
-            <Group spacing={0} ml={-8}>
+            <Group gap={0} ml={-8}>
               <IconBolt style={{ fill: theme.colors.yellow[7] }} color="yellow.7" size={20} />
               <div
                 contentEditable={status === 'confirming'}

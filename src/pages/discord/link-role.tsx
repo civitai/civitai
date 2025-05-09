@@ -70,12 +70,12 @@ export default function LinkRole({ providers, linked }: Props) {
     <Container size="xs">
       <Paper radius="md" p="xl" withBorder>
         {linked ? (
-          <Stack spacing="md" align="center">
+          <Stack gap="md" align="center">
             <Title align="center" order={1} sx={{ lineHeight: 1.2 }}>
               Civitai + Discord = ❤️
             </Title>
             <Alert color="green" my="lg">
-              <Group noWrap>
+              <Group wrap="nowrap">
                 <ThemeIcon size={46} color="green">
                   <IconCircleCheck size={30} />
                 </ThemeIcon>
@@ -90,7 +90,7 @@ export default function LinkRole({ providers, linked }: Props) {
             </Button>
           </Stack>
         ) : (
-          <Stack spacing="md">
+          <Stack gap="md">
             <Title order={3} sx={{ lineHeight: 1.2 }}>
               Connect your Discord account to your Civitai account
             </Title>

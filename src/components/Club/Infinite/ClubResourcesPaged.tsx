@@ -116,7 +116,7 @@ export function ClubResourcesPaged({ clubId }: Props) {
               })}
             </tbody>
             {pagination && pagination.totalPages > 1 && (
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                 <Pagination
                   page={filters.page}

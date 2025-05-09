@@ -53,7 +53,7 @@ export function EventRewards({ event }: { event: string }) {
         </Alert>
       ) : (
         <SimpleGrid
-          spacing={40}
+          gap={40}
           cols={2}
           breakpoints={[
             { minWidth: 'sm', cols: 3 },

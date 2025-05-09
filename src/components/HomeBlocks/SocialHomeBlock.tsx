@@ -152,9 +152,9 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
   );
 
   const MetaDataTop = (
-    <Stack spacing="sm">
-      <Group spacing="xs" position="apart">
-        <Group noWrap>
+    <Stack gap="sm">
+      <Group gap="xs" justify="space-between">
+        <Group wrap="nowrap">
           <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
             {metadata.title}{' '}
           </Title>
@@ -180,14 +180,14 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
                     </CustomMarkdown>
                   </Text>
                 )}
-                <Group spacing={4}>
+                <Group gap={4}>
                   <SocialLinks />
                 </Group>
               </Popover.Dropdown>
             </Popover>
           )}
         </Group>
-        <Group spacing={4}>
+        <Group gap={4}>
           <SocialLinks include={['instagram', 'youtube', 'twitter']} size={36} iconSize={28} />
         </Group>
       </Group>

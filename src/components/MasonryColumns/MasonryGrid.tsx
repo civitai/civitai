@@ -95,7 +95,7 @@ export function MasonryGrid<TData>({
                 <Button
                   component={Link}
                   href="/pricing"
-                  compact
+                  size="compact-md"
                   color="green"
                   variant="outline"
                   className="w-24"

@@ -16,7 +16,7 @@ export default function HiddenCommentsModal({ modelId }: { modelId: number }) {
       size="xl"
       withCloseButton
     >
-      <Stack spacing="xl">
+      <Stack gap="xl">
         <AlertWithIcon icon={<IconAlertCircle />}>
           Some comments may be hidden by the author or moderators to ensure a positive and inclusive
           environment. Moderated for respectful and relevant discussions.

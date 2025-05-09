@@ -43,7 +43,7 @@ export default function TagPage({
       {tag && (
         <Box className={classes.banner} mb="md">
           <Center>
-            <Stack spacing="xs">
+            <Stack gap="xs">
               <Title order={1} align="center">
                 {tag.name}
               </Title>
@@ -57,10 +57,10 @@ export default function TagPage({
         maxSingleColumnWidth={450}
       >
         <MasonryContainer>
-          <Stack spacing="xs">
-            <Group position="right">
+          <Stack gap="xs">
+            <Group justify="flex-end">
               <SortFilter type="models" />
-              <ModelFiltersDropdown size="sm" compact />
+              <ModelFiltersDropdown size="compact-sm" />
             </Group>
             <ModelsInfinite
               filters={{ ...queryFilters, followed: false, hidden: false }}

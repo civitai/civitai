@@ -22,7 +22,7 @@ export default function Rewards() {
     <>
       <Meta title="Cosmetic Shop - Settings" deIndex />
       <Container size="xs">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Cosmetic Shop</Title>
           <Text size="sm" color="dimmed">
             Manage products and sections for the Cosmetic Shop.

@@ -133,7 +133,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
     };
 
     return (
-      <Stack spacing={0} h="100%">
+      <Stack gap={0} h="100%">
         <Box p="sm" pt={0}>
           <TextInput
             icon={<IconSearch size={16} />}
@@ -164,7 +164,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
               <IconCloudOff size={36} />
             </Stack>
           ) : (
-            <Stack p="xs" spacing={4}>
+            <Stack p="xs" gap={4}>
               {filteredData.map((d) => {
                 const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
                 const otherMembers = d.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
@@ -176,7 +176,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                 return (
                   <Group
                     key={d.id}
-                    noWrap
+                    wrap="nowrap"
                     className={cx(classes.selectChat, {
                       [classes.selectedChat]: d.id === selectedChat,
                     })}
@@ -193,7 +193,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                         <UserAvatar user={otherMembers[0].user} />
                       )}
                     </Box>
-                    <Stack sx={{ overflow: 'hidden' }} spacing={0}>
+                    <Stack sx={{ overflow: 'hidden' }} gap={0}>
                       <Highlight
                         size="sm"
                         fw={500}
@@ -223,7 +223,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                         </Text>
                       )}
                     </Stack>
-                    <Group sx={{ marginLeft: 'auto' }} noWrap spacing={6}>
+                    <Group sx={{ marginLeft: 'auto' }} wrap="nowrap" gap={6}>
                       {isModSender && (
                         <Tooltip
                           withArrow={false}

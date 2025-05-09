@@ -3,7 +3,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function ModelRating({ rank, ...props }: Props) {
   return (
-    <Group spacing={4}>
+    <Group gap={4}>
       <Rating value={rank?.ratingAllTime ?? 0} fractions={2} readOnly {...props} />
       <Text size={props.size ?? 'sm'}>({abbreviateNumber(rank?.ratingCountAllTime ?? 0)})</Text>
     </Group>

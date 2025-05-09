@@ -139,9 +139,9 @@ export function ResourceSelectFiltersDropdown() {
         rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
-        compact
+        size="compact-md"
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <IconFilter size={16} />
           Filters
         </Group>
@@ -150,11 +150,11 @@ export function ResourceSelectFiltersDropdown() {
   );
 
   const dropdown = (
-    <Stack spacing="lg" p="md">
-      <Stack spacing="md">
+    <Stack gap="lg" p="md">
+      <Stack gap="md">
         <Divider label="Resource types" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={selectFilters.types}
           onChange={(rts: ModelType[]) => setSelectFilters((f) => ({ ...f, types: rts }))}
           multiple
@@ -168,7 +168,7 @@ export function ResourceSelectFiltersDropdown() {
         </Chip.Group>
         <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={selectFilters.baseModels}
           onChange={(bms: BaseModel[]) => setSelectFilters((f) => ({ ...f, baseModels: bms }))}
           multiple

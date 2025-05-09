@@ -68,8 +68,8 @@ function UserArticlesPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer p={0}>
-          <Stack spacing="xs">
-            <Group spacing={8} position="apart">
+          <Stack gap="xs">
+            <Group gap={8} justify="space-between">
               {selfView && (
                 <FeedContentToggle
                   size="xs"
@@ -81,7 +81,7 @@ function UserArticlesPage() {
                 />
               )}
               {viewingPublished && (
-                <Group spacing={8} ml="auto" noWrap>
+                <Group gap={8} ml="auto" wrap="nowrap">
                   <SortFilter
                     type="articles"
                     value={sort}
@@ -90,8 +90,7 @@ function UserArticlesPage() {
                   <ArticleFiltersDropdown
                     query={{ ...query, period, followed }}
                     onChange={(filters) => replace(filters)}
-                    size="sm"
-                    compact
+                    size="compact-sm"
                   />
                 </Group>
               )}

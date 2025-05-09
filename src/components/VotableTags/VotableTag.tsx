@@ -192,7 +192,7 @@ export function VotableTag({
       pl={canVote ? 3 : 4}
       pr={!!currentUser ? 0 : undefined}
     >
-      <Group spacing={0} noWrap>
+      <Group gap={0} wrap="nowrap">
         {canVote && (
           <LoginPopover>
             <UnstyledButton onClick={handleUpvote} className="z-10">
@@ -292,7 +292,7 @@ export function VotableTag({
           </Text>
           <Divider
             label={
-              <Group spacing={4}>
+              <Group gap={4}>
                 <IconClock size={12} /> Voting Period Remaining
               </Group>
             }

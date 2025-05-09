@@ -122,9 +122,9 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
         maxSingleColumnWidth={450}
       >
         <MasonryContainer p={0}>
-          <Stack spacing="xs">
-            <Group spacing={8} position="apart">
-              <Group spacing={8}>
+          <Stack gap="xs">
+            <Group gap={8} justify="space-between">
+              <Group gap={8}>
                 {isSameUser && (
                   <ContentToggle
                     size="xs"
@@ -135,12 +135,12 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                 )}
                 {viewingReactions && (
                   <Chip.Group
-                    spacing={4}
+                    gap={4}
                     value={reactions ?? []}
                     onChange={(reactions: ReviewReactions[]) => replace({ reactions })}
                     className={classes.chipGroup}
                     multiple
-                    noWrap
+                    wrap="nowrap"
                   >
                     {availableReactions.map((reaction, index) => (
                       <Chip
@@ -158,7 +158,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   </Chip.Group>
                 )}
               </Group>
-              <Group className={classes.filtersWrapper} spacing={8} noWrap>
+              <Group className={classes.filtersWrapper} gap={8} wrap="nowrap">
                 <SortFilter
                   type={isVideo ? 'videos' : 'images'}
                   value={sort}
@@ -179,8 +179,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   }}
                   filterType={isVideo ? 'videos' : 'images'}
                   onChange={(filters) => replace(filters)}
-                  size="sm"
-                  compact
+                  size="compact-sm"
                   hideMediaTypes
                 />
               </Group>

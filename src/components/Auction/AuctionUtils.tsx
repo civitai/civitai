@@ -245,7 +245,7 @@ export const BidModelButton = ({
 
   const actionButton = asButton ? (
     <Button onClick={handle} disabled={!destAuction} {...buttonProps}>
-      <Group spacing={8} noWrap>
+      <Group gap={8} wrap="nowrap">
         <IconGavel size={20} />
         <Text inherit inline className="hide-mobile">
           Bid
@@ -290,7 +290,7 @@ export const AuctionViews = () => {
   return (
     <Tooltip label="Currently viewing">
       <Paper radius="sm" shadow="xs" px={8} py={4} withBorder className="bg-gray-0 dark:bg-dark-6">
-        <Group spacing={4} className="min-w-[55px] cursor-default justify-center">
+        <Group gap={4} className="min-w-[55px] cursor-default justify-center">
           <IconUsers size={14} />
           <NumberFlow
             format={{ notation: 'compact' }}

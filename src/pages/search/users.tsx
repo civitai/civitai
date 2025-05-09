@@ -71,7 +71,7 @@ export function UserHitList() {
     const NotFound = (
       <Box>
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
               <Text color="dimmed">{hiddenCount} users have been hidden due to your settings.</Text>
             )}
@@ -151,17 +151,17 @@ export function UserCard({ data }: { data: UserSearchIndexRecord }) {
   return (
     <Link legacyBehavior href={`/user/${data.username}`} passHref>
       <Card component="a" p="xs" withBorder>
-        <Stack spacing="xs">
-          <Group position="apart" spacing={8}>
+        <Stack gap="xs">
+          <Group justify="space-between" gap={8}>
             <UserAvatar
               size="sm"
               user={data}
               subText={`Joined ${formatDate(data.createdAt)}`}
               withUsername
             />
-            <FollowUserButton userId={data.id} size="md" compact />
+            <FollowUserButton userId={data.id} size="compact-md" />
           </Group>
-          <Group spacing={8}>
+          <Group gap={8}>
             {data.rank && <RankBadge size="md" rank={data.rank} />}
             <UserStatBadges
               uploads={metrics?.uploadCount ?? 0}

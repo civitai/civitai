@@ -209,8 +209,8 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                   ) : !isBlocked ? (
                     isPending ? (
                       <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
-                        <Stack spacing={4}>
-                          <Group spacing={8} noWrap>
+                        <Stack gap={4}>
+                          <Group gap={8} wrap="nowrap">
                             <Loader size={20} />
                             <Badge size="xs" color="yellow">
                               Analyzing
@@ -244,7 +244,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       radius={0}
                       className="absolute bottom-0 left-0 w-full p-2"
                       title={
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           <IconInfoCircle />
                           <Text inline>Unable to verify AI generation</Text>
                         </Group>
@@ -270,7 +270,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       radius={0}
                       className="absolute bottom-0 left-0 w-full p-1"
                       title={
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           <IconInfoCircle />
                           <Text inline>TOS Violation</Text>
                         </Group>

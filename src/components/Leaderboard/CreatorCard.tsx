@@ -74,7 +74,7 @@ export function CreatorCard({
           >
             <ContainerGrid align="center">
               <ContainerGrid.Col span={2}>
-                <Stack align="center" spacing={0} sx={{ position: 'relative' }}>
+                <Stack align="center" gap={0} sx={{ position: 'relative' }}>
                   {isTop3 && (
                     <IconCrown
                       size={64}
@@ -104,7 +104,7 @@ export function CreatorCard({
                 </Stack>
               </ContainerGrid.Col>
               <ContainerGrid.Col span={10}>
-                <Stack spacing={8}>
+                <Stack gap={8}>
                   <UserAvatar user={user} textSize="lg" size="md" withUsername />
                   <LeaderboardMetrics score={score} metrics={metrics} delta={delta?.score} />
                 </Stack>

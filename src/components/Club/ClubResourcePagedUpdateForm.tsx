@@ -104,7 +104,7 @@ export const ClubResourcePagedUpdateForm = ({
         </td>
       ))}
       <td align="right">
-        <Group position="right">
+        <Group justify="flex-end">
           <Button
             size="xs"
             color="blue"

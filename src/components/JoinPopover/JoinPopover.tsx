@@ -56,7 +56,7 @@ export function JoinPopover({
       >
         <Popover.Target>{cloneElement(children, { [trigger]: handleClick })}</Popover.Target>
         <Popover.Dropdown>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <Group>
               <ThemeIcon color="red" size="xl" variant="outline">
                 <IconLock />

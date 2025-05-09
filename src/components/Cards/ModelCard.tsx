@@ -192,15 +192,15 @@ export function ModelCard({ data }: Props) {
                 !!data.rank.collectedCount ||
                 !!data.rank.tippedAmountCount) && (
                 <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
-                  <Group spacing={2}>
+                  <Group gap={2}>
                     <IconDownload size={14} strokeWidth={2.5} />
                     <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
                   </Group>
-                  <Group spacing={2}>
+                  <Group gap={2}>
                     <IconBookmark size={14} strokeWidth={2.5} />
                     <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
                   </Group>
-                  <Group spacing={2}>
+                  <Group gap={2}>
                     <IconMessageCircle2 size={14} strokeWidth={2.5} />
                     <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
                   </Group>
@@ -210,7 +210,7 @@ export function ModelCard({ data }: Props) {
                       entityType={'Model'}
                       entityId={data.id}
                     >
-                      <Group spacing={2}>
+                      <Group gap={2}>
                         <IconBolt size={14} strokeWidth={2.5} />
                         <Text size="xs" tt="uppercase">
                           {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}

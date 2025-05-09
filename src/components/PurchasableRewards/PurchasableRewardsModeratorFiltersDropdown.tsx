@@ -72,7 +72,7 @@ export function PurchasableRewardsFiltersModeratorDropdown({
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <IconFilter size={16} />
           Filters
         </Group>
@@ -81,11 +81,11 @@ export function PurchasableRewardsFiltersModeratorDropdown({
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
+    <Stack gap="lg">
+      <Stack gap="md">
         <Divider label="Mode" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={filters.mode ?? PurchasableRewardModeratorViewMode.Available}
           onChange={(mode: PurchasableRewardModeratorViewMode) => {
             setFilters({
@@ -101,7 +101,7 @@ export function PurchasableRewardsFiltersModeratorDropdown({
         </Chip.Group>
         <Divider label="Archived" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={
             filters.archived === true ? 'true' : filters.archived === false ? 'false' : undefined
           }
@@ -120,7 +120,7 @@ export function PurchasableRewardsFiltersModeratorDropdown({
         </Chip.Group>
         <Divider label="Usage" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
-          spacing={8}
+          gap={8}
           value={filters.usage ?? []}
           onChange={(usage: PurchasableRewardUsage[]) => {
             setFilters({

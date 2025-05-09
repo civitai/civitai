@@ -87,18 +87,18 @@ const DonationGoalItem = ({
       withBorder
       className={classes.donationGoalContainer}
     >
-      <Stack spacing="xs">
+      <Stack gap="xs">
         {donationGoal.isEarlyAccess && progress < 100 && modelVersionIsEarlyAccess && (
           <Text color="yellow" size="xs" weight={500}>
             The creator of this {resourceLabel} has set a donation goal! You can donate to make this
             resource available to everyone before the end of Early Access.
           </Text>
         )}
-        <Group position="apart" noWrap align="start">
+        <Group justify="space-between" wrap="nowrap" align="start">
           <Text size="sm" weight={500}>
             {donationGoal.title}
           </Text>
-          <Group spacing={0} position="left" align="center" noWrap>
+          <Group gap={0} position="left" align="center" wrap="nowrap">
             <CurrencyIcon currency={Currency.BUZZ} size={16} />
             <Text
               size="xs"
@@ -126,9 +126,9 @@ const DonationGoalItem = ({
         />
 
         {canDonate && (
-          <Stack spacing="xs" mt="xs">
-            <Group spacing="xs" noWrap>
-              <Group spacing="xs" noWrap>
+          <Stack gap="xs" mt="xs">
+            <Group gap="xs" wrap="nowrap">
+              <Group gap="xs" wrap="nowrap">
                 <NumberInputWrapper
                   value={donationAmount}
                   onChange={(value) => setDonationAmount(value ?? 0)}
@@ -165,8 +165,7 @@ const DonationGoalItem = ({
                 label="Donate"
                 buzzAmount={donationAmount}
                 color="yellow.7"
-                size="xs"
-                compact
+                size="compact-xs"
                 h={30}
                 disabled={!donationAmount}
                 loading={donating}
@@ -205,7 +204,7 @@ const ModelVersionDonationGoals = ({ modelVersionId }: Props) => {
   }
 
   return (
-    <Stack spacing="sm">
+    <Stack gap="sm">
       <Title order={4} mb={0}>
         Support this model
       </Title>

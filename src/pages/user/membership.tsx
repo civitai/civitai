@@ -6,7 +6,6 @@ import {
   Button,
   Center,
   Container,
-  createStyles,
   Grid,
   Group,
   Loader,
@@ -47,6 +46,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { booleanString } from '~/utils/zod-helpers';
+import styles from './membership.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -79,19 +79,6 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const useStyles = createStyles((theme) => ({
-  card: {
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.lg,
-  },
-  price: {
-    fontSize: 48,
-    fontWeight: 700,
-  },
-}));
-
 const querySchema = z.object({
   tier: userTierSchema.optional(),
   updated: booleanString().optional(),
@@ -99,7 +86,6 @@ const querySchema = z.object({
 });
 
 export default function UserMembership() {
-  const { classes, theme } = useStyles();
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
     checkWhenInBadState: true,
   });
@@ -227,7 +213,7 @@ export default function UserMembership() {
                   iconSize={28}
                   py={11}
                 >
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text lh={1.2}>
                       Uh oh! It looks like there was an issue with your membership. You can update
                       your payment method or renew your membership now by clicking{' '}
@@ -250,10 +236,10 @@ export default function UserMembership() {
                   </Stack>
                 </AlertWithIcon>
               )}
-              <Paper withBorder className={classes.card}>
+              <Paper withBorder className={styles.card}>
                 <Stack>
-                  <Group position="apart">
-                    <Group noWrap>
+                  <Group justify="space-between">
+                    <Group wrap="nowrap">
                       {image && (
                         <Center>
                           <Box w={100}>
@@ -261,15 +247,15 @@ export default function UserMembership() {
                           </Box>
                         </Center>
                       )}
-                      <Stack spacing={0}>
+                      <Stack gap={0}>
                         {product && (
-                          <Text weight={600} size={20}>
+                          <Text weight={600} size="20px">
                             {isFree ? 'Free' : product.name}
                           </Text>
                         )}
                         {price && (
                           <Text>
-                            <Text component="span" className={classes.price}>
+                            <Text component="span" className={styles.price}>
                               {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                             </Text>{' '}
                             <Text component="span" color="dimmed" size="sm">
@@ -282,7 +268,7 @@ export default function UserMembership() {
                       </Stack>
                     </Group>
                     <Stack className="@sm:items-end">
-                      <Group spacing="xs">
+                      <Group gap="xs">
                         {subscription.canceledAt && (
                           <>
                             {price.active && (
@@ -341,7 +327,7 @@ export default function UserMembership() {
               {benefits && (
                 <>
                   <Title order={3}>Your membership benefits</Title>
-                  <Paper withBorder className={classes.card}>
+                  <Paper withBorder className={styles.card}>
                     <PlanBenefitList benefits={benefits} />
                   </Paper>
                 </>

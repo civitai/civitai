@@ -60,16 +60,16 @@ export function SchedulePostModal({
       size="md"
       centered
     >
-      <Stack spacing="md">
+      <Stack gap="md">
         <Text size="sm" color="dimmed">
           {publishingModel
             ? 'Select the date and time you want to publish this model.'
             : 'Select the date and time you want to publish this post.'}
         </Text>
         <Form form={form} onSubmit={handleSubmit}>
-          <Stack spacing="xl">
-            <Stack spacing={4}>
-              <Group spacing={8} grow>
+          <Stack gap="xl">
+            <Stack gap={4}>
+              <Group gap={8} grow>
                 <InputDatePicker
                   name="date"
                   label="Publish Date"
@@ -84,7 +84,7 @@ export function SchedulePostModal({
                 The date and time are in your local timezone.
               </Text>
             </Stack>
-            <Group position="right">
+            <Group justify="flex-end">
               <Button variant="default" onClick={dialog.onClose}>
                 Cancel
               </Button>

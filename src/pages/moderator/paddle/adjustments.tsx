@@ -48,14 +48,14 @@ export default function ModeratorPaddleAdjustments() {
       <Meta title="Paddle Adjustments | Moderator" deIndex />
 
       <Container size="lg">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Paddle Adjustments</Title>
           <Text size="sm" color="dimmed">
             Includes refunds and Cashbacks we&rsquo;ve seen on Paddle. This mainly because Paddle
             has no way to check this on their platform.
           </Text>
         </Stack>
-        <Group position="apart" my="md">
+        <Group justify="space-between" my="md">
           <Group>
             <TextInput
               label="Filter by Customer Id"
@@ -152,7 +152,7 @@ export default function ModeratorPaddleAdjustments() {
                         <Badge>{getDisplayName(adjustment.status.replace('_', ' '))}</Badge>
                       </td>
                       <td>
-                        <Stack spacing={0}>
+                        <Stack gap={0}>
                           <Anchor
                             size="xs"
                             // Not keen on this approach, but will have to do in the meantime.

@@ -463,9 +463,8 @@ function BuzzMenuItem() {
         component="div"
         variant="white"
         radius="xl"
-        size="xs"
         px={12}
-        compact
+        size="compact-xs"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();

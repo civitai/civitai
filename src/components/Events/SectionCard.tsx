@@ -20,9 +20,9 @@ export function SectionCard({
   const { classes } = useStyles();
   return (
     <Card className={classes.card} radius="lg" {...cardProps}>
-      <Stack align="center" spacing={48}>
+      <Stack align="center" gap={48}>
         {(title || subtitle) && (
-          <Stack spacing={4} align={headerAlign}>
+          <Stack gap={4} align={headerAlign}>
             {title && (
               <Title order={2} size={32} align={headerAlign}>
                 {title}

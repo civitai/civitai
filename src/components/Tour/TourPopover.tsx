@@ -28,7 +28,7 @@ export function TourPopover(props: TooltipRenderProps) {
       radius="md"
       maw="375px"
     >
-      <Group position="apart" noWrap>
+      <Group justify="space-between" wrap="nowrap">
         <Text className={clsx(step.showProgress && 'hidden')} size="lg" weight={600} lineClamp={2}>
           {step.title}
         </Text>
@@ -46,14 +46,14 @@ export function TourPopover(props: TooltipRenderProps) {
         {typeof step.content === 'string' ? <Text>{step.content}</Text> : step.content}
       </div>
       {!step.hideFooter && (
-        <Group position="apart" noWrap>
+        <Group justify="space-between" wrap="nowrap">
           {step.showSkipButton !== false && (
             <Button {...skipProps} variant="subtle" size="xs" color="gray">
               {skipProps.title}
             </Button>
           )}
           {continuous && (
-            <Group spacing={8} noWrap>
+            <Group gap={8} wrap="nowrap">
               {index > 0 && !step.hideBackButton && (
                 <Button
                   {...backProps}

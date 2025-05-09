@@ -18,7 +18,7 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
   if (periodMode) queryFilters.periodMode = periodMode;
 
   return (
-    <Group className={classes.filtersWrapper} spacing={4} noWrap {...groupProps}>
+    <Group className={classes.filtersWrapper} gap={4} wrap="nowrap" {...groupProps}>
       {periodMode && (
         <Popover>
           <Popover.Target>
@@ -42,7 +42,7 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
         />
       )}
       <SortFilter type="models" className={classes.subnavDropdown} />
-      <ModelFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} isFeed />
+      <ModelFiltersDropdown w="100%" size="compact-sm" className={classes.subnavDropdown} isFeed />
     </Group>
   );
 }

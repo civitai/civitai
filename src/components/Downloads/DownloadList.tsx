@@ -8,12 +8,12 @@ import { slugit } from '~/utils/string-helpers';
 
 export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
   return (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       {items.map((download) => {
         const downloadDate = dayjs(download.downloadAt);
 
         return (
-          <Group key={download.modelVersion.id} noWrap>
+          <Group key={download.modelVersion.id} wrap="nowrap">
             <Link
               href={`/models/${download.modelVersion.model.id}/${slugit(
                 download.modelVersion.model.name
@@ -34,7 +34,7 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
                   },
                 })}
               >
-                <Stack spacing={0}>
+                <Stack gap={0}>
                   <Text size={textSize} weight={500} lineClamp={2} sx={{ lineHeight: 1 }}>
                     {download.modelVersion.model.name}: {download.modelVersion.name}
                   </Text>

@@ -126,7 +126,7 @@ export const GeneratedImagesReward = () => {
     <Paper withBorder className={classes.tileCard} h="100%">
       <Stack p="md">
         <Title order={3}>Images generated with your models</Title>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text>
             This chart shows the number of images generated with your resources over the past 30
             days.

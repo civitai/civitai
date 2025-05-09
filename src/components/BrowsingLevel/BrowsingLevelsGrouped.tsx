@@ -11,7 +11,7 @@ export function BrowsingLevelsGrouped({ size, ...props }: GroupProps & { size?: 
   const levels = currentUser?.isModerator ? [...baseLevels, NsfwLevel.Blocked] : baseLevels;
 
   return (
-    <Group spacing="xs" noWrap {...props}>
+    <Group gap="xs" wrap="nowrap" {...props}>
       {levels.map((level) => (
         <BrowsingLevelLabel key={level} level={level} size={size} />
       ))}

@@ -45,7 +45,7 @@ export const ImagesSearchItem = forwardRef<
   const nsfw = !getIsSafeBrowsingLevel(hit.nsfwLevel);
 
   return (
-    <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
+    <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
       <Center
         sx={{
           width: 64,
@@ -76,7 +76,7 @@ export const ImagesSearchItem = forwardRef<
           />
         )}
       </Center>
-      <Stack spacing={8} sx={{ flex: '1 !important' }}>
+      <Stack gap={8} sx={{ flex: '1 !important' }}>
         {!hit.hideMeta && hit.prompt && (
           <Text lineClamp={2} size="sm" inline>
             <Text weight={600} ml={1} span>
@@ -87,7 +87,7 @@ export const ImagesSearchItem = forwardRef<
           </Text>
         )}
         <UserAvatar size="xs" user={user} withUsername />
-        <Group spacing={8}>
+        <Group gap={8}>
           {tagsMax?.map((tag, index) => (
             <Badge key={index} {...tagBadgeProps}>
               {tag}
@@ -96,7 +96,7 @@ export const ImagesSearchItem = forwardRef<
           {remainingTagsCount > 0 && <Badge {...tagBadgeProps}>+{remainingTagsCount}</Badge>}
         </Group>
         {stats && (
-          <Group spacing={4}>
+          <Group gap={4}>
             <ActionIconBadge icon={<IconMoodSmile size={12} stroke={2.5} />}>
               {abbreviateNumber(reactionCountAllTime)}
             </ActionIconBadge>

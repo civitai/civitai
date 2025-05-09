@@ -114,7 +114,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
     <Paper className={classes.card}>
       <Stack h="100%" w="100%">
         <Badge variant="light" size="lg" color="green" ml="auto" mb={-36} px={8}>
-          <Group spacing={4}>
+          <Group gap={4}>
             <IconDiscountCheck size={18} />
             <Text tt="uppercase">Get More</Text>
           </Group>
@@ -124,15 +124,15 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
             <EdgeMedia src={image} />
           </Box>
         )}
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text className={classes.title}>{capitalize(targetTier)} membership</Text>
           <Text color="yellow.7" className={classes.subtitle}>
             {subscription ? 'Upgrade to get even more perks:' : 'Get more with a membership:'}
           </Text>
         </Stack>
-        <Stack spacing={4}>
+        <Stack gap={4}>
           {benefits.map((benefit, index) => (
-            <Group spacing="xs" key={index} noWrap>
+            <Group gap="xs" key={index} wrap="nowrap">
               <IconCheck size={18} />
               <Text key={index} className={classes.listItem} color="faded">
                 {benefit.content}

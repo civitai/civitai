@@ -623,10 +623,10 @@ export default function ModelDetailsV2({
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
         <Container size="xl" data-tour="model:start">
-          <Stack spacing="xl">
-            <Stack spacing="xs">
-              <Stack spacing={4}>
-                <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
+          <Stack gap="xl">
+            <Stack gap="xs">
+              <Stack gap={4}>
+                <Group align="flex-start" sx={{ justifyContent: 'space-between' }} wrap="nowrap">
                   <Group className={classes.titleWrapper} align="center">
                     <Title className={classes.title} order={1} lineClamp={2}>
                       {model?.name}
@@ -744,7 +744,7 @@ export default function ModelDetailsV2({
                     )}
                   </Group>
 
-                  <Group spacing={8} noWrap>
+                  <Group gap={8} wrap="nowrap">
                     <HowToButton
                       size={30}
                       stroke={1.5}
@@ -1011,7 +1011,7 @@ export default function ModelDetailsV2({
                     </Menu>
                   </Group>
                 </Group>
-                <Group spacing={4}>
+                <Group gap={4}>
                   <Text size="xs" color="dimmed">
                     Updated: {formatDate(model.updatedAt)}
                   </Text>
@@ -1055,7 +1055,7 @@ export default function ModelDetailsV2({
               </Stack>
               {(model.status === ModelStatus.Unpublished || modelDeleted) && (
                 <Alert color="red">
-                  <Group spacing="xs" noWrap align="flex-start">
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
                     <ThemeIcon color="red">
                       <IconExclamationMark />
                     </ThemeIcon>
@@ -1068,7 +1068,7 @@ export default function ModelDetailsV2({
               )}
               {model.status === ModelStatus.UnpublishedViolation && !model.meta?.needsReview && (
                 <Alert color="red">
-                  <Group spacing="xs" noWrap align="flex-start">
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
                     <ThemeIcon color="red">
                       <IconExclamationMark />
                     </ThemeIcon>
@@ -1087,7 +1087,7 @@ export default function ModelDetailsV2({
               )}
               {model.status === ModelStatus.UnpublishedViolation && model.meta?.needsReview && (
                 <Alert color="yellow">
-                  <Group spacing="xs" noWrap>
+                  <Group gap="xs" wrap="nowrap">
                     <ThemeIcon color="yellow">
                       <IconExclamationMark />
                     </ThemeIcon>
@@ -1100,7 +1100,7 @@ export default function ModelDetailsV2({
               )}
               {inaccurate && (
                 <Alert color="yellow">
-                  <Group spacing="xs" noWrap align="flex-start">
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
                     <ThemeIcon color="yellow">
                       <IconExclamationMark />
                     </ThemeIcon>
@@ -1120,7 +1120,7 @@ export default function ModelDetailsV2({
                 </AlertWithIcon>
               )}
             </Stack>
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               {isOwner ? (
                 <>
                   {model.availability !== Availability.Private && (
@@ -1179,7 +1179,7 @@ export default function ModelDetailsV2({
             type="Suggested"
             versionId={selectedVersion?.id}
             label={
-              <Group spacing={8} noWrap>
+              <Group gap={8} wrap="nowrap">
                 Suggested Resources{' '}
                 <InfoPopover>
                   <Text size="sm" weight={400}>
@@ -1195,9 +1195,9 @@ export default function ModelDetailsV2({
         {canLoadBelowTheFold &&
           (!model.locked && !model.meta?.commentsLocked ? (
             <Container size="xl" my="xl">
-              <Stack spacing="md">
+              <Stack gap="md">
                 <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
-                  <Group spacing="xs">
+                  <Group gap="xs">
                     <Title order={2} data-tour="model:discussion">
                       Discussion
                     </Title>
@@ -1237,7 +1237,7 @@ export default function ModelDetailsV2({
           ) : (
             <Paper p="lg" withBorder bg={`rgba(0, 0, 0, 0.1)`}>
               <Center>
-                <Group spacing="xs">
+                <Group gap="xs">
                   <ThemeIcon color="gray" size="xl" radius="xl">
                     <IconMessageCircleOff />
                   </ThemeIcon>

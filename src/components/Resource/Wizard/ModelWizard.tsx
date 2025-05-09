@@ -101,7 +101,7 @@ const CreateSteps = ({
             }}
           >
             {({ loading }) => (
-              <Group mt="xl" position="right">
+              <Group mt="xl" justify="flex-end">
                 <Button type="submit" loading={loading}>
                   Next
                 </Button>
@@ -121,7 +121,7 @@ const CreateSteps = ({
             onSubmit={goNext}
           >
             {({ loading, canSave }) => (
-              <Group mt="xl" position="right">
+              <Group mt="xl" justify="flex-end">
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
@@ -220,7 +220,7 @@ const TrainSteps = ({
           <Title order={3}>Edit model</Title>
           <ModelUpsertForm model={model} modelVersionId={modelVersion.id} onSubmit={goNext}>
             {({ loading }) => (
-              <Group mt="xl" position="right">
+              <Group mt="xl" justify="flex-end">
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
@@ -239,7 +239,7 @@ const TrainSteps = ({
           <Title order={3}>Edit version</Title>
           <ModelVersionUpsertForm model={model} version={modelVersion} onSubmit={goNext}>
             {({ loading, canSave }) => (
-              <Group mt="xl" position="right">
+              <Group mt="xl" justify="flex-end">
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
@@ -395,8 +395,8 @@ export function ModelWizard() {
           <NotFound />
         ) : (
           <Stack pb="xl">
-            <Group position="apart" noWrap>
-              <Group spacing={8} noWrap>
+            <Group justify="space-between" wrap="nowrap">
+              <Group gap={8} wrap="nowrap">
                 <Title order={2}>{isTraining ? 'Review your Model' : 'Publish a Model'}</Title>
                 <FeatureIntroductionHelpButton
                   feature="model-upload"

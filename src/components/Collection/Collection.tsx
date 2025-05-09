@@ -60,7 +60,7 @@ export function Collection<T>({
     </>
   );
 
-  return grouped ? <Group spacing={spacing}>{renderedItems}</Group> : renderedItems;
+  return grouped ? <Group gap={spacing}>{renderedItems}</Group> : renderedItems;
 }
 
 type Props<T> = {

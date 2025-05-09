@@ -52,7 +52,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
           <ImageGuard2 image={coverImage}>
             {(safe) => (
               <div className="relative h-full flex-1 overflow-hidden">
-                <Group spacing={4} className="absolute left-2 top-2 z-10">
+                <Group gap={4} className="absolute left-2 top-2 z-10">
                   <ImageGuard2.BlurToggle />
                   <Badge
                     size="sm"
@@ -85,7 +85,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
             )}
           </ImageGuard2>
         )}
-        <Stack className={classes.info} spacing={8}>
+        <Stack className={classes.info} gap={8}>
           {data.user.image && (
             <CivitaiTooltip
               position="left"
@@ -115,12 +115,12 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
               </Box>
             </CivitaiTooltip>
           )}
-          <Stack className={classes.content} spacing={6} p="xs">
+          <Stack className={classes.content} gap={6} p="xs">
             <Text size={14} weight={500} color="white" lineClamp={2} lh={1.2}>
               {title}
             </Text>
-            <Group position="apart">
-              <Group spacing={4}>
+            <Group justify="space-between">
+              <Group gap={4}>
                 <IconBadge icon={<IconBookmark size={14} />} className={classes.statBadge}>
                   <Text size="xs">{abbreviateNumber(favoriteCount)}</Text>
                 </IconBadge>

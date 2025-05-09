@@ -54,7 +54,7 @@ export function HeroCard({
           }}
         />
       </Card.Section>
-      <Stack spacing={32} justify="center">
+      <Stack gap={32} justify="center">
         <Text className={classes.title} weight={600} inline>
           {title}
         </Text>
@@ -68,7 +68,7 @@ export function HeroCard({
             target="_blank"
             rel="nofollow noreferrer"
           >
-            <Group spacing={4}>
+            <Group gap={4}>
               Learn more
               <IconExternalLink size={18} color="currentColor" />
             </Group>

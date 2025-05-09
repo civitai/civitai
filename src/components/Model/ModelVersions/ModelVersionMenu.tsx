@@ -133,7 +133,7 @@ export function ModelVersionMenu({
             e.stopPropagation();
             e.preventDefault();
           }}
-          compact
+          size="compact-md"
         >
           <IconDotsVertical size={14} />
         </Button>

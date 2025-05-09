@@ -119,7 +119,7 @@ export default function ManageClubTiers({
   if (loading || isLoadingTiers) return <PageLoader />;
 
   return (
-    <Stack spacing="md">
+    <Stack gap="md">
       <Title order={2}>Manage Club&rsquo;s Tiers</Title>
       <Text>
         Tiers are a way for you to offer different perks to your members. You can create as many

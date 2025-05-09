@@ -92,7 +92,7 @@ export const TrainingImagesLabelTypeSelect = ({
       value={labelType}
       data={constants.autoLabel.labelTypes.map((l) => ({
         label: (
-          // <Group position="center">
+          // <Group justify="center">
           //   <Text>{capitalize(l)}</Text>
           //   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }} withinPortal>
           //     <Text>{labelDescriptions[l]}</Text>
@@ -189,7 +189,7 @@ export const TrainingImagesTags = ({
   };
 
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <Paper
         h={100}
         // mih="xl"
@@ -205,7 +205,7 @@ export const TrainingImagesTags = ({
         sx={{ overflowY: 'auto', scrollbarWidth: 'thin' }}
       >
         {tags.length > 0 ? (
-          <Group spacing={8}>
+          <Group gap={8}>
             {tags.map((cap, index) => (
               <Badge
                 key={index}
@@ -344,7 +344,7 @@ export const TrainingImagesTagViewer = ({
     <Accordion variant="contained" transitionDuration={0}>
       <Accordion.Item value="tag-viewer">
         <Accordion.Control>
-          <Group spacing="xs">
+          <Group gap="xs">
             <Text>Tag Viewer</Text>
             <Badge color="indigo" leftSection={<IconPhoto size={14} />}>
               {numImages}
