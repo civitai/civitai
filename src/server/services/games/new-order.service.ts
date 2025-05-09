@@ -849,7 +849,10 @@ export async function getImagesQueue({
     if (imageIds.length >= imageCount) break;
   }
 
-  const imageRaters = isModerator ? await getImageRaters({ imageIds }) : {};
+  const imageRaters =
+    isModerator && (!queueType || queueType === 'Inquisitor')
+      ? await getImageRaters({ imageIds })
+      : {};
   const images = await dbRead.image.findMany({
     where: {
       id: { in: imageIds },
