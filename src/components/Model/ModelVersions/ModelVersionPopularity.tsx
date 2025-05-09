@@ -70,6 +70,7 @@ export const ModelVersionPopularity = ({
     { enabled: features.auctions }
   );
 
+  if (versionId === 1733399) return <></>;
   if (!features.auctions) return <></>;
   // if we want to show this for non checkpoints, simply remove this line
   if (!isCheckpoint) return <></>;
