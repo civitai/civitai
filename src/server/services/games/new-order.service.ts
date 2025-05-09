@@ -325,7 +325,7 @@ export async function addImageRating({
 
         if (status === NewOrderImageRatingStatus.AcolyteFailed) {
           const wrongAnswerCount = await acolyteFailedJudgments.increment({ id: playerId });
-          if (wrongAnswerCount >= ACOLYTE_WRONG_ANSWER_LIMIT) {
+          if (wrongAnswerCount > ACOLYTE_WRONG_ANSWER_LIMIT) {
             // Smite player:
             await smitePlayer({
               playerId,
@@ -333,6 +333,7 @@ export async function addImageRating({
               reason: 'Exceeded wrong answer limit',
               size: 10,
             });
+            await acolyteFailedJudgments.reset({ id: playerId });
           }
         } else if (levelAfterRating.level > currentLevel.level) {
           // Cleanup all smites & reset failed judgments
