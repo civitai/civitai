@@ -318,7 +318,7 @@ async function handleSuccess({
     const tagsFromTagsOnImageDetails = await dbWrite.$queryRaw<
       { name: string; nsfwLevel: number }[]
     >`
-      SELECT t.name, t."nsfwLevel",
+      SELECT t.name, t."nsfwLevel"
       FROM "TagsOnImageDetails" toi
       JOIN "Tag" t ON t.id = toi."tagId"
       WHERE toi."imageId" = ${id} AND toi.automated AND NOT toi.disabled
