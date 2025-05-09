@@ -1321,7 +1321,7 @@ export const newOrderConfig = {
   baseExp: 100,
   blessedBuzzConversionRatio: 0.001,
   smiteSize: 10,
-  welcomeImageUrl: '3a921959-523e-4254-8833-f0185e9450f2',
+  welcomeImageUrl: 'f2a97014-c0e2-48ba-bb7d-99435922850b',
   cosmetics: {
     badgeIds: { acolyte: 858, knight: 859, templar: 860 },
   },

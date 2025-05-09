@@ -8,7 +8,7 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
       size="lg"
       onClose={onClose}
       opened={opened}
-      title={<h1 className="text-xl font-semibold text-orange-5">What is Knights of New Order?</h1>}
+      title={<h1 className="text-xl font-semibold text-gold-9">What is Knights of New Order?</h1>}
       centered
     >
       <div className="flex flex-col gap-4">
@@ -18,7 +18,7 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
           correct ratings. Players progress through the ranks of the Order, moderating content while
           earning rewards.
         </p>
-        <h2 className="text-lg font-semibold text-orange-5">Ranks of the New Order</h2>
+        <h2 className="text-lg font-semibold text-gold-9">Ranks of the New Order</h2>
         <div className="flex flex-col gap-1">
           <h3 className="font-semibold">Acolyte (Training Rank)</h3>
           <p>
@@ -54,7 +54,7 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
             may earn the right to stand among them.
           </p>
         </div>
-        <h2 className="text-lg font-semibold text-orange-5">Mechanics</h2>
+        <h2 className="text-lg font-semibold text-gold-9">Mechanics</h2>
         <p>
           The following only applies once players reach{' '}
           <span className="font-semibold">Knight</span> or{' '}
@@ -119,7 +119,7 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
             </li>
           </ul>
         </div>
-        <h2 className="text-lg font-semibold text-orange-5">Join the Order</h2>
+        <h2 className="text-lg font-semibold text-gold-9">Join the Order</h2>
         <p>
           Join us now and experience the excitement of Knights of New Order. Will you rise to the
           challenge and become a legendary knight?

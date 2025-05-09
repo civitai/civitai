@@ -1,13 +1,11 @@
-import { Button, ThemeIcon } from '@mantine/core';
-import { IconShieldStar } from '@tabler/icons-react';
+import { Button } from '@mantine/core';
+import Image from 'next/image';
 import { useCallback, useMemo, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useJoinKnightsNewOrder } from '~/components/Games/KnightsNewOrder.utils';
 import { NewOrderRulesModal } from '~/components/Games/NewOrder/NewOrderRulesModal';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { newOrderConfig } from '~/server/common/constants';
 
 export function NewOrderJoin() {
   const { join, isLoading } = useJoinKnightsNewOrder();
@@ -39,7 +37,12 @@ export function NewOrderJoin() {
   const joinButton = useMemo(
     () => (
       <LoginRedirect reason="knights-new-order">
-        <Button color="orange.5" size="lg" onClick={handleJoin} loading={isLoading} fullWidth>
+        <Button
+          className="bg-gold-9 text-white hover:bg-gold-7"
+          onClick={handleJoin}
+          loading={isLoading}
+          fullWidth
+        >
           Join Game
         </Button>
       </LoginRedirect>
@@ -50,37 +53,33 @@ export function NewOrderJoin() {
   return (
     <div className="flex size-full items-center justify-center p-4">
       <div className="mx-auto flex w-full max-w-[448px] flex-col items-center gap-4 text-center">
-        {/* <div className="max-w-xs overflow-hidden rounded-md">
-          <EdgeMedia
-            type="image"
+        <div className="relative max-w-xs overflow-hidden rounded-md">
+          <Image
             className="size-full object-cover"
-            src={newOrderConfig.welcomeImageUrl}
-            width={1024}
-            alt="Title screen for knights of new order showing a knight in full plate armor holding a sword in a field with a castle in the distant"
+            alt="A knight in full plate armor and cape holding a sword wrapped in lighting animated"
+            src="/images/games/new-order-animated-bg.webp"
+            width={360}
+            height={560}
           />
-        </div> */}
-        <ThemeIcon
-          className="rounded-full border border-orange-5"
-          size={128}
-          color="orange"
-          variant="light"
-        >
-          <IconShieldStar className="size-16" />
-        </ThemeIcon>
-        <h1 className="text-4xl font-bold tracking-tight text-orange-5 md:text-5xl">
-          Knights of New Order
-        </h1>
-        <p>Forge your destiny in a realm of honor and glory</p>
-        {joinButton}
-        <Button
-          className="mx-12 text-orange-5"
-          variant="white"
-          size="md"
-          onClick={() => setOpened(true)}
-          fullWidth
-        >
-          Learn More
-        </Button>
+          <div className="absolute bottom-0 left-0 flex w-full flex-col gap-2 p-4">
+            <Image
+              className="size-full object-contain"
+              alt="Title screen for knights of new order"
+              src="/images/games/new-order-title.png"
+              width={1024}
+              height={430}
+            />
+            {joinButton}
+            <Button
+              className="text-gold-9"
+              color="dark.9"
+              onClick={() => setOpened(true)}
+              fullWidth
+            >
+              Learn More
+            </Button>
+          </div>
+        </div>
       </div>
       <NewOrderRulesModal opened={opened} onClose={() => setOpened(false)} footer={joinButton} />
     </div>
