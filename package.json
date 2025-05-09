@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.714",
+  "version": "5.0.715",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -228,7 +228,7 @@
     "trie-memoize": "^1.2.0",
     "unfurl.js": "^6.4.0",
     "unified": "^11.0.5",
-    "use-sound": "^4.0.1",
+    "use-sound": "^5.0.0",
     "uuid": "^9.0.0",
     "xml2js": "^0.6.2",
     "zod": "^3.23.8",

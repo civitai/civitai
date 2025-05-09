@@ -101,10 +101,17 @@ export function getRandomInt(min: number, max: number) {
   return Math.floor(Math.random() * (intMax - intMin + 1)) + intMin;
 }
 
-export function numberWithCommas(value: number | string | undefined) {
-  return value != null && !Number.isNaN(typeof value === 'string' ? parseFloat(value) : value)
-    ? `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-    : '';
+export function numberWithCommas(value: number | string | undefined, opts?: { decimals?: number }) {
+  if (value == null || Number.isNaN(typeof value === 'string' ? parseFloat(value) : value)) {
+    return '';
+  }
+
+  const numericValue = typeof value === 'string' ? parseFloat(value) : value;
+
+  const formattedValue =
+    opts?.decimals != null ? numericValue.toFixed(opts.decimals) : numericValue.toString();
+
+  return formattedValue.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
 export function formatPriceForDisplay(

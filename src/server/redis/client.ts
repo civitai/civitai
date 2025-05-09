@@ -403,6 +403,20 @@ export const REDIS_SYS_KEYS = {
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
   },
+  NEW_ORDER: {
+    EXP: 'new-order:exp',
+    FERVOR: 'new-order:fervor',
+    BUZZ: 'new-order:blessed-buzz',
+    SMITE: 'new-order:smite-progress',
+    QUEUES: 'new-order:queues',
+    RATINGS: 'new-order:ratings',
+    MATCHES: 'new-order:matches',
+    JUDGEMENTS: {
+      ALL: 'new-order:judgments:all',
+      CORRECT: 'new-order:judgments:correct',
+      ACOLYTE_FAILED: 'new-order:judgments:acolyte-failed',
+    },
+  },
 } as const;
 
 // Cached data
@@ -470,6 +484,9 @@ export const REDIS_KEYS = {
       IMAGES: 'packed:caches:mod-rules:images',
     },
     RESOURCE_OVERRIDES: 'packed:caches:resource-overrides',
+    NEW_ORDER: {
+      RANKS: 'new-order:ranks',
+    },
     TOP_EARNERS: 'packed:caches:top-earners',
   },
   RESEARCH: {
@@ -535,6 +552,9 @@ export const REDIS_KEYS = {
     POOL_VALUE: 'packed:caches:creator-program:pool-value',
     POOL_SIZE: 'packed:caches:creator-program:pool-size',
     POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
+  },
+  NEW_ORDER: {
+    RATED: 'new-order:rated',
   },
 } as const;
 

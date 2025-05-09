@@ -162,6 +162,8 @@ export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
 
+export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -408,6 +410,7 @@ export interface User {
   bids?: Bid[];
   recurringBids?: BidRecurring[];
   moderationRules?: ModerationRule[];
+  playerInfo?: NewOrderPlayer | null;
 }
 
 export interface CustomerSubscription {
@@ -2656,6 +2659,42 @@ export interface ModerationRule {
   reason: string | null;
   createdById: number;
   createdBy?: User;
+}
+
+export interface NewOrderPlayer {
+  userId: number;
+  user?: User;
+  rankType: NewOrderRankType;
+  rank?: NewOrderRank;
+  startAt: Date;
+  exp: number;
+  fervor: number;
+  smiteReceived?: NewOrderSmite[];
+  smiteGiven?: NewOrderSmite[];
+}
+
+export interface NewOrderRank {
+  type: NewOrderRankType;
+  name: string;
+  minExp: number;
+  createdAt: Date;
+  updatedAt: Date;
+  iconUrl: string | null;
+  players?: NewOrderPlayer[];
+}
+
+export interface NewOrderSmite {
+  id: number;
+  targetPlayerId: number;
+  targetPlayer?: NewOrderPlayer;
+  givenById: number;
+  givenBy?: NewOrderPlayer;
+  size: number;
+  remaining: number;
+  reason: string | null;
+  createdAt: Date;
+  cleansedAt: Date | null;
+  cleansedReason: string | null;
 }
 
 export interface QuestionRank {
