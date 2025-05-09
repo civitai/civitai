@@ -286,12 +286,14 @@ export const getHomeBlockData = async ({
       );
 
       const filteredModelData: typeof validModelData = [];
-      const creatorsSeen = new Set<number>();
+      const creatorsSeen: Record<number, number> = {};
+      const maxEntries = 3;
 
       validModelData.forEach((md) => {
-        if (!creatorsSeen.has(md.user.id)) {
+        const creatorSeen = creatorsSeen[md.user.id] ?? 0;
+        if (creatorSeen < maxEntries) {
           filteredModelData.push(md);
-          creatorsSeen.add(md.user.id);
+          creatorsSeen[md.user.id] = creatorSeen + 1;
         }
       });
 
