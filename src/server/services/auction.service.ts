@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import dayjs from 'dayjs';
 import { uniq } from 'lodash-es';
 import { getModelTypesForAuction, miscAuctionName } from '~/components/Auction/auction.utils';
 import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
@@ -200,8 +201,12 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
 };
 
 export type GetAuctionBySlugReturn = AsyncReturnType<typeof getAuctionBySlug>;
-export async function getAuctionBySlug({ slug, date }: GetAuctionBySlugInput) {
-  const now = date ?? new Date();
+export async function getAuctionBySlug({ slug, d }: GetAuctionBySlugInput) {
+  const now = dayjs
+    .utc()
+    .add(d ?? 0, 'day')
+    .startOf('day')
+    .toDate();
 
   const auction = await dbWrite.auction.findFirst({
     where: { startAt: { lte: now }, endAt: { gt: now }, auctionBase: { slug } },
