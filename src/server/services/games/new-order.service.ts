@@ -854,6 +854,7 @@ export async function getImagesQueue({
     where: {
       id: { in: imageIds },
       post: !isModerator ? { publishedAt: { lt: new Date() } } : undefined,
+      nsfwLevel: isModerator ? undefined : { notIn: [0, NsfwLevel.Blocked] },
     },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
