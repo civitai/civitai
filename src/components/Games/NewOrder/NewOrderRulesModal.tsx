@@ -122,7 +122,17 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
         <h2 className="text-lg font-semibold text-gold-9">Join the Order</h2>
         <p>
           Join us now and experience the excitement of Knights of New Order. Will you rise to the
-          challenge and become a legendary knight?
+          challenge and become a legendary knight? For further information, you can checkout the
+          official{' '}
+          <a
+            className="text-blue-5 underline"
+            href="https://education.civitai.com/knights-of-the-new-order-minigame/"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            guide
+          </a>
+          .
         </p>
         {footer}
       </div>
