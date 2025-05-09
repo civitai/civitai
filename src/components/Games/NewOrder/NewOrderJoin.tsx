@@ -51,7 +51,12 @@ export function NewOrderJoin() {
   );
 
   return (
-    <div className="flex size-full items-center justify-center p-4">
+    <div
+      className="-mt-3 flex size-full items-center justify-center p-4"
+      style={{
+        background: 'radial-gradient(circle, #133554 0%, #101113 50%, #101113 100%)',
+      }}
+    >
       <div className="mx-auto flex w-full max-w-[448px] flex-col items-center gap-4 text-center">
         <div className="relative max-w-xs overflow-hidden rounded-md">
           <Image

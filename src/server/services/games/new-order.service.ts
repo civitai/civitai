@@ -27,6 +27,7 @@ import {
   AddImageRatingInput,
   CleanseSmiteInput,
   GetHistorySchema,
+  GetImagesQueueSchema,
   SmitePlayerInput,
 } from '~/server/schema/games/new-order.schema';
 import { ImageMetadata } from '~/server/schema/media.schema';
@@ -815,17 +816,19 @@ export async function addImageToQueue({
 export async function getImagesQueue({
   playerId,
   imageCount = 100,
+  queueType,
   isModerator,
-}: {
+}: GetImagesQueueSchema & {
   playerId: number;
-  imageCount?: number;
   isModerator?: boolean;
 }) {
   const player = await getPlayerById({ playerId });
 
   const imageIds: number[] = [];
   const rankPools = isModerator
-    ? poolCounters.Inquisitor
+    ? queueType
+      ? poolCounters[queueType]
+      : poolCounters.Inquisitor
     : player.rankType === NewOrderRankType.Templar
     ? [...poolCounters.Templar, ...poolCounters.Knight]
     : poolCounters[player.rankType];

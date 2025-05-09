@@ -17,6 +17,7 @@ import {
 import {
   AddImageRatingInput,
   GetHistoryInput,
+  GetImagesQueueSchema,
   GetPlayersInfiniteSchema,
 } from '~/server/schema/games/new-order.schema';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
@@ -177,10 +178,13 @@ export const useJoinKnightsNewOrder = () => {
   };
 };
 
-export const useQueryKnightsNewOrderImageQueue = (opts?: { enabled?: boolean }) => {
+export const useQueryKnightsNewOrderImageQueue = (
+  filter?: GetImagesQueueSchema,
+  opts?: { enabled?: boolean }
+) => {
   const { playerData } = useJoinKnightsNewOrder();
 
-  const { data = [], ...rest } = trpc.games.newOrder.getImagesQueue.useQuery(undefined, {
+  const { data = [], ...rest } = trpc.games.newOrder.getImagesQueue.useQuery(filter, {
     ...opts,
     enabled: !!playerData && opts?.enabled !== false,
   });
@@ -206,7 +210,7 @@ export const useQueryInfiniteKnightsNewOrderHistory = (
   return { images: flatData, ...rest };
 };
 
-export const useAddImageRating = () => {
+export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => {
   const queryUtils = trpc.useUtils();
   const addRatingMutation = trpc.games.newOrder.addRating.useMutation({
     onMutate: async (payload) => {
@@ -214,7 +218,7 @@ export const useAddImageRating = () => {
       await queryUtils.games.newOrder.getPlayer.cancel();
 
       const prevQueue = queryUtils.games.newOrder.getImagesQueue.getData();
-      queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
+      queryUtils.games.newOrder.getImagesQueue.setData(opts?.filters, (old) => {
         if (!old) return old;
 
         return old.filter((image) => image.id !== payload.imageId);
@@ -256,7 +260,7 @@ export const useAddImageRating = () => {
 
   const handleSkipImage = async ({ imageId }: { imageId: number }) => {
     await queryUtils.games.newOrder.getImagesQueue.cancel();
-    queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
+    queryUtils.games.newOrder.getImagesQueue.setData(opts?.filters, (old) => {
       if (!old) return old;
 
       return old.filter((image) => image.id !== imageId);

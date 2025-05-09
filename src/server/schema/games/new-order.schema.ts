@@ -4,11 +4,13 @@ import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderDamnedReason, NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
-export type GetImageQueueSchema = z.infer<typeof getImageQueueSchema>;
-export const getImageQueueSchema = z.object({
+export type GetImagesQueueSchema = z.input<typeof getImagesQueueSchema>;
+export const getImagesQueueSchema = z.object({
   // TODO: add playerId to the schema
   imageCount: z.number().optional().default(20),
+  queueType: z.nativeEnum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const).optional(),
 });
 
 export type GetPlayersInfiniteSchema = z.infer<typeof getPlayersInfiniteSchema>;
