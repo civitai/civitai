@@ -51,7 +51,12 @@ export function NewOrderJoin() {
   );
 
   return (
-    <div className="flex size-full items-center justify-center p-4">
+    <div
+      className="-mt-3 flex size-full items-center justify-center p-4"
+      style={{
+        background: 'radial-gradient(circle, #133554 0%, #101113 50%, #101113 100%)',
+      }}
+    >
       <div className="mx-auto flex w-full max-w-[448px] flex-col items-center gap-4 text-center">
         <div className="relative max-w-xs overflow-hidden rounded-md">
           <Image
@@ -60,6 +65,7 @@ export function NewOrderJoin() {
             src="/images/games/new-order-animated-bg.webp"
             width={360}
             height={560}
+            unoptimized
           />
           <div className="absolute bottom-0 left-0 flex w-full flex-col gap-2 p-4">
             <Image
