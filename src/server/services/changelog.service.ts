@@ -8,13 +8,14 @@ import {
 import { throwDbError } from '~/server/utils/errorHandling';
 
 export type Changelog = AsyncReturnType<typeof getChangelogs>['items'][number];
-export const getChangelogs = async (input: GetChangelogsInput) => {
-  console.log(input);
-  const { limit, cursor, sortDir, search, dateBefore, dateAfter, types, tags } = input;
+export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: boolean }) => {
+  const { isModerator, limit, cursor, sortDir, search, dateBefore, dateAfter, types, tags } = input;
 
-  const where: Prisma.ChangelogWhereInput = {
-    disabled: false,
-  };
+  const where: Prisma.ChangelogWhereInput = {};
+
+  if (!isModerator) {
+    where['disabled'] = false;
+  }
 
   if (search && search.length > 0) {
     where['OR'] = [
@@ -33,7 +34,13 @@ export const getChangelogs = async (input: GetChangelogsInput) => {
     : dateAfter.getTime() > now.getTime()
     ? now
     : dateAfter;
-  const dateBeforeMod = !dateBefore ? now : dateBefore.getTime() > now.getTime() ? now : dateBefore;
+  const dateBeforeMod = !dateBefore
+    ? isModerator
+      ? new Date('1970-01-01')
+      : now
+    : dateBefore.getTime() > now.getTime()
+    ? now
+    : dateBefore;
 
   if (dateAfterMod) {
     where['effectiveAt'] = { lte: dateBeforeMod, gte: dateAfterMod };

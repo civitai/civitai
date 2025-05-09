@@ -89,6 +89,12 @@ const CreateChangelog = () => {
     // shouldUnregister: false,
   });
 
+  const formTags = form.watch('tags');
+  const allTagData = useMemo(
+    () => Array.from(new Set([...(formTags ?? []), ...tagData])),
+    [formTags, tagData]
+  );
+
   const handleClose = () => {
     form.reset(defaultValues);
     setOpened(false);
@@ -148,7 +154,7 @@ const CreateChangelog = () => {
             <InputMultiSelect
               name="tags"
               label="Tags"
-              data={tagData}
+              data={allTagData}
               loading={loadingTagData}
               limit={50}
               placeholder="Tags..."

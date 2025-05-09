@@ -17,7 +17,7 @@ export const changelogRouter = router({
   getInfinite: publicProcedure
     .input(getChangelogsInput)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
-    .query(({ input }) => getChangelogs(input)),
+    .query(({ input, ctx }) => getChangelogs({ ...input, isModerator: ctx.user?.isModerator })),
   create: moderatorProcedure
     .input(createChangelogInput)
     .mutation(({ input }) => createChangelog(input)),
