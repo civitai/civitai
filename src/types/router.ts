@@ -156,3 +156,9 @@ export type CompensationPool = RouterOutput['creatorProgram']['getCompensationPo
 
 type AuctionRouter = RouterOutput['auction'];
 export type AuctionBySlug = AuctionRouter['getBySlug'];
+
+type NewOrderRouter = RouterOutput['games']['newOrder'];
+export type GetJudgmentHistoryItem = NewOrderRouter['getHistory']['items'][number];
+export type GetPlayer = NewOrderRouter['getPlayer'];
+export type GetPlayersItem = NewOrderRouter['getPlayers']['items'][number];
+export type GetImagesQueueItem = NewOrderRouter['getImagesQueue'][number];
