@@ -585,7 +585,7 @@ async function handleSuccess({
           rankType: NewOrderRankType.Knight,
         };
 
-        if (nsfw) queueDetails.priority = 2;
+        if (flags.nsfw) queueDetails.priority = 2;
 
         if (reviewKey) {
           data.needsReview = reviewKey;
