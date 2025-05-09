@@ -593,13 +593,14 @@ async function handleSuccess({
 
           if (reviewKey === 'minor') queueDetails.priority = 1;
           if (reviewKey === 'poi') queueDetails.priority = 2;
+        } else {
+          // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
+          await addImageToQueue({
+            imageIds: id,
+            rankType: queueDetails.rankType,
+            priority: queueDetails.priority,
+          });
         }
-        // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
-        await addImageToQueue({
-          imageIds: id,
-          rankType: queueDetails.rankType,
-          priority: queueDetails.priority,
-        });
         // #endregion
       }
     }
