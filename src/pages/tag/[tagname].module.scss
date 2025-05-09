@@ -1,0 +1,46 @@
+/* Define styles using Mantine variables and light-dark function */
+.banner {
+  margin-top: calc(-1 * var(--mantine-spacing-md));
+  padding-top: calc(var(--mantine-spacing-xl) * 2);
+  padding-bottom: calc(var(--mantine-spacing-xl) * 2);
+  background-color: light-dark(var(--mantine-color-dark-8), var(--mantine-color-gray-1));
+
+  @container (max-width: var(--mantine-breakpoint-xs)) {
+    padding-top: var(--mantine-spacing-md);
+    padding-bottom: var(--mantine-spacing-md);
+  }
+}
+
+.image {
+  width: 128px;
+  border-radius: var(--mantine-radius-sm);
+  overflow: hidden;
+}
+
+.wrapper {
+  align-items: flex-start;
+
+  @container (max-width: var(--mantine-breakpoint-xs)) {
+    align-items: center;
+  }
+}
+
+.outsideImage {
+  display: none;
+
+  @container (max-width: var(--mantine-breakpoint-xs)) {
+    display: block;
+  }
+}
+
+.insideImage {
+  @container (max-width: var(--mantine-breakpoint-xs)) {
+    display: none;
+  }
+}
+
+.card {
+  @container (max-width: var(--mantine-breakpoint-xs)) {
+    width: 100%;
+  }
+}
