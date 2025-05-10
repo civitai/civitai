@@ -19,7 +19,6 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { env } from '~/env/client';
-import { enterFall, jelloVertical } from '~/libs/animations';
 import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -85,8 +84,7 @@ export default function PurchaseBuzz() {
       <Container size="md" mb="lg">
         <Center
           sx={{
-            // animation: `${jelloVerical} 2s 1s ease-in-out`,
-            animationName: `${enterFall}, ${jelloVertical}`,
+            animationName: `enterFall, jelloVertical`,
             animationDuration: `1.5s, 2s`,
             animationDelay: `0s, 1.5s`,
             animationIterationCount: '1, 1',

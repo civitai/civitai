@@ -16,12 +16,6 @@ export const ViewMoreItem = forwardRef<HTMLDivElement, AutocompleteItem>(
 
 ViewMoreItem.displayName = 'SearchItem';
 
-export const useSearchItemStyles = createStyles((theme) => ({
-  highlighted: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.yellow[5] : theme.colors.yellow[2],
-  },
-}));
-
 export function ActionIconBadge(props: Omit<IconBadgeProps, 'color'>) {
   const theme = useMantineTheme();
 

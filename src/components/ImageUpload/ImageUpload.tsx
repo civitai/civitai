@@ -15,7 +15,6 @@ import {
   Alert,
   Box,
   Center,
-  createStyles,
   Group,
   HoverCard,
   Input,
@@ -26,6 +25,8 @@ import {
   Paper,
   Stack,
   Text,
+  useMantineColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate, useListState, UseListStateHandlers } from '@mantine/hooks';
@@ -48,6 +49,8 @@ import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { formatBytes } from '~/utils/number-helpers';
+import styles from './ImageUpload.module.scss';
+import clsx from 'clsx';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -76,8 +79,9 @@ export function ImageUpload({
   reset = 0,
   ...inputWrapperProps
 }: Props) {
-  const { classes, theme, cx } = useStyles();
   const isClient = useIsClient();
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
@@ -140,13 +144,13 @@ export function ImageUpload({
           accept={IMAGE_MIME_TYPE}
           onDrop={handleDrop}
           maxFiles={max - files.length}
-          className={cx({ [classes.disabled]: dropzoneDisabled })}
+          className={clsx({ [styles.disabled]: dropzoneDisabled })}
           styles={(theme) => ({
             root:
               !!inputWrapperProps.error || !!error
                 ? {
                     borderColor: theme.colors.red[6],
-                    marginBottom: theme.spacing.xs / 2,
+                    marginBottom: `var(--mantine-spacing-xs) / 2)`,
                   }
                 : undefined,
           })}
@@ -158,14 +162,14 @@ export function ImageUpload({
               <IconUpload
                 size={50}
                 stroke={1.5}
-                color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+                color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
               />
             </Dropzone.Accept>
             <Dropzone.Reject>
               <IconX
                 size={50}
                 stroke={1.5}
-                color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+                color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
               />
             </Dropzone.Reject>
             <Dropzone.Idle>
@@ -305,7 +309,7 @@ function UploadedImage({
       {showLoading && (
         <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <Overlay blur={2} zIndex={10} color="#000" />
-          <Stack gap="xs" sx={{ zIndex: 11 }} align="center">
+          <Stack gap="xs" style={{ zIndex: 11 }} align="center">
             <Loader size="lg" />
             {image.message && <Text weight={600}>{image.message}...</Text>}
           </Stack>
@@ -319,7 +323,7 @@ function UploadedImage({
               variant="filled"
               radius={0}
               p={4}
-              sx={{
+              style={{
                 position: 'absolute',
                 bottom: 0,
                 right: 0,
@@ -345,20 +349,7 @@ function UploadedImage({
           </HoverCard.Dropdown>
         </HoverCard>
       )}
-      <Group
-        sx={(theme) => ({
-          position: 'absolute',
-          background: theme.fn.rgba(theme.colors.dark[9], 0.6),
-          borderBottomLeftRadius: theme.radius.sm,
-          top: 0,
-          right: 0,
-          zIndex: 11,
-        })}
-        align="center"
-        justify="flex-end"
-        p={4}
-        gap={4}
-      >
+      <Group className={styles.overlayGroup} align="center" justify="flex-end" p={4} gap={4}>
         {!showLoading && (!image.status || image.status === 'complete') && (
           <>
             {/* Disable as part of move to advanced self-mod */}
@@ -686,43 +677,43 @@ function UploadedImage({
 //   );
 // }
 
-const useStyles = createStyles((theme, _params) => ({
-  sortItem: {
-    position: 'relative',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+// const useStyles = createStyles((theme, _params) => ({
+//   sortItem: {
+//     position: 'relative',
+//     display: 'flex',
+//     alignItems: 'center',
+//     justifyContent: 'center',
+//   },
 
-  draggableIcon: {
-    position: 'absolute',
-    top: '4px',
-    right: 0,
-  },
+//   draggableIcon: {
+//     position: 'absolute',
+//     top: '4px',
+//     right: 0,
+//   },
 
-  checkbox: {
-    position: 'absolute',
-    top: '4px',
-    left: '4px',
-  },
+//   checkbox: {
+//     position: 'absolute',
+//     top: '4px',
+//     left: '4px',
+//   },
 
-  meta: {
-    position: 'absolute',
-    bottom: '4px',
-    right: '4px',
-  },
+//   meta: {
+//     position: 'absolute',
+//     bottom: '4px',
+//     right: '4px',
+//   },
 
-  fullWidth: {
-    width: '100%',
-  },
+//   fullWidth: {
+//     width: '100%',
+//   },
 
-  disabled: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-    cursor: 'not-allowed',
+//   disabled: {
+//     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+//     borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+//     cursor: 'not-allowed',
 
-    '& *': {
-      color: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[5],
-    },
-  },
-}));
+//     '& *': {
+//       color: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[5],
+//     },
+//   },
+// }));

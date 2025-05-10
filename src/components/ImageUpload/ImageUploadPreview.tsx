@@ -18,6 +18,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { UniqueIdentifier } from '@dnd-kit/core';
 import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons-react';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import clsx from 'clsx';
+import styles from './ImageUploadPreview.module.scss';
 
 //TODO - handle what to display when there is an error
 type Props = {
@@ -31,7 +33,6 @@ type Props = {
 export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
   ({ image, children, isPrimary, disabled, id, ...props }, ref) => {
     //eslint-disable-line
-    const { classes, cx } = useStyles({ isPrimary });
     const [ready, setReady] = useState(false);
 
     const sortable = useSortable({ id });
@@ -39,11 +40,15 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
     const { attributes, listeners, isDragging, setNodeRef, transform, transition } = sortable;
 
     const isDisabled = disabled || image?.status === 'blocked';
-    const style: CSSProperties = {
+    const style: CSSProperties & MixedObject = {
       transform: CSS.Transform.toString(transform),
       transition,
       cursor: isDragging ? 'grabbing' : !isDisabled ? 'pointer' : 'auto',
       touchAction: 'none',
+      // '--faded-opacity': faded ? '0.2' : '1',
+      '--is-primary-height': isPrimary ? '410px' : '200px',
+      '--is-primary-grid-row': isPrimary ? 'span 2' : 'auto',
+      '--is-primary-grid-column': isPrimary ? 'span 2' : 'auto',
     };
 
     if (!image) return null;
@@ -54,7 +59,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
     return (
       <Paper
         ref={setNodeRef}
-        className={cx(classes.root, { [classes.error]: image.status === 'blocked' })}
+        className={clsx(styles.root, { [styles.error]: image.status === 'blocked' })}
         {...props}
         radius="sm"
         style={{ ...style, ...props.style }}
@@ -64,14 +69,14 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
             src={image.previewUrl}
             type={MediaType.image}
             width={450}
-            className={classes.image}
+            className={styles.image}
           />
         ) : image.url && image.url != image.previewUrl ? (
           <EdgeMedia
             src={image.url}
             type={MediaType.image}
             width={450}
-            className={classes.image}
+            className={styles.image}
             onLoad={() => {
               image.onLoad?.();
               setReady(true);
@@ -121,8 +126,8 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
         )}
 
         {!isDisabled && (
-          <Center className={classes.draggable} {...listeners} {...attributes}>
-            <Paper className={classes.draggableIcon} p="xl" radius={100}>
+          <Center className={styles.draggable} {...listeners} {...attributes}>
+            <Paper className={styles.draggableIcon} p="xl" radius={100}>
               <IconArrowsMaximize
                 size={48}
                 stroke={1.5}
@@ -139,67 +144,67 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
 );
 ImageUploadPreview.displayName = 'ImagePreview';
 
-const useStyles = createStyles(
-  (
-    theme,
-    {
-      // index,
-      faded,
-      isPrimary,
-    }: {
-      // index: number;
-      faded?: boolean;
-      isPrimary?: boolean;
-    }
-  ) => {
-    const errorColors = theme.fn.variant({ variant: 'filled', color: 'red' });
-    return {
-      root: {
-        position: 'relative',
-        opacity: faded ? '0.2' : '1',
-        transformOrigin: '0 0',
-        height: isPrimary ? 410 : 200,
-        gridRowStart: isPrimary ? 'span 2' : undefined,
-        gridColumnStart: isPrimary ? 'span 2' : undefined,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundColor: 'grey',
-        overflow: 'hidden',
-      },
-      error: {
-        border: `1px solid ${errorColors.background}`,
-      },
-      draggableIcon: {
-        background: theme.fn.rgba('dark', 0.5),
-        height: '120px',
-        width: '120px',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-      },
-      image: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        objectFit: 'cover',
-        objectPosition: '50% 50%',
-      },
-      draggable: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        opacity: 0,
+// const useStyles = createStyles(
+//   (
+//     theme,
+//     {
+//       // index,
+//       faded,
+//       isPrimary,
+//     }: {
+//       // index: number;
+//       faded?: boolean;
+//       isPrimary?: boolean;
+//     }
+//   ) => {
+//     const errorColors = theme.fn.variant({ variant: 'filled', color: 'red' });
+//     return {
+//       root: {
+//         position: 'relative',
+//         opacity: faded ? '0.2' : '1',
+//         transformOrigin: '0 0',
+//         height: isPrimary ? 410 : 200,
+//         gridRowStart: isPrimary ? 'span 2' : undefined,
+//         gridColumnStart: isPrimary ? 'span 2' : undefined,
+//         backgroundSize: 'cover',
+//         backgroundPosition: 'center',
+//         backgroundColor: 'grey',
+//         overflow: 'hidden',
+//       },
+//       error: {
+//         border: `1px solid ${errorColors.background}`,
+//       },
+//       draggableIcon: {
+//         background: theme.fn.rgba('dark', 0.5),
+//         height: '120px',
+//         width: '120px',
+//         display: 'flex',
+//         justifyContent: 'center',
+//         alignItems: 'center',
+//       },
+//       image: {
+//         position: 'absolute',
+//         top: 0,
+//         left: 0,
+//         width: '100%',
+//         height: '100%',
+//         objectFit: 'cover',
+//         objectPosition: '50% 50%',
+//       },
+//       draggable: {
+//         position: 'absolute',
+//         top: 0,
+//         left: 0,
+//         right: 0,
+//         bottom: 0,
+//         opacity: 0,
 
-        // transition: '.3s ease-in-out opacity',
+//         // transition: '.3s ease-in-out opacity',
 
-        ['&:hover']: {
-          opacity: 1,
-        },
-      },
-    };
-  }
-);
+//         ['&:hover']: {
+//           opacity: 1,
+//         },
+//       },
+//     };
+//   }
+// );

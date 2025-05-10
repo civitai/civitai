@@ -7,7 +7,6 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import {
   ActionIconBadge,
-  useSearchItemStyles,
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -16,12 +15,12 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import styles from './common.module.scss';
 
 export const CollectionsSearchItem = forwardRef<
   HTMLDivElement,
   AutocompleteItem & { hit: SearchIndexDataMap['collections'][number] }
 >(({ value, hit, ...props }, ref) => {
-  const { classes } = useSearchItemStyles();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
@@ -67,7 +66,7 @@ export const CollectionsSearchItem = forwardRef<
       </Center>
       <Stack gap={8} sx={{ flex: '1 !important' }}>
         <Text>
-          <Highlight attribute="name" hit={hit} classNames={classes} />
+          <Highlight attribute="name" hit={hit} classNames={styles} />
         </Text>
         <UserAvatar size="xs" user={user} withUsername />
 

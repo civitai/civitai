@@ -1,0 +1,77 @@
+.controls {
+  position: absolute;
+  display: flex;
+  gap: 8px;
+  flex-wrap: nowrap;
+  padding: var(--mantine-spacing-xs); // Replace with Mantine's spacing variable
+  width: 100%;
+  justify-content: space-between;
+  bottom: 0;
+}
+
+.iosScroll {
+  @media (max-width: var(--mantine-breakpoint-md)) {
+
+    // Replace with Mantine's breakpoint variable
+    &::after {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      content: '';
+      pointer-events: none;
+    }
+  }
+}
+
+.playIndicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--mantine-color-white); // Replace with Mantine's white color variable
+  opacity: 0;
+  animation: fadeInOut 0.5s;
+  pointer-events: none;
+}
+
+.volumeControl {
+  z-index: 10;
+  display: flex;
+  position: relative;
+  flex-direction: column;
+  gap: 8px;
+
+  &:hover {
+    .volumeSlider {
+      display: block;
+    }
+  }
+}
+
+.volumeSlider {
+  display: none;
+  position: absolute;
+  line-height: 1;
+  padding: var(--mantine-spacing-xs); // Replace with Mantine's spacing variable
+  top: 0;
+  left: 0;
+  transform: translate(-33%, -170%) rotate(270deg);
+  z-index: 10;
+}
+
+.playButton {
+  width: 80px;
+  height: 80px;
+  color: var(--mantine-color-white); // Replace with Mantine's white color variable
+  background-color: rgba(0, 0, 0, 0.6);
+  padding: 20px;
+  border-radius: 50%;
+  box-shadow: 0 2px 2px 1px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  transition: background-color 200ms ease;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}

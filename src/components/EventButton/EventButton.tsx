@@ -1,7 +1,6 @@
 import { Box, BoxProps, createStyles } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconChristmasTree } from '@tabler/icons-react';
-import { wiggle } from '~/libs/animations';
 export const EventButton = ({ className, ...props }: Props) => {
   const { classes, cx } = useStyles();
 
@@ -35,7 +34,7 @@ const useStyles = createStyles((theme) => ({
     stroke: theme.colors.green[4],
 
     [`&:hover`]: {
-      animation: `${wiggle()} 750ms ease-in-out infinite`,
+      animation: `wiggle 750ms ease-in-out infinite`,
     },
   },
 }));

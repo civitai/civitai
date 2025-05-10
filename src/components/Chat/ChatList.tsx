@@ -5,7 +5,6 @@ import {
   Button,
   Center,
   createPolymorphicComponent,
-  createStyles,
   Divider,
   Group,
   GroupProps,
@@ -48,24 +47,26 @@ import { ChatListMessage } from '~/types/router';
 import { isApril1 } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import styles from './ChatList.module.scss';
+import clsx from 'clsx';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 
-export const chatListStyles = createStyles((theme) => ({
-  selectChat: {
-    cursor: 'pointer',
-    borderRadius: theme.spacing.xs,
-    padding: theme.spacing.xs,
-    paddingTop: '6px',
-    paddingBottom: '6px',
-    '&:hover': {
-      backgroundColor: theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.2),
-    },
-  },
-  selectedChat: {
-    backgroundColor: `${theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5)} !important`,
-  },
-}));
+// export const chatListStyles = createStyles((theme) => ({
+//   selectChat: {
+//     cursor: 'pointer',
+//     borderRadius: theme.spacing.xs,
+//     padding: theme.spacing.xs,
+//     paddingTop: '6px',
+//     paddingBottom: '6px',
+//     '&:hover': {
+//       backgroundColor: theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.2),
+//     },
+//   },
+//   selectedChat: {
+//     backgroundColor: `${theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5)} !important`,
+//   },
+// }));
 
 const statusMap = {
   [ChatMemberStatus.Invited]: 'Pending',
@@ -80,7 +81,6 @@ type StatusValues = (typeof statusMap)[StatusKeys];
 export function ChatList() {
   const { state, setState } = useChatContext();
   const currentUser = useCurrentUser();
-  const { classes, cx } = chatListStyles();
   const queryUtils = trpc.useUtils();
   const [searchInput, setSearchInput] = useState<string>('');
   const [activeTab, setActiveTab] = useState<StatusValues>('Active');
@@ -352,8 +352,8 @@ export function ChatList() {
                     key={d.id}
                     component={div}
                     wrap="nowrap"
-                    className={cx(classes.selectChat, {
-                      [classes.selectedChat]: d.id === state.existingChatId,
+                    className={clsx(styles.selectChat, {
+                      [styles.selectedChat]: d.id === state.existingChatId,
                     })}
                     initial={{ y: -20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}

@@ -1,0 +1,25 @@
+.divider {
+  flex: 1;
+  border-bottom: 0;
+  border: 1px solid;
+  border-color: light-dark(var(--mantine-color-gray-3),
+      var(--mantine-color-dark-5)); // Use Mantine's light-dark method for dynamic theming
+}
+
+.root {
+  @container (max-width: var(--mantine-breakpoint-md)) {
+    height: 100%;
+  }
+}
+
+.wrapper {
+  @container (max-width: var(--mantine-breakpoint-md)) {
+    height: 100%;
+  }
+}
+
+.input {
+  @container (max-width: var(--mantine-breakpoint-md)) {
+    height: 100%;
+  }
+}

@@ -1,0 +1,23 @@
+.label {
+  padding: 8px;
+  font-weight: 590;
+  line-height: 1;
+  font-size: 12px;
+
+  &[data-checked] {
+
+    &,
+    &:hover {
+      color: var(--mantine-color-white, #fff); // Replace with Mantine's white or black based on theme
+      border: 1px solid var(--mantine-primary-border-color); // Replace with Mantine's primary border color
+    }
+
+    &[data-variant="filled"] {
+      background-color: rgba(var(--mantine-primary-rgba), 0.2); // Replace with Mantine's primary RGBA color
+    }
+  }
+}
+
+.iconWrapper {
+  display: none;
+}

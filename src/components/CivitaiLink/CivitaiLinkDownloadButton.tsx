@@ -14,8 +14,6 @@ export function CivitaiLinkDownloadButton({
   href,
   isMember,
 }: LinkDownloadButtonProps) {
-  const { classes } = useStyles();
-
   return (
     <Flex direction="column" justify="space-between" align="center">
       <Button
@@ -33,7 +31,7 @@ export function CivitaiLinkDownloadButton({
         </Flex>
       </Button>
       {isMember ? (
-        <Text className={classes.buttonSecondary} mt={10}>
+        <Text fz={10} mt={10}>
           Not your OS? Check out all{' '}
           <Anchor
             href="https://github.com/civitai/civitai-link-desktop/releases/latest"
@@ -47,9 +45,3 @@ export function CivitaiLinkDownloadButton({
     </Flex>
   );
 }
-
-const useStyles = createStyles(() => ({
-  buttonSecondary: {
-    fontSize: 10,
-  },
-}));

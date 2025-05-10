@@ -21,7 +21,6 @@ import { useQueryCosmetic } from '~/components/Cosmetics/cosmetics.util';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { enterFall, jelloVertical } from '~/libs/animations';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -169,7 +168,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
           )}
           <Center
             sx={{
-              animationName: `${enterFall}, ${jelloVertical}`,
+              animationName: `enterFall, jelloVertical`,
               animationDuration: `1.5s, 2s`,
               animationDelay: `0s, 1.5s`,
               animationIterationCount: '1, 1',

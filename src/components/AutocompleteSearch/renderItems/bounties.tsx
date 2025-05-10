@@ -4,11 +4,7 @@ import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import React, { forwardRef } from 'react';
 import { Highlight } from 'react-instantsearch';
-import {
-  ActionIconBadge,
-  ViewMoreItem,
-  useSearchItemStyles,
-} from '~/components/AutocompleteSearch/renderItems/common';
+import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -18,13 +14,12 @@ import { constants } from '~/server/common/constants';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import styles from './common.module.scss';
 
 export const BountiesSearchItem = forwardRef<
   HTMLDivElement,
   AutocompleteItem & { hit: SearchIndexDataMap['bounties'][number] }
 >(({ value, hit, ...props }, ref) => {
-  const { classes } = useSearchItemStyles();
-
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { user, images, nsfwLevel, stats } = hit;
@@ -71,9 +66,9 @@ export const BountiesSearchItem = forwardRef<
           <Skeleton width="100px" height="100px" />
         )}
       </Center>
-      <Stack gap={8} sx={{ flex: '1 !important' }}>
+      <Stack gap={8} style={{ flex: '1 !important' }}>
         <Text>
-          <Highlight attribute="name" hit={hit} classNames={classes} />
+          <Highlight attribute="name" hit={hit} classNames={styles} />
         </Text>
         <UserAvatar size="xs" user={user} withUsername />
 

@@ -1,26 +1,32 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Badge, BadgeProps, Center, Group, Stack, Text } from '@mantine/core';
+import {
+  AutocompleteItem,
+  Badge,
+  BadgeProps,
+  Center,
+  Group,
+  Stack,
+  Text,
+  useMantineColorScheme,
+} from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import {
-  ActionIconBadge,
-  useSearchItemStyles,
-  ViewMoreItem,
-} from '~/components/AutocompleteSearch/renderItems/common';
+import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import styles from './common.module.scss';
 
 export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
   AutocompleteItem & { hit: SearchIndexDataMap['images'][number] }
 >(({ value, hit, ...props }, ref) => {
-  const { theme } = useSearchItemStyles();
+  const { colorScheme } = useMantineColorScheme();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
@@ -39,7 +45,7 @@ export const ImagesSearchItem = forwardRef<
     radius: 'xl',
     size: 'xs',
     color: 'gray',
-    variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
+    variant: colorScheme === 'dark' ? 'filled' : 'light',
   };
 
   const nsfw = !getIsSafeBrowsingLevel(hit.nsfwLevel);

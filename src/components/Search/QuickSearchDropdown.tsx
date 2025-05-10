@@ -32,6 +32,7 @@ import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
+import styles from './QuickSearchDropdown.module.scss';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -40,75 +41,75 @@ const meilisearch = instantMeiliSearch(
 );
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.
-const useStyles = createStyles((theme) => ({
-  root: {
-    flexGrow: 1,
+// const useStyles = createStyles((theme) => ({
+//   root: {
+//     flexGrow: 1,
 
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-      flexGrow: 1,
-    },
-  },
-  wrapper: {
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  input: {
-    borderRadius: 0,
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//       flexGrow: 1,
+//     },
+//   },
+//   wrapper: {
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//     },
+//   },
+//   input: {
+//     borderRadius: 0,
 
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  dropdown: {
-    [containerQuery.smallerThan('sm')]: {
-      marginTop: '-7px',
-    },
-  },
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//     },
+//   },
+//   dropdown: {
+//     [containerQuery.smallerThan('sm')]: {
+//       marginTop: '-7px',
+//     },
+//   },
 
-  targetSelectorRoot: {
-    width: '110px',
+//   targetSelectorRoot: {
+//     width: '110px',
 
-    [containerQuery.smallerThan('sm')]: {
-      width: '25%',
-    },
-  },
+//     [containerQuery.smallerThan('sm')]: {
+//       width: '25%',
+//     },
+//   },
 
-  targetSelectorInput: {
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    paddingRight: '18px',
+//   targetSelectorInput: {
+//     borderTopRightRadius: 0,
+//     borderBottomRightRadius: 0,
+//     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
+//     paddingRight: '18px',
 
-    '&:not(:focus)': {
-      borderRightStyle: 'none',
-    },
+//     '&:not(:focus)': {
+//       borderRightStyle: 'none',
+//     },
 
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//     },
+//   },
 
-  targetSelectorRightSection: {
-    pointerEvents: 'none',
-  },
+//   targetSelectorRightSection: {
+//     pointerEvents: 'none',
+//   },
 
-  searchButton: {
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+//   searchButton: {
+//     borderTopLeftRadius: 0,
+//     borderBottomLeftRadius: 0,
+//     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
+//     color: theme.colorScheme === 'dark' ? theme.white : theme.black,
 
-    '&:hover': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.gray[4],
-    },
+//     '&:hover': {
+//       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.gray[4],
+//     },
 
-    [containerQuery.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-}));
+//     [containerQuery.smallerThan('md')]: {
+//       display: 'none',
+//     },
+//   },
+// }));
 
 export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   supportedIndexes?: SearchIndexKey[];
@@ -192,7 +193,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   // const currentUser = useCurrentUser();
   const { query, refine: setQuery } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
-  const { classes } = useStyles();
   const features = useFeatureFlags();
   const [search, setSearch] = useState(query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -225,13 +225,13 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   }, [debouncedSearch, query]);
 
   return (
-    <Group className={classes.wrapper} gap={0} wrap="nowrap">
+    <Group className={styles.wrapper} gap={0} wrap="nowrap">
       {!!showIndexSelect && (
         <Select
           classNames={{
-            root: classes.targetSelectorRoot,
-            input: classes.targetSelectorInput,
-            rightSection: classes.targetSelectorRightSection,
+            root: styles.targetSelectorRoot,
+            input: styles.targetSelectorInput,
+            rightSection: styles.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
           defaultValue={availableIndexes[0]}
@@ -251,7 +251,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       )}
       <ClearableAutoComplete
         key={indexName}
-        classNames={classes}
+        classNames={styles}
         placeholder={placeholder ?? 'Search Civitai'}
         type="search"
         maxDropdownHeight={300}

@@ -16,7 +16,6 @@ import { z } from 'zod';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { enterFall, jelloVertical } from '~/libs/animations';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CurrencyConfig } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -102,7 +101,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
           )}
           <Center
             sx={{
-              animationName: `${enterFall}, ${jelloVertical}`,
+              animationName: `enterFall, jelloVertical`,
               animationDuration: `1.5s, 2s`,
               animationDelay: `0s, 1.5s`,
               animationIterationCount: '1, 1',

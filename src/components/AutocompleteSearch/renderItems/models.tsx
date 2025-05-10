@@ -1,11 +1,17 @@
-import { AutocompleteItem, Badge, Center, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import {
+  AutocompleteItem,
+  Badge,
+  Center,
+  Group,
+  Stack,
+  Text,
+  ThemeIcon,
+  useMantineTheme,
+} from '@mantine/core';
 import { IconBrush, IconDownload, IconMessageCircle2, IconPhotoOff } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
 import { Highlight } from 'react-instantsearch';
-import {
-  useSearchItemStyles,
-  ViewMoreItem,
-} from '~/components/AutocompleteSearch/renderItems/common';
+import { ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -16,13 +22,14 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import styles from './common.module.scss';
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
   AutocompleteItem & { hit: SearchIndexDataMap['models'][number] }
 >(({ value, hit, ...props }, ref) => {
   const features = useFeatureFlags();
-  const { classes, theme } = useSearchItemStyles();
+  const theme = useMantineTheme();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
@@ -71,7 +78,7 @@ export const ModelSearchItem = forwardRef<
       <Stack gap={4} sx={{ flex: '1 !important' }}>
         <Group gap={8}>
           <Text>
-            <Highlight attribute="name" hit={hit} classNames={classes} />
+            <Highlight attribute="name" hit={hit} classNames={styles} />
           </Text>
           {features.imageGeneration && !!version?.generationCoverage?.covered && (
             <ThemeIcon color="white" variant="filled" radius="xl" size="sm">

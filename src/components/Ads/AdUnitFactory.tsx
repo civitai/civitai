@@ -1,5 +1,5 @@
 import { supportUsImageSizes } from '~/components/Ads/ads.utils';
-import { CSSObject, Text, createStyles } from '@mantine/core';
+import { Text } from '@mantine/core';
 import React, { useEffect, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
@@ -10,6 +10,7 @@ import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpressionTracked';
+import styles from './ads.module.scss';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -114,7 +115,7 @@ function AdWrapper({
   // const key = router.asPath.split('?')[0];
   const { adsBlocked, ready, isMember } = useAdsContext();
 
-  const { classes } = useAdWrapperStyles({ sizes, lutSizes, maxHeight, maxWidth });
+  const adWrapperStyles = useAdWrapperStyles({ sizes, lutSizes, maxHeight, maxWidth });
   const adSizes = useAdSizes({ sizes, lutSizes, maxHeight, maxWidth });
   const [ref, inView] = useInView();
 
@@ -123,11 +124,12 @@ function AdWrapper({
   return (
     <div
       ref={ref}
-      className={clsx(
-        { [classes.root]: preserveLayout !== false },
-        'relative box-content flex flex-col items-center justify-center gap-2',
-        className
-      )}
+      style={preserveLayout !== false ? adWrapperStyles : undefined}
+      className={clsx({
+        [styles.adWrapper]: preserveLayout !== false,
+        ['relative box-content flex flex-col items-center justify-center gap-2']: true,
+        [className ?? '']: !!className,
+      })}
     >
       {inView && (
         <>
@@ -212,35 +214,34 @@ function getMaxHeight(sizes: AdSize[], args?: { maxHeight?: number; maxWidth?: n
   return maxHeight ? Math.min(maxHeight, height) : height;
 }
 
-const useAdWrapperStyles = createStyles(
-  (
-    theme,
-    {
-      sizes,
-      lutSizes,
+const useAdWrapperStyles = ({
+  sizes,
+  lutSizes,
+  maxHeight,
+  maxWidth: maxOuterWidth,
+}: {
+  sizes?: AdSize[] | null;
+  lutSizes?: AdSizeLUT[];
+  maxHeight?: number;
+  maxWidth?: number;
+}) => {
+  const vars: Record<string, string> = {};
+
+  lutSizes?.forEach(([[minWidth, maxWidth], sizes], index) => {
+    if (minWidth) vars[`--min-width-${index + 1}`] = `${minWidth}px`;
+    if (maxWidth) vars[`--max-width-${index + 1}`] = `${maxWidth}px`;
+
+    vars[`--min-width-${index + 1}`] = `${getMaxHeight(sizes, {
       maxHeight,
       maxWidth: maxOuterWidth,
-    }: { sizes?: AdSize[] | null; lutSizes?: AdSizeLUT[]; maxHeight?: number; maxWidth?: number }
-  ) => {
-    return {
-      root: {
-        minHeight: sizes ? getMaxHeight(sizes, { maxHeight, maxWidth: maxOuterWidth }) : undefined,
-        ...lutSizes?.reduce<Record<string, CSSObject>>((acc, [[minWidth, maxWidth], sizes]) => {
-          const queries: string[] = [];
-          if (minWidth) queries.push(`(min-width: ${minWidth}px)`);
-          if (maxWidth) queries.push(`(max-width: ${maxWidth}px)`);
+    })}px`;
+  });
 
-          return {
-            ...acc,
-            [`@container ${queries.join(' and ')}`]: {
-              minHeight: getMaxHeight(sizes, { maxHeight, maxWidth: maxOuterWidth }),
-            },
-          };
-        }, {}),
-      },
-    };
-  }
-);
+  return {
+    minHeight: sizes ? getMaxHeight(sizes, { maxHeight, maxWidth: maxOuterWidth }) : undefined,
+    ...vars,
+  };
+};
 
 function useAdSizes({
   sizes,

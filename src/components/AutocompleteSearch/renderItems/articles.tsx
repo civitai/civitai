@@ -11,21 +11,16 @@ import {
 import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import {
-  ActionIconBadge,
-  useSearchItemStyles,
-  ViewMoreItem,
-} from '~/components/AutocompleteSearch/renderItems/common';
+import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import styles from './common.module.scss';
 
 export const ArticlesSearchItem = forwardRef<
   HTMLDivElement,
   AutocompleteItem & { hit: SearchIndexDataMap['articles'][number] }
 >(({ value, hit, ...props }, ref) => {
-  const { classes } = useSearchItemStyles();
-
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { coverImage, user, tags, stats, title } = hit;
@@ -77,7 +72,7 @@ export const ArticlesSearchItem = forwardRef<
         )}
       </Center>
       <Stack gap={4} sx={{ flex: '1 !important' }}>
-        <Highlight attribute="title" hit={hit} classNames={classes} />
+        <Highlight attribute="title" hit={hit} classNames={styles} />
         <Group gap={4}>
           <UserAvatar size="xs" user={user} withUsername />
           {nsfw && (
