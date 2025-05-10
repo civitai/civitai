@@ -759,6 +759,15 @@ export const ModerationRuleAction = {
 
 export type ModerationRuleAction = (typeof ModerationRuleAction)[keyof typeof ModerationRuleAction];
 
+export const ChangelogType = {
+  Feature: 'Feature',
+  Bugfix: 'Bugfix',
+  Policy: 'Policy',
+  Update: 'Update',
+} as const;
+
+export type ChangelogType = (typeof ChangelogType)[keyof typeof ChangelogType];
+
 export const NewOrderRankType = {
   Acolyte: 'Acolyte',
   Knight: 'Knight',
