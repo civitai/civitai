@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ActionIcon, Button, Card, Loader, ThemeIcon } from '@mantine/core';
+import { ActionIcon, Button, Card, Loader, Select, ThemeIcon } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
@@ -62,16 +62,20 @@ export default Page(
     const [isLevelingUp, setIsLevelingUp] = useState(false);
     const [isRankingUp, setIsRankingUp] = useState(false);
     const [prevHistory, setPrevHistory] = useState<number[]>([]);
+    const [selectedQueue, setSelectedQueue] = useState<NewOrderRankType | 'Inquisitor' | null>(
+      null
+    );
+    const filters = selectedQueue ? { queueType: selectedQueue } : undefined;
 
     const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
     const { playerData, isLoading, joined } = useJoinKnightsNewOrder();
-    const { addRating, skipRating } = useAddImageRating();
+    const { addRating, skipRating } = useAddImageRating({ filters });
     const {
       data,
       isLoading: loadingImagesQueue,
       refetch,
       isRefetching,
-    } = useQueryKnightsNewOrderImageQueue();
+    } = useQueryKnightsNewOrderImageQueue(filters);
     const filteredData = data.filter((image) => !prevHistory.includes(image.id));
 
     useKnightsNewOrderListener({
@@ -170,6 +174,15 @@ export default Page(
               <div className="relative flex size-full items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
                 {isLevelingUp && <LevelUp className="absolute" />}
                 {isRankingUp && <RankUp className="absolute" />}
+                {currentUser?.isModerator && (
+                  <Select
+                    className="absolute right-2 top-2 z-10 w-[200px] max-w-full"
+                    placeholder="Select a queue"
+                    value={selectedQueue}
+                    data={[...Object.keys(NewOrderRankType), 'Inquisitor']}
+                    onChange={(value) => setSelectedQueue(value as NewOrderRankType)}
+                  />
+                )}
                 {loadingImagesQueue || isRefetching ? (
                   <Loader variant="bars" size="xl" />
                 ) : currentImage ? (
@@ -194,18 +207,20 @@ export default Page(
                             width={700}
                             contain
                           />
-                          <ActionIcon
-                            component={Link}
-                            href={`/images/${currentImage.id}`}
-                            target="_blank"
-                            aria-label="Open image in new tab"
-                            size="sm"
-                            variant="light"
-                            color="dark"
-                            className="absolute bottom-2 right-2 text-white"
-                          >
-                            <IconExternalLink size={16} color="currentColor" />
-                          </ActionIcon>
+                          {playerData.rankType !== NewOrderRankType.Acolyte && (
+                            <ActionIcon
+                              component={Link}
+                              href={`/images/${currentImage.id}`}
+                              target="_blank"
+                              aria-label="Open image in new tab"
+                              size="sm"
+                              variant="light"
+                              color="dark"
+                              className="absolute bottom-2 right-2 text-white"
+                            >
+                              <IconExternalLink size={16} color="currentColor" />
+                            </ActionIcon>
+                          )}
                         </div>
                       )}
                     </ImageGuard2>

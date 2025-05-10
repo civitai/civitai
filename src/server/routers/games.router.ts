@@ -7,7 +7,7 @@ import {
   addImageRatingSchema,
   cleanseSmiteSchema,
   getHistorySchema,
-  getImageQueueSchema,
+  getImagesQueueSchema,
   getPlayersInfiniteSchema,
   resetPlayerByIdSchema,
   smitePlayerSchema,
@@ -102,7 +102,7 @@ export const gamesRouter = router({
       .query(({ input }) => getPlayersInfinite({ ...input })),
     getImagesQueue: guardedProcedure
       .use(isFlagProtected('newOrderGame'))
-      .input(getImageQueueSchema.optional())
+      .input(getImagesQueueSchema.optional())
       .query(({ input, ctx }) =>
         getImagesQueue({ ...input, playerId: ctx.user.id, isModerator: ctx.user.isModerator })
       ),

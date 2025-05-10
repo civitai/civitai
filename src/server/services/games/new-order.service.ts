@@ -27,6 +27,7 @@ import {
   AddImageRatingInput,
   CleanseSmiteInput,
   GetHistorySchema,
+  GetImagesQueueSchema,
   SmitePlayerInput,
 } from '~/server/schema/games/new-order.schema';
 import { ImageMetadata } from '~/server/schema/media.schema';
@@ -324,7 +325,7 @@ export async function addImageRating({
 
         if (status === NewOrderImageRatingStatus.AcolyteFailed) {
           const wrongAnswerCount = await acolyteFailedJudgments.increment({ id: playerId });
-          if (wrongAnswerCount >= ACOLYTE_WRONG_ANSWER_LIMIT) {
+          if (wrongAnswerCount > ACOLYTE_WRONG_ANSWER_LIMIT) {
             // Smite player:
             await smitePlayer({
               playerId,
@@ -332,6 +333,7 @@ export async function addImageRating({
               reason: 'Exceeded wrong answer limit',
               size: 10,
             });
+            await acolyteFailedJudgments.reset({ id: playerId });
           }
         } else if (levelAfterRating.level > currentLevel.level) {
           // Cleanup all smites & reset failed judgments
@@ -815,17 +817,19 @@ export async function addImageToQueue({
 export async function getImagesQueue({
   playerId,
   imageCount = 100,
+  queueType,
   isModerator,
-}: {
+}: GetImagesQueueSchema & {
   playerId: number;
-  imageCount?: number;
   isModerator?: boolean;
 }) {
   const player = await getPlayerById({ playerId });
 
   const imageIds: number[] = [];
   const rankPools = isModerator
-    ? poolCounters.Inquisitor
+    ? queueType
+      ? poolCounters[queueType]
+      : poolCounters.Inquisitor
     : player.rankType === NewOrderRankType.Templar
     ? [...poolCounters.Templar, ...poolCounters.Knight]
     : poolCounters[player.rankType];
@@ -845,11 +849,15 @@ export async function getImagesQueue({
     if (imageIds.length >= imageCount) break;
   }
 
-  const imageRaters = isModerator ? await getImageRaters({ imageIds }) : {};
+  const imageRaters =
+    isModerator && (!queueType || queueType === 'Inquisitor')
+      ? await getImageRaters({ imageIds })
+      : {};
   const images = await dbRead.image.findMany({
     where: {
       id: { in: imageIds },
       post: !isModerator ? { publishedAt: { lt: new Date() } } : undefined,
+      nsfwLevel: isModerator ? undefined : { notIn: [0, NsfwLevel.Blocked] },
     },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
