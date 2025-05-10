@@ -123,7 +123,7 @@ export function ChangelogFiltersDropdown() {
         <Divider label="Before" labelProps={{ weight: 'bold', size: 'sm' }} />
         <DatePicker
           placeholder="Choose a date..."
-          value={filters.dateBefore}
+          value={filters.dateBefore ?? null}
           onChange={(x) => {
             setFilters({
               ...filters,
@@ -136,7 +136,7 @@ export function ChangelogFiltersDropdown() {
         <Divider label="After" labelProps={{ weight: 'bold', size: 'sm' }} />
         <DatePicker
           placeholder="Choose a date..."
-          value={filters.dateAfter}
+          value={filters.dateAfter ?? null}
           onChange={(x) => {
             setFilters({
               ...filters,
