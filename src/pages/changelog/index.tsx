@@ -19,7 +19,7 @@ export default function Page() {
         description="List of the recent features, fixes, and improvements to Civitai."
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/changelog`, rel: 'canonical' }]}
       />
-      <Container size="xl" p="sm">
+      <Container size="lg" p="md" my="xl">
         <Changelogs />
       </Container>
     </>

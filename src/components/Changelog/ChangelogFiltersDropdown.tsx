@@ -79,7 +79,12 @@ export function ChangelogFiltersDropdown() {
       dot={false}
       inline
     >
-      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+      <FilterButton
+        icon={IconFilter}
+        size="md"
+        onClick={() => setOpened((o) => !o)}
+        active={opened}
+      >
         Filters
       </FilterButton>
     </Indicator>
@@ -117,9 +122,7 @@ export function ChangelogFiltersDropdown() {
       <Stack spacing="md">
         <Divider label="Before" labelProps={{ weight: 'bold', size: 'sm' }} />
         <DatePicker
-          allowFreeInput
-          placeholder="Pick date"
-          label="Event date"
+          placeholder="Choose a date..."
           value={filters.dateBefore}
           onChange={(x) => {
             setFilters({
@@ -132,9 +135,7 @@ export function ChangelogFiltersDropdown() {
       <Stack spacing="md">
         <Divider label="After" labelProps={{ weight: 'bold', size: 'sm' }} />
         <DatePicker
-          allowFreeInput
-          placeholder="Pick date"
-          label="Event date"
+          placeholder="Choose a date..."
           value={filters.dateAfter}
           onChange={(x) => {
             setFilters({

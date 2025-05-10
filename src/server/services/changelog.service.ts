@@ -36,7 +36,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: 
     : dateAfter;
   const dateBeforeMod = !dateBefore
     ? isModerator
-      ? new Date('1970-01-01')
+      ? undefined
       : now
     : dateBefore.getTime() > now.getTime()
     ? now
@@ -69,6 +69,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: 
         updatedAt: true,
         type: true,
         tags: true,
+        disabled: true,
       },
       where,
       take: limit + 1,
@@ -99,7 +100,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: 
 
 export const createChangelog = async (data: CreateChangelogInput) => {
   try {
-    return dbWrite.changelog.create({ data });
+    return dbWrite.changelog.create({ data: { ...data, updatedAt: data.effectiveAt } });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -108,7 +109,6 @@ export const createChangelog = async (data: CreateChangelogInput) => {
 export const updateChangelog = async (data: UpdateChangelogInput) => {
   const { id, ...rest } = data;
 
-  // TODO check if this only updates non-undefined values
   try {
     return dbWrite.changelog.update({
       where: { id },

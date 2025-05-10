@@ -1,31 +1,37 @@
 import {
+  Badge,
   Button,
+  Card,
   Center,
   Collapse,
   Divider,
   Group,
   Loader,
   LoadingOverlay,
+  MantineColor,
+  Paper,
   Stack,
   Text,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconAlertCircle,
+  IconExternalLink,
   IconMinus,
   IconPlus,
   IconSortAscending,
   IconSortDescending,
 } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { isEqual } from 'lodash-es';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ChangelogFiltersDropdown } from '~/components/Changelog/ChangelogFiltersDropdown';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
-import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -46,17 +52,143 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 
-const ChangelogItem = ({ item }: { item: Changelog }) => {
+const changelogTypeMap: { [K in ChangelogType]: { color: MantineColor; text: string } } = {
+  Bugfix: { color: 'grape', text: 'Bugfix' },
+  Policy: { color: 'teal', text: 'Policy' },
+  Feature: { color: 'green', text: 'Feature' },
+  Update: { color: 'violet', text: 'Update' },
+};
+
+const ChangelogItem = ({
+  item,
+  isMod,
+  setEditingItem,
+  setOpened,
+  scrollRef,
+}: {
+  item: Changelog;
+  isMod: boolean;
+  setEditingItem: React.Dispatch<React.SetStateAction<Changelog | undefined>>;
+  setOpened: React.Dispatch<React.SetStateAction<boolean>>;
+  scrollRef: React.RefObject<HTMLDivElement> | undefined;
+}) => {
+  const typeMapped = changelogTypeMap[item.type];
+
   return (
-    <div>
-      <Text size="sm" color="dimmed">
-        {item.effectiveAt.toLocaleDateString()}
-      </Text>
-      <Text size="lg" weight={700}>
-        {item.title}
-      </Text>
-      <Text size="sm" color="dimmed"></Text>
-    </div>
+    <Card withBorder shadow="sm" p="md" radius="md">
+      <Card.Section withBorder inheritPadding py="md">
+        <Stack spacing="sm">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between">
+            <Badge
+              color={typeMapped.color}
+              size="lg"
+              variant="light"
+              className="mb-2 self-center sm:hidden"
+            >
+              {typeMapped.text}
+            </Badge>
+
+            <span className="min-w-0 flex-1 text-center sm:text-left">
+              <span className="inline-block break-all bg-gradient-to-r from-blue-800 to-green-800 bg-clip-text text-lg font-bold text-transparent dark:from-blue-3 dark:to-green-3">
+                {item.title}
+              </span>
+            </span>
+
+            <Badge
+              color={typeMapped.color}
+              size="lg"
+              variant="light"
+              className="hidden sm:ml-4 sm:inline-flex"
+            >
+              {typeMapped.text}
+            </Badge>
+          </div>
+
+          <Group position="apart">
+            <Group spacing="xs">
+              <Text size="md">{dayjs(item.effectiveAt).format('MMM DD, YYYY')}</Text>
+              {item.updatedAt.getTime() > item.effectiveAt.getTime() && (
+                <Text size="sm" color="dimmed">
+                  Updated: {dayjs().to(dayjs(item.updatedAt))}
+                </Text>
+              )}
+              {isMod && item.disabled && (
+                <Badge color="red" variant="light">
+                  Disabled
+                </Badge>
+              )}
+              {isMod && item.effectiveAt > new Date() && (
+                <Badge color="cyan" variant="light">
+                  Future
+                </Badge>
+              )}
+            </Group>
+            {item.tags.length && (
+              <Group spacing="xs">
+                {item.tags.map((tag) => (
+                  <Badge key={tag} color="blue" variant="light">
+                    {tag}
+                  </Badge>
+                ))}
+              </Group>
+            )}
+          </Group>
+        </Stack>
+      </Card.Section>
+
+      <Card.Section withBorder inheritPadding py="md">
+        <RenderHtml html={item.content} />
+        {item.cta && (
+          <div className="text-center">
+            <Button
+              component="a"
+              href={item.cta}
+              variant="light"
+              color="blue"
+              mt="md"
+              radius="md"
+              className="w-full sm:w-1/2"
+            >
+              Check it out
+            </Button>
+          </div>
+        )}
+      </Card.Section>
+
+      {(item.link || isMod) && (
+        <Card.Section inheritPadding py="sm">
+          <Group position="apart" className="w-full">
+            <div>
+              {isMod && (
+                <Button
+                  onClick={() => {
+                    setEditingItem(item);
+                    setOpened(true);
+                    scrollRef?.current?.scrollIntoView({ behavior: 'smooth' });
+                  }}
+                >
+                  Edit
+                </Button>
+              )}
+            </div>
+            {item.link && (
+              <Button
+                component="a"
+                target="_blank"
+                rel="noopener noreferrer"
+                compact
+                href={item.link}
+                color="gray"
+                variant="light"
+                rightIcon={<IconExternalLink size={14} />}
+              >
+                More Info
+              </Button>
+            )}
+          </Group>
+        </Card.Section>
+      )}
+    </Card>
   );
 };
 
@@ -73,21 +205,37 @@ const defaultValues: SchemaType = {
   disabled: false,
 };
 
-const CreateChangelog = () => {
+const CreateChangelog = ({
+  existing,
+  opened,
+  setEditingItem,
+  setOpened,
+}: {
+  existing?: Changelog;
+  opened: boolean;
+  setEditingItem: React.Dispatch<React.SetStateAction<Changelog | undefined>>;
+  setOpened: React.Dispatch<React.SetStateAction<boolean>>;
+}) => {
   const queryUtils = trpc.useUtils();
-  const [opened, setOpened] = useState(false);
 
   const { data: tagData = [], isLoading: loadingTagData } = trpc.changelog.getAllTags.useQuery();
 
   const { mutate, isLoading } = trpc.changelog.create.useMutation();
-
-  // TODO how to edit
+  const { mutate: update, isLoading: isLoadingUpdate } = trpc.changelog.update.useMutation();
 
   const form = useForm({
     schema,
     defaultValues,
-    // shouldUnregister: false,
+    shouldUnregister: false,
   });
+
+  useEffect(() => {
+    form.reset(
+      !!existing
+        ? { ...existing, link: existing.link ?? undefined, cta: existing.cta ?? undefined }
+        : defaultValues
+    );
+  }, [existing]);
 
   const formTags = form.watch('tags');
   const allTagData = useMemo(
@@ -97,98 +245,141 @@ const CreateChangelog = () => {
 
   const handleClose = () => {
     form.reset(defaultValues);
+    setEditingItem(undefined);
     setOpened(false);
   };
 
   const handleSubmit = async (data: SchemaType) => {
-    mutate(removeEmpty(data, true), {
-      async onSuccess() {
-        showSuccessNotification({
-          message: 'Changelog created!',
-        });
+    if (!existing) {
+      mutate(removeEmpty(data, true), {
+        async onSuccess() {
+          showSuccessNotification({
+            message: 'Changelog created!',
+          });
 
-        handleClose();
+          handleClose();
 
-        await queryUtils.changelog.getInfinite.invalidate();
-        await queryUtils.changelog.getAllTags.invalidate();
-      },
-      onError(error) {
-        showErrorNotification({
-          title: 'Failed to create article',
-          error: new Error(error.message),
-        });
-      },
-    });
+          await queryUtils.changelog.getInfinite.invalidate();
+          await queryUtils.changelog.getAllTags.invalidate();
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Failed to create changelog',
+            error: new Error(error.message),
+          });
+        },
+      });
+    } else {
+      const changed = Object.fromEntries(
+        Object.entries(data).filter(
+          ([key, value]) => !isEqual(value, existing[key as keyof Changelog])
+        )
+      ) as Partial<SchemaType>;
+      update(
+        {
+          ...changed,
+          id: existing.id,
+        },
+        {
+          async onSuccess() {
+            showSuccessNotification({
+              message: 'Changelog updated!',
+            });
+
+            handleClose();
+
+            await queryUtils.changelog.getInfinite.invalidate();
+            await queryUtils.changelog.getAllTags.invalidate();
+          },
+          onError(error) {
+            showErrorNotification({
+              title: 'Failed to update changelog',
+              error: new Error(error.message),
+            });
+          },
+        }
+      );
+    }
   };
 
   return (
-    <>
-      <Button leftIcon={opened ? <IconMinus /> : <IconPlus />} onClick={() => setOpened((o) => !o)}>
-        {opened ? 'Hide' : 'Create New'}
+    <div className="my-2">
+      <Divider mb="lg" />
+
+      <Button
+        px="lg"
+        leftIcon={opened ? <IconMinus /> : <IconPlus />}
+        onClick={() => setOpened((o) => !o)}
+      >
+        {opened ? 'Hide' : !!existing ? 'Update' : 'Create New'}
       </Button>
 
       <Collapse in={opened}>
         <Form form={form} onSubmit={handleSubmit}>
-          <Stack spacing="lg">
-            <InputText name="title" label="Title" placeholder="Title..." withAsterisk />
-            <InputRTE
-              name="content"
-              label="Content"
-              editorSize="xl"
-              includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors']} // mentions, polls
-              withAsterisk
-              stickyToolbar
-            />
-            <InputDatePicker
-              name="effectiveAt"
-              label="Effective at"
-              placeholder="Select a date"
-              withAsterisk
-            />
-            <InputSelect
-              name="type"
-              label="Type"
-              withAsterisk
-              data={Object.values(ChangelogType)}
-            />
-            <InputMultiSelect
-              name="tags"
-              label="Tags"
-              data={allTagData}
-              loading={loadingTagData}
-              limit={50}
-              placeholder="Tags..."
-              getCreateLabel={(query) => `+ Create ${query}`}
-              creatable
-              clearable
-              searchable
-            />
-            <InputText name="link" label="Link" placeholder="Link to commit/article..." />
-            <InputText name="cta" label="CTA" placeholder="Link for CTA..." />
-            <InputCheckbox name="disabled" label="Disabled" />
-            <Group position="right">
-              <Button variant="default" onClick={handleClose}>
-                Cancel
-              </Button>
-              <Button type="submit" loading={isLoading}>
-                {!true ? 'Save' : 'Create'}
-              </Button>
-            </Group>
-          </Stack>
+          <Paper withBorder mt="md" p="lg">
+            <Stack spacing="lg">
+              <InputText name="title" label="Title" placeholder="Title..." withAsterisk />
+              <InputRTE
+                name="content"
+                label="Content"
+                editorSize="xl"
+                includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors']} // mentions, polls
+                withAsterisk
+                stickyToolbar
+              />
+              <InputDatePicker
+                name="effectiveAt"
+                label="Effective at"
+                placeholder="Select a date"
+                withAsterisk
+              />
+              <InputSelect
+                name="type"
+                label="Type"
+                withAsterisk
+                data={Object.values(ChangelogType)}
+              />
+              <InputMultiSelect
+                name="tags"
+                label="Tags"
+                data={allTagData}
+                loading={loadingTagData}
+                limit={50}
+                placeholder="Tags..."
+                getCreateLabel={(query) => `+ Create ${query}`}
+                creatable
+                clearable
+                searchable
+              />
+              <InputText name="link" label="Link" placeholder="Link to commit/article..." />
+              <InputText name="cta" label="CTA" placeholder="Link for CTA..." />
+              <InputCheckbox name="disabled" label="Disabled" />
+              <Group position="right">
+                <Button variant="default" onClick={handleClose}>
+                  Cancel
+                </Button>
+                <Button type="submit" loading={isLoading || isLoadingUpdate}>
+                  {!!existing ? 'Update' : 'Create'}
+                </Button>
+              </Group>
+            </Stack>
+          </Paper>
         </Form>
       </Collapse>
-    </>
+    </div>
   );
 };
 
 export function Changelogs() {
-  const { classes } = useFeedFiltersStyles();
   const currentUser = useCurrentUser();
   const { filters: clFilters, setFilters } = useFiltersContext((state) => ({
     filters: state.changelogs,
     setFilters: state.setChangelogFilters,
   }));
   const [searchTxt, setSearchTxt] = useState('');
+  const [createOpened, setCreateOpened] = useState(false);
+  const [editingItem, setEditingItem] = useState<Changelog | undefined>();
+  const ref = useRef<HTMLDivElement>(null);
 
   const filters = useMemo(
     () =>
@@ -201,7 +392,7 @@ export function Changelogs() {
       ),
     [clFilters, searchTxt]
   );
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const [debouncedFilters, cancel] = useDebouncedValue(filters, 400);
 
   useEffect(() => {
     if (isEqual(filters, debouncedFilters)) cancel();
@@ -209,7 +400,7 @@ export function Changelogs() {
 
   const { data, isLoading, isError, fetchNextPage, hasNextPage, isRefetching } =
     trpc.changelog.getInfinite.useInfiniteQuery(
-      { ...filters },
+      { ...debouncedFilters },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         keepPreviousData: true,
@@ -222,33 +413,46 @@ export function Changelogs() {
   const isAsc = filters.sortDir === 'asc';
 
   return (
-    <Stack>
-      {/* Filters */}
-      <Group className={classes.filtersWrapper} spacing={8} noWrap>
-        <TextInputWrapper
-          value={searchTxt}
-          onChange={(event) => {
-            setSearchTxt(event.currentTarget.value);
-          }}
-          label="Search"
-          placeholder="Search titles and content..."
-        />
-        <Button
-          rightIcon={isAsc ? <IconSortAscending size={18} /> : <IconSortDescending size={18} />}
-          onClick={() => setFilters({ ...filters, sortDir: isAsc ? 'desc' : 'asc' })}
-        >
-          {isAsc ? 'New' : 'Old'}
-        </Button>
-        <ChangelogFiltersDropdown />
-      </Group>
+    <Stack ref={ref}>
+      <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <Text size="xl" weight="bold" className="w-full text-left sm:w-auto">
+          Changelog
+        </Text>
+
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
+          <TextInputWrapper
+            value={searchTxt}
+            onChange={(event) => setSearchTxt(event.currentTarget.value)}
+            placeholder="Search titles and content..."
+            className="w-full sm:mr-2 sm:w-[300px]"
+          />
+
+          <div className="flex w-full flex-row justify-end gap-2 sm:w-auto">
+            <Button
+              variant="light"
+              className="rounded-3xl"
+              size="sm"
+              p="sm"
+              onClick={() => setFilters({ ...filters, sortDir: isAsc ? 'desc' : 'asc' })}
+            >
+              {isAsc ? <IconSortAscending size={18} /> : <IconSortDescending size={18} />}
+            </Button>
+            <ChangelogFiltersDropdown />
+          </div>
+        </div>
+      </div>
 
       {/* Create */}
       {currentUser?.isModerator && (
-        <>
-          <CreateChangelog />
-          <Divider />
-        </>
+        <CreateChangelog
+          opened={createOpened}
+          setOpened={setCreateOpened}
+          existing={editingItem}
+          setEditingItem={setEditingItem}
+        />
       )}
+
+      <Divider mb="md" />
 
       {/* Data */}
       {isLoading ? (
@@ -265,9 +469,16 @@ export function Changelogs() {
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
-          <Stack>
+          <Stack spacing="xl">
             {flatData.map((c) => (
-              <ChangelogItem key={c.id} item={c} />
+              <ChangelogItem
+                key={c.id}
+                item={c}
+                isMod={currentUser?.isModerator ?? false}
+                setEditingItem={setEditingItem}
+                setOpened={setCreateOpened}
+                scrollRef={ref}
+              />
             ))}
           </Stack>
 
@@ -283,7 +494,7 @@ export function Changelogs() {
           )}
         </div>
       ) : (
-        <NoContent />
+        <NoContent my="lg" />
       )}
     </Stack>
   );
