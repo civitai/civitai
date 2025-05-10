@@ -57,6 +57,8 @@ export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: 
     where['tags'] = { hasSome: tags };
   }
 
+  const skip = cursor ?? 0;
+
   try {
     const data = await dbRead.changelog.findMany({
       select: {
@@ -73,7 +75,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: 
       },
       where,
       take: limit + 1,
-      skip: cursor ?? 0,
+      skip,
       orderBy: [
         {
           effectiveAt: sortDir,
@@ -91,7 +93,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: 
 
     return {
       items: data,
-      nextCursor: hasMore ? data.length : undefined,
+      nextCursor: hasMore ? skip + data.length : undefined,
     };
   } catch (error) {
     throw throwDbError(error);

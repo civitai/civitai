@@ -22,8 +22,11 @@ CREATE TABLE "Changelog"
   CONSTRAINT "Changelog_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "Changelog_effectiveAt_idx" ON "Changelog"("effectiveAt");
-CREATE INDEX "Changelog_title_content_idx" ON "Changelog"("title", "content");
-CREATE INDEX "Changelog_type_idx" ON "Changelog"("type");
-CREATE INDEX "Changelog_tags_idx" ON "Changelog"("tags");
-CREATE INDEX "Changelog_disabled_idx" ON "Changelog"("disabled");
+-- TODO trigram index?
+CREATE EXTENSION IF NOT EXISTS btree_gin;
+
+CREATE INDEX "Changelog_effectiveAt_idx" ON "Changelog" ("effectiveAt");
+CREATE INDEX "Changelog_title_content_idx" ON "Changelog" USING gin ("title", "content");
+CREATE INDEX "Changelog_type_idx" ON "Changelog" ("type");
+CREATE INDEX "Changelog_tags_idx" ON "Changelog" ("tags");
+CREATE INDEX "Changelog_disabled_idx" ON "Changelog" ("disabled");

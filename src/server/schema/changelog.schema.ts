@@ -4,7 +4,7 @@ import { ChangelogType } from '~/shared/utils/prisma/enums';
 
 export type GetChangelogsInput = z.infer<typeof getChangelogsInput>;
 export const getChangelogsInput = infiniteQuerySchema.extend({
-  limit: z.number().min(1).max(500).optional().default(50),
+  limit: z.number().min(1).max(500).optional().default(30),
   sortDir: z.enum(['asc', 'desc']).optional().default('desc'),
   search: z.string().optional(),
   dateBefore: z.date().optional(),

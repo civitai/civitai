@@ -89,7 +89,7 @@ const ChangelogItem = ({
             </Badge>
 
             <span className="min-w-0 flex-1 text-center sm:text-left">
-              <span className="inline-block break-all bg-gradient-to-r from-blue-800 to-green-800 bg-clip-text text-lg font-bold text-transparent dark:from-blue-3 dark:to-green-3">
+              <span className="inline-block break-normal bg-gradient-to-r from-blue-800 to-green-800 bg-clip-text text-lg font-bold text-transparent dark:from-blue-3 dark:to-green-3">
                 {item.title}
               </span>
             </span>
