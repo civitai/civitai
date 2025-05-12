@@ -6,6 +6,7 @@ import {
   MantineSize,
   Text,
   Tooltip,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import {
@@ -16,13 +17,11 @@ import {
   IconMoodSmile,
   IconBrush,
 } from '@tabler/icons-react';
-
+import Image from 'next/image';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import Image from 'next/image';
 
 export function UserStatBadges({
   followers,
@@ -34,6 +33,7 @@ export function UserStatBadges({
   colorOverrides,
 }: Props) {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme();
 
   return (
     <Group gap={8} justify="space-between">
@@ -42,12 +42,12 @@ export function UserStatBadges({
         radius="xl"
         px={8}
         color="dark"
-        sx={
+        style={
           colorOverrides
             ? { backgroundColor: colorOverrides.backgroundColor ?? undefined }
             : undefined
         }
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
       >
         <Group gap="xs" wrap="nowrap">
           {uploads != null ? (
@@ -55,7 +55,7 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Uploads" value={uploads} />}
               icon={<IconUpload size={14} />}
-              sx={
+              style={
                 colorOverrides
                   ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
                   : undefined
@@ -75,7 +75,7 @@ export function UserStatBadges({
               tooltip={<StatTooltip label="Followers" value={followers} />}
               href={username ? `/user/${username}/followers` : undefined}
               icon={<IconUsers size={14} />}
-              sx={
+              style={
                 colorOverrides
                   ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
                   : undefined
@@ -94,7 +94,7 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Likes" value={favorites} />}
               icon={<ThumbsUpIcon size={14} />}
-              sx={
+              style={
                 colorOverrides
                   ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
                   : undefined
@@ -113,7 +113,7 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Downloads" value={downloads} />}
               icon={<IconDownload size={14} />}
-              sx={
+              style={
                 colorOverrides
                   ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
                   : undefined
@@ -132,7 +132,7 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Answers" value={answers} />}
               icon={<IconChecks size={14} />}
-              sx={
+              style={
                 colorOverrides
                   ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
                   : undefined
@@ -165,9 +165,9 @@ const BadgedIcon = ({
   icon: React.ReactNode;
   textSize?: MantineSize;
 } & Omit<BadgeProps, 'leftSection'>) => (
-  <Group gap={0} wrap="nowrap" sx={{ position: 'relative' }}>
+  <Group gap={0} wrap="nowrap" className="relative">
     <Tooltip label={label}>
-      <Box pos="relative" sx={{ zIndex: 2, overflow: 'hidden' }} h={32}>
+      <Box pos="relative" style={{ zIndex: 2, overflow: 'hidden' }} h={32}>
         <Image src="/images/base-badge.png" alt={`${label} - ${value}`} width={32} height={32} />
         <Box
           style={{
@@ -186,12 +186,7 @@ const BadgedIcon = ({
       color="dark.6"
       // @ts-ignore
       variant="filled"
-      sx={{
-        paddingLeft: 16,
-        marginLeft: -14,
-        borderTopLeftRadius: 0,
-        borderBottomLeftRadius: 0,
-      }}
+      className="ml-[-14px] rounded-l-none pl-4"
       {...props}
     >
       <Text size={textSize} inline title={numberWithCommas(value ?? 0)}>

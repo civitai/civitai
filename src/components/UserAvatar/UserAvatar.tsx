@@ -6,12 +6,12 @@ import {
   Indicator,
   IndicatorProps,
   Loader,
-  MantineNumberSize,
   MantineSize,
   MantineTheme,
   Paper,
   Stack,
   Text,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconUser } from '@tabler/icons-react';
@@ -92,6 +92,7 @@ export function UserAvatar({
   withOverlay = false,
 }: Props) {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme();
   const { canViewNsfw } = useFeatureFlags();
   const browsingLevel = useBrowsingLevelDebounced();
 
@@ -120,14 +121,18 @@ export function UserAvatar({
   textSize ??= mapAvatarTextSize[size].textSize;
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
 
-  const imageSize = getRawAvatarSize(avatarProps?.size ?? avatarSize ?? size);
-  const imageRadius = getRawAvatarRadius(avatarProps?.radius ?? radius, theme);
+  const imageSize = getRawAvatarSize(
+    (avatarProps?.size ?? avatarSize ?? size) as MantineNumberSize
+  );
+  const imageRadius = getRawAvatarRadius(
+    (avatarProps?.radius ?? radius) as MantineNumberSize,
+    theme
+  );
   const nsfwLevel = avatarUser.profilePicture?.nsfwLevel ?? 0;
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
     (!canViewNsfw ? !hasPublicBrowsingLevel(nsfwLevel) : nsfwLevel > browsingLevel);
-  const avatarBgColor =
-    theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
+  const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   const image = avatarUser.profilePicture;
   const decoration =
@@ -139,7 +144,7 @@ export function UserAvatar({
   return (
     <Group
       align="center"
-      sx={
+      style={
         withOverlay
           ? {
               padding: '0 10px 0 0',
@@ -273,7 +278,7 @@ type Props = {
   subTextSize?: MantineSize;
   includeAvatar?: boolean;
   radius?: MantineNumberSize;
-  avatarSize?: MantineSize | number;
+  avatarSize?: MantineNumberSize;
   userId?: number;
   indicatorProps?: Omit<IndicatorProps, 'children'>;
   badgeSize?: number;

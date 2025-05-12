@@ -1,4 +1,4 @@
-import { ActionIcon, Loader, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
+import { ActionIcon, Loader, Menu, MenuProps, Text } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconCalculator,
