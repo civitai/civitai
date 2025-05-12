@@ -1,5 +1,7 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
+import { NewOrderImageRatingStatus } from '~/server/common/enums';
+import { dbRead } from '~/server/db/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
@@ -31,22 +33,22 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     return fetchedCount;
   }
 
-  async function getAll(opts?: { limit?: number }) {
-    const { limit = 100 } = opts ?? {};
+  async function getAll(opts?: { limit?: number; offset?: number }) {
+    const { limit = 100, offset = 0 } = opts ?? {};
     // Returns all ids in the range of min and max
     // If ordered, returns the ids by the score in descending order.
     if (ordered) {
       const data = await sysRedis.zRangeWithScores(key, Infinity, -Infinity, {
         BY: 'SCORE',
         REV: true,
-        LIMIT: { offset: 0, count: limit },
+        LIMIT: { offset, count: limit },
       });
 
       return data.map((x) => x.value);
     }
 
     const data = await sysRedis.hGetAll(key);
-    return Object.values(data).slice(0, limit);
+    return Object.values(data).slice(offset, offset + limit);
   }
 
   async function getCount(id: number | string) {
@@ -98,32 +100,106 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
 
 export const correctJudgmentsCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.CORRECT,
-  fetchCount: async () => 0,
+  fetchCount: async (id) => {
+    if (!clickhouse) return 0;
+
+    const player = await dbRead.newOrderPlayer.findUnique({
+      where: { userId: Number(id) },
+      select: { startAt: true },
+    });
+    if (!player) return 0;
+
+    const data = await clickhouse.$query<{ count: number }>`
+      SELECT
+        COUNT(*) as count
+      FROM knights_new_order_image_rating
+      WHERE userId = ${id}
+        AND createdAt >= ${player.startAt}
+        AND status = '${NewOrderImageRatingStatus.Correct}'
+    `;
+    if (!data) return 0;
+
+    return data[0]?.count ?? 0;
+  },
   ttl: CacheTTL.week,
 });
 
 export const allJudgmentsCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.ALL,
-  fetchCount: async () => 0,
+  fetchCount: async (id) => {
+    if (!clickhouse) return 0;
+
+    const player = await dbRead.newOrderPlayer.findUnique({
+      where: { userId: Number(id) },
+      select: { startAt: true },
+    });
+    if (!player) return 0;
+
+    const data = await clickhouse.$query<{ count: number }>`
+      SELECT
+        COUNT(*) as count
+      FROM knights_new_order_image_rating
+      WHERE userId = ${id}
+        AND createdAt >= ${player.startAt}
+        AND status NOT IN ('${NewOrderImageRatingStatus.AcolyteCorrect}', '${NewOrderImageRatingStatus.AcolyteFailed}')
+    `;
+    if (!data) return 0;
+
+    return data[0]?.count ?? 0;
+  },
   ttl: CacheTTL.week,
 });
 
 export const acolyteFailedJudgments = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.ACOLYTE_FAILED,
-  fetchCount: async () => 0,
+  fetchCount: async (id) => {
+    if (!clickhouse) return 0;
+
+    const player = await dbRead.newOrderPlayer.findUnique({
+      where: { userId: Number(id) },
+      select: { startAt: true },
+    });
+    if (!player) return 0;
+
+    const data = await clickhouse.$query<{ count: number }>`
+      SELECT
+        COUNT(*) as count
+      FROM knights_new_order_image_rating
+      WHERE userId = ${id}
+        AND createdAt >= ${player.startAt}
+        AND status = '${NewOrderImageRatingStatus.AcolyteFailed}'
+    `;
+    if (!data) return 0;
+
+    return data[0]?.count ?? 0;
+  },
   ttl: CacheTTL.week,
 });
 
 export const fervorCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.FERVOR,
-  fetchCount: async () => 0,
+  fetchCount: async (id) => {
+    const data = await dbRead.newOrderPlayer.findUnique({
+      where: { userId: Number(id) },
+      select: { fervor: true },
+    });
+    if (!data) return 0;
+
+    return data.fervor;
+  },
   ttl: CacheTTL.week,
   ordered: true,
 });
 
 export const smitesCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.SMITE,
-  fetchCount: async () => 0,
+  fetchCount: async (id) => {
+    const data = await dbRead.newOrderSmite.count({
+      where: { targetPlayerId: Number(id), cleansedAt: null },
+    });
+
+    return data;
+  },
   ttl: CacheTTL.week,
 });
 
@@ -135,7 +211,15 @@ export const blessedBuzzCounter = createCounter({
 
 export const expCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.EXP,
-  fetchCount: async () => 0,
+  fetchCount: async (id) => {
+    const data = await dbRead.newOrderPlayer.findUnique({
+      where: { userId: Number(id) },
+      select: { exp: true },
+    });
+    if (!data) return 0;
+
+    return data.exp;
+  },
   ttl: CacheTTL.week,
 });
 
