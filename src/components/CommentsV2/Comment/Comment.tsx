@@ -7,7 +7,6 @@ import {
   Text,
   Button,
   Box,
-  createStyles,
   UnstyledButton,
   Divider,
   ThemeIcon,
@@ -47,6 +46,8 @@ import { openReportModal } from '~/components/Dialog/dialog-registry';
 import type { Comment } from '~/server/services/commentsv2.service';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import classes from './Comment.module.scss';
+import clsx from 'clsx';
 
 type Store = {
   id?: number;
@@ -90,8 +91,6 @@ export function CommentContent({
     entityType: 'comment',
   });
 
-  const { classes, cx } = useCommentStyles();
-
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
 
@@ -133,7 +132,7 @@ export function CommentContent({
       wrap="nowrap"
       {...groupProps}
       gap="sm"
-      className={cx(groupProps.className, classes.groupWrap, {
+      className={clsx(groupProps.className, classes.groupWrap, {
         [classes.highlightedComment]: highlightProp || isHighlighted,
       })}
     >
@@ -313,34 +312,3 @@ export function CommentContent({
     </Group>
   );
 }
-
-export const useCommentStyles = createStyles((theme) => ({
-  highlightedComment: {
-    background: theme.fn.rgba(theme.colors.blue[5], 0.2),
-    margin: `-${theme.spacing.xs}px`,
-    padding: `${theme.spacing.xs}px`,
-    borderRadius: theme.radius.sm,
-  },
-  groupWrap: {
-    position: 'relative',
-  },
-  repliesIndicator: {
-    position: 'absolute',
-    top: 26 + 8,
-    width: 2,
-    height: 'calc(100% - 26px - 8px)',
-    background: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.31)',
-    // Size of the image / 2, minus the size of the border / 2
-    left: 26 / 2 - 2 / 2,
-    '&:hover': {
-      background: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)',
-    },
-  },
-  replyInset: {
-    // Size of the image / 2, minus the size of the border / 2
-    marginLeft: -12,
-  },
-  rootCommentReplyInset: {
-    paddingLeft: 46,
-  },
-}));

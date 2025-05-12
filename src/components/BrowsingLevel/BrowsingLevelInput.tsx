@@ -1,16 +1,14 @@
-import { NSFWLevel } from '@civitai/client';
-import { Chip, Group, GroupProps, Input, InputWrapperProps, createStyles } from '@mantine/core';
+import { Chip, Group, Input, InputWrapperProps } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import { useCallback, useState } from 'react';
-import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
-import { NsfwLevel } from '~/server/common/enums';
 import {
   browsingLevels,
   browsingLevelLabels,
   BrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import classes from './BrowsingLevelInput.module.scss';
 
 type BrowsingLevelInput = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: number;
@@ -65,8 +63,6 @@ function BrowsingLevelLabel({
   onToggle: (value: number) => void;
 }) {
   const isSelected = Flags.hasFlag(browsingLevel, level);
-  const { classes } = useStyles();
-
   // const browsingLevel = useStore((x) => x.browsingLevel);
 
   return (
@@ -82,41 +78,3 @@ function BrowsingLevelLabel({
     </Chip>
   );
 }
-
-const useStyles = createStyles((theme, _params, getRef) => ({
-  root: {
-    flex: 1,
-  },
-  label: {
-    width: '100%',
-    display: 'inline-flex',
-    justifyContent: 'center',
-    '&[data-checked]': {
-      '&, &:hover': {
-        backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-        color: theme.white,
-      },
-
-      [`& .${getRef('iconWrapper')}`]: {
-        color: theme.white,
-        display: 'none',
-
-        [`@media (min-width: ${theme.breakpoints.xs}px)`]: {
-          display: 'inline-block',
-        },
-      },
-    },
-    paddingLeft: 10,
-    paddingRight: 10,
-    [`@media (min-width: ${theme.breakpoints.xs}px)`]: {
-      '&': {
-        paddingLeft: 20,
-        paddingRight: 20,
-      },
-    },
-  },
-
-  iconWrapper: {
-    ref: getRef('iconWrapper'),
-  },
-}));

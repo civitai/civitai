@@ -7,7 +7,6 @@ import {
   Chip,
   ChipProps,
   Button,
-  createStyles,
   Drawer,
   ButtonProps,
   useMantineTheme,
@@ -215,34 +214,4 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
 }
 
 type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'>;
-
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));
+ 

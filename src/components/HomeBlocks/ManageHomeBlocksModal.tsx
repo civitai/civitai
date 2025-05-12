@@ -17,25 +17,18 @@ import {
   Button,
   Card,
   Center,
-  createStyles,
   Group,
   Loader,
   Stack,
   Text,
+  useMantineColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconGripVertical, IconInfoCircle, IconPlus, IconTrash } from '@tabler/icons-react';
 import { CSS } from '@dnd-kit/utilities';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-
-const useStyles = createStyles((theme) => ({
-  sectionHeader: {
-    height: 30,
-    fontSize: theme.fontSizes.sm,
-    textTransform: 'capitalize',
-    fontWeight: 500,
-  },
-}));
+import classes from './ManageHomeBlocksModal.module.scss';
 
 const { openModal: openManageHomeBlocksModal, Modal } = createContextModal({
   name: 'manageHomeBlocks',
@@ -51,7 +44,8 @@ export default Modal;
 
 type Props = { onClose: VoidFunction };
 function ManageHomeBlocks({ onClose }: Props) {
-  const { classes } = useStyles();
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const { data: homeBlocks = [], isLoading: isLoadingOwnedHomeBlocks } =
     trpc.homeBlock.getHomeBlocks.useQuery({
       withCoreData: true,
@@ -151,11 +145,11 @@ function ManageHomeBlocks({ onClose }: Props) {
       <Group
         gap="xs"
         py="md"
-        sx={(theme) => ({
+        style={{
           borderTop: `1px solid ${
-            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+            colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
           }`,
-        })}
+        }}
       >
         <Badge color="yellow" variant="light" size="xs">
           Beta

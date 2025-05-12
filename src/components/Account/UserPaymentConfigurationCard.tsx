@@ -77,7 +77,7 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
         </Center>
       ) : (
         <Stack gap="md">
-          <ScrollArea.Autosize maxHeight={500}>
+          <ScrollArea.Autosize mah={500}>
             <Stack>
               <CustomMarkdown rehypePlugins={[rehypeRaw]}>{data.content}</CustomMarkdown>
               <Checkbox

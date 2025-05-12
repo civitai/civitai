@@ -83,7 +83,7 @@ export const TosModal = ({
               <Divider mx="-lg" my="md" />
             </>
           )}
-          <ScrollArea.Autosize maxHeight={500}>
+          <ScrollArea.Autosize mah={500}>
             <Stack>
               <CustomMarkdown
                 // allowedElements={['p', 'a', 'strong', 'h1', 'h2', 'ul', 'ol', 'li']}

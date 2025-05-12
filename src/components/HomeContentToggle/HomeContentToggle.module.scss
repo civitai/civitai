@@ -1,0 +1,84 @@
+.tabHighlight {
+  background-color: light-dark(rgba(var(--mantine-color-yellow-3-rgb), 0.1),
+      rgba(var(--mantine-color-yellow-3-rgb), 0.3));
+  background-image: linear-gradient(90deg,
+      rgba(var(--mantine-color-yellow-4-rgb), 0),
+      rgba(var(--mantine-color-yellow-4-rgb), 0.1),
+      rgba(var(--mantine-color-yellow-4-rgb), 0));
+  background-size: 50px;
+  background-position: -300% 50%;
+  background-repeat: no-repeat;
+  color: light-dark(var(--mantine-color-yellow-3), var(--mantine-color-yellow-8));
+  animation: button-highlight 5s linear infinite;
+  will-change: background-position;
+}
+
+.tabRainbow {
+  background: linear-gradient(90deg,
+      rgba(255, 0, 0, 1) 0%,
+      rgba(255, 154, 0, 1) 10%,
+      rgba(208, 222, 33, 1) 20%,
+      rgba(79, 220, 74, 1) 30%,
+      rgba(63, 218, 216, 1) 40%,
+      rgba(47, 201, 226, 1) 50%,
+      rgba(28, 127, 238, 1) 60%,
+      rgba(95, 21, 242, 1) 70%,
+      rgba(186, 12, 248, 1) 80%,
+      rgba(251, 7, 217, 1) 90%,
+      rgba(255, 0, 0, 1) 100%) 0/200%;
+  animation: rainbow-text-animation 10s linear infinite;
+
+  &:hover {
+    background: linear-gradient(90deg,
+        rgba(255, 0, 0, 1) 0%,
+        rgba(255, 154, 0, 1) 10%,
+        rgba(208, 222, 33, 1) 20%,
+        rgba(79, 220, 74, 1) 30%,
+        rgba(63, 218, 216, 1) 40%,
+        rgba(47, 201, 226, 1) 50%,
+        rgba(28, 127, 238, 1) 60%,
+        rgba(95, 21, 242, 1) 70%,
+        rgba(186, 12, 248, 1) 80%,
+        rgba(251, 7, 217, 1) 90%,
+        rgba(255, 0, 0, 1) 100%) 0/200%;
+  }
+
+  &[data-active] {
+    background: linear-gradient(90deg,
+        rgba(255, 0, 0, 1) 0%,
+        rgba(255, 154, 0, 1) 10%,
+        rgba(208, 222, 33, 1) 20%,
+        rgba(79, 220, 74, 1) 30%,
+        rgba(63, 218, 216, 1) 40%,
+        rgba(47, 201, 226, 1) 50%,
+        rgba(28, 127, 238, 1) 60%,
+        rgba(95, 21, 242, 1) 70%,
+        rgba(186, 12, 248, 1) 80%,
+        rgba(251, 7, 217, 1) 90%,
+        rgba(255, 0, 0, 1) 100%) 0/200%;
+  }
+}
+
+.moreButton {
+  padding: 8px 10px 8px 16px;
+  font-size: 16px;
+  font-weight: 500;
+  display: none;
+
+  &[data-active="true"] {
+    background: light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-4));
+    color: light-dark(var(--mantine-white), var(--mantine-color-gray-8));
+  }
+
+  @container (min-width: 992px) and (max-width: 1440px) {
+    display: block;
+  }
+}
+
+.groupedOptions {
+  display: block;
+
+  @container (min-width: 992px) and (max-width: 1440px) {
+    display: none;
+  }
+}

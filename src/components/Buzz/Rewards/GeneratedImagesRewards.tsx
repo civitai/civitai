@@ -1,4 +1,13 @@
-import { Center, Loader, MultiSelect, Paper, Stack, Text, Title } from '@mantine/core';
+import {
+  Center,
+  Loader,
+  MultiSelect,
+  Paper,
+  Stack,
+  Text,
+  Title,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -13,7 +22,7 @@ import {
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 import { maxDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -35,8 +44,7 @@ export const GeneratedImagesReward = () => {
     trpc.modelVersion.modelVersionsGeneratedImagesOnTimeframe.useQuery({
       timeframe: DEFAULT_TIMEFRAME,
     });
-
-  const { classes, theme } = useBuzzDashboardStyles();
+  const theme = useMantineTheme();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
 
   const options = useMemo<ChartOptions<'line'>>(

@@ -1,6 +1,5 @@
 import {
   Center,
-  createStyles,
   Group,
   MantineSize,
   Paper,
@@ -19,6 +18,7 @@ import { getNotificationMessage } from '~/server/notifications/utils.notificatio
 import { NotificationGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { isDefined } from '~/utils/type-guards';
+import classes from './NotificationList.module.scss';
 
 export function NotificationList({
   items,
@@ -28,7 +28,6 @@ export function NotificationList({
   searchText,
 }: Props) {
   const router = useRouter();
-  const { classes } = useStyles();
 
   const fullItems = useMemo(() => {
     return items
@@ -157,29 +156,4 @@ type Props = {
   truncate?: boolean;
   searchText: string;
 };
-
-const useStyles = createStyles((theme) => ({
-  listItem: {
-    cursor: 'pointer',
-    borderTop: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-    }`,
-    '&:first-of-type': {
-      borderTop: 'none',
-    },
-    padding: theme.spacing.sm,
-    '&[data-unread="true"]': {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-      ':hover': {
-        background:
-          theme.colorScheme === 'dark'
-            ? theme.fn.lighten(theme.colors.dark[6], 0.05)
-            : theme.fn.darken(theme.colors.gray[0], 0.05),
-      },
-    },
-    ':hover': {
-      background:
-        theme.colorScheme === 'dark' ? `rgba(255, 255, 255, 0.05)` : `rgba(0, 0, 0, 0.05)`,
-    },
-  },
-}));
+ 

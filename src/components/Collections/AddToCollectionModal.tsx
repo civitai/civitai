@@ -8,7 +8,6 @@ import {
   Select,
   Stack,
   Text,
-  createStyles,
 } from '@mantine/core';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {
@@ -45,6 +44,7 @@ import { isDefined } from '~/utils/type-guards';
 import { closeAllModals, openModal } from '@mantine/modals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import classes from './AddToCollectionModal.module.scss';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
@@ -74,12 +74,6 @@ const { openModal: openAddToCollectionModal, Modal } = createContextModal<Props>
 export { openAddToCollectionModal };
 export default Modal;
 
-const useCollectionListStyles = createStyles((theme) => ({
-  body: { alignItems: 'center' },
-  labelWrapper: { flex: 1 },
-  contentWrap: { paddingTop: theme.spacing.xs, paddingBottom: theme.spacing.xs },
-}));
-
 type SelectedCollection = {
   collectionId: number;
   tagId?: number | null;
@@ -93,7 +87,6 @@ function CollectionListForm({
   ...props
 }: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
   const { note, ...target } = props;
-  const { classes } = useCollectionListStyles();
   const queryUtils = trpc.useUtils();
   const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);
 
@@ -224,7 +217,7 @@ function CollectionListForm({
             </Center>
           ) : (
             <>
-              <ScrollArea.Autosize maxHeight={200}>
+              <ScrollArea.Autosize mah={200}>
                 {ownedCollections.length > 0 ? (
                   <Stack gap={4}>
                     {ownedCollections.map((collection) => {
@@ -313,7 +306,7 @@ function CollectionListForm({
                   <Text size="sm" weight="bold" mt="md">
                     Collections you contribute to
                   </Text>
-                  <ScrollArea.Autosize maxHeight={200}>
+                  <ScrollArea.Autosize mah={200}>
                     <Stack gap={4}>
                       {contributingCollections.map((collection) => {
                         const Icon = collectionReadPrivacyData[collection.read].icon;

@@ -66,7 +66,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
         />
         <Divider />
         <ScrollArea.Autosize
-          maxHeight={maxScrollHeight}
+          mah={maxScrollHeight}
           type="always"
           offsetScrollbars
           classNames={classes}

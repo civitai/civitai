@@ -3,7 +3,6 @@ import {
   Button,
   Chip,
   CloseButton,
-  createStyles,
   Divider,
   Group,
   Stack,
@@ -27,85 +26,7 @@ import { useTrackEvent } from '../TrackView/track.utils';
 import { UserBuzz } from '../User/UserBuzz';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
-
-const useStyles = createStyles((theme) => ({
-  presetCard: {
-    position: 'relative',
-    width: '100%',
-    borderRadius: theme.radius.sm,
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-    }`,
-
-    '&:hover:not([disabled])': {
-      borderColor: theme.colors.blue[6],
-    },
-
-    '&[disabled]': {
-      opacity: 0.5,
-      cursor: 'not-allowed',
-    },
-  },
-
-  sendIcon: {
-    backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-    color: theme.white,
-    borderTopRightRadius: theme.radius.sm,
-    borderBottomRightRadius: theme.radius.sm,
-  },
-
-  // Chip styling
-  label: {
-    padding: `0 ${theme.spacing.xs}px`,
-
-    '&[data-checked]': {
-      border: `2px solid ${theme.colors.accent[5]}`,
-      color: theme.colors.accent[5],
-
-      '&[data-variant="filled"], &[data-variant="filled"]:hover': {
-        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-      },
-    },
-  },
-
-  // Chip styling
-  iconWrapper: {
-    display: 'none',
-  },
-
-  chipGroup: {
-    gap: 8,
-
-    [theme.fn.smallerThan('sm')]: {
-      gap: theme.spacing.md,
-    },
-  },
-
-  actions: {
-    [theme.fn.smallerThan('sm')]: {
-      flexDirection: 'column',
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      width: '100%',
-      padding: theme.spacing.md,
-    },
-  },
-
-  cancelButton: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-      order: 2,
-    },
-  },
-
-  submitButton: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-      order: 1,
-    },
-  },
-}));
+import classes from './SendTipModal.module.scss';
 
 const schema = z
   .object({
@@ -143,7 +64,6 @@ export default function SendTipModal({
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
 
-  const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
 
   const [loading, setLoading] = useState(false);
@@ -272,7 +192,7 @@ export default function SendTipModal({
                 min={1}
                 max={constants.buzz.maxTipAmount}
                 disabled={sending}
-                icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                 parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
                 formatter={(value) =>
                   value && !Number.isNaN(parseFloat(value))

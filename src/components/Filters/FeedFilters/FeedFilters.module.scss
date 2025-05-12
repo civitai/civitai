@@ -1,0 +1,28 @@
+.filtersWrapper {
+  @media (max-width: var(--mantine-breakpoint-sm, 768px)) {
+    width: 100%;
+
+    >* {
+      flex-grow: 1;
+    }
+  }
+}
+
+.subnavDropdown {
+  // Uncomment and customize these styles as needed:
+  // background: transparent;
+  // color: light-dark(var(--mantine-white), var(--mantine-color-gray-8));
+  // height: 32px;
+
+  // &:hover {
+  //   background: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-3));
+  // }
+
+  // &[data-expanded="true"] {
+  //   background: light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-4));
+
+  //   &:hover {
+  //     background: light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-4));
+  //   }
+  // }
+}

@@ -2,7 +2,7 @@ import { ActionIcon, Button, Group, GroupProps, Popover } from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons-react';
 
 import { SortFilter } from '~/components/Filters';
-import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
+import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { PeriodMode } from '~/server/schema/base.schema';
@@ -10,7 +10,6 @@ import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
-  const { classes } = useFeedFiltersStyles();
   const currentUser = useCurrentUser();
   const { set, ...queryFilters } = useModelQueryParams();
   const { favorites, query } = queryFilters;

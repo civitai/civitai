@@ -12,6 +12,7 @@ import {
   Title,
   Tooltip,
   UnstyledButton,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconCategory,
@@ -25,7 +26,10 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
-import { useSearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { useSearchLayout } from '~/components/Search/SearchLayout';
+import searchLayoutClasses from '~/components/Search/SearchLayout.module.scss';
+import classes from './SearchHeader.module.scss';
+
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
   ARTICLES_SEARCH_INDEX,
@@ -41,51 +45,6 @@ import { isDefined } from '~/utils/type-guards';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { searchIndexMap } from '~/components/Search/search.types';
 
-const useStyles = createStyles((theme) => ({
-  wrapper: {
-    [containerQuery.smallerThan('sm')]: {
-      overflow: 'auto',
-      maxWidth: '100%',
-    },
-  },
-  label: {
-    paddingTop: 6,
-    paddingBottom: 6,
-    paddingLeft: 6,
-    paddingRight: 10,
-  },
-  root: {
-    backgroundColor: 'transparent',
-    gap: 8,
-    [containerQuery.smallerThan('sm')]: {
-      overflow: 'visible',
-      maxWidth: '100%',
-    },
-  },
-  control: {
-    border: 'none !important',
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-    svg: {
-      color: theme.colorScheme === 'dark' ? theme.colors.gray[1] : theme.colors.dark[6],
-    },
-    borderRadius: theme.radius.xl,
-  },
-  active: { borderRadius: theme.radius.xl },
-  controlActive: {
-    borderRadius: theme.radius.xl,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[3] : theme.colors.dark[6],
-    svg: {
-      color: theme.colorScheme === 'dark' ? undefined : theme.colors.gray[1],
-    },
-    '& label': {
-      color: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[1],
-
-      '&:hover': {
-        color: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
-      },
-    },
-  },
-}));
 export const SearchHeader = () => {
   const { uiState, status } = useInstantSearch();
   const { setSearchParamsByUiState, ...states } = useSearchStore((state) => state);
@@ -93,10 +52,9 @@ export const SearchHeader = () => {
   const { query } = useSearchBox();
   const { nbHits } = usePagination();
   const features = useFeatureFlags();
+  const theme = useMantineTheme();
 
   const router = useRouter();
-  const { classes, theme } = useStyles();
-  const { classes: searchLayoutStyles } = useSearchLayoutStyles();
   const { sidebarOpen, setSidebarOpen } = useSearchLayout();
 
   const onChangeIndex = (value: string) => {

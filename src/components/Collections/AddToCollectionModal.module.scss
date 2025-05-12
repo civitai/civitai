@@ -1,0 +1,12 @@
+.body {
+  align-items: center;
+}
+
+.labelWrapper {
+  flex: 1;
+}
+
+.contentWrap {
+  padding-top: var(--mantine-spacing-xs, 8px);
+  padding-bottom: var(--mantine-spacing-xs, 8px);
+}

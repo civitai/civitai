@@ -1,3 +1,5 @@
+$SIDEBAR_SIZE: 377px;
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -21,4 +23,43 @@
   svg {
     color: light-dark(var(--mantine-color-dark-6), inherit);
   }
+}
+
+.sidebar {
+  height: 100%;
+  margin-left: -$SIDEBAR_SIZE; // SIDEBAR_SIZE
+  width: $SIDEBAR_SIZE; // SIDEBAR_SIZE
+
+  transition: margin 200ms ease;
+  border-right: 1px solid light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-1));
+  background: light-dark(var(--mantine-color-dark-7), var(--mantine-color-gray-0));
+  display: flex;
+  flex-direction: column;
+
+  @container (max-width: 768px) {
+    top: 0;
+    left: 0;
+    z-index: 200;
+    height: 100%;
+    width: 100%;
+    margin-left: -100%;
+    position: absolute;
+    border: none;
+  }
+}
+
+.scrollable {
+  padding: var(--mantine-spacing-md);
+  overflow-y: auto;
+  flex: 1;
+}
+
+.root {
+  height: 100%;
+  width: 100%;
+  display: flex;
+}
+
+.active {
+  margin-left: 0 !important;
 }

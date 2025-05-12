@@ -3,8 +3,7 @@ import {
   Box,
   Button,
   Center,
-  createStyles,
-  Group,
+   Group,
   List,
   Overlay,
   Stack,
@@ -29,13 +28,13 @@ import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import classes from './CommentSection.module.scss';
 
 export function CommentSection({ comments, modelId, parent, highlights }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const theme = useMantineTheme();
   const queryUtils = trpc.useContext();
-  const { classes } = useStyles();
   const features = useFeatureFlags();
   highlights = highlights?.filter((x) => x);
 
@@ -202,11 +201,3 @@ type Props = {
   parent?: CommentGetById;
   highlights?: number[];
 };
-
-const useStyles = createStyles((theme) => ({
-  highlightedComment: {
-    background: theme.fn.rgba(theme.colors.blue[5], 0.2),
-    margin: `-${theme.spacing.xs}px`,
-    padding: `${theme.spacing.xs}px`,
-  },
-}));

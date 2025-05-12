@@ -12,7 +12,7 @@ import {
 import { IconMoodDollar, IconX } from '@tabler/icons-react';
 import { z } from 'zod';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 import {
   useBuzzWithdrawalRequestStatus,
   useMutateBuzzWithdrawalRequest,
@@ -42,8 +42,6 @@ export const CreateWithdrawalRequest = () => {
   const { createBuzzWithdrawalRequest, creatingBuzzWithdrawalRequest } =
     useMutateBuzzWithdrawalRequest();
   const { data: status, isLoading: isLoadingStatus } = useBuzzWithdrawalRequestStatus();
-
-  const { classes } = useBuzzDashboardStyles();
 
   const form = useForm({
     schema,

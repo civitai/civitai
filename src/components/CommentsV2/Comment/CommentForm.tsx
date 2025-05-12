@@ -14,6 +14,8 @@ import { SimpleUser } from '~/server/selectors/user.selector';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from './CommentForm.module.scss';
+import clsx from 'clsx';
 
 /*
   Most use cases of this form will require cancel/submit buttons to be displayed
@@ -39,7 +41,6 @@ export const CommentForm = ({
   replyToCommentId?: number;
   borderless?: boolean;
 }) => {
-  const { classes, cx } = useStyles();
   const { expanded, toggleExpanded } = useRootThreadContext();
   const {
     entityId: contextEntityId,
@@ -170,7 +171,7 @@ export const CommentForm = ({
           onSuperEnter={() => form.handleSubmit(handleSubmit)()}
           classNames={{
             root: borderless ? 'border-none' : undefined,
-            content: cx(classes.content, 'rounded-3xl'),
+            content: clsx(classes.content, 'rounded-3xl'),
           }}
           data-testid="comment-form"
           inputClasses="break-all"
@@ -190,17 +191,3 @@ export const CommentForm = ({
     </Form>
   );
 };
-
-const useStyles = createStyles((theme) => ({
-  content: {
-    padding: 0,
-    fontSize: 14,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-
-    '.ProseMirror': {
-      padding: `8px 12px`,
-      minHeight: 38,
-      cursor: 'text',
-    },
-  },
-}));

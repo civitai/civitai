@@ -25,8 +25,8 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
-import { env } from '~/env/client';
+import classes from '~/components/Search/SearchLayout.module.scss';
+ import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ImageCover, ImageSrcCover } from '~/components/Cards/CollectionCard';
@@ -107,7 +107,6 @@ function HiddenNotice({ hiddenCount }: { hiddenCount: number }) {
 function ResourceHitList() {
   const startedRef = useRef(false);
   const { status } = useInstantSearch();
-  const { classes } = useSearchLayoutStyles();
   const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'collections'>();
   const {
     items: collections,

@@ -384,7 +384,7 @@ export function DumbModelFiltersDropdown({
         <Popover.Target>{target}</Popover.Target>
         <Popover.Dropdown maw={576} p={0} w="100%">
           <ScrollArea.Autosize
-            maxHeight={maxPopoverHeight ?? 'calc(90vh - var(--header-height) - 56px)'}
+            mah={maxPopoverHeight ?? 'calc(90vh - var(--header-height) - 56px)'}
             type="hover"
           >
             {dropdown}

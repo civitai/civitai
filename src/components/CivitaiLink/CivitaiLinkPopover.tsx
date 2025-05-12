@@ -10,7 +10,6 @@ import {
   GroupProps,
   Paper,
   Indicator,
-  createStyles,
   ScrollArea,
   Divider,
   Center,
@@ -56,6 +55,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
+import classes from './CivitaiLinkPopover.module.scss';
 
 export function CivitaiLinkPopover() {
   return (
@@ -263,8 +263,6 @@ function LostConnection({ error }: { error?: string }) {
 }
 
 function InstancesManager() {
-  const { classes } = useStyles();
-
   const {
     instances,
     instance: selectedInstance,
@@ -296,7 +294,7 @@ function InstancesManager() {
           </Button>
         )}
       </Group>
-      <ScrollArea.Autosize maxHeight={410}>
+      <ScrollArea.Autosize mah={410}>
         {instances?.map((instance) => {
           const isSelected = instance.id === selectedInstance?.id;
           return (
@@ -430,9 +428,8 @@ function GetReconnected() {
 
 function ActivityList() {
   const ids = useCivitaiLinkStore((state) => state.ids);
-  const { classes } = useStyles();
   return ids.length > 0 ? (
-    <ScrollArea.Autosize maxHeight={410}>
+    <ScrollArea.Autosize mah={410}>
       {ids.map((id) => (
         <LinkActivity key={id} id={id} p="xs" pr="sm" className={classes.listItem} />
       ))}
@@ -443,14 +440,6 @@ function ActivityList() {
     </Center>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  listItem: {
-    '&:nth-of-type(2n + 1)': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    },
-  },
-}));
 
 function LinkButton() {
   // only show the connected indicator if there are any instances

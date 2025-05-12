@@ -10,31 +10,16 @@ import {
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from './RedeemCodeModal.module.scss';
 
 const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
   { ssr: false }
 );
-
-const useStyles = createStyles(() => ({
-  cancelButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-      order: 2,
-    },
-  },
-
-  submitButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-      order: 1,
-    },
-  },
-}));
+ 
 
 export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; code?: string }) {
   const dialog = useDialogContext();
-  const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
 
   const [playAnimation, setPlayAnimation] = useState(false);

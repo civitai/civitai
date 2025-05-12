@@ -132,7 +132,7 @@ export function AdaptiveFiltersDropdown({
         <ScrollArea.Autosize
           classNames={{ root: dropdownProps?.className }}
           type="hover"
-          maxHeight={'calc(90vh - var(--header-height) - 56px)'}
+          mah={'calc(90vh - var(--header-height) - 56px)'}
         >
           {dropdown}
         </ScrollArea.Autosize>

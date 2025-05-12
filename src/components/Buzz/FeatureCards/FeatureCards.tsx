@@ -1,15 +1,4 @@
-import {
-  Button,
-  ButtonProps,
-  Center,
-  List,
-  Paper,
-  Stack,
-  Text,
-  Title,
-  createStyles,
-  Group,
-} from '@mantine/core';
+import { Button, ButtonProps, Center, List, Paper, Stack, Text, Title, Group } from '@mantine/core';
 import {
   IconArrowRight,
   IconBarbell,
@@ -30,15 +19,10 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { generationPanel } from '~/store/generation.store';
 import dynamic from 'next/dynamic';
+import classes from './FeatureCards.module.scss';
 const RedeemCodeModal = dynamic(() =>
   import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
 );
-
-const useStyles = createStyles((theme) => ({
-  featureCard: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-  },
-}));
 
 const getEarnings = (): (FeatureCardProps & { key: string })[] => [
   // {
@@ -140,7 +124,7 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
     btnProps: {
       href: '/models/train',
       children: 'Train now',
-      rightIcon: <IconArrowRight size={14} />,
+      rightSection: <IconArrowRight size={14} />,
     },
   },
   {
@@ -155,7 +139,7 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
         generationPanel.open();
       },
       children: 'Generate now',
-      rightIcon: <IconArrowRight size={14} />,
+      rightSection: <IconArrowRight size={14} />,
     },
   },
   {
@@ -166,7 +150,7 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
     btnProps: {
       href: '/images',
       children: 'View artists',
-      rightIcon: <IconArrowRight size={14} />,
+      rightSection: <IconArrowRight size={14} />,
     },
   },
   {
@@ -177,7 +161,7 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
     btnProps: {
       href: '/bounties/create',
       children: 'Post a bounty',
-      rightIcon: <IconArrowRight size={14} />,
+      rightSection: <IconArrowRight size={14} />,
     },
   },
   {
@@ -190,7 +174,7 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
       rel: 'noreferrer nofollow',
       href: `https://civitai.retool.com/form/cdf269fb-c9b1-4da4-8601-6367c2358a36?userId=${userId}`,
       children: 'Apply Now',
-      rightIcon: <IconArrowRight size={14} />,
+      rightSection: <IconArrowRight size={14} />,
     },
   },
   {
@@ -201,7 +185,7 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
     btnProps: {
       href: '/shop',
       children: 'Get some!',
-      rightIcon: <IconArrowRight size={14} />,
+      rightSection: <IconArrowRight size={14} />,
     },
   },
   {
@@ -259,8 +243,6 @@ type FeatureCardProps = {
 };
 
 export const FeatureCard = ({ title, description, icon, btnProps, withCTA }: FeatureCardProps) => {
-  const { classes } = useStyles();
-
   if (!withCTA && btnProps.disabled) return null;
 
   return (

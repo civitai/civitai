@@ -1,0 +1,31 @@
+.highlightedComment {
+  background: rgba(var(--mantine-color-blue-5-rgb), 0.2);
+  margin: calc(var(--mantine-spacing-xs, 8px) * -1);
+  padding: var(--mantine-spacing-xs, 8px);
+  border-radius: var(--mantine-radius-sm, 4px);
+}
+
+.groupWrap {
+  position: relative;
+}
+
+.repliesIndicator {
+  position: absolute;
+  top: calc(26px + 8px);
+  width: 2px;
+  height: calc(100% - 26px - 8px);
+  background: light-dark(rgba(255, 255, 255, 0.1), rgba(0, 0, 0, 0.31));
+  left: calc(26px / 2 - 2px / 2);
+
+  &:hover {
+    background: light-dark(rgba(255, 255, 255, 0.8), rgba(0, 0, 0, 0.7));
+  }
+}
+
+.replyInset {
+  margin-left: -12px;
+}
+
+.rootCommentReplyInset {
+  padding-left: 46px;
+}

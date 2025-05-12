@@ -32,7 +32,8 @@ import {
   getBuzzWithdrawalDetails,
   numberWithCommas,
 } from '../../../utils/number-helpers';
-import { useBuzzDashboardStyles, WithdrawalRequestBadgeColor } from '../buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
+import { WithdrawalRequestBadgeColor } from '../buzz.styles';
 import {
   useMutateBuzzWithdrawalRequest,
   useQueryOwnedBuzzWithdrawalRequests,
@@ -40,7 +41,6 @@ import {
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
   const { userPaymentConfiguration } = useUserPaymentConfiguration();
-  const { classes } = useBuzzDashboardStyles();
   const [filters, setFilters] = useState<
     Omit<GetPaginatedOwnedBuzzWithdrawalRequestSchema, 'limit'>
   >({

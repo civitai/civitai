@@ -11,6 +11,7 @@ import {
   Text,
   Title,
   UnstyledButton,
+  useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
@@ -29,7 +30,7 @@ import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { Bar } from 'react-chartjs-2';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -74,8 +75,7 @@ export function DailyCreatorCompReward() {
     { date: selectedDate },
     { enabled: features.buzz }
   );
-
-  const { classes, theme } = useBuzzDashboardStyles();
+  const theme = useMantineTheme();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
   const minSelectedDate = dayjs(selectedDate).startOf('month').toDate();
   const maxSelectedDate = dayjs(selectedDate).endOf('month').toDate();
@@ -274,7 +274,7 @@ export function DailyCreatorCompReward() {
               ) : filteredResources.length > 0 ? (
                 <div>
                   <ScrollArea.Autosize
-                    maxHeight={400}
+                    mah={400}
                     style={{ width: '100%', overflow: 'hidden' }}
                     type="auto"
                     className="[&>*]:w-full"

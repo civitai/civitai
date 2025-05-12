@@ -1,4 +1,4 @@
-import { Badge, BadgeProps, keyframes } from '@mantine/core';
+import { Badge, BadgeProps } from '@mantine/core';
 import { useIsLive } from '~/hooks/useIsLive';
 
 export function LiveNowIndicator(props: Omit<BadgeProps, 'children'>) {
@@ -12,7 +12,7 @@ export function LiveNowIndicator(props: Omit<BadgeProps, 'children'>) {
       styles={{
         root: {
           '&:before': {
-            animation: `${blink} 2s linear infinite`,
+            animation: `blink 2s linear infinite`,
           },
         },
       }}
@@ -31,15 +31,4 @@ export function LiveNowIndicator(props: Omit<BadgeProps, 'children'>) {
     </Badge>
   );
 }
-
-const blink = keyframes({
-  '0%': {
-    opacity: 0.25,
-  },
-  '50%': {
-    opacity: 1,
-  },
-  '100%': {
-    opacity: 0.25,
-  },
-});
+ 

@@ -1,0 +1,83 @@
+.htmlRenderer {
+
+  // Remove margin from the last paragraph
+  & p:last-of-type {
+    margin-bottom: 0;
+  }
+
+  // Break words in paragraphs
+  p {
+    word-break: break-word;
+  }
+
+  // Remove border from iframes
+  iframe {
+    border: none;
+  }
+
+  // Code block styling
+  code {
+    white-space: break-spaces;
+  }
+
+  // Instagram embed styling
+  div[data-type="instagram"] {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 769px;
+
+    &>iframe {
+      width: 50%;
+      overflow: hidden;
+      flex-grow: 1;
+    }
+
+    @media (max-width: var(--mantine-breakpoint-md)) {
+      height: 649px;
+    }
+
+    @media (max-width: var(--mantine-breakpoint-sm)) {
+      height: 681px;
+
+      &>iframe {
+        width: 100%;
+      }
+    }
+  }
+
+  // StrawPoll embed styling
+  div[data-type="strawPoll"] {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 480px;
+
+    &>iframe {
+      flex-grow: 1;
+    }
+  }
+
+  // Prevent headings from being hidden by the fixed navbar
+  h1,
+  h2,
+  h3 {
+    &:before {
+      display: block;
+      content: '';
+      margin-top: calc(var(--mantine-spacing-xs, 8px) * -7);
+      height: calc(var(--mantine-spacing-xs, 8px) * 7 + var(--mantine-spacing-xs, 8px));
+      visibility: hidden;
+    }
+  }
+
+  // Horizontal rule styling
+  hr {
+    height: 4px;
+    padding: 0;
+    margin: 24px 0;
+    background-color: light-dark(var(--mantine-color-dark-4),
+        var(--mantine-color-gray-2));
+    border: 0;
+  }
+}

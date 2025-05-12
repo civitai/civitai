@@ -18,7 +18,7 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
 import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 import { CreatorProgramV2 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
@@ -67,7 +67,6 @@ export const getServerSideProps = createServerSideProps({
 
 export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
-  const { classes } = useBuzzDashboardStyles();
   const isMember = currentUser?.isMember;
   const { isFreeTier, meta } = useActiveSubscription();
   const { query } = useRouter();

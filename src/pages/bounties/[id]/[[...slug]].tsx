@@ -776,7 +776,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             <Group justify="space-between">Supporters</Group>
           </Accordion.Control>
           <Accordion.Panel>
-            <ScrollArea.Autosize maxHeight={500}>
+            <ScrollArea.Autosize mah={500}>
               <DescriptionTable
                 items={benefactorDetails}
                 labelWidth="70%"
@@ -807,7 +807,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               </Group>
             </Accordion.Control>
             <Accordion.Panel>
-              <ScrollArea.Autosize maxHeight={300}>
+              <ScrollArea.Autosize mah={300}>
                 <Stack gap={2}>
                   {filesCount > 0 ? (
                     <SimpleGrid cols={1} gap={2}>

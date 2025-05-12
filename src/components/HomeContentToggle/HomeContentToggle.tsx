@@ -1,4 +1,4 @@
-import { Button, createStyles, Group, Menu, Text } from '@mantine/core';
+import { Button, Group, Menu, Text } from '@mantine/core';
 import {
   IconCalendar,
   IconCaretDown,
@@ -22,6 +22,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import classes from './HomeContentToggle.module.scss';
 
 type HomeOption = {
   key: string;
@@ -108,106 +109,10 @@ export function filterHomeOptions(features: FeatureAccess) {
   );
 }
 
-const useTabsStyles = createStyles((theme) => ({
-  tabHighlight: {
-    backgroundColor: theme.fn.rgba(
-      theme.colors.yellow[3],
-      theme.colorScheme === 'dark' ? 0.1 : 0.3
-    ),
-    backgroundImage: `linear-gradient(90deg, ${theme.fn.rgba(
-      theme.colors.yellow[4],
-      0
-    )}, ${theme.fn.rgba(
-      theme.colors.yellow[4],
-      theme.colorScheme === 'dark' ? 0.1 : 0.2
-    )}, ${theme.fn.rgba(theme.colors.yellow[4], 0)})`,
-    backgroundSize: '50px',
-    backgroundPosition: '-300% 50%',
-    backgroundRepeat: 'no-repeat',
-    color: theme.colorScheme === 'dark' ? theme.colors.yellow[3] : theme.colors.yellow[8],
-    animation: 'button-highlight 5s linear infinite',
-    willChange: 'background-position',
-  },
-
-  // tabRainbow: {
-  //   background: `linear-gradient(
-  //       90deg,
-  //       rgba(255, 0, 0, 1) 0%,
-  //       rgba(255, 154, 0, 1) 10%,
-  //       rgba(208, 222, 33, 1) 20%,
-  //       rgba(79, 220, 74, 1) 30%,
-  //       rgba(63, 218, 216, 1) 40%,
-  //       rgba(47, 201, 226, 1) 50%,
-  //       rgba(28, 127, 238, 1) 60%,
-  //       rgba(95, 21, 242, 1) 70%,
-  //       rgba(186, 12, 248, 1) 80%,
-  //       rgba(251, 7, 217, 1) 90%,
-  //       rgba(255, 0, 0, 1) 100%
-  //   ) 0/200%`,
-  //   animation: `${rainbowTextAnimation} 10s linear infinite`,
-  //   ':hover': {
-  //     background: `linear-gradient(
-  //       90deg,
-  //       rgba(255, 0, 0, 1) 0%,
-  //       rgba(255, 154, 0, 1) 10%,
-  //       rgba(208, 222, 33, 1) 20%,
-  //       rgba(79, 220, 74, 1) 30%,
-  //       rgba(63, 218, 216, 1) 40%,
-  //       rgba(47, 201, 226, 1) 50%,
-  //       rgba(28, 127, 238, 1) 60%,
-  //       rgba(95, 21, 242, 1) 70%,
-  //       rgba(186, 12, 248, 1) 80%,
-  //       rgba(251, 7, 217, 1) 90%,
-  //       rgba(255, 0, 0, 1) 100%
-  //   ) 0/200%`,
-  //   },
-  //   '&[data-active]': {
-  //     background: `linear-gradient(
-  //       90deg,
-  //       rgba(255, 0, 0, 1) 0%,
-  //       rgba(255, 154, 0, 1) 10%,
-  //       rgba(208, 222, 33, 1) 20%,
-  //       rgba(79, 220, 74, 1) 30%,
-  //       rgba(63, 218, 216, 1) 40%,
-  //       rgba(47, 201, 226, 1) 50%,
-  //       rgba(28, 127, 238, 1) 60%,
-  //       rgba(95, 21, 242, 1) 70%,
-  //       rgba(186, 12, 248, 1) 80%,
-  //       rgba(251, 7, 217, 1) 90%,
-  //       rgba(255, 0, 0, 1) 100%
-  //   ) 0/200%`,
-  //   },
-  // },
-  moreButton: {
-    padding: '8px 10px 8px 16px',
-    fontSize: 16,
-    fontWeight: 500,
-    display: 'none',
-
-    [`&[data-active="true"]`]: {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4],
-      color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[8],
-    },
-
-    ['@container (min-width: 992px) and (max-width: 1440px)']: {
-      display: 'block',
-    },
-  },
-
-  groupedOptions: {
-    display: 'block',
-
-    ['@container (min-width: 992px) and (max-width: 1440px)']: {
-      display: 'none',
-    },
-  },
-}));
-
 export function HomeTabs() {
   const router = useRouter();
   const features = useFeatureFlags();
   const activePath = router.pathname.split('/')[1] || 'home';
-  const { classes, cx } = useTabsStyles();
 
   const [moreOpened, setMoreOpened] = useState(false);
 
@@ -258,7 +163,7 @@ export function HomeTabs() {
                 <Menu.Item
                   component="a"
                   icon={value.icon({ size: 16 })}
-                  className={cx(
+                  className={clsx(
                     value.classes
                       ?.map((c) => {
                         if (classes.hasOwnProperty(c)) return classes[c as keyof typeof classes];

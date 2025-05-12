@@ -16,7 +16,6 @@ import {
   ScrollArea,
   SimpleGrid,
   Card,
-  createStyles,
 } from '@mantine/core';
 import {
   IconInfoCircle,
@@ -28,6 +27,7 @@ import {
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
+import classes from './RunPartners.module.scss';
 
 export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
   const { theme, classes } = useStyles();
@@ -302,11 +302,3 @@ const calculateStepsPerSecond = (value: number) => {
 
   return Math.round(parsed);
 };
-
-const useStyles = createStyles((theme) => ({
-  premiumPartner: {
-    '.mantine-Badge-root': {
-      padding: '2px 8px',
-    },
-  },
-}));

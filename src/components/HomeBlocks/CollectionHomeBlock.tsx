@@ -30,10 +30,7 @@ import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
-import {
-  useHomeBlockStyles,
-  useHomeBlockGridStyles,
-} from '~/components/HomeBlocks/HomeBlock.Styles';
+import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
@@ -71,7 +68,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
 
   const rows = metadata.collection?.rows ?? 2;
 
-  const { classes: homeBlockClasses } = useHomeBlockStyles();
   const currentUser = useCurrentUser();
 
   const { collection } = homeBlock ?? {};
@@ -95,11 +91,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     return filtered.slice(0, itemsToShow);
   }, [filtered, rows]);
 
-  const { classes, cx } = useHomeBlockGridStyles({
-    count: items.length ?? 0,
-    rows,
-  });
-
   // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 
   // useEffect(() => console.log('items'), [items]);
@@ -109,10 +100,16 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   const Icon = icons[itemType];
 
   const MetaDataTop = (
-    <Stack gap="sm">
-      <Group gap="xs" justify="space-between" className={homeBlockClasses.header}>
+    <Stack
+      gap="sm"
+      style={{
+        '--count': items.length ?? 0,
+        '--rows': rows,
+      }}
+    >
+      <Group gap="xs" justify="space-between" className={classes.header}>
         <Group wrap="nowrap">
-          <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
+          <Title className={classes.title} order={1} lineClamp={1}>
             {metadata.title ?? collection?.name ?? 'Collection'}{' '}
           </Title>
           {!metadata.descriptionAlwaysVisible && currentUser && metadata.description && (
@@ -154,7 +151,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         {metadata.link && (
           <Link legacyBehavior href={metadata.link} passHref>
             <Button
-              className={homeBlockClasses.expandButton}
+              className={classes.expandButton}
               component="a"
               variant="subtle"
               rightIcon={<IconArrowRight size={16} />}
@@ -182,7 +179,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
             <Icon />
           </ThemeIcon>
         )}
-        <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
+        <Title className={classes.title} order={1} lineClamp={1}>
           {metadata.title ?? collection?.name ?? 'Collection'}
         </Title>
       </Group>

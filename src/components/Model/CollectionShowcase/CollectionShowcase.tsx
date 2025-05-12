@@ -31,7 +31,7 @@ export function CollectionShowcase({ modelId, loading }: Props) {
   return (
     <div className="relative">
       <LoadingOverlay visible={isRefetching} zIndex={9} />
-      <ScrollArea.Autosize maxHeight={300}>
+      <ScrollArea.Autosize mah={300}>
         {isLoading || loading ? (
           <div className="flex items-center justify-center p-2">
             <Loader variant="bars" size="sm" />

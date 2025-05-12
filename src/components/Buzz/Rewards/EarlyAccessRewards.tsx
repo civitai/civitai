@@ -1,4 +1,4 @@
-import { Center, Loader, Paper, Stack, Text, Title } from '@mantine/core';
+import { Center, Loader, Paper, Stack, Text, Title, useMantineTheme } from '@mantine/core';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -13,7 +13,7 @@ import {
 import dayjs from 'dayjs';
 import { useMemo } from 'react';
 import { Line } from 'react-chartjs-2';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { constants } from '~/server/common/constants';
@@ -40,8 +40,7 @@ export const EarlyAccessRewards = () => {
         enabled: userPaymentConfiguration?.stripeAccountStatus === StripeConnectStatus.Approved,
       }
     );
-
-  const { classes, theme } = useBuzzDashboardStyles();
+  const theme = useMantineTheme();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
 
   const options = useMemo<ChartOptions<'line'>>(

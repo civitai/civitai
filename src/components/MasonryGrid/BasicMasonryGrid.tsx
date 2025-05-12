@@ -82,7 +82,7 @@ export function BasicMasonryGrid<T>({
   return (
     <ScrollArea.Autosize
       viewportRef={containerRef}
-      maxHeight={maxHeight}
+      mah={maxHeight}
       style={{ position: 'relative', width: '100%' }}
       type="hover"
     >

@@ -453,7 +453,7 @@ export default function BountyEntryDetailsPage({
                 <Loader size="md" variant="bars" />
               </Center>
             ) : filesCount > 0 ? (
-              <ScrollArea.Autosize maxHeight={300}>
+              <ScrollArea.Autosize mah={300}>
                 <SimpleGrid cols={1} gap={2}>
                   {files.map((file) => {
                     const isLocked = !file.url;
@@ -544,7 +544,7 @@ export default function BountyEntryDetailsPage({
         <span>Entry notes</span>
       </Text>
       <Card.Section pl="md" pb="md">
-        <ScrollArea.Autosize maxHeight={200} offsetScrollbars>
+        <ScrollArea.Autosize mah={200} offsetScrollbars>
           <RenderHtml html={bountyEntry.description} />
         </ScrollArea.Autosize>
       </Card.Section>

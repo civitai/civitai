@@ -1,4 +1,4 @@
-import { Badge, createStyles, Tabs, TabsProps, Text } from '@mantine/core';
+import { Badge,  Tabs, TabsProps, Text } from '@mantine/core';
 import {
   getCategoryDisplayName,
   useNotificationSettings,
@@ -13,15 +13,8 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 const categoryTabs: string[] = Object.values(NotificationCategory);
 const tabs = ['all', 'announcements', ...categoryTabs];
 
-const useStyles = createStyles(() => ({
-  tab: {
-    padding: '8px 12px',
-  },
-}));
-
 export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: Props) {
-  const { classes } = useStyles();
-  const count = useQueryNotificationsCount();
+   const count = useQueryNotificationsCount();
   const { isLoading, hasCategory } = useNotificationSettings(enabled);
   const currentUser = useCurrentUser();
   const isCreator = Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram);
@@ -44,7 +37,11 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
   return (
     <TwScrollX>
       <Tabs
-        classNames={classes}
+        classNames={{
+          tab: {
+            padding: '8px 12px',
+          }
+        }}
         variant="pills"
         radius="xl"
         color="gray"

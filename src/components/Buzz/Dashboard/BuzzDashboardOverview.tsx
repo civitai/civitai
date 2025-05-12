@@ -30,7 +30,7 @@ import { UserBuzz } from '~/components/User/UserBuzz';
 import { GetTransactionsReportSchema, TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
-import { useBuzzDashboardStyles } from '../buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -46,7 +46,7 @@ const options = {
 const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 
 export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
-  const { classes, theme } = useBuzzDashboardStyles();
+  const theme = useMantineTheme();
   // Right now, sadly, we neeed to use two separate queries for user and generation transactions.
   // If this ever changes, that'd be awesome. But for now, we need to do this.
   const [transactionType, setTransactionType] = React.useState<'user' | 'generation'>('user');
@@ -284,7 +284,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
               </Group>
             </Text>
             {transactions.length ? (
-              <ScrollArea.Autosize maxHeight={480} mt="md" key={transactionType}>
+              <ScrollArea.Autosize mah={480} mt="md" key={transactionType}>
                 <Stack gap={8} mr={14}>
                   {transactions.map((transaction, index) => {
                     const { amount, date } = transaction;

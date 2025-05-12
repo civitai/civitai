@@ -50,7 +50,7 @@ export function TemplateSelect({ userId, onSelect }: Props) {
       </Stack>
       <Divider mx={-4} mt="sm" />
       {models.length ? (
-        <ScrollArea.Autosize maxHeight={300}>
+        <ScrollArea.Autosize mah={300}>
           <Stack gap={0} mt={4}>
             {models.map((model) => (
               <Link key={model.id} href={`?templateId=${model.id}`} shallow>

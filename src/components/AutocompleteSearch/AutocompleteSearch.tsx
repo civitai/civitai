@@ -8,7 +8,6 @@ import {
   Select,
   Stack,
   Text,
-  createStyles,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
@@ -61,6 +60,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { getBlockedNsfwWords, includesPoi } from '~/utils/metadata/audit';
+import classes from './AutocompleteSearch.module.scss';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -101,84 +101,6 @@ const searchClient: InstantSearchProps['searchClient'] = {
 };
 
 const DEFAULT_DROPDOWN_ITEM_LIMIT = 6;
-const useStyles = createStyles((theme) => ({
-  root: {
-    flexGrow: 1,
-
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-      flexGrow: 1,
-    },
-  },
-  wrapper: {
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  input: {
-    borderRadius: 0,
-
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  dropdown: {
-    [theme.fn.smallerThan('sm')]: {
-      marginTop: '-7px',
-    },
-  },
-
-  targetSelectorRoot: {
-    width: '110px',
-
-    [theme.fn.smallerThan('md')]: {
-      display: 'none', // TODO.search: Remove this once we figure out a way to prevent hiding the whole bar when selecting a target
-      height: '100%',
-
-      '&, & > [role="combobox"], & > [role="combobox"] *': {
-        height: '100%',
-      },
-    },
-
-    [theme.fn.smallerThan('sm')]: {
-      width: '25%',
-    },
-  },
-
-  targetSelectorInput: {
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    paddingRight: '18px',
-
-    '&:not(:focus)': {
-      borderRightStyle: 'none',
-    },
-
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-
-  targetSelectorRightSection: {
-    pointerEvents: 'none',
-  },
-
-  searchButton: {
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-
-    '&:hover': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.gray[4],
-    },
-
-    [theme.fn.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-}));
 
 const targetData = [
   { value: 'models', label: 'Models' },
@@ -267,7 +189,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 ) {
   // const currentUser = useCurrentUser();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const { classes } = useStyles();
   const router = useRouter();
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
@@ -435,7 +356,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           )}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           sx={{ flexShrink: 1 }}
-          onChange={onTargetChange}
+          onChange={(v: string | null) => onTargetChange(v as SearchIndexKey)}
           autoComplete="off"
           withinPortal
         />

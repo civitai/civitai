@@ -1,5 +1,5 @@
 import { Group, GroupProps } from '@mantine/core';
-import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
+import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -9,7 +9,6 @@ import { ImageSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
-  const { classes } = useFeedFiltersStyles();
   const currentUser = useCurrentUser();
 
   const { replace, query } = useImageQueryParams();

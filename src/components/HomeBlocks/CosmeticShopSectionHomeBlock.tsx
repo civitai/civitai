@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
-import { useHomeBlockGridStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
+import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ShopItem } from '~/components/Shop/ShopItem';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -34,18 +34,18 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
     return cosmeticShopSection.items;
   }, [cosmeticShopSection, metadata]);
 
-  const { classes, cx } = useHomeBlockGridStyles({
-    count: items.length ?? 0,
-    rows: 2,
-  });
-
   if (!cosmeticShopSection) {
     return null;
   }
 
   // How we can go to town:
   return (
-    <>
+    <div
+      style={{
+        '--count': items.length ?? 0,
+        '--rows': 2,
+      }}
+    >
       <HomeBlockHeaderMeta
         metadata={{
           ...metadata,
@@ -64,7 +64,7 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
           );
         })}
       </div>
-    </>
+    </div>
   );
 }
 

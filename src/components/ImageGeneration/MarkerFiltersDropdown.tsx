@@ -76,7 +76,7 @@ export function DumbMarkerFiltersDropdown({
           </Popover.Target>
         </Indicator>
         <Popover.Dropdown maw={576} w="100%">
-          <ScrollArea.Autosize maxHeight={'calc(90vh - var(--header-height) - 56px)'} type="hover">
+          <ScrollArea.Autosize mah={'calc(90vh - var(--header-height) - 56px)'} type="hover">
             <Stack gap={8}>
               {!hideMediaTypes && (
                 <>

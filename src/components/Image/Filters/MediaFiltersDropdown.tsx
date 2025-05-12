@@ -362,7 +362,7 @@ export function MediaFiltersDropdown({
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p={0} w="100%">
-        <ScrollArea.Autosize type="hover" maxHeight={'calc(90vh - var(--header-height) - 56px)'}>
+        <ScrollArea.Autosize type="hover" mah={'calc(90vh - var(--header-height) - 56px)'}>
           {dropdown}
         </ScrollArea.Autosize>
       </Popover.Dropdown>
