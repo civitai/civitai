@@ -9,10 +9,10 @@ import {
   Title,
   Tooltip,
   TooltipProps,
-  createStyles,
   ActionIcon,
   Paper,
   Input,
+  useMantineTheme,
 } from '@mantine/core';
 import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
@@ -32,7 +32,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
+import utilClasses from '~/libs/helpers.module.scss';
 import { upsertArticleInput } from '~/server/schema/article.schema';
 import type { ArticleGetById } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
@@ -50,7 +50,7 @@ import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsing
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider'
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -70,13 +70,6 @@ const tooltipProps: Partial<TooltipProps> = {
   withinPortal: true,
 };
 
-const useStyles = createStyles((theme) => ({
-  sidebar: {
-    position: 'sticky',
-    top: 70 + theme.spacing.xl,
-  },
-}));
-
 export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
   label: browsingLevelLabels[level],
   value: String(level),
@@ -84,7 +77,7 @@ export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
 
 export function ArticleUpsertForm({ article }: Props) {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
+  const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const features = useFeatureFlags();
@@ -194,7 +187,11 @@ export function ArticleUpsertForm({ article }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this article."} />
+      <ReadOnlyAlert
+        message={
+          "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this article."
+        }
+      />
       <ContainerGrid gutter="xl">
         <ContainerGrid.Col xs={12} md={8}>
           <Stack gap="xl">
@@ -231,7 +228,13 @@ export function ArticleUpsertForm({ article }: Props) {
           </Stack>
         </ContainerGrid.Col>
         <ContainerGrid.Col xs={12} md={4}>
-          <Stack className={classes.sidebar} gap="xl">
+          <Stack
+            style={{
+              position: 'sticky',
+              top: 70 + theme.spacing.xl,
+            }}
+            gap="xl"
+          >
             <ActionButtons
               article={article}
               saveButtonProps={{
@@ -244,7 +247,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
-              sx={hideMobile}
+              className={utilClasses.hideMobile}
             />
             <InputSelect
               name="userNsfwLevel"
@@ -286,7 +289,7 @@ export function ArticleUpsertForm({ article }: Props) {
               }
               placeholder="Select a category"
               data={categories}
-              nothingFound="Nothing found"
+              nothingFoundMessage="Nothing found"
               loading={loadingCategories}
             />
             <InputTags
@@ -366,7 +369,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
-              sx={showMobile}
+              className={utilClasses.showMobile}
             />
           </Stack>
         </ContainerGrid.Col>

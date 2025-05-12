@@ -1,0 +1,6 @@
+.attachment {
+  &:hover {
+    background-color: light-dark(lighten(var(--mantine-color-dark-4), 5%),
+        darken(var(--mantine-color-gray-0), 5%));
+  }
+}

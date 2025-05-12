@@ -3,7 +3,6 @@ import {
   Anchor,
   Badge,
   Center,
-  createStyles,
   Group,
   LoadingOverlay,
   Pagination,
@@ -20,34 +19,10 @@ import { useState } from 'react';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles((theme) => ({
-  header: {
-    position: 'sticky',
-    top: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    transition: 'box-shadow 150ms ease',
-    zIndex: 10,
-
-    '&::after': {
-      content: '""',
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2]
-      }`,
-    },
-  },
-
-  scrolled: {
-    boxShadow: theme.shadows.sm,
-  },
-}));
+import classes from './UserDraftArticles.module.scss';
+import clsx from 'clsx';
 
 export function UserDraftArticles() {
-  const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
 
   const [page, setPage] = useState(1);
@@ -85,8 +60,8 @@ export function UserDraftArticles() {
   return (
     <Stack>
       <ScrollArea style={{ height: 400 }} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
-        <Table verticalSpacing="md" fontSize="md" striped={hasDrafts}>
-          <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
+        <Table verticalSpacing="md" fz="md" striped={hasDrafts}>
+          <thead className={clsx(classes.header, { [classes.scrolled]: scrolled })}>
             <tr>
               <th>Title</th>
               <th>Status</th>
@@ -153,7 +128,7 @@ export function UserDraftArticles() {
       {pagination.totalPages > 1 && (
         <Group justify="space-between">
           <Text>Total {pagination.totalItems} items</Text>
-          <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
+          <Pagination value={page} onChange={setPage} total={pagination.totalPages} />
         </Group>
       )}
     </Stack>

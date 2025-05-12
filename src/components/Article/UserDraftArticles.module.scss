@@ -1,0 +1,20 @@
+.header {
+  position: sticky;
+  top: 0;
+  background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-white));
+  transition: box-shadow 150ms ease;
+  z-index: 10;
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-bottom: 1px solid light-dark(var(--mantine-color-dark-3), var(--mantine-color-gray-2));
+  }
+}
+
+.scrolled {
+  box-shadow: var(--mantine-shadow-sm);
+}

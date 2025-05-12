@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Button, Divider, Grid, Header } from '@mantine/core';
+import { ActionIcon, Alert, AppShell, Button, Divider, Grid } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { ReactElement, RefObject, useRef, useState } from 'react';
@@ -52,10 +52,13 @@ export function AppHeader({
   const onSearchDone = () => setShowSearch(false);
 
   return (
-    <>
-      <Header
-        height={HEADER_HEIGHT}
-        fixed={fixed}
+    <AppShell
+      header={{
+        height: HEADER_HEIGHT,
+      }}
+    >
+      <AppShell.Header
+        // fixed={fixed} TODO: Mantine7
         zIndex={199}
         className={clsx({
           ['border-green-8 border-b-[3px]']: features.isGreen,
@@ -82,7 +85,13 @@ export function AppHeader({
               {/* <EventButton /> */}
             </div>
           </Grid.Col>
-          <Grid.Col span={6} md={4} className="@max-md:hidden">
+          <Grid.Col
+            span={{
+              base: 6,
+              md: 4,
+            }}
+            className="@max-md:hidden"
+          >
             {renderSearchComponent({ onSearchDone, isMobile: false })}
           </Grid.Col>
           <Grid.Col span="auto" className="flex items-center justify-end gap-3 @max-md:hidden">
@@ -129,8 +138,8 @@ export function AppHeader({
             </div>
           </Grid.Col>
         </Grid>
-      </Header>
-    </>
+      </AppShell.Header>
+    </AppShell>
   );
 }
 

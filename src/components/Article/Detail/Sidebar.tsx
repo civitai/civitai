@@ -1,4 +1,4 @@
-import { Accordion, SimpleGrid, Stack, createStyles } from '@mantine/core';
+import { Accordion, SimpleGrid, Stack, useMantineTheme } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconList, IconPaperclip } from '@tabler/icons-react';
 
@@ -6,19 +6,12 @@ import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { useHeadingsData } from '~/hooks/useHeadingsData';
-import { hideMobile } from '~/libs/sx-helpers';
 import type { ArticleGetById } from '~/server/services/article.service';
-
-const useStyles = createStyles((theme) => ({
-  sidebar: {
-    position: 'sticky',
-    top: 70 + theme.spacing.xl,
-  },
-}));
+import utilClasses from '~/lib/helpers.module.scss';
 
 export function Sidebar({ articleId, attachments, creator }: Props) {
-  const { classes, theme } = useStyles();
   const { nestedHeadings } = useHeadingsData();
+  const theme = useMantineTheme();
 
   const [activeAccordion, setActiveAccordion] = useLocalStorage<string>({
     key: 'article-active-accordion',
@@ -29,7 +22,13 @@ export function Sidebar({ articleId, attachments, creator }: Props) {
   const hasHeadings = !!nestedHeadings.length;
 
   return (
-    <aside className={classes.sidebar}>
+    <aside
+      className={classes.sidebar}
+      style={{
+        position: 'sticky',
+        top: 70 + theme.spacing.xl,
+      }}
+    >
       <Stack>
         {(hasAttachments || hasHeadings) && (
           <Accordion
@@ -52,7 +51,7 @@ export function Sidebar({ articleId, attachments, creator }: Props) {
           >
             <Stack>
               {!!nestedHeadings.length && (
-                <Accordion.Item value="toc" sx={hideMobile}>
+                <Accordion.Item value="toc" className={utilClasses.hideMobile}>
                   <Accordion.Control icon={<IconList size={20} />}>
                     Table of Contents
                   </Accordion.Control>

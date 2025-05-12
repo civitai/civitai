@@ -5,6 +5,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { trpc } from '~/utils/trpc';
+import classes from './NotFound.module.scss';
 
 export function NotFound() {
   const isClient = useIsClient();
@@ -32,19 +33,7 @@ export function NotFound() {
           <Text size="lg">The page you are looking for doesn&apos;t exist</Text>
 
           <Stack gap={4} my="xl">
-            <Box
-              sx={(theme) => ({
-                height: 400,
-                display: 'flex',
-                img: {
-                  margin: '0 auto',
-                  height: '100%',
-                  width: 'auto',
-                  borderRadius: theme.radius.sm,
-                  boxShadow: theme.shadows.md,
-                },
-              })}
-            >
+            <Box classeName={classes.imageContainer}>
               {image ? (
                 <EdgeMedia src={image.url} width={700} alt={image.alt} />
               ) : (

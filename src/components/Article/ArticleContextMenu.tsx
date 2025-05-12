@@ -101,7 +101,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
           {...props}
           variant="transparent"
           p={0}
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
           }}
@@ -139,7 +139,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             <Menu.Item
               color="red"
               icon={<IconTrash size={14} stroke={1.5} />}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 handleDeleteArticle();
@@ -158,7 +158,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                     <IconBan size={14} stroke={1.5} />
                   )
                 }
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   handleUnpublishArticle();
@@ -198,7 +198,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
           <LoginRedirect reason="report-article">
             <Menu.Item
               icon={<IconFlag size={14} stroke={1.5} />}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 openReportModal({ entityType: ReportEntity.Article, entityId: article.id });

@@ -1,10 +1,7 @@
 import { Stack, Group, Text, Loader, Center, Divider, Title, Button, Modal } from '@mantine/core';
-import {
-  RootThreadProvider,
-  CreateComment,
-  Comment,
-  useCommentStyles,
-} from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
+
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 import { IconAlertCircle, IconMessageCancel } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useState } from 'react';
@@ -19,7 +16,6 @@ type ArticleDetailCommentsProps = {
 
 export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommentsProps) {
   const [opened, setOpened] = useState(false);
-  const { classes } = useCommentStyles();
 
   return (
     <>

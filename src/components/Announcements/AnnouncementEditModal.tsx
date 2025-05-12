@@ -1,6 +1,6 @@
-import { Button, ColorSwatch, MantineColor, Modal, useMantineTheme } from '@mantine/core';
+import { Button, ColorSwatch, Modal, SelectProps, useMantineTheme } from '@mantine/core';
 import dayjs from 'dayjs';
-import { forwardRef, useRef } from 'react';
+import { useRef } from 'react';
 import { z } from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
@@ -91,6 +91,17 @@ export function AnnouncementEditModal({
     });
   }
 
+  const renderSelectOption: SelectProps['renderOption'] = ({ option, checked }) => {
+    return (
+      <div>
+        <div className="flex items-center gap-2">
+          <span>{option.label}</span>
+          <ColorSwatch size={18} color={theme.colors[option.label][4]} />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <Modal {...dialog} title={`${announcement?.id ? 'Edit' : 'Save'} Announcement`}>
       <Form form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -103,7 +114,7 @@ export function AnnouncementEditModal({
             name="color"
             label="Color"
             data={colors.map((color) => ({ value: color, label: color }))}
-            itemComponent={SelectItem}
+            renderOption={renderSelectOption}
             searchable
             clearable
           />
@@ -133,18 +144,3 @@ export function AnnouncementEditModal({
     </Modal>
   );
 }
-
-const SelectItem = forwardRef<HTMLDivElement, { label: MantineColor }>(
-  ({ label, ...others }, ref) => {
-    const theme = useMantineTheme();
-    return (
-      <div ref={ref} {...others}>
-        <div className="flex items-center gap-2">
-          <span>{label}</span>
-          <ColorSwatch size={18} color={theme.colors[label][4]} />
-        </div>
-      </div>
-    );
-  }
-);
-SelectItem.displayName = 'MantineColorSelect';

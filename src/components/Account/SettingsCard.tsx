@@ -72,7 +72,7 @@ export function SettingsCard() {
               },
             ]}
             value={user.filePreferences?.imageFormat ?? 'metadata'}
-            onChange={(value: string) =>
+            onChange={(value: string | null) =>
               mutate({
                 id: user.id,
                 filePreferences: { ...user.filePreferences, imageFormat: value as ImageFormat },
@@ -121,8 +121,11 @@ export function SettingsCard() {
               label: value.toUpperCase(),
             }))}
             value={user.filePreferences?.fp ?? 'fp16'}
-            onChange={(value: ModelFileFp) =>
-              mutate({ id: user.id, filePreferences: { ...user.filePreferences, fp: value } })
+            onChange={(value: string | null) =>
+              mutate({
+                id: user.id,
+                filePreferences: { ...user.filePreferences, fp: value as ModelFileFp },
+              })
             }
             disabled={isLoading}
           />

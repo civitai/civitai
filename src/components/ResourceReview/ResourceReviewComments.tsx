@@ -1,14 +1,9 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import {
-  RootThreadProvider,
-  CreateComment,
-  Comment,
-  useCommentStyles,
-} from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 import { ReturnToRootThread } from '../CommentsV2/ReturnToRootThread';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 
 export function ResourceReviewComments({ reviewId, userId }: { reviewId: number; userId: number }) {
-  const { classes } = useCommentStyles();
   return (
     <RootThreadProvider
       entityType="review"

@@ -1,0 +1,12 @@
+.imageContainer {
+  height: 400px;
+  display: flex;
+
+  img {
+    margin: 0 auto;
+    height: 100%;
+    width: auto;
+    border-radius: var(--mantine-radius-sm);
+    box-shadow: var(--mantine-shadow-md);
+  }
+}

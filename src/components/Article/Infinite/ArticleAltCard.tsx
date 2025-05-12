@@ -1,4 +1,4 @@
-import { Badge, Box, Card, Group, Stack, Text, createStyles } from '@mantine/core';
+import { Badge, Box, Card, Group, Stack, Text } from '@mantine/core';
 import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
@@ -13,9 +13,10 @@ import { ArticleContextMenu } from '../ArticleContextMenu';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AssociatedResourceArticleCardData } from '~/server/controllers/model.controller';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import React from 'react';
+import classes from './ArticleAltCard.module.scss';
 
 export function ArticleAltCard({ data, height, ...props }: Props) {
-  const { classes } = useStyles();
   const router = useRouter();
 
   const { id, title, coverImage, tags, stats } = data;
@@ -40,7 +41,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
       >
         <ArticleContextMenu
           article={data}
-          sx={{
+          style={{
             width: 30,
             position: 'absolute',
             top: 10,
@@ -89,7 +90,9 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
           {data.user.image && (
             <CivitaiTooltip
               position="left"
-              transition="slide-left"
+              transitionProps={{
+                transition: 'slide-left',
+              }}
               variant="smallRounded"
               label={
                 <Text size="xs" weight={500}>
@@ -98,7 +101,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
               }
             >
               <Box
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   router.push(`/user/${data.user.username}`);
@@ -116,7 +119,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
             </CivitaiTooltip>
           )}
           <Stack className={classes.content} gap={6} p="xs">
-            <Text size={14} weight={500} color="white" lineClamp={2} lh={1.2}>
+            <Text fz={14} weight={500} color="white" lineClamp={2} lh={1.2}>
               {title}
             </Text>
             <Group justify="space-between">
@@ -146,59 +149,3 @@ type Props = {
   data: AssociatedResourceArticleCardData;
   height?: number;
 } & ElementDataAttributes;
-
-const useStyles = createStyles((theme) => ({
-  image: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-  },
-
-  info: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    left: 0,
-    zIndex: 10,
-  },
-
-  content: {
-    background: theme.fn.gradient({
-      from: 'rgba(37,38,43,0.8)',
-      to: 'rgba(37,38,43,0)',
-      deg: 0,
-    }),
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-  },
-
-  statBadge: {
-    background: 'rgba(212,212,212,0.2)',
-    color: 'white',
-  },
-
-  userAvatar: {
-    opacity: 0.8,
-    boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
-    transition: 'opacity .25s ease',
-    position: 'relative',
-
-    '&::before': {
-      content: '""',
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      borderRadius: theme.radius.xl,
-      boxShadow: 'inset 0 0 0px 1px rgba(255,255,255,0.8)',
-    },
-
-    '&:hover': {
-      opacity: 1,
-    },
-  },
-}));

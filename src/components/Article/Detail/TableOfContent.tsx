@@ -1,4 +1,13 @@
-import { Text, Stack, Collapse, ScrollArea, Anchor } from '@mantine/core';
+import {
+  Text,
+  Stack,
+  Collapse,
+  ScrollArea,
+  Anchor,
+  useMantineTheme,
+  useMantineColorScheme,
+  rgba,
+} from '@mantine/core';
 import { useState } from 'react';
 
 import { NestedHeading, useIntersectionObserver } from '~/hooks/useHeadingsData';
@@ -28,23 +37,27 @@ function Heading({
   const isActive = !!activeId && activeId === heading.id; // || heading.items.some((item) => item.id === activeId);
   const isFirstLevel = parentIndex === 1;
   const labelSize = isFirstLevel ? 'md' : 'sm';
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
 
   return (
     <Stack gap={0}>
       <Anchor
         href={`#${heading.id}`}
         variant="text"
-        sx={(theme) => ({
+        style={{
           padding: theme.spacing.sm,
-          paddingLeft: isFirstLevel ? theme.spacing.sm : `${parentIndex * theme.spacing.md}px`,
-          backgroundColor: isActive ? theme.fn.rgba(theme.colors.blue[5], 0.2) : 'transparent',
+          paddingLeft: isFirstLevel
+            ? theme.spacing.sm
+            : `calc(${parentIndex} * ${theme.spacing.sm})`,
+          backgroundColor: isActive ? rgba(theme.colors.blue[5], 0.2) : 'transparent',
           color: isActive
-            ? theme.colorScheme === 'dark'
+            ? colorScheme === 'dark'
               ? theme.colors.blue[2]
               : theme.colors.blue[6]
             : undefined,
-        })}
-        onClick={(event) => {
+        }}
+        onClick={(event: React.MouseEvent) => {
           event.preventDefault();
 
           document.getElementById(heading.id)?.scrollIntoView({

@@ -1,11 +1,7 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import {
-  RootThreadProvider,
-  CreateComment,
-  Comment,
-  useCommentStyles,
-} from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 
 type PostCommentsProps = {
   postId: number;
@@ -13,8 +9,6 @@ type PostCommentsProps = {
 };
 
 export function PostComments({ postId, userId }: PostCommentsProps) {
-  const { classes } = useCommentStyles();
-
   return (
     <RootThreadProvider
       entityType="post"

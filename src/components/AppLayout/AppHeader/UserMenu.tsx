@@ -9,6 +9,7 @@ import {
   UnstyledButton,
   useMantineColorScheme,
   useMantineTheme,
+  getPrimaryShade,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import {
@@ -188,12 +189,12 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
             onClick={() => toggleColorScheme()}
             size="lg"
             className="flex-1"
-            sx={(theme) => ({
-              color:
-                theme.colorScheme === 'dark'
-                  ? theme.colors.yellow[theme.fn.primaryShade()]
-                  : theme.colors.blue[theme.fn.primaryShade()],
-            })}
+            style={{
+              backgroundColor:
+                colorScheme === 'dark'
+                  ? theme.colors.dark[getPrimaryShade(theme, colorScheme)]
+                  : theme.colors.gray[0],
+            }}
           >
             {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
           </ActionIcon>
@@ -214,7 +215,10 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
             </Tooltip>
             <Tooltip label="Logout">
               <ActionIcon variant="default" onClick={() => logout()} size="lg" className="flex-1">
-                <IconLogout stroke={1.5} color={theme.colors.red[theme.fn.primaryShade()]} />
+                <IconLogout
+                  stroke={1.5}
+                  color={theme.colors.red[getPrimaryShade(theme, colorScheme)]}
+                />
               </ActionIcon>
             </Tooltip>
           </>
