@@ -7,11 +7,12 @@ import {
   IconLock,
   IconMessageCircle2,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
@@ -33,9 +34,6 @@ import { trpc } from '~/utils/trpc';
 export function ModelCard({ data }: Props) {
   const image = data.images[0];
   const aspectRatio = image && image.width && image.height ? image.width / image.height : 1;
-  const { classes, cx } = useCardStyles({
-    aspectRatio,
-  });
 
   const currentUser = useCurrentUser();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
@@ -74,6 +72,9 @@ export function ModelCard({ data }: Props) {
 
   return (
     <AspectRatioImageCard
+      style={{
+        '--aspect-ratio': aspectRatio,
+      }}
       href={href}
       cosmetic={data.cosmetic?.data}
       contentType="model"
@@ -86,7 +87,7 @@ export function ModelCard({ data }: Props) {
           <div className="flex gap-1">
             {currentUser?.isModerator && isPOI && (
               <Badge
-                className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
                 variant="light"
                 radius="xl"
               >
@@ -97,7 +98,7 @@ export function ModelCard({ data }: Props) {
             )}
             {currentUser?.isModerator && isMinor && (
               <Badge
-                className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
                 variant="light"
                 radius="xl"
               >
@@ -108,7 +109,7 @@ export function ModelCard({ data }: Props) {
             )}
             {currentUser?.isModerator && isNSFW && (
               <Badge
-                className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
                 variant="light"
                 radius="xl"
               >
@@ -118,19 +119,23 @@ export function ModelCard({ data }: Props) {
               </Badge>
             )}
             {isPrivate && (
-              <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
+              <Badge
+                className={clsx(cardClasses.infoChip, cardClasses.chip)}
+                variant="light"
+                radius="xl"
+              >
                 <IconLock size={16} />
               </Badge>
             )}
             <ModelTypeBadge
-              className={cx(classes.infoChip, classes.chip)}
+              className={clsx(cardClasses.infoChip, cardClasses.chip)}
               type={data.type}
               baseModel={data.version.baseModel}
             />
 
             {(isNew || isUpdated || isEarlyAccess) && (
               <Badge
-                className={classes.chip}
+                className={cardClasses.chip}
                 variant="filled"
                 radius="xl"
                 sx={(theme) => ({
@@ -147,7 +152,11 @@ export function ModelCard({ data }: Props) {
               </Badge>
             )}
             {isArchived && (
-              <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
+              <Badge
+                className={clsx(cardClasses.infoChip, cardClasses.chip)}
+                variant="light"
+                radius="xl"
+              >
                 <IconArchiveFilled size={16} />
               </Badge>
             )}
@@ -183,7 +192,7 @@ export function ModelCard({ data }: Props) {
       footer={
         <div className="flex w-full flex-col items-start gap-1">
           <UserAvatarSimple {...data.user} />
-          <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={3} lh={1.2}>
+          <Text className={cardClasses.dropShadow} size="xl" weight={700} lineClamp={3} lh={1.2}>
             {data.name}
           </Text>
           {data.rank && (
@@ -191,7 +200,11 @@ export function ModelCard({ data }: Props) {
               {(!!data.rank.downloadCount ||
                 !!data.rank.collectedCount ||
                 !!data.rank.tippedAmountCount) && (
-                <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
+                <Badge
+                  className={clsx(cardClasses.statChip, cardClasses.chip)}
+                  variant="light"
+                  radius="xl"
+                >
                   <Group gap={2}>
                     <IconDownload size={14} strokeWidth={2.5} />
                     <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
@@ -222,7 +235,7 @@ export function ModelCard({ data }: Props) {
               )}
               {!data.locked && !!data.rank.thumbsUpCount && (
                 <Badge
-                  className={cx(classes.statChip, classes.chip)}
+                  className={clsx(cardClasses.statChip, cardClasses.chip)}
                   pl={6}
                   pr={8}
                   data-reviewed={hasReview}

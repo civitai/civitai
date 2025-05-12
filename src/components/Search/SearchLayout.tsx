@@ -220,25 +220,3 @@ SearchLayout.Content = function Content({ children }: { children: React.ReactNod
     </MasonryProvider>
   );
 };
-
-export const useSearchLayoutStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: `repeat(auto-fill, minmax(250px, 1fr))`,
-    gap: theme.spacing.md,
-    gridTemplateRows: `auto 1fr`,
-    overflow: 'hidden',
-    // marginTop: -theme.spacing.md,
-
-    // '& > *': {
-    //   marginTop: theme.spacing.md,
-    // },
-  },
-
-  filterButton: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-    svg: {
-      color: theme.colorScheme === 'dark' ? undefined : theme.colors.dark[6],
-    },
-  },
-}));

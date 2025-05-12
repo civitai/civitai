@@ -1,20 +1,10 @@
-import {
-  Button,
-  Center,
-  Grid,
-  Group,
-  Loader,
-  Modal,
-  Paper,
-  Stack,
-  createStyles,
-} from '@mantine/core';
+import { Button, Center, Grid, Group, Loader, Modal, Paper, Stack } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { IconArrowRight } from '@tabler/icons-react';
 import { z } from 'zod';
 
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import {
   useEquipContentDecoration,
   useQueryUserCosmetics,
@@ -26,38 +16,8 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
-
-const useStyles = createStyles((theme) => ({
-  preview: {
-    order: 1,
-
-    [containerQuery.largerThan('xs')]: {
-      order: 2,
-    },
-  },
-
-  decorations: {
-    order: 2,
-
-    [theme.fn.largerThan('xs')]: {
-      order: 1,
-    },
-  },
-
-  hideMobile: {
-    [theme.fn.smallerThan('xs')]: {
-      display: 'none',
-    },
-  },
-
-  showMobile: {
-    [theme.fn.largerThan('xs')]: {
-      display: 'none',
-    },
-  },
-}));
+import classes from './CardDecorationModal.module.scss';
 
 const schema = z.object({
   cosmetic: cosmeticInputSchema.nullish(),
@@ -66,7 +26,6 @@ const schema = z.object({
 export function CardDecorationModal({ entityType, entityId, image, currentCosmetic }: Props) {
   const dialog = useDialogContext();
   const form = useForm({ schema, defaultValues: { cosmetic: currentCosmetic } });
-  const { classes } = useStyles();
 
   const { data: userCosmetics, isInitialLoading } = useQueryUserCosmetics();
 
@@ -134,14 +93,16 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
       {...dialog}
       onClose={handleClose}
       title="Content Decorations"
-      closeButtonLabel="Close content decorations modal"
+      closeButtonProps={{
+        children: 'Close content decorations modal',
+      }}
       size="lg"
       closeOnClickOutside={!isLoading}
       closeOnEscape={!isLoading}
     >
       <Form form={form} onSubmit={handleSubmit}>
         <Grid gutter="xl">
-          <Grid.Col xs={12} sm={6} className={classes.decorations}>
+          <Grid.Col span={{ base: 12, sm: 6 }} className={classes.decorations}>
             {isInitialLoading ? (
               <Center>
                 <Loader />
@@ -153,7 +114,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                   data={items}
                   shopUrl="/shop"
                   gridProps={{
-                    breakpoints: [{ cols: 3, minWidth: 'xs' }],
+                    cols: 3,
                   }}
                 />
                 <Button
@@ -241,8 +202,6 @@ export const PreviewCard = ({
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
       : DEFAULT_EDGE_IMAGE_WIDTH;
 
-  const { classes } = useCardStyles({ aspectRatio: originalAspectRatio });
-
   if (!image) return null;
 
   const heightRatio = image.height && image.width ? image.height / image.width : 1;
@@ -251,9 +210,12 @@ export const PreviewCard = ({
   return (
     <MasonryCard height={cardHeight} frameDecoration={decoration}>
       <EdgeMedia2
+        style={{
+          '--aspect-ratio': originalAspectRatio,
+        }}
         src={image.url}
         type={image.type}
-        className={classes.image}
+        className={cardClasses.image}
         width={imageWidth}
         wrapperProps={{ className: 'h-full' }}
         anim

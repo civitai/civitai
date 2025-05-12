@@ -1,4 +1,12 @@
-import { Badge, BadgeProps, HoverCard, Text, ThemeIcon } from '@mantine/core';
+import {
+  Badge,
+  BadgeProps,
+  HoverCard,
+  Text,
+  ThemeIcon,
+  useMantineColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
@@ -10,7 +18,7 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { BountyGetAll } from '~/types/router';
@@ -20,6 +28,7 @@ import { BountyContextMenu } from '../Bounty/BountyContextMenu';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import clsx from 'clsx';
 
 const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
   radius: 'xl',
@@ -30,10 +39,11 @@ const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
 };
 
 export function BountyCard({ data }: Props) {
-  const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const { id, name, images, type, expiresAt, stats, complete } = data;
   const image = images?.[0];
   const expired = expiresAt < new Date();
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
 
   const { engagements } = useBountyEngagement();
 
@@ -45,7 +55,9 @@ export function BountyCard({ data }: Props) {
       {...sharedBadgeProps}
       color="dark"
       icon={<IconClockHour4 size={14} />}
-      sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+      style={{
+        backgroundColor: 'rgba(0, 0, 0, 0.31)',
+      }}
     >
       <Text size="xs">
         <DaysFromNow date={expiresAt} withoutSuffix />
@@ -54,14 +66,20 @@ export function BountyCard({ data }: Props) {
   );
 
   const expiredBadge = (
-    <Badge className={classes.chip} {...sharedBadgeProps} color="red" variant="filled" radius="xl">
+    <Badge
+      className={cardClasses.chip}
+      {...sharedBadgeProps}
+      color="red"
+      variant="filled"
+      radius="xl"
+    >
       Expired
     </Badge>
   );
 
   const completeBadge = (
     <Badge
-      className={classes.chip}
+      className={cardClasses.chip}
       {...sharedBadgeProps}
       color="yellow.7"
       variant="filled"
@@ -89,7 +107,11 @@ export function BountyCard({ data }: Props) {
         <div className="flex w-full justify-between">
           <div className="flex gap-1">
             {type && (
-              <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
+              <Badge
+                className={clsx(cardClasses.infoChip, cardClasses.chip)}
+                variant="light"
+                radius="xl"
+              >
                 <Text color="white" size="xs" transform="capitalize">
                   {getDisplayName(type)}
                 </Text>
@@ -137,12 +159,16 @@ export function BountyCard({ data }: Props) {
               radius="xl"
               px={8}
               variant="filled"
-              className={classes.chip}
-              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+              className={cardClasses.chip}
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.31)',
+              }}
             />
             <Badge
-              className={classes.chip}
-              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+              className={cardClasses.chip}
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.31)',
+              }}
               radius="xl"
               px={8}
               variant="filled"
@@ -155,7 +181,7 @@ export function BountyCard({ data }: Props) {
                       color={isTracked ? theme.colors.green[5] : 'currentColor'}
                     />
                   }
-                  color={isTracked ? 'green' : theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={isTracked ? 'green' : colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore: transparent variant does work
@@ -171,7 +197,7 @@ export function BountyCard({ data }: Props) {
                       fill={isFavorite ? theme.colors.red[5] : 'currentColor'}
                     />
                   }
-                  color={isFavorite ? 'red' : theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={isFavorite ? 'red' : colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore
@@ -181,7 +207,7 @@ export function BountyCard({ data }: Props) {
                 </IconBadge>
                 <IconBadge
                   icon={<IconMessageCircle2 size={14} />}
-                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore
@@ -191,7 +217,7 @@ export function BountyCard({ data }: Props) {
                 </IconBadge>
                 <IconBadge
                   icon={<IconSwords size={14} />}
-                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore

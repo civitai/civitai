@@ -1,0 +1,11 @@
+.title {
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    font-size: 24px;
+  }
+}
+
+.ContainerGrid {
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    flex-direction: column-reverse;
+  }
+}

@@ -1,7 +1,7 @@
-import { createStyles, Group, keyframes, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Group, Stack, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
@@ -18,34 +18,14 @@ import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import clsx from 'clsx';
+import awardedStyles from './BountyEntryCard.module.scss';
 
 const IMAGE_CARD_WIDTH = 450;
 
-const moveBackground = keyframes({
-  '0%': {
-    backgroundPosition: '0% 50%',
-  },
-  '50%': {
-    backgroundPosition: '100% 50%',
-  },
-  '100%': {
-    backgroundPosition: '0% 50%',
-  },
-});
-
-const useStyles = createStyles((theme) => ({
-  awardedBanner: {
-    background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
-    animation: `${moveBackground} 5s ease infinite`,
-    backgroundSize: '200% 200%',
-    color: theme.colors.yellow[7],
-  },
-}));
-
 export function BountyEntryCard({ data, currency, renderActions }: Props) {
-  const { classes: awardedStyles } = useStyles();
-  const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
+  const theme = useMantineTheme();
   const { user, images, awardedUnitAmountTotal } = data;
   const image = images?.[0];
   const reactions = data?.reactions ?? [];
@@ -59,14 +39,14 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
       pos="relative"
     >
       <div
-        className={cx(
-          classes.root,
-          classes.noHover,
-          'flex flex-col justify-stretch items-stretch h-full'
+        className={clsx(
+          cardClasses.root,
+          cardClasses.noHover,
+          'flex h-full flex-col items-stretch justify-stretch'
         )}
       >
         <Stack
-          className={cx(classes.header, {
+          className={clsx(cardClasses.header, {
             [awardedStyles.awardedBanner]: isAwarded,
           })}
         >
@@ -144,7 +124,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                           : image.name ?? undefined
                       }
                       width={IMAGE_CARD_WIDTH}
-                      className={classes.image}
+                      className={cardClasses.image}
                       wrapperProps={{ style: { height: 'calc(100% - 60px)' } }}
                       skip={getSkipValue(image)}
                     />
@@ -157,7 +137,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
           )}
         </div>
         <Stack
-          className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
+          className={clsx(cardClasses.contentOverlay, cardClasses.bottom, cardClasses.fullOverlay)}
           gap="sm"
         >
           <Reactions

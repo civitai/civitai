@@ -1,7 +1,7 @@
 import { Badge, Group, HoverCard, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
@@ -16,13 +16,12 @@ import { constants } from '~/server/common/constants';
 const IMAGE_CARD_WIDTH = 450;
 
 export function ClubCard({ data }: Props) {
-  const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { id, name, coverImage, user, stats } = data;
 
   return (
     <FeedCard href={`/clubs/${id}`} aspectRatio="square">
-      <div className={classes.root}>
+      <div className={cardClasses.root}>
         {/* <ImageGuard
           images={coverImage ? [coverImage] : []}
           connect={{ entityId: id, entityType: 'club' }}
@@ -33,7 +32,7 @@ export function ClubCard({ data }: Props) {
                   <Group
                     gap={4}
                     justify="space-between"
-                    className={cx(classes.contentOverlay, classes.top)}
+                    className={cx(cardClasses.contentOverlay, cardClasses.top)}
                     wrap="nowrap"
                   >
                     <Group gap={4}>
@@ -57,7 +56,7 @@ export function ClubCard({ data }: Props) {
                         }
                         type={image.type}
                         width={IMAGE_CARD_WIDTH}
-                        className={classes.image}
+                        className={cardClasses.image}
                       />
                     ) : (
                       <MediaHash {...coverImage} />
@@ -71,7 +70,7 @@ export function ClubCard({ data }: Props) {
           )}
         /> */}
         <Stack
-          className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
+          className={cx(cardClasses.contentOverlay, cardClasses.bottom, cardClasses.fullOverlay)}
           gap="sm"
         >
           {user ? (
@@ -120,8 +119,10 @@ export function ClubCard({ data }: Props) {
           </Group>
           <Group gap={8} justify="space-between">
             <Badge
-              className={classes.chip}
-              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+              className={cardClasses.chip}
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.31)',
+              }}
               radius="xl"
               px={8}
               variant="filled"

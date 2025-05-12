@@ -1,0 +1,106 @@
+.title {
+  font-size: 32px;
+
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    font-size: 24px;
+  }
+}
+
+.profileSection {
+  padding-left: var(--mantine-spacing-md);
+  padding-right: var(--mantine-spacing-md);
+  padding-top: var(--mantine-spacing-xl);
+  padding-bottom: var(--mantine-spacing-xl);
+  margin-right: calc(-1 * var(--mantine-spacing-md));
+  margin-left: calc(-1 * var(--mantine-spacing-md));
+
+  &:nth-of-type(even) {
+    background: light-dark(var(--mantine-color-gray-0),
+        var(--mantine-color-dark-8));
+  }
+
+  &:hover {
+
+    .scrollGrid,
+    .grid {
+      &::-webkit-scrollbar {
+        opacity: 1;
+      }
+
+      &::-webkit-scrollbar-thumb {
+        background-color: light-dark(rgba(var(--mantine-color-black), 0.5),
+            rgba(var(--mantine-color-white), 0.5));
+      }
+    }
+  }
+}
+
+.loader {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 101;
+}
+
+.nullState {
+  position: relative;
+}
+
+.loading {
+  position: relative;
+
+  &::after {
+    position: absolute;
+    height: 100%;
+    width: 100%;
+    top: 0;
+    left: 0;
+    content: '';
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 100;
+    /* Uncomment if needed */
+    /* backdrop-filter: blur(8px); */
+  }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(var(--column-count, auto-fill), minmax(var(--width-grid, 380px), 1fr));
+  column-gap: var(--mantine-spacing-md);
+  grid-template-rows: repeat(var(--row-count, 2), auto);
+  grid-auto-rows: 0;
+  overflow: hidden;
+  margin-top: calc(-1 * var(--mantine-spacing-md));
+  padding-bottom: var(--mantine-spacing-md);
+
+  &::-webkit-scrollbar {
+    background: transparent;
+    opacity: 0;
+    height: 8px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 4px;
+  }
+
+  &>* {
+    margin-top: var(--mantine-spacing-md);
+  }
+
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    grid-auto-flow: column;
+    grid-template-columns: repeat(var(--count, 4), var(--width-carousel, 280px));
+    grid-template-rows: auto;
+    scroll-snap-type: x mandatory;
+    overflow-x: auto;
+    margin-right: calc(-1 * var(--mantine-spacing-md));
+    margin-left: calc(-1 * var(--mantine-spacing-md));
+    padding-left: var(--mantine-spacing-md);
+    padding-right: var(--mantine-spacing-md);
+
+    &>* {
+      scroll-snap-align: center;
+    }
+  }
+}

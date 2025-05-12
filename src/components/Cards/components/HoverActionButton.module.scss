@@ -1,0 +1,76 @@
+.wrapper {
+  position: relative;
+  height: var(--size);
+  width: var(--size);
+  z-index: 0;
+
+  &:hover {
+    .label {
+      transform: scaleX(1);
+      opacity: 1;
+    }
+
+    .hover {
+      opacity: 1;
+    }
+  }
+}
+
+.icon {
+  position: relative;
+  z-index: 1;
+
+  &.white {
+    background-color: var(--mantine-color-gray-3);
+    /* Replace with Mantine's gray[3] */
+    color: var(--mantine-color-dark-6);
+    /* Replace with Mantine's dark[6] */
+  }
+}
+
+.hover {
+  opacity: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transition: opacity 200ms ease;
+  z-index: 2;
+
+  &.white {
+    background-color: var(--mantine-color-gray-3);
+    /* Replace with Mantine's gray[3] */
+    color: var(--mantine-color-dark-6);
+    /* Replace with Mantine's dark[6] */
+  }
+}
+
+.label {
+  top: 0;
+  right: 0;
+  width: auto;
+  padding-right: var(--size);
+  min-width: calc(3 * var(--size));
+  transform: scaleX(0);
+  height: 100%;
+  overflow: hidden;
+  position: absolute;
+  transform-origin: 90%;
+  transition: transform 200ms ease, opacity 200ms ease;
+  border-radius: var(--mantine-radius-xl);
+  /* Replace with Mantine's radius.xl */
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  justify-content: flex-start;
+  padding-left: var(--mantine-spacing-md);
+  /* Replace with Mantine's spacing.md */
+  opacity: 0;
+
+  &.white {
+    background-color: var(--mantine-color-gray-3);
+    /* Replace with Mantine's gray[3] */
+    color: var(--mantine-color-dark-6);
+    /* Replace with Mantine's dark[6] */
+  }
+}

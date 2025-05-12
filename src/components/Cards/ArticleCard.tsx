@@ -1,6 +1,6 @@
 import { Badge, Text } from '@mantine/core';
 import React from 'react';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -15,7 +15,6 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 
 export function ArticleCard({ data, aspectRatio }: Props) {
-  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const { id, title, coverImage, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
   const { commentCount, viewCount, collectedCount, tippedAmountCount } = stats || {
@@ -30,6 +29,11 @@ export function ArticleCard({ data, aspectRatio }: Props) {
 
   return (
     <AspectRatioImageCard
+      // @ts-ignore
+      style={{
+        // @ts-ignore
+        '--aspect-ratio': 1,
+      }}
       href={`/articles/${id}/${slugit(title)}`}
       aspectRatio={aspectRatio}
       contentType="article"
@@ -43,7 +47,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
               size="sm"
               variant="gradient"
               gradient={{ from: 'cyan', to: 'blue' }}
-              className={classes.chip}
+              className={cardClasses.chip}
             >
               {category.name}
             </Badge>
@@ -56,18 +60,28 @@ export function ArticleCard({ data, aspectRatio }: Props) {
           <UserAvatarSimple {...user} />
           <div>
             {publishedAt && (
-              <Text className={classes.dropShadow} size="xs" weight={500} color="white" inline>
+              <Text className={cardClasses.dropShadow} size="xs" weight={500} color="white" inline>
                 {formatDate(publishedAt)}
               </Text>
             )}
             {title && (
-              <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
+              <Text
+                className={cardClasses.dropShadow}
+                size="xl"
+                weight={700}
+                lineClamp={2}
+                lh={1.2}
+              >
                 {title}
               </Text>
             )}
           </div>
           <div className="flex items-center justify-between gap-1">
-            <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
+            <Badge
+              className={cx(cardClasses.statChip, cardClasses.chip)}
+              variant="light"
+              radius="xl"
+            >
               <div className="flex items-center gap-0.5">
                 <IconBookmark size={14} strokeWidth={2.5} />
                 <Text size="xs">{abbreviateNumber(collectedCount)}</Text>
@@ -85,7 +99,11 @@ export function ArticleCard({ data, aspectRatio }: Props) {
                 </div>
               </InteractiveTipBuzzButton>
             </Badge>
-            <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
+            <Badge
+              className={cx(cardClasses.statChip, cardClasses.chip)}
+              variant="light"
+              radius="xl"
+            >
               <div className="flex items-center gap-0.5">
                 <IconEye size={14} strokeWidth={2.5} />
                 <Text size="xs">{abbreviateNumber(viewCount)}</Text>

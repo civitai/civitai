@@ -2,8 +2,9 @@ import {
   ProfileSection,
   ProfileSectionPreview,
   ProfileSectionProps,
-  useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
+import classes from '~/components/Profile/ProfileSection.module.scss';
+
 import { useInView } from '~/hooks/useInView';
 import { IconArrowRight, IconTrendingUp } from '@tabler/icons-react';
 import React from 'react';
@@ -28,12 +29,6 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
     { keepPreviousData: true, enabled: inView }
   );
 
-  const { classes } = useProfileSectionStyles({
-    count: models.length,
-    rowCount: 2,
-    widthGrid: '280px',
-  });
-
   const isNullState = !isLoading && !models.length;
 
   if (isNullState) {
@@ -41,7 +36,15 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
   }
 
   return (
-    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
+    <div
+      ref={ref}
+      className={isNullState ? undefined : classes.profileSection}
+      style={{
+        '--count': models.length,
+        '--row-count': 2,
+        '--width-grid': '280px',
+      }}
+    >
       {inView &&
         (isLoading ? (
           <ProfileSectionPreview rowCount={2} />

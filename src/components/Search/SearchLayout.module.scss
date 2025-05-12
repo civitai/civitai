@@ -1,0 +1,24 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: var(--mantine-spacing-md);
+  /* Replace with Mantine's spacing variable */
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+
+  /* Uncomment if needed */
+  /* margin-top: calc(-1 * var(--mantine-spacing-md)); */
+
+  /* Uncomment if needed */
+  /* & > * {
+    margin-top: var(--mantine-spacing-md);
+  } */
+}
+
+.filterButton {
+  background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-6));
+
+  svg {
+    color: light-dark(var(--mantine-color-dark-6), inherit);
+  }
+}

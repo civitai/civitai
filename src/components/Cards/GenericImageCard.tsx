@@ -1,4 +1,4 @@
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -21,10 +21,6 @@ export function GenericImageCard({
   entityType?: string;
   disabled?: boolean;
 }) {
-  const { classes: sharedClasses } = useCardStyles({
-    aspectRatio: image.width && image.height ? image.width / image.height : 1,
-  });
-
   const url = (() => {
     if (!entityType || !entityId) return undefined;
 
@@ -65,13 +61,16 @@ export function GenericImageCard({
 
   const cardContent = (
     <FeedCard
+      style={{
+        cursor: disabled ? 'initial' : undefined,
+        '--aspect-ratio': image.width && image.height ? image.width / image.height : 1,
+      }}
       href={disabled ? undefined : url}
-      style={disabled ? { cursor: 'initial' } : undefined}
       frameDecoration={image.cosmetic}
       aspectRatio="portrait"
       useCSSAspectRatio
     >
-      <div className={sharedClasses.root}>
+      <div className={cardClasses.root}>
         {image && (
           <ImageGuard2 image={image}>
             {(safe) => {
@@ -101,7 +100,7 @@ export function GenericImageCard({
                         }
                         skip={getSkipValue(image)}
                         placeholder="empty"
-                        className={sharedClasses.image}
+                        className={cardClasses.image}
                         wrapperProps={{ style: { height: '100%', width: '100%' } }}
                         loading="lazy"
                         contain

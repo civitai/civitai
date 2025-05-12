@@ -3,7 +3,6 @@ import {
   Anchor,
   Badge,
   Box,
-  createStyles,
   Group,
   Loader,
   Stack,
@@ -13,7 +12,7 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
@@ -39,10 +38,10 @@ import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import clsx from 'clsx';
+import classes from './ImagesCard.module.scss';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
-  const { classes, cx } = useStyles();
-  const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
   const { images, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
@@ -133,7 +132,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         metadata={image.metadata}
                         src={image.url}
                         thumbnailUrl={image.thumbnailUrl}
-                        className={cx(sharedClasses.image, { ['opacity-30']: isBlocked })}
+                        className={clsx(cardClasses.image, { ['opacity-30']: isBlocked })}
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
                         skip={getSkipValue(image)}
@@ -294,7 +293,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     metrics={reactionMetrics}
                     targetUserId={image.user.id}
                     readonly={!safe || (isScanned && isBlocked)}
-                    className={cx('justify-between p-2')}
+                    className="justify-between p-2"
                     invisibleEmpty
                     disableBuzzTip={image.poi}
                   />
@@ -307,28 +306,3 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
     </TwCosmeticWrapper>
   );
 }
-
-const useStyles = createStyles((theme) => {
-  return {
-    footer: {
-      display: 'flex',
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
-      background: theme.fn.gradient({
-        from: 'rgba(37,38,43,0.8)',
-        to: 'rgba(37,38,43,0)',
-        deg: 0,
-      }),
-      // backdropFilter: 'blur(5px) saturate(160%)',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-      zIndex: 10,
-      gap: 6,
-      padding: theme.spacing.xs,
-    },
-  };
-});

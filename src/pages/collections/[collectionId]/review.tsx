@@ -35,7 +35,7 @@ import { trpc } from '~/utils/trpc';
 import { CollectionItemStatus, CollectionMode, CollectionType } from '~/shared/utils/prisma/enums';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import {
   getCollectionItemReviewData,
   useCollection,
@@ -264,7 +264,6 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
     useCallback((state) => state.selected[collectionItem.id] ?? false, [collectionItem.id])
   );
   const toggleSelected = useStore((state) => state.toggleSelected);
-  const { classes: sharedClasses, cx } = useCardStyles({ aspectRatio: 1 });
   const reviewData = getCollectionItemReviewData(collectionItem);
   const badgeColor = {
     [CollectionItemStatus.ACCEPTED]: 'green',
@@ -358,13 +357,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
         footer={
           <div className="flex flex-col gap-1">
             {reviewData.title && (
-              <Text
-                className={sharedClasses.dropShadow}
-                size="xl"
-                weight={700}
-                lineClamp={2}
-                inline
-              >
+              <Text className={cardClasses.dropShadow} size="xl" weight={700} lineClamp={2} inline>
                 {reviewData.title}
               </Text>
             )}

@@ -1,13 +1,12 @@
 import {
   ActionIcon,
-  createStyles,
   Group,
-  keyframes,
   Popover,
   Stack,
   Text,
   UnstyledButton,
   UnstyledButtonProps,
+  useMantineTheme,
 } from '@mantine/core';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
@@ -28,6 +27,8 @@ import { isTouchDevice } from '~/utils/device-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { useBuzzTransaction } from './buzz.utils';
+import classes from './InteractiveTipBuzzButton.module.scss';
+import clsx from 'clsx';
 
 type Props = UnstyledButtonProps & {
   toUserId: number;
@@ -105,7 +106,7 @@ export function InteractiveTipBuzzButton({
   hideLoginPopover = false,
   ...buttonProps
 }: Props) {
-  const { theme, classes, cx } = useStyle();
+  const theme = useMantineTheme();
   const mobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const { balance } = useBuzz(undefined, 'user');
@@ -367,7 +368,7 @@ export function InteractiveTipBuzzButton({
           {children}
         </UnstyledButton>
       </Popover.Target>
-      <Popover.Dropdown py={4} className={cx({ [classes.confirming]: showCountDown })}>
+      <Popover.Dropdown py={4} className={clsx({ [classes.confirming]: showCountDown })}>
         <Group className={classes.popoverContent}>
           {status !== 'pending' && (
             <ActionIcon color="red.5" onClick={cancelTip}>
@@ -419,43 +420,3 @@ export function InteractiveTipBuzzButton({
     </LoginPopover>
   );
 }
-
-const useStyle = createStyles((theme) => ({
-  popoverContent: {
-    position: 'relative',
-    zIndex: 3,
-  },
-  confirming: {
-    [`&:before`]: {
-      content: '""',
-      position: 'absolute',
-      zIndex: 2,
-      top: 0,
-      left: 0,
-      height: '100%',
-      width: 0,
-      // backgroundColor: theme.colors.gray[1],
-      backgroundColor: theme.colors.red[6],
-      opacity: 0,
-      animation: `${fillEffect} ${CONFIRMATION_TIMEOUT}ms linear forwards`,
-    },
-  },
-  tipAmount: {
-    fontVariantNumeric: 'tabular-nums',
-    fontWeight: 500,
-    color: theme.colors.yellow[7],
-    fontSize: 16,
-    padding: 0,
-    lineHeight: 1,
-    outline: 0,
-    display: 'inline-block',
-  },
-}));
-
-const fillEffect = keyframes({
-  to: {
-    width: '100%',
-    opacity: 0.3,
-    // backgroundColor: 'red',
-  },
-});

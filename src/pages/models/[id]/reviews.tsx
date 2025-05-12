@@ -45,6 +45,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ResourceReviewPagedModel } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import classes from './ModelReviews.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -236,7 +237,7 @@ export default function ModelReviews() {
                 {resourceReviews && resourceReviews.totalPages > 1 && (
                   <Center mt="md">
                     <Pagination
-                      page={page}
+                      value={page}
                       onChange={handlePaginationChange}
                       total={resourceReviews.totalPages}
                     />
@@ -251,25 +252,7 @@ export default function ModelReviews() {
   );
 }
 
-const useCardStyles = createStyles((theme) => ({
-  card: {
-    padding: theme.spacing.xl,
-
-    [theme.fn.smallerThan('sm')]: {
-      padding: theme.spacing.sm,
-    },
-  },
-  actionsWrapper: {
-    gap: theme.spacing.md,
-
-    [theme.fn.smallerThan('sm')]: {
-      gap: 8,
-    },
-  },
-}));
-
 function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creatorId?: number }) {
-  const { classes } = useCardStyles();
   const isCreator = creatorId === review.user.id;
   const isThumbsUp = review.recommended;
 

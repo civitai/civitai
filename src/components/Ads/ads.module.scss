@@ -3,7 +3,6 @@
 
   // Supports up to 5 different queries
   @each $index in (1, 2, 3, 4, 5) {
-
     // Placeholder for multiple queries
     @media (min-width: var(--min-width-#{$index}, 0px)) and (max-width: var(--max-width-#{$index}, 100vw)) {
       @container {

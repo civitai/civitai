@@ -34,7 +34,7 @@ import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -687,7 +687,6 @@ export const ModelPlacementCard = ({
   const animatedRef = useRef<HTMLDivElement>(null);
   const node = useScrollAreaRef();
   const { ref: viewRef, inView } = useInView({ root: node?.current, rootMargin: '1800px 0px' });
-  const { classes: cardClasses } = useCardStyles({ aspectRatio: 1 });
 
   const { data: myBidData = [] } = trpc.auction.getMyBids.useQuery(undefined, {
     enabled: !!currentUser,
@@ -722,6 +721,10 @@ export const ModelPlacementCard = ({
 
   return (
     <div
+      style={{
+        // @ts-ignore
+        '--aspect-ratio': 1,
+      }}
       className={clsx({
         [cardClasses.winnerFirst]: aboveThreshold && data.position === 1,
         [cardClasses.winnerSecond]: aboveThreshold && data.position === 2,

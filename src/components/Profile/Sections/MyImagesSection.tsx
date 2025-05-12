@@ -13,10 +13,10 @@ import {
   ProfileSectionNoResults,
   ProfileSectionPreview,
   ProfileSectionProps,
-  useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { ImageSort } from '~/server/common/enums';
+import classes from '~/components/Profile/ProfileSection.module.scss';
 
 const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7
 
@@ -48,12 +48,6 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
 
   const images = useMemo(() => _images.slice(0, MAX_IMAGES_DISPLAY), [_images]);
 
-  const { classes, cx } = useProfileSectionStyles({
-    count: images.length,
-    rowCount: 2,
-    widthGrid: '280px',
-  });
-
   const isNullState = !isLoading && !images.length;
 
   if (isNullState) {
@@ -61,7 +55,15 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
   }
 
   return (
-    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
+    <div
+      ref={ref}
+      className={isNullState ? undefined : classes.profileSection}
+      style={{
+        '--count': images.length,
+        '--row-count': 2,
+        '--width-grid': '280px',
+      }}
+    >
       {inView &&
         (isLoading ? (
           <ProfileSectionPreview rowCount={2} />

@@ -246,10 +246,6 @@ export default defineNextConfig(
         },
       ];
     },
-    output: 'standalone',
-    sassOptions: {
-      implementation: 'sass-embedded',
-      additionalData: `@use "${path.join(process.cwd(), '_mantine').replace(/\\/g, '/')}" as mantine;`,
-    }
+    output: 'standalone'
   })
 );

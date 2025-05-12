@@ -9,36 +9,13 @@ import {
   Stack,
   Text,
   UnstyledButton,
-  createStyles,
 } from '@mantine/core';
 import { IconBuildingStore } from '@tabler/icons-react';
 import { SimpleCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
-
-const useStyles = createStyles((theme) => ({
-  decoration: {
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100%',
-    width: '100%',
-  },
-
-  selected: {
-    border: `2px solid ${theme.colors.blue[4]}`,
-  },
-
-  noContent: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
-    gridColumn: '2 / min-content',
-  },
-  noContentNoUrl: {
-    gridColumn: '1 / min-content',
-  },
-}));
+import classes from './CosmeticSelect.module.scss';
+import clsx from 'clsx';
 
 export function CosmeticSelect<TData extends CosmeticItem>({
   data,
@@ -50,8 +27,6 @@ export function CosmeticSelect<TData extends CosmeticItem>({
   onShopClick,
   ...props
 }: Props<TData>) {
-  const { classes, cx } = useStyles();
-
   const handleClick = (value: TData | null) => {
     onChange?.(value);
   };
@@ -61,13 +36,13 @@ export function CosmeticSelect<TData extends CosmeticItem>({
   return (
     <Input.Wrapper {...props}>
       <SimpleGrid
-        gap={16}
-        breakpoints={[
-          { cols: 3, maxWidth: 'xs' },
-          { cols: 4, minWidth: 'xs' },
-          { cols: 5, minWidth: 'sm' },
-          { cols: 7, minWidth: 'md' },
-        ]}
+        spacing="xs"
+        cols={{
+          base: 2,
+          xs: 3,
+          sm: 4,
+          md: 5,
+        }}
         {...gridProps}
       >
         {shopUrl && (
@@ -99,7 +74,7 @@ export function CosmeticSelect<TData extends CosmeticItem>({
                 inline
               >
                 <UnstyledButton
-                  className={cx(classes.decoration, isSelected && classes.selected)}
+                  className={clsx(classes.decoration, isSelected && classes.selected)}
                   p="sm"
                   onClick={() => handleClick(!isSelected ? item : null)}
                 >
@@ -110,7 +85,7 @@ export function CosmeticSelect<TData extends CosmeticItem>({
           })
         ) : (
           <Paper
-            className={cx(classes.noContent, {
+            className={clsx(classes.noContent, {
               [classes.noContentNoUrl]: !shopUrl,
             })}
             p="sm"

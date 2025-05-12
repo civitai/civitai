@@ -1,4 +1,15 @@
-import { Badge, Button, Group, Paper, Stack, Text, ThemeIcon, createStyles } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  ThemeIcon,
+  createStyles,
+  useMantineColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import { IconCategory, IconPhoto, IconStar } from '@tabler/icons-react';
 import React from 'react';
 
@@ -10,34 +21,19 @@ import {
   ProfileSection,
   ProfileSectionPreview,
   ProfileSectionProps,
-  useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
+import classes from '~/components/Profile/ProfileSection.module.scss';
+
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useQueryResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useInView } from '~/hooks/useInView';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles(() => ({
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  ContainerGrid: {
-    [containerQuery.smallerThan('sm')]: {
-      flexDirection: 'column-reverse',
-    },
-  },
-}));
+import sectionClasses from './RecentReviewsSection.module.scss';
 
 export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
-  const { classes: sectionClasses } = useStyles();
   const [ref, inView] = useInViewDynamic({ id: 'profile-reviews-section' });
-  const { classes, theme } = useProfileSectionStyles({});
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
 
   const { resourceReviews, isLoading } = useQueryResourceReview(
     {
@@ -78,9 +74,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                         radius="sm"
                         style={{
                           background:
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[6]
-                              : theme.colors.gray[1],
+                            colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
                         }}
                       >
                         <Stack>
@@ -113,7 +107,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                 <RenderHtml
                                   html={review.details}
                                   style={{
-                                    color: theme.colorScheme === 'dark' ? 'white' : 'black',
+                                    color: colorScheme === 'dark' ? 'white' : 'black',
                                   }}
                                 />
                               </ContentClamp>

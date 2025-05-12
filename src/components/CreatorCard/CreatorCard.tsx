@@ -6,10 +6,11 @@ import {
   Card,
   Group,
   Stack,
-  createStyles,
   Text,
   CardProps,
   Image,
+  useMantineTheme,
+  useMantineColorScheme,
 } from '@mantine/core';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 
@@ -35,32 +36,7 @@ import { BadgeDisplay, Username } from '../User/Username';
 import { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-
-const useStyles = createStyles((theme) => ({
-  profileDetailsContainer: {
-    background: theme.fn.rgba(theme.colors.dark[9], 0.8),
-    margin: -theme.spacing.md,
-    marginTop: 0,
-    minHeight: 50,
-    display: 'flex',
-    justifyContent: 'center',
-    flexDirection: 'column',
-    color: theme.white,
-    zIndex: 10,
-  },
-
-  profileDetails: {
-    padding: theme.spacing.md,
-    paddingTop: theme.spacing.xs,
-    paddingBottom: theme.spacing.xs,
-    position: 'relative',
-  },
-  avatar: {
-    position: 'absolute',
-    bottom: 4,
-    overflow: 'visible',
-  },
-}));
+import classes from './CreatorCard.module.scss';
 
 export function CreatorCard({
   user,
@@ -143,9 +119,9 @@ export function CreatorCard({
         <Card.Section
           withBorder
           inheritPadding
-          sx={(theme) => ({
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          })}
+          style={{
+            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+          }}
           py={5}
         >
           <Group gap={4}>
@@ -180,7 +156,8 @@ export const CreatorCardV2 = ({
   subText,
   ...cardProps
 }: CreatorCardPropsV2) => {
-  const { classes, theme } = useStyles();
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const { data } = trpc.user.getCreator.useQuery(
     { id: user.id },
     { enabled: user.id !== constants.system.user.id }
@@ -281,9 +258,7 @@ export const CreatorCardV2 = ({
             w="100%"
             h="100%"
             styles={{
-              figure: { height: '100%' },
-              imageWrapper: { height: '100%' },
-              image: { objectFit: 'cover', height: '100% !important' },
+              root: { objectFit: 'cover', height: '100% !important' },
             }}
           />
         )}
@@ -354,7 +329,7 @@ export const CreatorCardV2 = ({
                               size="xs"
                               lh={1}
                               lineClamp={1}
-                              style={{ color: theme.fn.rgba(theme.white, 0.75) }}
+                              style={{ color: `rgba(${theme.white}, 0.75)` }}
                             >
                               Joined {formatDate(creator.createdAt)}
                             </Text>
@@ -408,9 +383,9 @@ export const CreatorCardV2 = ({
         <Card.Section
           withBorder
           inheritPadding
-          sx={(theme) => ({
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          })}
+          style={{
+            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+          }}
           py={5}
         >
           <Group gap={4}>

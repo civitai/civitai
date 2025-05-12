@@ -17,6 +17,8 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
+  useMantineColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import {
@@ -41,7 +43,7 @@ import {
   useRefinementList,
 } from 'react-instantsearch';
 import { BidModelButton } from '~/components/Auction/AuctionUtils';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
@@ -77,7 +79,7 @@ import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceR
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import searchLayoutClasses from '~/components/Search/SearchLayout.module.scss';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { TwCard } from '~/components/TwCard/TwCard';
@@ -453,7 +455,7 @@ function ResourceSelectModalContent() {
         <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
           <Text>{title}</Text>
           <CustomSearchBox
-            isMobile={isMobile}
+            isMobile={isMobile} // TODO: Mantine7
             autoFocus
             className="order-last w-full grow sm:order-none sm:w-auto"
           />
@@ -537,8 +539,6 @@ function ResourceHitList({
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
-  const { classes, cx } = useSearchLayoutStyles();
-  const { classes: cardClasses } = useCardStyles({ aspectRatio: 1 });
   const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
   const {
     items: models,
@@ -610,10 +610,10 @@ function ResourceHitList({
                 {hiddenCount} models have been hidden due to your settings.
               </Text>
             )}
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <ThemeIcon size={128} radius={100} style={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
             </ThemeIcon>
-            <Title order={1} inline>
+            <Title order={1} className="inline">
               No models found
             </Title>
             <Text align="center">
@@ -647,9 +647,9 @@ function ResourceHitList({
 
       {topItems.length > 0 && (
         <div
-          className={cx(
-            classes.grid,
-            'p-3 grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6'
+          className={clsx(
+            searchLayoutClasses.grid,
+            'grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6 p-3'
           )}
         >
           <div className={cardClasses.winnerFirst}>
@@ -679,7 +679,7 @@ function ResourceHitList({
           )}
         </div>
       )}
-      <div className={classes.grid}>
+      <div className={searchLayoutClasses.grid}>
         {restItems.map((model) => (
           <ResourceSelectCard
             key={model.id}
@@ -851,9 +851,8 @@ function ResourceSelectCard({
   const [loading, setLoading] = useState(false);
 
   const image = data.images[0];
-  const { classes, cx, theme } = useCardStyles({
-    aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
-  });
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
 
   const versions = data.versions;
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
@@ -1058,7 +1057,7 @@ function ResourceSelectCard({
   return (
     // Visually hide card if there are no versions
     <TwCard
-      className={clsx(classes.root, 'justify-between')}
+      className={clsx(cardClasses.root, 'justify-between')}
       // onClick={handleSelect}
       style={{ display: versions.length === 0 ? 'none' : undefined }}
     >
@@ -1082,7 +1081,7 @@ function ResourceSelectCard({
                           type={image.type}
                           width={width}
                           placeholder="empty"
-                          className={classes.image}
+                          className={cardClasses.image}
                           loading="lazy"
                         />
                       </Link>
@@ -1092,21 +1091,19 @@ function ResourceSelectCard({
                     <div className="absolute left-2 top-2 flex items-center gap-1">
                       <ImageGuard2.BlurToggle />
                       <ModelTypeBadge
-                        className={cx(classes.infoChip, classes.chip)}
+                        className={clsx(cardClasses.infoChip, cardClasses.chip)}
                         type={data.type}
                         baseModel={data.version.baseModel}
                       />
 
                       {(isNew || isUpdated) && (
                         <Badge
-                          className={classes.chip}
+                          className={cardClasses.chip}
                           variant="filled"
                           radius="xl"
-                          sx={(theme) => ({
-                            backgroundColor: isUpdated
-                              ? '#1EBD8E'
-                              : theme.colors.blue[theme.fn.primaryShade()],
-                          })}
+                          style={{
+                            backgroundColor: isUpdated ? '#1EBD8E' : theme.colors.blue[4],
+                          }}
                         >
                           <Text color="white" size="xs" transform="capitalize">
                             {isUpdated ? 'Updated' : 'New'}
@@ -1141,7 +1138,7 @@ function ResourceSelectCard({
                         <BidModelButton
                           actionIconProps={{
                             size: 'md',
-                            variant: theme.colorScheme === 'light' ? undefined : 'light',
+                            variant: colorScheme === 'light' ? undefined : 'light',
                             px: 4,
                           }}
                           entityData={{
@@ -1166,7 +1163,7 @@ function ResourceSelectCard({
                             color={isFavorite ? 'green' : 'gray'}
                             px={4}
                             size="xs"
-                            variant={theme.colorScheme === 'light' ? undefined : 'light'}
+                            variant={colorScheme === 'light' ? undefined : 'light'}
                           >
                             <ThumbsUpIcon color="#fff" filled={isFavorite} size={20} />
                           </Button>
@@ -1185,7 +1182,7 @@ function ResourceSelectCard({
                   items={modelDetails}
                   labelWidth="80px"
                   withBorder
-                  fontSize="xs"
+                  fz="xs"
                 />
               </Stack>
               <TopRightIcons data={data} setFlipped={setFlipped} />

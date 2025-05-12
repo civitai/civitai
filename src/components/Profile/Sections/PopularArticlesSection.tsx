@@ -2,8 +2,9 @@ import {
   ProfileSection,
   ProfileSectionPreview,
   ProfileSectionProps,
-  useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
+import classes from '~/components/Profile/ProfileSection.module.scss';
+
 import { useInView } from '~/hooks/useInView';
 import { IconArrowRight, IconPencilMinus, IconTrendingUp } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
@@ -29,11 +30,6 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
 
   const articles = useMemo(() => _articles.slice(0, MAX_ARTICLES_DISPLAY), [_articles]);
 
-  const { classes } = useProfileSectionStyles({
-    count: articles.length,
-    rowCount: 1,
-  });
-
   const isNullState = !isLoading && !articles.length;
 
   if (isNullState && inView) {
@@ -41,7 +37,14 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
   }
 
   return (
-    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
+    <div
+      ref={ref}
+      className={isNullState ? undefined : classes.profileSection}
+      style={{
+        '--count': articles.length,
+        '--row-count': 1,
+      }}
+    >
       {inView &&
         (isLoading ? (
           <ProfileSectionPreview />
