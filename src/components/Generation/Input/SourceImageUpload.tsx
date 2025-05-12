@@ -74,14 +74,17 @@ export function SourceImageUpload({
     handleChange(base64);
   }
 
-  async function handleDropCapture(url: string) {
-    const base64 = await handleResizeToBase64(url);
+  async function handleDropCapture(src: File | Blob | string) {
+    const base64 = await handleResizeToBase64(src);
     handleChange(base64);
   }
 
   useEffect(() => {
     if (value && typeof value === 'string' && (value as string).length > 0) handleUrlChange(value);
+    else if (value && value instanceof Blob) handleDropCapture(value);
   }, [value]);
+
+  const _value = value instanceof Blob ? null : value;
 
   return (
     <>
@@ -94,11 +97,11 @@ export function SourceImageUpload({
             <IconHistory />
           </ActionIcon> */}
         <div className="relative flex size-full items-stretch justify-center rounded-md bg-gray-2 dark:bg-dark-6">
-          {!value ? (
+          {!_value ? (
             <ImageDropzone
               allowExternalImageDrop
               onDrop={handleDrop}
-              count={value ? 1 : 0}
+              count={_value ? 1 : 0}
               max={1}
               maxSize={maxOrchestratorImageFileSize}
               label="Drag image here or click to select a file"
@@ -112,7 +115,7 @@ export function SourceImageUpload({
             <div className="flex max-h-96 justify-center ">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={value.url}
+                src={_value.url}
                 alt="image to refine"
                 className="max-h-full shadow-sm shadow-black"
                 onLoad={() => setLoaded(true)}
@@ -127,7 +130,7 @@ export function SourceImageUpload({
               )}
               {loaded && (
                 <div className="absolute bottom-0 right-0 rounded-tl-md bg-dark-9/50 px-2 text-white">
-                  {value.width} x {value.height}
+                  {_value.width} x {_value.height}
                 </div>
               )}
             </div>

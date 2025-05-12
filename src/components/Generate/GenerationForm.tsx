@@ -59,6 +59,7 @@ export function GenerationForm() {
                   { label: 'Image', value: 'image' },
                   { label: 'Video', value: 'video' },
                 ]}
+                suppressHydrationWarning
               />
             </div>
             {type === 'image' && (

@@ -4,15 +4,18 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
 import { Point, Area, MediaSize } from 'react-easy-crop/types';
 import { IconZoomIn, IconZoomOut } from '@tabler/icons-react';
+import getCroppedImg from '~/utils/image-utils';
+import clsx from 'clsx';
 
 type ImageProps = { url: string; width: number; height: number; label?: string };
-type ImageCropperProps = { images: ImageProps[]; onCancel?: () => void; onConfirm: () => void };
+type ImageCropperProps = { images: ImageProps[]; onCancel?: () => void; onConfirm: OnConfirmFn };
 type CroppedImageProps = ImageProps & {
   zoom: number;
   crop: Point;
   croppedAreaPixels: Area | null;
   croppedArea: Area | null;
 };
+type OnConfirmFn = (urls: (string | Blob)[]) => void;
 
 export function ImageCropModal(props: ImageCropperProps) {
   const dialog = useDialogContext();
@@ -22,25 +25,32 @@ export function ImageCropModal(props: ImageCropperProps) {
     dialog.onClose();
   }
 
-  function handleConfirm() {
-    props.onConfirm();
+  const handleConfirm: OnConfirmFn = (args) => {
+    props.onConfirm(args);
     dialog.onClose();
-  }
+  };
 
   return (
-    <Modal {...dialog} title="Crop Images" size={768}>
+    <Modal
+      {...dialog}
+      title="Crop Images"
+      size={768}
+      transitionDuration={0}
+      onClose={() => props.onCancel?.()}
+    >
       <ImageCropperContent {...props} onCancel={handleCancel} onConfirm={handleConfirm} />
     </Modal>
   );
 }
 
 export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCropperProps) {
+  const initialAspect = images[0].width / images[0].height;
+  const [aspect, setAspect] = useState(initialAspect);
   const [selected, setSelected] = useState('0');
+  const [loading, setLoading] = useState(false);
   const [state, setState] = useState<CroppedImageProps[]>(
     images.map((image) => ({
       ...image,
-      x: 0,
-      y: 0,
       zoom: 1,
       crop: { x: 0, y: 0 },
       croppedArea: null,
@@ -48,9 +58,6 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
     }))
   );
   const selectedIndex = Number(selected);
-  const image = state[selectedIndex];
-  const initialAspect = state[0].width / state[0].height;
-  const [aspect, setAspect] = useState(initialAspect);
 
   const availableAspects = useMemo(() => {
     return [
@@ -65,11 +72,12 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
     croppedArea: Area,
     croppedAreaPixels: Area,
     crop: Point,
-    zoom: number
+    zoom: number,
+    index: number
   ) {
     setState((state) => {
-      state[selectedIndex] = {
-        ...state[selectedIndex],
+      state[index] = {
+        ...state[index],
         croppedArea,
         croppedAreaPixels,
         crop,
@@ -79,8 +87,28 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
     });
   }
 
-  function handleConfirm() {
-    onConfirm();
+  async function handleConfirm() {
+    setLoading(true);
+    try {
+      const croppedImages = await Promise.all(
+        state.map(async (image) => {
+          if (
+            image.croppedAreaPixels &&
+            (image.width !== image.croppedAreaPixels.width ||
+              image.height !== image.croppedAreaPixels.height)
+          ) {
+            return await getCroppedImg(image.url, image.croppedAreaPixels).then(async (res) =>
+              res ? await res.toBlob() : image.url
+            );
+          }
+          return image.url;
+        })
+      );
+      onConfirm(croppedImages);
+    } catch (e) {
+      console.error(e);
+    }
+    setLoading(false);
   }
 
   return (
@@ -96,51 +124,63 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
             }))}
             className="mx-3"
           />
-          <div className="relative aspect-square">
-            <ImageCropper
-              key={selectedIndex}
-              {...image}
-              aspect={aspect}
-              onCropComplete={handleCropComplete}
-            />
+          <div className="relative">
+            {state.map((image, index) => (
+              <div
+                key={index}
+                className={clsx({
+                  ['absolute inset-0 invisible']: selectedIndex !== index,
+                })}
+              >
+                <ImageCropper
+                  {...image}
+                  aspect={aspect}
+                  onCropComplete={(...args) => handleCropComplete(...args, index)}
+                />
+              </div>
+            ))}
           </div>
-        </div>
-        <div className="flex justify-end gap-3">
-          <Button onClick={onCancel} variant="default">
-            Cancel
-          </Button>
-          <Button onClick={handleConfirm}>Confirm</Button>
         </div>
       </div>
-      <div className="flex flex-col gap-3 sm:w-40">
-        {state.map((image, index) => (
-          <div
-            key={index}
-            className="overflow-hidden rounded-md max-sm:hidden"
-            onClick={() => setSelected(`${index}`)}
-          >
-            <ImageCropper
-              {...image}
-              aspect={aspect}
-              readonly
-              classes={{ containerClassName: 'cursor-pointer' }}
-            />
-          </div>
-        ))}
-        <Card withBorder>
-          <Radio.Group
-            size="xs"
-            label="Aspect Ratio"
-            orientation="vertical"
-            value={`${aspect}`}
-            onChange={(value) => setAspect(Number(value))}
-            spacing="sm"
-          >
-            {availableAspects.map(({ label, value }) => (
-              <Radio key={value} value={value} label={label} />
-            ))}
-          </Radio.Group>
-        </Card>
+      <div className="flex flex-col justify-between gap-3  sm:w-48">
+        <div className="flex flex-col gap-3">
+          {state.map((image, index) => (
+            <div
+              key={index}
+              className="overflow-hidden rounded-md max-sm:hidden"
+              onClick={() => setSelected(`${index}`)}
+            >
+              <ImageCropper
+                {...image}
+                aspect={aspect}
+                readonly
+                classes={{ containerClassName: 'cursor-pointer' }}
+              />
+            </div>
+          ))}
+          <Card withBorder>
+            <Radio.Group
+              size="xs"
+              label="Aspect Ratio"
+              orientation="vertical"
+              value={`${aspect}`}
+              onChange={(value) => setAspect(Number(value))}
+              spacing="sm"
+            >
+              {availableAspects.map(({ label, value }) => (
+                <Radio key={value} value={value} label={label} />
+              ))}
+            </Radio.Group>
+          </Card>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button className="flex-1" onClick={onCancel} variant="default">
+            Cancel
+          </Button>
+          <Button className="flex-1" onClick={handleConfirm} loading={loading}>
+            {!loading ? 'Confirm' : ''}
+          </Button>
+        </div>
       </div>
     </div>
   );

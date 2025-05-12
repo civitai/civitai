@@ -5,13 +5,45 @@ import { viduDuration } from '~/server/orchestrator/vidu/vidu.schema';
 import { ViduVideoGenStyle } from '@civitai/client';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
-import { IconPlus } from '@tabler/icons-react';
+import { useEffect } from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 
 export function ViduFormInput() {
   const form = useFormContext();
   const sourceImage = form.watch('sourceImage');
   const endSourceImage = form.watch('endSourceImage');
   const hasImage = !!sourceImage || !!endSourceImage;
+
+  useEffect(() => {
+    if (
+      !sourceImage ||
+      !endSourceImage ||
+      sourceImage instanceof Blob ||
+      endSourceImage instanceof Blob
+    )
+      return;
+    const ar1 = sourceImage.width / sourceImage.height;
+    const ar2 = endSourceImage.width / endSourceImage.height;
+    if (Math.round(ar1 * 100) / 100 !== Math.round(ar2 * 100) / 100) {
+      dialogStore.trigger({
+        component: ImageCropModal,
+        props: {
+          images: [
+            { ...sourceImage, label: 'First Frame' },
+            { ...endSourceImage, label: 'Last Frame' },
+          ],
+          onConfirm: (urls) => {
+            if (urls[0] instanceof Blob) form.setValue('sourceImage', urls[0]);
+            if (urls[1] instanceof Blob) form.setValue('endSourceImage', urls[1]);
+          },
+          onCancel: () => {
+            form.setValue('endSourceImage', null);
+          },
+        },
+      });
+    }
+  }, [sourceImage, endSourceImage]);
 
   return (
     <>

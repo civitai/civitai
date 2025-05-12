@@ -151,7 +151,7 @@ export const createImage = (url: string): Promise<HTMLImageElement> =>
     const image = new Image();
     image.addEventListener('load', () => resolve(image));
     image.addEventListener('error', (error) => reject(error));
-    // image.setAttribute('crossOrigin', 'anonymous') // needed to avoid cross-origin issues on CodeSandbox
+    image.setAttribute('crossOrigin', 'anonymous'); // needed to avoid cross-origin issues on CodeSandbox
     image.src = url;
   });
 
@@ -231,14 +231,34 @@ export default async function getCroppedImg(
     pixelCrop.height
   );
 
-  // As Base64 string
-  // return croppedCanvas.toDataURL('image/jpeg');
+  function toBase64() {
+    return croppedCanvas.toDataURL('image/jpeg');
+  }
+
+  async function toBlob() {
+    return new Promise<Blob>((resolve, reject) => {
+      croppedCanvas.toBlob((file) => {
+        if (file) resolve(file);
+        else reject('failed to crop image');
+      }, 'image/jpeg');
+    });
+  }
+
+  async function toObjectUrl() {
+    return await toBlob().then((blob) => URL.createObjectURL(blob));
+  }
 
   // As a blob
-  return new Promise((resolve, reject) => {
-    croppedCanvas.toBlob((file) => {
-      if (file) resolve(URL.createObjectURL(file));
-      else reject('failed to crop image');
-    }, 'image/jpeg');
-  });
+  // return new Promise((resolve, reject) => {
+  //   croppedCanvas.toBlob((file) => {
+  //     if (file) resolve(URL.createObjectURL(file));
+  //     else reject('failed to crop image');
+  //   }, 'image/jpeg');
+  // });
+
+  return {
+    toBase64,
+    toBlob,
+    toObjectUrl,
+  };
 }
