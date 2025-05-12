@@ -152,27 +152,7 @@ export const allJudgmentsCounter = createCounter({
 
 export const acolyteFailedJudgments = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.ACOLYTE_FAILED,
-  fetchCount: async (id) => {
-    if (!clickhouse) return 0;
-
-    const player = await dbRead.newOrderPlayer.findUnique({
-      where: { userId: Number(id) },
-      select: { startAt: true },
-    });
-    if (!player) return 0;
-
-    const data = await clickhouse.$query<{ count: number }>`
-      SELECT
-        COUNT(*) as count
-      FROM knights_new_order_image_rating
-      WHERE userId = ${id}
-        AND createdAt >= ${player.startAt}
-        AND status = '${NewOrderImageRatingStatus.AcolyteFailed}'
-    `;
-    if (!data) return 0;
-
-    return data[0]?.count ?? 0;
-  },
+  fetchCount: async () => 0,
   ttl: CacheTTL.week,
 });
 
