@@ -15,10 +15,7 @@ import { IconArrowRight, IconCategory, IconInfoCircle } from '@tabler/icons-reac
 import { useMemo } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import {
-  useHomeBlockGridStyles,
-  useHomeBlockStyles,
-} from '~/components/HomeBlocks/HomeBlock.Styles';
+
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -29,6 +26,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
+import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 
 type Props = { homeBlockId: number; metadata: Pick<HomeBlockMetaSchema, 'title' | 'description'> };
 
@@ -46,7 +44,6 @@ const ITEMS_PER_ROW = 7;
 const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const { classes: homeBlockClasses } = useHomeBlockStyles();
 
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
@@ -69,20 +66,22 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
     const itemsToShow = ITEMS_PER_ROW * ROWS;
     return filtered.slice(0, itemsToShow);
   }, [filtered]);
-
-  const { classes, cx } = useHomeBlockGridStyles({
-    count: items.length ?? 0,
-    rows: ROWS,
-  });
+ 
 
   const title = metadata.title ?? 'Featured Models';
   const useGrid = metadata.description && !currentUser;
 
   const MetaDataTop = (
-    <Stack gap="sm">
-      <Group gap="xs" justify="space-between" className={homeBlockClasses.header}>
+    <Stack
+      gap="sm"
+      style={{
+        '--count': items.length ?? 0,
+        '--rows': ROWS,
+      }}
+    >
+      <Group gap="xs" justify="space-between" className={classes.header}>
         <Group wrap="nowrap">
-          <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
+          <Title className={classes.title} order={1} lineClamp={1}>
             {title}{' '}
           </Title>
           {currentUser && metadata.description && (
@@ -133,7 +132,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
         </Group>
         <Link legacyBehavior href="/models" passHref>
           <Button
-            className={homeBlockClasses.expandButton}
+            className={classes.expandButton}
             component="a"
             variant="subtle"
             rightIcon={<IconArrowRight size={16} />}
@@ -158,7 +157,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
         <ThemeIcon size={50} variant="light" color="gray">
           <IconCategory />
         </ThemeIcon>
-        <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
+        <Title className={classes.title} order={1} lineClamp={1}>
           {title}
         </Title>
       </Group>

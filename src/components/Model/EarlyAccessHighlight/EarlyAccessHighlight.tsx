@@ -12,11 +12,12 @@ import {
   Text,
   Button,
 } from '@mantine/core';
-import { useHomeBlockGridStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
+import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { IconArrowRight } from '@tabler/icons-react';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 
 const ITEMS_PER_ROW = 7;
 
@@ -38,11 +39,7 @@ export const EarlyAccessHighlight = () => {
       enabled: !modelFilters.earlyAccess,
     }
   );
-
-  const { classes, theme } = useHomeBlockGridStyles({
-    count: models?.length ?? 15,
-    rows: 1,
-  });
+ 
 
   const onViewAll = () => {
     setFilters({ earlyAccess: true });
@@ -54,7 +51,10 @@ export const EarlyAccessHighlight = () => {
 
   if (isLoading || isRefetching) {
     return (
-      <Box className={classes.grid}>
+      <Box style={{
+        '--count': models?.length ?? 15,
+        '--rows': 1,
+      }} className={classes.grid}>
         {Array.from({ length: ITEMS_PER_ROW }).map((_, index) => (
           <AspectRatio ratio={7 / 9} key={index}>
             <Skeleton width="100%" />
@@ -70,7 +70,10 @@ export const EarlyAccessHighlight = () => {
   }
 
   return (
-    <Stack mb="md">
+    <Stack mb="md" style={{
+      '--count': models?.length ?? 15,
+      '--rows': 1,
+    }}>
       <Badge>Check out some early access models matching your query</Badge>
       <ShowcaseGrid itemCount={models.length + (hasNextPage ? 1 : 0)} rows={1} carousel={true}>
         {models.map((model) => (
