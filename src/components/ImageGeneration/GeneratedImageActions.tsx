@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Checkbox, MantineNumberSize, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Checkbox, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconTrash } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
@@ -23,8 +23,6 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { CivitaiResource } from '~/server/schema/image.schema';
-import { parseAIR } from '~/utils/string-helpers';
 import { getStepMeta } from './GenerationForm/generation.utils';
 
 const limit = pLimit(10);

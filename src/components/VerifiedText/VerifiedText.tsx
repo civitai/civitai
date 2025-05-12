@@ -1,17 +1,8 @@
-import {
-  ButtonProps,
-  Popover,
-  Text,
-  DefaultMantineColor,
-  Group,
-  ThemeIcon,
-  createStyles,
-} from '@mantine/core';
+import { ButtonProps, Popover, Text, DefaultMantineColor, Group, ThemeIcon } from '@mantine/core';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import dayjs from 'dayjs';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type VerifiedFile = {
   virusScanResult: ScanResultCode;
@@ -43,7 +34,6 @@ const statusMessage: Record<ScanResultCode, string> = {
 const StatusCodeOrder = ['Pending', 'Danger', 'Error', 'Success'] as const;
 
 export function VerifiedText({ file, iconOnly }: Props) {
-  const { classes } = useStyles();
   if (!file) return null;
 
   const { virusScanResult, virusScanMessage, pickleScanResult, pickleScanMessage, scannedAt } =
@@ -105,11 +95,3 @@ export function VerifiedText({ file, iconOnly }: Props) {
     </Group>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  hideSm: {
-    [containerQuery.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-}));

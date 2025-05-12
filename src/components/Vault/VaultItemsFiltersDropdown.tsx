@@ -9,7 +9,7 @@ import {
   Drawer,
   ButtonProps,
   Text,
-  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -18,7 +18,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { TagSort } from '~/server/common/enums';
 import { GetPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { DatePicker } from '@mantine/dates';
+import { DatePickerInput } from '@mantine/dates';
 import { trpc } from '~/utils/trpc';
 import { constants } from '~/server/common/constants';
 import { FilterButton } from '~/components/Buttons/FilterButton';
@@ -28,7 +28,7 @@ type Filters = Omit<GetPaginatedVaultItemsSchema, 'limit'>;
 
 export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps }: Props) {
   const mobile = useIsMobile();
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme();
   const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery({
     entityType: ['Model'],
     sort: TagSort.MostModels,
@@ -66,8 +66,6 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
       inline
     >
       <FilterButton
@@ -76,6 +74,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
         variant="default"
         active={opened}
         onClick={() => setOpened((o) => !o)}
+        {...buttonProps}
       >
         Filters
       </FilterButton>
@@ -85,14 +84,11 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
   const dropdown = (
     <Stack gap="xs">
       <Stack gap="xs">
-        <Divider label="Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Type" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          gap={8}
           value={filters.types ?? []}
-          onChange={(types: ModelType[]) => {
-            setFilters({
-              types,
-            });
+          onChange={(types) => {
+            setFilters({ types: types as ModelType[] });
           }}
           multiple
         >
@@ -102,11 +98,10 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
             </FilterChip>
           ))}
         </Chip.Group>
-        <Divider label="Category" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Category" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          gap={8}
           value={filters.categories ?? []}
-          onChange={(categories: string[]) => {
+          onChange={(categories) => {
             setFilters({
               categories,
             });
@@ -121,11 +116,10 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
             </FilterChip>
           ))}
         </Chip.Group>
-        <Divider label="Base Model" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Base Model" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          gap={8}
           value={filters.baseModels ?? []}
-          onChange={(baseModels: string[]) => {
+          onChange={(baseModels) => {
             setFilters({
               baseModels,
             });
@@ -140,9 +134,9 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
             </FilterChip>
           ))}
         </Chip.Group>
-        <Divider label="Created at" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Created at" classNames={{ label: 'font-bold text-sm' }} />
         <Group grow>
-          <DatePicker
+          <DatePickerInput
             label="From"
             placeholder="From"
             value={filters.dateCreatedFrom}
@@ -150,10 +144,10 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
               setFilters({ dateCreatedFrom: date ?? undefined });
             }}
             maxDate={filters.dateCreatedTo ?? undefined}
-            clearButtonLabel="Clear"
+            clearable
             radius="xl"
           />
-          <DatePicker
+          <DatePickerInput
             label="To"
             placeholder="To"
             value={filters.dateCreatedTo}
@@ -161,13 +155,13 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
               setFilters({ dateCreatedTo: date ?? undefined });
             }}
             minDate={filters.dateCreatedFrom ?? undefined}
-            clearButtonLabel="Clear"
+            clearable
             radius="xl"
           />
         </Group>
-        <Divider label="Added at" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Added at" classNames={{ label: 'font-bold text-sm' }} />
         <Group grow>
-          <DatePicker
+          <DatePickerInput
             label="From"
             placeholder="From"
             value={filters.dateAddedFrom}
@@ -175,10 +169,10 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
               setFilters({ dateAddedFrom: date ?? undefined });
             }}
             maxDate={filters.dateAddedTo ?? undefined}
-            clearButtonLabel="Clear"
+            clearable
             radius="xl"
           />
-          <DatePicker
+          <DatePickerInput
             label="To"
             placeholder="To"
             value={filters.dateAddedTo}
@@ -186,7 +180,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
               setFilters({ dateAddedTo: date ?? undefined });
             }}
             minDate={filters.dateAddedFrom ?? undefined}
-            clearButtonLabel="Clear"
+            clearable
             radius="xl"
           />
         </Group>
@@ -194,7 +188,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -214,14 +208,14 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           size="90%"
           position="bottom"
           styles={{
-            drawer: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -250,34 +244,3 @@ type Props = {
   setFilters: (filters: Partial<Filters>) => void;
   filters: Filters;
 } & Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'>;
-
-// const useStyles = createStyles((theme) => ({
-//   label: {
-//     fontSize: 12,
-//     fontWeight: 600,
-
-//     '&[data-checked]': {
-//       '&, &:hover': {
-//         color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-//         border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-//       },
-
-//       '&[data-variant="filled"]': {
-//         backgroundColor: 'transparent',
-//       },
-//     },
-//   },
-//   opened: {
-//     transform: 'rotate(180deg)',
-//     transition: 'transform 200ms ease',
-//   },
-
-//   actionButton: {
-//     [containerQuery.smallerThan('sm')]: {
-//       width: '100%',
-//     },
-//   },
-
-//   indicatorRoot: { lineHeight: 1 },
-//   indicatorIndicator: { lineHeight: 1.6 },
-// }));

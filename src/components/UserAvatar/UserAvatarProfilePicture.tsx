@@ -1,4 +1,4 @@
-import { ActionIcon, Center } from '@mantine/core';
+import { ActionIcon, Center, rgba, useMantineTheme } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -15,6 +15,7 @@ export function UserAvatarProfilePicture({
   image: ProfileImage;
   username?: string | null;
 }) {
+  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const isSelf = currentUser?.id === id;
 
@@ -30,13 +31,13 @@ export function UserAvatarProfilePicture({
                   <ActionIcon
                     color="red"
                     radius="xl"
-                    sx={(theme) => ({
-                      backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.6),
+                    style={{
+                      backgroundColor: rgba(theme.colors.red[9], 0.6),
                       color: 'white',
                       backdropFilter: 'blur(7px)',
                       boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
                       zIndex: 10,
-                    })}
+                    }}
                     onClick={toggle}
                   >
                     {safe ? (
