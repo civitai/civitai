@@ -3543,6 +3543,7 @@ model Changelog {
   type        ChangelogType
   tags        String[]      @default([])
   disabled    Boolean       @default(false)
+  titleColor  String?
 }
 
 model NewOrderPlayer {

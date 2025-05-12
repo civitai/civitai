@@ -2955,6 +2955,7 @@ const genChangelogs = (num: number) => {
         { value: false, weight: 15 },
         { value: true, weight: 1 },
       ]), // disabled
+      rand(['blue', 'purple', 'red', 'orange', 'yellow', 'green', 'junk', null]), // titleColor
     ];
 
     ret.push(row);

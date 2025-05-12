@@ -13,15 +13,17 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
+import { useDebouncedValue, useLocalStorage } from '@mantine/hooks';
 import {
   IconAlertCircle,
   IconExternalLink,
   IconMinus,
   IconPlus,
+  IconPointFilled,
   IconSortAscending,
   IconSortDescending,
 } from '@tabler/icons-react';
+import { clsx } from 'clsx';
 import dayjs from 'dayjs';
 import { isEqual } from 'lodash-es';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -59,20 +61,35 @@ const changelogTypeMap: { [K in ChangelogType]: { color: MantineColor; text: str
   Update: { color: 'violet', text: 'Update' },
 };
 
+// nb: set your editor tailwind to `"classAttributes": [... ".*TWStyles"]` for this to populate
+const titleGradientTWStyles = {
+  blue: 'from-blue-800 to-purple-800 dark:from-blue-4 dark:to-purple-400',
+  purple: 'from-purple-800 to-red-800 dark:from-purple-400 dark:to-red-3',
+  red: 'from-red-800 to-orange-700 dark:from-red-3 dark:to-orange-4',
+  orange: 'from-orange-700 to-yellow-600 dark:from-orange-4 dark:to-yellow-1',
+  yellow: 'from-yellow-600 to-green-800 dark:from-yellow-1 dark:to-green-3',
+  green: 'from-green-800 to-blue-800 dark:from-green-3 dark:to-blue-4',
+} as Record<string, string>;
+
 const ChangelogItem = ({
   item,
   isMod,
   setEditingItem,
   setOpened,
   scrollRef,
+  lastSeen,
 }: {
   item: Changelog;
   isMod: boolean;
   setEditingItem: React.Dispatch<React.SetStateAction<Changelog | undefined>>;
   setOpened: React.Dispatch<React.SetStateAction<boolean>>;
   scrollRef: React.RefObject<HTMLDivElement> | undefined;
+  lastSeen: number;
 }) => {
   const typeMapped = changelogTypeMap[item.type];
+  const titleGradient = !item.titleColor
+    ? titleGradientTWStyles['blue']
+    : titleGradientTWStyles[item.titleColor] ?? titleGradientTWStyles['blue'];
 
   return (
     <Card withBorder shadow="sm" p="md" radius="md">
@@ -89,7 +106,17 @@ const ChangelogItem = ({
             </Badge>
 
             <span className="min-w-0 flex-1 text-center sm:text-left">
-              <span className="inline-block break-normal bg-gradient-to-r from-blue-800 to-green-800 bg-clip-text text-lg font-bold text-transparent dark:from-blue-3 dark:to-green-3">
+              <span
+                className={clsx(
+                  'inline-block break-normal bg-gradient-to-r bg-clip-text text-lg font-bold text-transparent',
+                  titleGradient
+                )}
+              >
+                {lastSeen < item.effectiveAt.getTime() && (
+                  <Text className="mr-1 inline-block">
+                    <IconPointFilled color="green" size={18} />
+                  </Text>
+                )}
                 {item.title}
               </span>
             </span>
@@ -196,6 +223,7 @@ const schema = createChangelogInput;
 type SchemaType = z.infer<typeof schema>;
 const defaultValues: SchemaType = {
   title: '',
+  titleColor: 'blue',
   content: '',
   link: undefined,
   cta: undefined,
@@ -232,7 +260,12 @@ const CreateChangelog = ({
   useEffect(() => {
     form.reset(
       !!existing
-        ? { ...existing, link: existing.link ?? undefined, cta: existing.cta ?? undefined }
+        ? {
+            ...existing,
+            link: existing.link ?? undefined,
+            cta: existing.cta ?? undefined,
+            titleColor: existing.titleColor ?? 'blue',
+          }
         : defaultValues
     );
   }, [existing]);
@@ -319,6 +352,11 @@ const CreateChangelog = ({
           <Paper withBorder mt="md" p="lg">
             <Stack spacing="lg">
               <InputText name="title" label="Title" placeholder="Title..." withAsterisk />
+              <InputSelect
+                name="titleColor"
+                label="Title Color"
+                data={Object.keys(titleGradientTWStyles)}
+              />
               <InputRTE
                 name="content"
                 label="Content"
@@ -379,7 +417,13 @@ export function Changelogs() {
   const [searchTxt, setSearchTxt] = useState('');
   const [createOpened, setCreateOpened] = useState(false);
   const [editingItem, setEditingItem] = useState<Changelog | undefined>();
+  const [lastSeenChangelog, setLastSeenChangelog] = useLocalStorage<number>({
+    key: 'last-seen-changelog',
+    defaultValue: 0, // -1
+    getInitialValueInEffect: false,
+  });
   const ref = useRef<HTMLDivElement>(null);
+  const lastSeenRef = useRef<number>(lastSeenChangelog);
 
   const filters = useMemo(
     () =>
@@ -410,12 +454,18 @@ export function Changelogs() {
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
 
+  useEffect(() => {
+    if (!flatData?.length) return;
+    const latest = Math.max(...flatData.map((item) => item.effectiveAt.getTime()));
+    if (latest > lastSeenChangelog) setLastSeenChangelog(latest);
+  }, [flatData, lastSeenChangelog, setLastSeenChangelog]);
+
   const isAsc = filters.sortDir === 'asc';
 
   return (
     <Stack ref={ref}>
       <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <Text size="xl" weight="bold" className="w-full text-left sm:w-auto">
+        <Text size={26} weight="bold" className="w-full text-left sm:w-auto">
           Changelog
         </Text>
 
@@ -478,6 +528,7 @@ export function Changelogs() {
                 setEditingItem={setEditingItem}
                 setOpened={setCreateOpened}
                 scrollRef={ref}
+                lastSeen={lastSeenRef.current}
               />
             ))}
           </Stack>

@@ -20,10 +20,10 @@ export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: 
   if (search && search.length > 0) {
     where['OR'] = [
       {
-        title: { contains: search },
+        title: { contains: search, mode: 'insensitive' },
       },
       {
-        content: { contains: search },
+        content: { contains: search, mode: 'insensitive' },
       },
     ];
   }
@@ -64,6 +64,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: 
       select: {
         id: true,
         title: true,
+        titleColor: true,
         content: true,
         link: true,
         cta: true,
@@ -133,4 +134,15 @@ export const getAllTags = async () => {
   });
 
   return [...new Set(data.flatMap((x) => x.tags ?? []))];
+};
+
+export const getLatestChangelog = async () => {
+  const cl = await dbRead.changelog.findFirst({
+    select: { effectiveAt: true },
+    where: { disabled: false, effectiveAt: { lte: new Date() } },
+    orderBy: { effectiveAt: 'desc' },
+    // take: 1,
+  });
+
+  return !cl ? 0 : cl.effectiveAt.getTime();
 };

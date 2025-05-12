@@ -9,6 +9,7 @@ import {
   createChangelog,
   getAllTags,
   getChangelogs,
+  getLatestChangelog,
   updateChangelog,
 } from '~/server/services/changelog.service';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
@@ -25,4 +26,7 @@ export const changelogRouter = router({
     .input(updateChangelogInput)
     .mutation(({ input }) => updateChangelog(input)),
   getAllTags: publicProcedure.use(edgeCacheIt({ ttl: CacheTTL.xs })).query(() => getAllTags()),
+  getLatest: publicProcedure
+    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .query(() => getLatestChangelog()),
 });

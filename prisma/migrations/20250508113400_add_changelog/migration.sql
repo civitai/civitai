@@ -18,15 +18,18 @@ CREATE TABLE "Changelog"
   "type"        "ChangelogType" NOT NULL,
   "tags"        TEXT[]          NOT NULL DEFAULT ARRAY []::text[],
   "disabled"    BOOLEAN         NOT NULL DEFAULT false,
+  "titleColor"  TEXT,
 
   CONSTRAINT "Changelog_pkey" PRIMARY KEY ("id")
 );
 
--- TODO trigram index?
-CREATE EXTENSION IF NOT EXISTS btree_gin;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE INDEX "Changelog_effectiveAt_idx" ON "Changelog" ("effectiveAt");
-CREATE INDEX "Changelog_title_content_idx" ON "Changelog" USING gin ("title", "content");
+CREATE INDEX "Changelog_title_content_idx" ON "Changelog" USING gin (
+  title gin_trgm_ops,
+  content gin_trgm_ops
+);
 CREATE INDEX "Changelog_type_idx" ON "Changelog" ("type");
 CREATE INDEX "Changelog_tags_idx" ON "Changelog" ("tags");
 CREATE INDEX "Changelog_disabled_idx" ON "Changelog" ("disabled");

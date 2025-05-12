@@ -16,6 +16,7 @@ export const getChangelogsInput = infiniteQuerySchema.extend({
 export type CreateChangelogInput = z.infer<typeof createChangelogInput>;
 export const createChangelogInput = z.object({
   title: z.string().min(1),
+  titleColor: z.string().optional(),
   content: z.string().min(1),
   link: z.string().url().optional().or(z.literal('')),
   //   link: z.string().optional().refine(value => !value || /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})(\/[\w.-]*)*\/?$/.test(value), {

@@ -2666,6 +2666,7 @@ export interface ModerationRule {
 export interface Changelog {
   id: number;
   title: string;
+  titleColor: string | null;
   content: string;
   link: string | null;
   cta: string | null;
