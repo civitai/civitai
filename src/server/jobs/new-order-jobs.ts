@@ -107,7 +107,6 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   if (!clickhouse) return;
   log('DailyReset:: Running daily reset');
 
-  // startDate is 6 days ago
   const endDate = new Date();
   // Apr. 10, 2025 as Start Date
   const startDate = dayjs('2025-04-10').startOf('day').toDate();
@@ -115,7 +114,6 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   log(`DailyReset:: Getting judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
   const users = await dbRead.newOrderPlayer.findMany({
-    where: { rankType: { not: NewOrderRankType.Acolyte } },
     select: { userId: true, startAt: true },
   });
 
@@ -149,12 +147,12 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       ) as failedJudgments,
       SUM(
         -- Make it so we ignore elements before a reset.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt), 1, 0)
+        -- Exclude 'AcolyteCorrect' and 'AcolyteFailed' statuses from total judgments as they represent auxiliary actions not directly tied to the primary judgment process.
+        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" NOT IN ('${NewOrderImageRatingStatus.AcolyteCorrect}', '${NewOrderImageRatingStatus.AcolyteFailed}'), 1, 0)
       ) as totalJudgments
     FROM knights_new_order_image_rating knoir
     JOIN u ON knoir."userId" = CAST(u.userId as Int32)
     WHERE knoir."createdAt" BETWEEN ${startDate} AND ${endDate}
-      AND knoir."status" NOT IN ('${NewOrderImageRatingStatus.AcolyteCorrect}', '${NewOrderImageRatingStatus.AcolyteFailed}')
     GROUP BY knoir."userId"
   `;
 

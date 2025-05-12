@@ -13,6 +13,7 @@ import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
 import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
+import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
@@ -137,6 +138,7 @@ export const jobs: Job[] = [
   ...creatorProgramJobs,
   handleAuctions,
   ...newOrderJobs,
+  updateModelVersionNsfwLevelsJob,
 ];
 
 const log = createLogger('jobs', 'green');

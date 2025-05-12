@@ -22,9 +22,11 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
         <div className="flex flex-col gap-1">
           <h3 className="font-semibold">Acolyte (Training Rank)</h3>
           <p>
-            All players start as an <span className="font-semibold">Acolyte</span>, training in the
-            art of content judgment. As an Acolyte, you will learn the basics of the game and gain
-            experience by rating images to level up.
+            All players begin as <span className="font-semibold">Acolytes</span>, training in the
+            sacred art of content judgment. As an Acolyte, you’ll learn the game’s basics and gain
+            experience by rating images to level up. But beware: five incorrect ratings at the same
+            level will earn you a Smite - and three Smites will drop you all the way back to Level
+            1! The good news? Leveling up clears your Smites, so judge wisely!
           </p>
         </div>
         <div className="flex flex-col gap-1">
@@ -71,10 +73,17 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
             Players earn <span className="font-semibold">Gold</span> by rating images.
           </p>
           <ul className="pl-8">
+            <li>Every correct rating equals 100 gold.</li>
+            <li className="flex items-center gap-1">
+              1,000 gold equals 1{' '}
+              <span className="flex items-center gap-1">
+                <CurrencyIcon size={16} currency="BUZZ" /> Yellow Buzz.
+              </span>{' '}
+            </li>
             <li>
               Gold must pass a 3-day settlement period before it can be converted into{' '}
               <span className="flex items-center gap-1">
-                <CurrencyIcon size={16} currency="BUZZ" /> Buzz.
+                <CurrencyIcon size={16} currency="BUZZ" /> Yellow Buzz.
               </span>
             </li>
           </ul>

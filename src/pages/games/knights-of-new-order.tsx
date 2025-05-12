@@ -207,18 +207,20 @@ export default Page(
                             width={700}
                             contain
                           />
-                          <ActionIcon
-                            component={Link}
-                            href={`/images/${currentImage.id}`}
-                            target="_blank"
-                            aria-label="Open image in new tab"
-                            size="sm"
-                            variant="light"
-                            color="dark"
-                            className="absolute bottom-2 right-2 text-white"
-                          >
-                            <IconExternalLink size={16} color="currentColor" />
-                          </ActionIcon>
+                          {playerData.rankType !== NewOrderRankType.Acolyte && (
+                            <ActionIcon
+                              component={Link}
+                              href={`/images/${currentImage.id}`}
+                              target="_blank"
+                              aria-label="Open image in new tab"
+                              size="sm"
+                              variant="light"
+                              color="dark"
+                              className="absolute bottom-2 right-2 text-white"
+                            >
+                              <IconExternalLink size={16} color="currentColor" />
+                            </ActionIcon>
+                          )}
                         </div>
                       )}
                     </ImageGuard2>
