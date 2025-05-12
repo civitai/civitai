@@ -33,3 +33,8 @@ export type UpdateChangelogInput = z.infer<typeof updateChangelogInput>;
 export const updateChangelogInput = createChangelogInput.partial().extend({
   id: z.number(),
 });
+
+export type DeleteChangelogInput = z.infer<typeof deleteChangelogInput>;
+export const deleteChangelogInput = z.object({
+  id: z.number(),
+});

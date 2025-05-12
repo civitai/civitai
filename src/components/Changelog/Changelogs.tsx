@@ -14,6 +14,7 @@ import {
   Text,
 } from '@mantine/core';
 import { useDebouncedValue, useLocalStorage } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertCircle,
   IconExternalLink,
@@ -34,7 +35,6 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputCheckbox,
@@ -46,6 +46,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { createChangelogInput } from '~/server/schema/changelog.schema';
 import type { Changelog } from '~/server/services/changelog.service';
@@ -73,19 +74,53 @@ const titleGradientTWStyles = {
 
 const ChangelogItem = ({
   item,
-  isMod,
+  canEdit,
   setEditingItem,
   setOpened,
   scrollRef,
   lastSeen,
 }: {
   item: Changelog;
-  isMod: boolean;
+  canEdit: boolean;
   setEditingItem: React.Dispatch<React.SetStateAction<Changelog | undefined>>;
   setOpened: React.Dispatch<React.SetStateAction<boolean>>;
   scrollRef: React.RefObject<HTMLDivElement> | undefined;
   lastSeen: number;
 }) => {
+  const queryUtils = trpc.useUtils();
+  const { mutate: deleteItem } = trpc.changelog.delete.useMutation();
+
+  const handleDelete = (id: number) => {
+    openConfirmModal({
+      title: 'Delete changelog',
+      children: 'Are you sure you want to delete this changelog?',
+      centered: true,
+      labels: { confirm: 'Delete', cancel: "No, don't delete it" },
+      confirmProps: { color: 'red' },
+      onConfirm: () => {
+        deleteItem(
+          { id },
+          {
+            async onSuccess() {
+              showSuccessNotification({
+                message: 'Changelog deleted!',
+              });
+
+              await queryUtils.changelog.getInfinite.invalidate();
+              await queryUtils.changelog.getAllTags.invalidate();
+            },
+            onError(error) {
+              showErrorNotification({
+                title: 'Failed to delete changelog',
+                error: new Error(error.message),
+              });
+            },
+          }
+        );
+      },
+    });
+  };
+
   const typeMapped = changelogTypeMap[item.type];
   const titleGradient = !item.titleColor
     ? titleGradientTWStyles['blue']
@@ -139,12 +174,12 @@ const ChangelogItem = ({
                   Updated: {dayjs().to(dayjs(item.updatedAt))}
                 </Text>
               )}
-              {isMod && item.disabled && (
+              {canEdit && item.disabled && (
                 <Badge color="red" variant="light">
                   Disabled
                 </Badge>
               )}
-              {isMod && item.effectiveAt > new Date() && (
+              {canEdit && item.effectiveAt > new Date() && (
                 <Badge color="cyan" variant="light">
                   Future
                 </Badge>
@@ -182,20 +217,25 @@ const ChangelogItem = ({
         )}
       </Card.Section>
 
-      {(item.link || isMod) && (
+      {(item.link || canEdit) && (
         <Card.Section inheritPadding py="sm">
           <Group position="apart" className="w-full">
             <div>
-              {isMod && (
-                <Button
-                  onClick={() => {
-                    setEditingItem(item);
-                    setOpened(true);
-                    scrollRef?.current?.scrollIntoView({ behavior: 'smooth' });
-                  }}
-                >
-                  Edit
-                </Button>
+              {canEdit && (
+                <Group spacing="xs">
+                  <Button
+                    onClick={() => {
+                      setEditingItem(item);
+                      setOpened(true);
+                      scrollRef?.current?.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  <Button color="red" onClick={() => handleDelete(item.id)}>
+                    Delete
+                  </Button>
+                </Group>
               )}
             </div>
             {item.link && (
@@ -409,7 +449,7 @@ const CreateChangelog = ({
 };
 
 export function Changelogs() {
-  const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { filters: clFilters, setFilters } = useFiltersContext((state) => ({
     filters: state.changelogs,
     setFilters: state.setChangelogFilters,
@@ -461,6 +501,7 @@ export function Changelogs() {
   }, [flatData, lastSeenChangelog, setLastSeenChangelog]);
 
   const isAsc = filters.sortDir === 'asc';
+  const canEdit = features.changelogEdit;
 
   return (
     <Stack ref={ref}>
@@ -493,7 +534,7 @@ export function Changelogs() {
       </div>
 
       {/* Create */}
-      {currentUser?.isModerator && (
+      {canEdit && (
         <CreateChangelog
           opened={createOpened}
           setOpened={setCreateOpened}
@@ -524,7 +565,7 @@ export function Changelogs() {
               <ChangelogItem
                 key={c.id}
                 item={c}
-                isMod={currentUser?.isModerator ?? false}
+                canEdit={canEdit}
                 setEditingItem={setEditingItem}
                 setOpened={setCreateOpened}
                 scrollRef={ref}

@@ -2,18 +2,19 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   CreateChangelogInput,
+  DeleteChangelogInput,
   GetChangelogsInput,
   UpdateChangelogInput,
 } from '~/server/schema/changelog.schema';
 import { throwDbError } from '~/server/utils/errorHandling';
 
 export type Changelog = AsyncReturnType<typeof getChangelogs>['items'][number];
-export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: boolean }) => {
-  const { isModerator, limit, cursor, sortDir, search, dateBefore, dateAfter, types, tags } = input;
+export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: boolean }) => {
+  const { hasFeature, limit, cursor, sortDir, search, dateBefore, dateAfter, types, tags } = input;
 
   const where: Prisma.ChangelogWhereInput = {};
 
-  if (!isModerator) {
+  if (!hasFeature) {
     where['disabled'] = false;
   }
 
@@ -35,7 +36,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { isModerator?: 
     ? now
     : dateAfter;
   const dateBeforeMod = !dateBefore
-    ? isModerator
+    ? hasFeature
       ? undefined
       : now
     : dateBefore.getTime() > now.getTime()
@@ -116,6 +117,16 @@ export const updateChangelog = async (data: UpdateChangelogInput) => {
     return dbWrite.changelog.update({
       where: { id },
       data: rest,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const deleteChangelog = async ({ id }: DeleteChangelogInput) => {
+  try {
+    return dbWrite.changelog.delete({
+      where: { id },
     });
   } catch (error) {
     throw throwDbError(error);
