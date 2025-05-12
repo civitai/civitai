@@ -149,7 +149,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
           </Notification>
         )}
         <div className="flex gap-2">
-          <SubmitButton2 loading={isLoading || isLoadingDebounced} />
+          <SubmitButton2 loading={isLoading || isLoadingDebounced} engine={engine} />
           <Button onClick={handleReset} variant="default" className="h-auto px-3">
             Reset
           </Button>
@@ -172,8 +172,8 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   );
 }
 
-function SubmitButton2({ loading }: { loading: boolean }) {
-  const engine = useVideoGenerationStore((state) => state.engine);
+function SubmitButton2({ loading, engine }: { loading: boolean; engine: OrchestratorEngine2 }) {
+  // const engine = useVideoGenerationStore((state) => state.engine);
   const setState = useVideoGenerationStore((state) => state.setState);
   const config = videoGenerationConfig2[engine];
   const [query, setQuery] = useState<Record<string, any> | null>(null);

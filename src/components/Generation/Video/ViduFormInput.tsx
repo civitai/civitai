@@ -14,6 +14,7 @@ export function ViduFormInput() {
   const sourceImage = form.watch('sourceImage');
   const endSourceImage = form.watch('endSourceImage');
   const hasImage = !!sourceImage || !!endSourceImage;
+  const model = form.watch('model');
 
   useEffect(() => {
     if (
@@ -77,16 +78,18 @@ export function ViduFormInput() {
         autosize
       />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
-      <div className="flex flex-col gap-0.5">
-        <Input.Label>Duration</Input.Label>
-        <InputSegmentedControl
-          name="duration"
-          data={viduDuration.map((value) => ({
-            label: `${value}s`,
-            value,
-          }))}
-        />
-      </div>
+      {model !== 'q1' && (
+        <div className="flex flex-col gap-0.5">
+          <Input.Label>Duration</Input.Label>
+          <InputSegmentedControl
+            name="duration"
+            data={viduDuration.map((value) => ({
+              label: `${value}s`,
+              value,
+            }))}
+          />
+        </div>
+      )}
       {!hasImage && (
         <div className="flex flex-col gap-0.5">
           <Input.Label>Style</Input.Label>

@@ -93,5 +93,6 @@ export function VideoGenerationConfig2<
     validate,
     getWhatIfValues,
     inputFn,
+    transformFn,
   };
 }
