@@ -160,16 +160,6 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     return;
   }
 
-  // Clean up counters
-  const userIds = userData.map((j) => j.userId);
-  await Promise.all([
-    ...userIds.map((id) => correctJudgmentsCounter.reset({ id })),
-    ...userIds.map((id) => allJudgmentsCounter.reset({ id })),
-    ...userIds.map((id) => fervorCounter.reset({ id })),
-    ...userIds.map((id) => expCounter.reset({ id })),
-  ]);
-  log('DailyReset:: Cleared counters');
-
   const batches = chunk(userData, 500);
   let loopCount = 1;
   for (const batch of batches) {
@@ -198,23 +188,20 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       WHERE "NewOrderPlayer"."userId" = affected."userId"
     `;
 
-    // Update counters
-    await Promise.all(
-      batchWithFervor.map((j) => {
-        const { userId, exp, correctJudgments, totalJudgments, fervor } = j;
-        return Promise.all([
-          expCounter.increment({ id: userId, value: exp }),
-          correctJudgmentsCounter.increment({ id: userId, value: correctJudgments }),
-          allJudgmentsCounter.increment({ id: userId, value: totalJudgments }),
-          fervorCounter.increment({ id: userId, value: fervor }),
-        ]);
-      })
-    );
-
     log(`DailyReset:: Processing judgments :: ${loopCount} of ${batches.length} :: done`);
     loopCount++;
   }
   log('DailyReset:: Processing judgments :: done');
+
+  // Clean up counters
+  const userIds = userData.map((j) => j.userId);
+  await Promise.all([
+    ...userIds.map((id) => correctJudgmentsCounter.reset({ id })),
+    ...userIds.map((id) => allJudgmentsCounter.reset({ id })),
+    ...userIds.map((id) => fervorCounter.reset({ id })),
+    ...userIds.map((id) => expCounter.reset({ id })),
+  ]);
+  log('DailyReset:: Cleared counters');
 });
 
 const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', async () => {
