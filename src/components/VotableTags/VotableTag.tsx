@@ -11,6 +11,9 @@ import {
   Divider,
   Menu,
   UnstyledButton,
+  useComputedColorScheme,
+  lighten,
+  alpha,
 } from '@mantine/core';
 import { useCallback, useRef } from 'react';
 import { TagType } from '~/shared/utils/prisma/enums';
@@ -99,27 +102,26 @@ export function VotableTag({
   const key = getKey({ entityType, entityId, name });
   const vote = useVotableTagStore(useCallback((state) => state.votes[key] ?? initialVote, [key])); //eslint-disable-line
   const upvoteDate = useVotableTagStore(useCallback((state) => state.upvoteDates[key], [key]));
-  const moderatorVariant = highlightContested && needsReview
+  const moderatorVariant = highlightContested && needsReview;
 
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark', { getInitialValueInEffect: false });
   const isNsfw = !getIsSafeBrowsingLevel(nsfwLevel);
-  const { color, shade } = votableTagColors[nsfwLevel][theme.colorScheme];
+  const { color, shade } = votableTagColors[nsfwLevel][colorScheme];
   const voteColor = isNsfw ? theme.colors[color][shade] : theme.colors.blue[5];
-  const badgeColor = theme.fn.variant({
+  const badgeColor = theme.variantColorResolver({
     color: moderatorVariant ? 'grape' : color,
-    variant: theme.colorScheme === 'dark' ? (isNsfw ? 'light' : 'filled') : 'light',
+    variant: colorScheme === 'dark' ? (isNsfw ? 'light' : 'filled') : 'light',
+    theme,
   });
-  const badgeBorder = theme.fn.lighten(
+  const badgeBorder = lighten(
     needsReview || !concrete
       ? theme.colors.yellow[8]
       : badgeColor.background ?? theme.colors.gray[4],
     0.05
   );
-  const badgeBg = theme.fn.rgba(badgeColor.background ?? theme.colors.gray[4], 0.3);
-  const progressBg = theme.fn.rgba(
-    badgeColor.background ?? theme.colors.gray[4],
-    isNsfw ? 0.4 : 0.8
-  );
+  const badgeBg = alpha(badgeColor.background ?? theme.colors.gray[4], 0.3);
+  const progressBg = alpha(badgeColor.background ?? theme.colors.gray[4], isNsfw ? 0.4 : 0.8);
   const opacity = 0.2 + (Math.max(Math.min(score, 10), 0) / 10) * 0.8;
 
   if (upvoteDate) lastUpvote = upvoteDate;
@@ -201,7 +203,7 @@ export function VotableTag({
                 fill={
                   vote === 1
                     ? voteColor
-                    : theme.colorScheme === 'dark'
+                    : colorScheme === 'dark'
                     ? 'rgba(255, 255, 255, 0.3)'
                     : 'rgba(0, 0, 0, 0.3)'
                 }
@@ -218,7 +220,7 @@ export function VotableTag({
                 fill={
                   vote === -1
                     ? voteColor
-                    : theme.colorScheme === 'dark'
+                    : colorScheme === 'dark'
                     ? 'rgba(255, 255, 255, 0.3)'
                     : 'rgba(0, 0, 0, 0.3)'
                 }
@@ -233,19 +235,13 @@ export function VotableTag({
           </ActionIcon>
         )}
         {needsReview && (
-          <IconFlag
-            size={12}
-            strokeWidth={4}
-            color={theme.colorScheme === 'dark' ? theme.colors.orange[9] : theme.colors.yellow[4]}
-            style={{ marginRight: 2 }}
-          />
+          <IconFlag size={12} strokeWidth={4} className="mr-0.5 text-yellow-4 dark:text-orange-9" />
         )}
         {!concrete && (
           <IconHourglassEmpty
             size={12}
             strokeWidth={4}
-            color={theme.colorScheme === 'dark' ? theme.colors.orange[9] : theme.colors.yellow[4]}
-            style={{ marginRight: 2 }}
+            className="mr-0.5 text-yellow-4 dark:text-orange-9"
           />
         )}
         <Text
