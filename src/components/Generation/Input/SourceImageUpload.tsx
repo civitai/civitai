@@ -12,7 +12,9 @@ import { useLocalStorage } from '@mantine/hooks';
 import clsx from 'clsx';
 import { resizeImage } from '~/utils/image-utils';
 import { IconHistory } from '@tabler/icons-react';
+import { uniqBy } from 'lodash-es';
 
+const key = 'img-uploads';
 export type SourceImageUploadProps = {
   value?: SourceImageProps | null;
   onChange?: (value?: SourceImageProps | null) => void;
@@ -86,6 +88,25 @@ export function SourceImageUpload({
 
   const _value = value instanceof Blob ? null : value;
 
+  function getHistory() {
+    const stored = localStorage.getItem(key);
+    return stored ? (JSON.parse(stored) as SourceImageProps[]) : [];
+  }
+
+  function addToHistory(value: SourceImageProps) {
+    const items = uniqBy([value, ...getHistory()], 'url').splice(0, 30);
+    localStorage.setItem(key, JSON.stringify(items));
+  }
+
+  function removeFromHistory(url: string) {
+    const items = getHistory().filter((x) => x.url !== url);
+    localStorage.setItem(key, JSON.stringify(items));
+  }
+
+  useEffect(() => {
+    if (_value) addToHistory(_value);
+  }, [_value]);
+
   return (
     <>
       <Input.Wrapper
@@ -119,6 +140,7 @@ export function SourceImageUpload({
                 alt="image to refine"
                 className="max-h-full shadow-sm shadow-black"
                 onLoad={() => setLoaded(true)}
+                onError={() => removeFromHistory(_value.url)}
               />
               {loaded && removable && (
                 <CloseButton
