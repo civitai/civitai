@@ -115,7 +115,6 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
 
   const users = await dbRead.newOrderPlayer.findMany({
     select: { userId: true, startAt: true },
-    where: { userId: 1290051 },
   });
 
   if (!users.length) {
