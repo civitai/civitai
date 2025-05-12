@@ -837,14 +837,21 @@ export async function getImagesQueue({
   const ratedImages = await getRatedImages({ userId: playerId, startAt: player.startAt });
 
   for (const pool of rankPools) {
-    // We multiply by 10 to ensure we get enough images in case some are already rated.
-    const images = (await pool.getAll({ limit: imageCount * 10 })).map(Number);
-    if (images.length === 0) continue;
+    let offset = 0;
 
-    // Allow mods to see all images regardless of rating.
-    // imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
-    if (!isModerator) imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
-    else imageIds.push(...images);
+    while (imageIds.length < imageCount) {
+      // Fetch images with offset to ensure we get enough images in case some are already rated.
+      const images = (await pool.getAll({ limit: imageCount * 10, offset })).map(Number);
+      if (images.length === 0) break;
+
+      // Allow mods to see all images regardless of rating.
+      if (!isModerator) imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
+      else imageIds.push(...images);
+
+      if (imageIds.length >= imageCount) break;
+
+      offset += imageCount * 10; // Increment offset for the next batch
+    }
 
     if (imageIds.length >= imageCount) break;
   }
