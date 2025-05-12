@@ -31,22 +31,22 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     return fetchedCount;
   }
 
-  async function getAll(opts?: { limit?: number }) {
-    const { limit = 100 } = opts ?? {};
+  async function getAll(opts?: { limit?: number; offset?: number }) {
+    const { limit = 100, offset = 0 } = opts ?? {};
     // Returns all ids in the range of min and max
     // If ordered, returns the ids by the score in descending order.
     if (ordered) {
       const data = await sysRedis.zRangeWithScores(key, Infinity, -Infinity, {
         BY: 'SCORE',
         REV: true,
-        LIMIT: { offset: 0, count: limit },
+        LIMIT: { offset, count: limit },
       });
 
       return data.map((x) => x.value);
     }
 
     const data = await sysRedis.hGetAll(key);
-    return Object.values(data).slice(0, limit);
+    return Object.values(data).slice(offset, offset + limit);
   }
 
   async function getCount(id: number | string) {

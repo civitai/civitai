@@ -107,7 +107,6 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   if (!clickhouse) return;
   log('DailyReset:: Running daily reset');
 
-  // startDate is 6 days ago
   const endDate = new Date();
   // Apr. 10, 2025 as Start Date
   const startDate = dayjs('2025-04-10').startOf('day').toDate();
@@ -115,8 +114,8 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   log(`DailyReset:: Getting judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
   const users = await dbRead.newOrderPlayer.findMany({
-    where: { rankType: { not: NewOrderRankType.Acolyte } },
     select: { userId: true, startAt: true },
+    where: { userId: 1290051 },
   });
 
   if (!users.length) {
@@ -149,12 +148,11 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       ) as failedJudgments,
       SUM(
         -- Make it so we ignore elements before a reset.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt), 1, 0)
+        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" NOT IN ('${NewOrderImageRatingStatus.AcolyteCorrect}', '${NewOrderImageRatingStatus.AcolyteFailed}'), 1, 0)
       ) as totalJudgments
     FROM knights_new_order_image_rating knoir
     JOIN u ON knoir."userId" = CAST(u.userId as Int32)
     WHERE knoir."createdAt" BETWEEN ${startDate} AND ${endDate}
-      AND knoir."status" NOT IN ('${NewOrderImageRatingStatus.AcolyteCorrect}', '${NewOrderImageRatingStatus.AcolyteFailed}')
     GROUP BY knoir."userId"
   `;
 
@@ -162,6 +160,16 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     log('DailyReset:: No judgments found');
     return;
   }
+
+  // Clean up counters
+  const userIds = userData.map((j) => j.userId);
+  await Promise.all([
+    ...userIds.map((id) => correctJudgmentsCounter.reset({ id })),
+    ...userIds.map((id) => allJudgmentsCounter.reset({ id })),
+    ...userIds.map((id) => fervorCounter.reset({ id })),
+    ...userIds.map((id) => expCounter.reset({ id })),
+  ]);
+  log('DailyReset:: Cleared counters');
 
   const batches = chunk(userData, 500);
   let loopCount = 1;
@@ -191,20 +199,23 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       WHERE "NewOrderPlayer"."userId" = affected."userId"
     `;
 
+    // Update counters
+    await Promise.all(
+      batchWithFervor.map((j) => {
+        const { userId, exp, correctJudgments, totalJudgments, fervor } = j;
+        return Promise.all([
+          expCounter.increment({ id: userId, value: exp }),
+          correctJudgmentsCounter.increment({ id: userId, value: correctJudgments }),
+          allJudgmentsCounter.increment({ id: userId, value: totalJudgments }),
+          fervorCounter.increment({ id: userId, value: fervor }),
+        ]);
+      })
+    );
+
     log(`DailyReset:: Processing judgments :: ${loopCount} of ${batches.length} :: done`);
     loopCount++;
   }
   log('DailyReset:: Processing judgments :: done');
-
-  // Clean up counters
-  const userIds = userData.map((j) => j.userId);
-  await Promise.all([
-    ...userIds.map((id) => correctJudgmentsCounter.reset({ id })),
-    ...userIds.map((id) => allJudgmentsCounter.reset({ id })),
-    ...userIds.map((id) => fervorCounter.reset({ id })),
-    ...userIds.map((id) => expCounter.reset({ id })),
-  ]);
-  log('DailyReset:: Cleared counters');
 });
 
 const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', async () => {
