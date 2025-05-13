@@ -5,7 +5,7 @@ import {
   Stack,
   Text,
   Title,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import {
@@ -42,7 +42,7 @@ ChartJS.register(
 
 export const EarlyAccessRewards = () => {
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { userPaymentConfiguration } = useUserPaymentConfiguration();
   const { data: modelVersions = [], isLoading } =
     trpc.modelVersion.earlyAccessModelVersionsOnTimeframe.useQuery(

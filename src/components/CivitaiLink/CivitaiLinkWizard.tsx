@@ -83,12 +83,13 @@ const { openModal, Modal } = createContextModal({
       </Text>
     );
 
+    // TODO: Mantine7 Confirm this looks ok without the breakpoint.
     return (
-      <Stepper active={active} onStepClick={setActive} breakpoint="sm" allowNextStepsSelect={false}>
+      <Stepper active={active} onStepClick={setActive} allowNextStepsSelect={false}>
         <Stepper.Step label="About Civitai Link" description="Learn what it does">
           <Stack mt="sm">
             <Stack gap={4}>
-              <Title order={3} sx={{ lineHeight: 1.1 }}>
+              <Title order={3} style={{ lineHeight: 1.1 }}>
                 About Civitai Link
               </Title>
               <Text>{`Civitai Link allows you to interact with your Stable Diffusion instance in realtime wherever it is from any device.`}</Text>
@@ -123,7 +124,7 @@ const { openModal, Modal } = createContextModal({
                     content: <>Download resources from {vaultLink}</>,
                     icon: <IconCircleCheck size={18} />,
                     iconColor: 'green',
-                  }
+                  },
                 ]}
               />
               <Divider
@@ -188,7 +189,7 @@ const { openModal, Modal } = createContextModal({
         <Stepper.Step label="Install Link App" description="Install the Link application">
           <Stack mt="sm">
             <Stack gap={4}>
-              <Title order={3} mb={0} sx={{ lineHeight: 1 }}>
+              <Title order={3} mb={0} style={{ lineHeight: 1 }}>
                 Download the Link desktop application
               </Title>
               <Text mb="md" color="dimmed">
@@ -212,7 +213,7 @@ const { openModal, Modal } = createContextModal({
         <Stepper.Step label="Connect Link App" description="Link your account">
           <Stack mt="sm">
             <Stack gap={4}>
-              <Title order={3} mb={0} sx={{ lineHeight: 1 }}>
+              <Title order={3} mb={0} style={{ lineHeight: 1 }}>
                 Link your account
               </Title>
               <Text mb="md" color="dimmed">

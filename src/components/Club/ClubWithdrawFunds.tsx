@@ -57,13 +57,9 @@ export const ClubWithdrawFunds = ({ clubId }: { clubId: number }) => {
                   rightSectionWidth="10%"
                   min={1}
                   max={balance}
-                  icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                  parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-                  formatter={(value) =>
-                    value && !Number.isNaN(parseFloat(value))
-                      ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                      : ''
-                  }
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  allowNegative={false}
+                  allowDecimal={false}
                   hideControls
                 />
 

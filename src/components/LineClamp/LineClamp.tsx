@@ -1,7 +1,11 @@
 import { Text, TextProps } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 
-export function LineClamp({ children, lineClamp = 3, ...props }: TextProps) {
+export function LineClamp({
+  children,
+  lineClamp = 3,
+  ...props
+}: TextProps & { children: React.ReactNode; lineClamp?: number }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [clamped, setClamped] = useState(false);
   const [showMore, setShowMore] = useState(false);

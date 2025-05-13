@@ -17,7 +17,7 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
@@ -852,7 +852,7 @@ function ResourceSelectCard({
 
   const image = data.images[0];
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const versions = data.versions;
   const [selectedIndex, setSelectedIndex] = useState<number>(0);

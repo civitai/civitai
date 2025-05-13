@@ -5,7 +5,6 @@ import {
   Button,
   Center,
   createPolymorphicComponent,
-  createStyles,
   Divider,
   Group,
   Image,
@@ -18,6 +17,7 @@ import {
   Textarea,
   Title,
   Tooltip,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
@@ -60,6 +60,8 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import classes from './ExistingChat.module.css';
+import clsx from 'clsx';
 
 type TypingStatus = {
   [key: string]: boolean;
@@ -67,63 +69,14 @@ type TypingStatus = {
 
 const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
 
-const useStyles = createStyles((theme) => ({
-  chatMessage: {
-    borderRadius: theme.spacing.xs,
-    padding: `${theme.spacing.xs / 2}px ${theme.spacing.xs}px`,
-    width: 'max-content',
-    maxWidth: '70%',
-    whiteSpace: 'pre-line',
-  },
-  replyMessage: {
-    textOverflow: 'ellipsis',
-    overflow: 'hidden',
-    overflowWrap: 'normal',
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[5],
-    fontSize: theme.spacing.sm,
-  },
-  myDetails: {
-    flexDirection: 'row-reverse',
-  },
-  myMessage: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.blue[8] : theme.colors.blue[4],
-  },
-  otherMessage: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
-  },
-  highlightRow: {
-    '&:hover': {
-      '> button': {
-        display: 'initial',
-      },
-    },
-  },
-  chatInput: {
-    borderRadius: 0,
-    borderLeft: 0,
-    borderTop: 0,
-    borderBottom: 0,
-  },
-  isTypingBox: {
-    position: 'sticky',
-    bottom: 0,
-    // backdropFilter: 'blur(16px)',
-    display: 'inline-flex',
-    // backgroundColor:
-    //   theme.colorScheme === 'dark'
-    //     ? theme.fn.rgba(theme.colors.green[7], 0.1)
-    //     : theme.fn.rgba(theme.colors.green[2], 0.1),
-  },
-}));
-
 export function ExistingChat() {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
   const { worker } = useSignalContext();
   const { state, setState } = useChatContext();
   const queryUtils = trpc.useUtils();
   const isMobile = useContainerSmallerThan(700);
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const lastReadRef = useRef<HTMLDivElement>(null);
   const [typingStatus, setTypingStatus] = useState<TypingStatus>({});
@@ -457,7 +410,7 @@ export function ExistingChat() {
                 <Loader />
               </Center>
             ) : allChats.length > 0 ? (
-              <Stack sx={{ overflowWrap: 'break-word' }} gap={12}>
+              <Stack style={{ overflowWrap: 'break-word' }} gap={12}>
                 {hasNextPage && (
                   <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
                     <Center p="xl" sx={{ height: 36 }} mt="md">
@@ -514,7 +467,7 @@ export function ExistingChat() {
                 </Text>
                 {myMember.status === ChatMemberStatus.Left && (
                   <Button
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    variant={colorScheme === 'dark' ? 'filled' : 'light'}
                     size="compact-md"
                     disabled={isJoining}
                     onClick={handleJoinChat}
@@ -584,7 +537,6 @@ function ChatInputBox({
   setTypingText: React.Dispatch<React.SetStateAction<string | null>>;
 }) {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
   const { state } = useChatContext();
   const queryUtils = trpc.useUtils();
 
@@ -727,7 +679,7 @@ function ChatInputBox({
   return (
     <Group gap={0}>
       <Textarea
-        sx={{ flexGrow: 1 }}
+        style={{ flexGrow: 1 }}
         disabled={isMuted}
         placeholder={isMuted ? 'Your account has been restricted' : 'Send message'}
         autosize
@@ -777,8 +729,6 @@ const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
 };
 
 const EmbedMessage = ({ content }: { content: string }) => {
-  const { classes, cx } = useStyles();
-
   let contentObj: {
     title: string | null;
     description: string | null;
@@ -799,11 +749,11 @@ const EmbedMessage = ({ content }: { content: string }) => {
 
   return (
     <Group
-      sx={{
+      style={{
         alignSelf: 'center',
         border: '1px solid gray',
       }}
-      className={cx(classes.chatMessage)}
+      className={clsx(classes.chatMessage)}
       wrap="nowrap"
     >
       {(!!title || !!description) && (
@@ -833,7 +783,6 @@ function DisplayMessages({
   setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
 }) {
   const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
   const { state } = useChatContext();
 
   const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
@@ -891,7 +840,7 @@ function DisplayMessages({
               //   ...Text (below)
               // </Group>
               <Text
-                className={cx(classes.chatMessage)}
+                className={clsx(classes.chatMessage)}
                 size="xs"
                 py={0}
                 sx={{
@@ -906,7 +855,7 @@ function DisplayMessages({
             ) : (
               <>
                 {shouldShowInfo && (
-                  <Group className={cx({ [classes.myDetails]: isMe })}>
+                  <Group className={clsx({ [classes.myDetails]: isMe })}>
                     {!!cachedUser ? (
                       <UserAvatar user={cachedUser} withUsername />
                     ) : (
@@ -920,7 +869,7 @@ function DisplayMessages({
                   <Group
                     gap={6}
                     justify="flex-end"
-                    sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
+                    style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
                   >
                     <IconArrowBack size={14} />
                     {!!tReplyData?.data?.user && (
@@ -930,7 +879,7 @@ function DisplayMessages({
                         </Box>
                       </Tooltip>
                     )}
-                    <Text className={cx([classes.chatMessage, classes.replyMessage])}>
+                    <Text className={clsx([classes.chatMessage, classes.replyMessage])}>
                       {!tReplyData || tReplyData.isError ? (
                         <em>Could not load message.</em>
                       ) : tReplyData.isLoading ? (
@@ -944,7 +893,7 @@ function DisplayMessages({
                 <Group
                   justify="flex-end"
                   className={classes.highlightRow}
-                  sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
+                  style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
                 >
                   <Menu withArrow position={isMe ? 'left-start' : 'right-start'}>
                     <Menu.Target>
@@ -968,13 +917,13 @@ function DisplayMessages({
                         : undefined
                     }
                     disabled={shouldShowInfo}
-                    sx={{ opacity: 0.85 }}
+                    style={{ opacity: 0.85 }}
                     openDelay={350}
                     position={isMe ? 'top-end' : 'top-start'}
                     withArrow
                   >
                     <div
-                      className={cx(classes.chatMessage, {
+                      className={clsx(classes.chatMessage, {
                         [classes.otherMessage]: !isMe,
                         [classes.myMessage]: isMe,
                       })}

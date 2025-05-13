@@ -3,13 +3,14 @@ import {
   Box,
   Button,
   Center,
-   Group,
+  Group,
   List,
   Overlay,
   Stack,
   Text,
   Title,
   useMantineTheme,
+  rgba,
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
 import { IconLock } from '@tabler/icons-react';
@@ -109,8 +110,8 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
             <Stack gap="xs">
               <Box sx={{ position: 'relative' }}>
                 {!currentUser ? (
-                  <Overlay color={theme.fn.rgba(theme.colors.gray[9], 0.6)} opacity={1} zIndex={5}>
-                    <Stack align="center" justify="center" gap={2} sx={{ height: '100%' }}>
+                  <Overlay color={rgba(theme.colors.gray[9], 0.6)} opacity={1} zIndex={5}>
+                    <Stack align="center" justify="center" gap={2} style={{ height: '100%' }}>
                       <Text size="xs" color={theme.colors.gray[4]}>
                         You must be logged in to add a comment
                       </Text>
@@ -168,7 +169,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
           </Center>
         </Alert>
       )}
-      <List listStyleType="none" gap="lg" styles={{ itemWrapper: { width: '100%' } }}>
+      <List listStyleType="none" spacing="lg" styles={{ itemWrapper: { width: '100%' } }}>
         {comments.map((comment) => {
           const isHighlighted = highlights?.includes(comment.id);
 

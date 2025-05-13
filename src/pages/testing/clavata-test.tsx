@@ -10,7 +10,7 @@ import {
   Paper,
   Group,
   Badge,
-  useMantineColorScheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
@@ -22,7 +22,7 @@ import { ImageTag } from '~/server/integrations/clavata';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
   const [policyId, setPolicyId] = useState<string | undefined>(undefined);
   const [tags, setTags] = useState<ImageTag[]>([]);

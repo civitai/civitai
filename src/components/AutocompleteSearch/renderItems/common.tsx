@@ -4,7 +4,7 @@ import {
   ComboboxItem,
   Center,
   useMantineTheme,
-  useMantineColorScheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconBadge, IconBadgeProps } from '~/components/IconBadge/IconBadge';
 
@@ -21,7 +21,7 @@ export const ViewMoreItem = forwardRef<HTMLDivElement, ComboboxItem>(({ value, .
 ViewMoreItem.displayName = 'SearchItem';
 
 export function ActionIconBadge(props: Omit<IconBadgeProps, 'color'>) {
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   return <IconBadge color={colorScheme === 'dark' ? 'dark' : 'gray'} size="xs" {...props} />;
 }

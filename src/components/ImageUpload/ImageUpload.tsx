@@ -25,7 +25,7 @@ import {
   Paper,
   Stack,
   Text,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { Dropzone, FileWithPath } from '@mantine/dropzone';
@@ -81,7 +81,7 @@ export function ImageUpload({
 }: Props) {
   const isClient = useIsClient();
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();

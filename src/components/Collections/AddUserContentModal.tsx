@@ -11,6 +11,8 @@ import {
   Select,
   Stack,
   Text,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
@@ -51,6 +53,8 @@ export function AddUserContentModal({ collectionId }: Props) {
   const deselectAll = useStore((state) => state.deselectAll);
   const [error, setError] = useState('');
   const [tagId, setTagId] = useState<number | null>(null);
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const { files, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
 
@@ -160,7 +164,7 @@ export function AddUserContentModal({ collectionId }: Props) {
 
         <Divider label="or select from your library" labelPosition="center" />
         <ScrollAreaProvider>
-          <ScrollArea.Autosize maxHeight="500px">
+          <ScrollArea.Autosize mah="500px">
             <MasonryProvider
               columnWidth={constants.cardSizes.image}
               maxColumnCount={4}
@@ -208,11 +212,11 @@ export function AddUserContentModal({ collectionId }: Props) {
           mx="-lg"
           px="lg"
           pt="lg"
-          sx={(theme) => ({
+          style={{
             borderTop: `1px solid ${
-              theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+              colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
             }`,
-          })}
+          }}
         >
           <Button variant="default" onClick={handleClose}>
             Cancel
@@ -269,7 +273,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
         <Checkbox
           size="lg"
           checked={selected}
-          sx={{ position: 'absolute', top: 5, right: 5 }}
+          style={{ position: 'absolute', top: 5, right: 5 }}
           readOnly
         />
         {image.hasMeta && (

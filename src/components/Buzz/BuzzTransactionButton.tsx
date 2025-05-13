@@ -5,7 +5,7 @@ import {
   MantineSize,
   Text,
   Tooltip,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
@@ -50,7 +50,7 @@ export function BuzzTransactionButton({
 }: Props) {
   const features = useFeatureFlags();
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const {
     conditionalPerformTransaction,
     hasRequiredAmount,

@@ -10,7 +10,7 @@ import {
   CardProps,
   Image,
   useMantineTheme,
-  useMantineColorScheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 
@@ -157,7 +157,7 @@ export const CreatorCardV2 = ({
   ...cardProps
 }: CreatorCardPropsV2) => {
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { data } = trpc.user.getCreator.useQuery(
     { id: user.id },
     { enabled: user.id !== constants.system.user.id }

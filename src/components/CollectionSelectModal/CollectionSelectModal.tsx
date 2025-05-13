@@ -25,8 +25,8 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-import classes from '~/components/Search/SearchLayout.module.scss';
- import { env } from '~/env/client';
+// import classes from '~/components/Search/SearchLayout.module.scss';
+import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ImageCover, ImageSrcCover } from '~/components/Cards/CollectionCard';
@@ -79,7 +79,7 @@ export default function ModelShowcaseCollectionModal({
                 <Text>Select Model Showcase Collection</Text>
                 <CloseButton onClick={handleClose} />
               </div>
-              <CustomSearchBox isMobile={isMobile} autoFocus />
+              <CustomSearchBox isMobile={!!isMobile} autoFocus />
             </div>
             <ResourceHitList />
           </InstantSearch>
@@ -138,10 +138,10 @@ function ResourceHitList() {
         <Center>
           <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && <HiddenNotice hiddenCount={hiddenCount} />}
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <ThemeIcon size={128} radius={100} style={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
             </ThemeIcon>
-            <Title order={1} inline>
+            <Title order={1} className="inline-block">
               No collections found
             </Title>
             <Text align="center">

@@ -1,0 +1,39 @@
+.container {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.sidebar {
+  display: block;
+  overflow: visible;
+  transition: margin-left 500ms;
+
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    display: none;
+  }
+}
+
+.sidebarToggle {
+  position: absolute;
+  top: 0;
+  right: -32px;
+}
+
+.content {
+  flex: 1;
+}
+
+.drawerButton {
+  display: none;
+
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    display: block;
+  }
+}
+
+.drawerHeader {
+  padding: var(--mantine-spacing-xs);
+  margin-bottom: 0;
+  box-shadow: var(--mantine-shadow-sm);
+}

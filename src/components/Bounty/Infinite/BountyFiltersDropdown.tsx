@@ -10,7 +10,7 @@ import {
   Drawer,
   ButtonProps,
   useMantineTheme,
-  useMantineColorScheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import { BountyType, MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -38,7 +38,7 @@ const checkSupportsBaseModel = (types: BountyType[]) => {
 };
 
 export function BountyFiltersDropdown({ ...buttonProps }: Props) {
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);

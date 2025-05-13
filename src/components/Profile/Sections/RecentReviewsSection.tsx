@@ -7,7 +7,7 @@ import {
   Text,
   ThemeIcon,
   createStyles,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconCategory, IconPhoto, IconStar } from '@tabler/icons-react';
@@ -33,7 +33,7 @@ import sectionClasses from './RecentReviewsSection.module.scss';
 export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
   const [ref, inView] = useInViewDynamic({ id: 'profile-reviews-section' });
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const { resourceReviews, isLoading } = useQueryResourceReview(
     {

@@ -3,7 +3,6 @@ import {
   ActionIconProps,
   Box,
   Center,
-  createStyles,
   Divider,
   Group,
   Menu,
@@ -49,29 +48,8 @@ import { useIsMobile } from '../../../hooks/useIsMobile';
 import { triggerRoutedDialog } from '../../Dialog/RoutedDialogProvider';
 import { ContentClamp } from '../../ContentClamp/ContentClamp';
 import { Reactions } from '../../Reaction/Reactions';
-
-export const useClubFeedStyles = createStyles((theme) => ({
-  feedContainer: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.md,
-  },
-  clubPost: {
-    maxWidth: 700,
-    width: '100%',
-  },
-  feedContainerWithCover: {
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-    padding: 0,
-  },
-  title: {
-    overflowWrap: 'break-word',
-    [theme.fn.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-}));
+import classes from './ClubFeed.module.scss';
+import clsx from 'clsx';
 
 export function ClubPostContextMenu({
   clubPost,
@@ -170,7 +148,7 @@ export function ClubPostContextMenu({
           radius="xl"
           variant="filled"
           {...buttonProps}
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
           }}
@@ -184,7 +162,6 @@ export function ClubPostContextMenu({
 }
 
 export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] }) => {
-  const { classes, cx } = useClubFeedStyles();
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView();
   const { metrics, reactions } = clubPost;
@@ -215,7 +192,7 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
 
   return (
     <Paper
-      className={cx(classes.feedContainer, classes.clubPost, {
+      className={clsx(classes.feedContainer, classes.clubPost, {
         [classes.feedContainerWithCover]: !!clubPost.coverImage,
       })}
     >

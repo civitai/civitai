@@ -99,7 +99,7 @@ export const ClubRequirementNotice = ({
               of a creator&rsquo;s club. If you&rsquo;d like to access this{' '}
               {getDisplayName(entityType)} you can sign up for one of the following clubs:
             </Text>
-            <List size="xs" gap={8}>
+            <List size="xs" spacing={8}>
               {clubs.map((club) => {
                 const requirement = clubRequirement.clubs.find((c) => c.clubId === club.id);
 
@@ -116,18 +116,19 @@ export const ClubRequirementNotice = ({
                     <Stack gap={0}>
                       <LoginPopover>
                         <Anchor
-                          onClick={(e) => {
-                            // dialogStore.trigger({
-                            //   component: ManageClubMembershipModal,
-                            //   props: {
-                            //     clubId: club.id,
-                            //     clubTierIds:
-                            //       requiredTiers.length > 0
-                            //         ? requiredTiers.map((t) => t.id)
-                            //         : undefined,
-                            //   },
-                            // });
-                          }}
+                          // onClick={
+                          //   (e) => {
+                          //   // dialogStore.trigger({
+                          //   //   component: ManageClubMembershipModal,
+                          //   //   props: {
+                          //   //     clubId: club.id,
+                          //   //     clubTierIds:
+                          //   //       requiredTiers.length > 0
+                          //   //         ? requiredTiers.map((t) => t.id)
+                          //   //         : undefined,
+                          //   //   },
+                          //   // });
+                          // }}
                           span
                         >
                           {club.name} by {club.user.username}{' '}
@@ -255,16 +256,16 @@ export const ClubRequirementButton = ({
           return (
             <Menu.Item
               key={club.id}
-              onClick={(e) => {
-                // dialogStore.trigger({
-                //   component: ManageClubMembershipModal,
-                //   props: {
-                //     clubId: club.id,
-                //     clubTierIds:
-                //       requiredTiers.length > 0 ? requiredTiers.map((t) => t.id) : undefined,
-                //   },
-                // });
-              }}
+              // onClick={(e) => {
+              // dialogStore.trigger({
+              //   component: ManageClubMembershipModal,
+              //   props: {
+              //     clubId: club.id,
+              //     clubTierIds:
+              //       requiredTiers.length > 0 ? requiredTiers.map((t) => t.id) : undefined,
+              //   },
+              // });
+              // }}
             >
               <Stack gap={0}>
                 <Text>

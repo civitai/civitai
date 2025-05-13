@@ -233,6 +233,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
             <Stack mt="xl">
               <Divider
                 size="sm"
+                className="text-sm"
                 label={
                   <Group gap={4}>
                     <IconClock size={16} stroke={1.5} />
@@ -240,7 +241,6 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                   </Group>
                 }
                 labelPosition="center"
-                labelProps={{ size: 'sm' }}
               />
               <Center>
                 <Stack gap={0} align="center">

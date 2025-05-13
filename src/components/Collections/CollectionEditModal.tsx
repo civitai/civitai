@@ -248,7 +248,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       name="metadata.endsAt"
                       label="End Date"
                       placeholder="Select an end date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       clearable
                     />
                     <Text size="xs" color="dimmed">
@@ -260,14 +260,14 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       name="metadata.submissionStartDate"
                       label="Submission Start Date"
                       placeholder="Select an start date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       clearable
                     />
                     <InputDatePicker
                       name="metadata.submissionEndDate"
                       label="Submission End Date"
                       placeholder="Select an end date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       clearable
                     />
                     {metadata?.submissionEndDate && (
@@ -301,7 +301,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       label="When voting for this contest will start"
                       description="This will lock the ratings on these entries. Use with care. Leaving this blank makes it so that they're always reactable."
                       placeholder="Select a voting period start date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       clearable
                     />
                     <InputTags
@@ -360,7 +360,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       label="Sets a start date for Reactions on the entries"
                       description="This will lock the reactions on these entries. Use with care, ideally only when the contest rely on reactions from users. Leaving this blank makes it so that they're always reactable."
                       placeholder="Select a voting period start date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       clearable
                     />
                     <InputBrowsingLevels

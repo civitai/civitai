@@ -21,7 +21,7 @@ import {
   Loader,
   Stack,
   Text,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconGripVertical, IconInfoCircle, IconPlus, IconTrash } from '@tabler/icons-react';
@@ -45,7 +45,7 @@ export default Modal;
 type Props = { onClose: VoidFunction };
 function ManageHomeBlocks({ onClose }: Props) {
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { data: homeBlocks = [], isLoading: isLoadingOwnedHomeBlocks } =
     trpc.homeBlock.getHomeBlocks.useQuery({
       withCoreData: true,

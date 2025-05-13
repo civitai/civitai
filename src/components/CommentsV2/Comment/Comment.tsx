@@ -252,7 +252,7 @@ export function CommentContent({
                 <LineClamp lineClamp={3}>
                   <RenderHtml
                     html={comment.content}
-                    sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                    className="text-sm"
                     allowCustomStyles={false}
                   />
                 </LineClamp>

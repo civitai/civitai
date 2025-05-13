@@ -18,7 +18,7 @@ export function CollectionCategorySelect({ collectionId, value, onChange, ...sel
     <Select
       value={innerValue}
       onChange={handleChange}
-      nothingFound={isLoading ? 'Loading...' : 'No categories found'}
+      nothingFoundMessage={isLoading ? 'Loading...' : 'No categories found'}
       label="Collection Categories"
       placeholder="All"
       data={

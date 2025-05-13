@@ -6,7 +6,7 @@ import {
   Indicator,
   Popover,
   Stack,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -21,7 +21,7 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
   const theme = useMantineTheme();
   const mobile = useIsMobile();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const [opened, setOpened] = useState(false);
 

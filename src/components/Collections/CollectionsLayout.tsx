@@ -3,7 +3,6 @@ import {
   Card,
   Center,
   Container,
-  createStyles,
   Drawer,
   Group,
   Loader,
@@ -29,51 +28,9 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
+import classes from './CollectionsLayout.module.scss';
 
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
-
-const useStyle = createStyles((theme) => ({
-  container: {
-    display: 'flex',
-    flexWrap: 'nowrap',
-    alignItems: 'flex-start',
-  },
-  sidebar: {
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-    transition: 'margin-left 500ms',
-    overflow: 'visible',
-  },
-  sidebarToggle: {
-    position: 'absolute',
-    top: 0,
-    right: -32,
-  },
-  content: {
-    flex: 1,
-  },
-}));
-
-const useStyleDrawer = createStyles((theme) => ({
-  sidebar: {
-    display: 'block',
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-  drawerButton: {
-    display: 'none',
-    [containerQuery.smallerThan('sm')]: {
-      display: 'block',
-    },
-  },
-  drawerHeader: {
-    padding: theme.spacing.xs,
-    marginBottom: 0,
-    boxShadow: theme.shadows.sm,
-  },
-}));
 
 type SortOrder = 'asc' | 'desc';
 
@@ -85,7 +42,6 @@ const MyCollectionsDrawer = ({
   setSortOrder: React.Dispatch<React.SetStateAction<SortOrder>>;
 }) => {
   const [drawerOpen, { close, toggle }] = useDisclosure();
-  const { classes } = useStyleDrawer();
 
   return (
     <>
@@ -137,7 +93,7 @@ const MyCollectionsDrawer = ({
                 </Tooltip>
               </Group>
               <Divider />
-              <ScrollArea.Autosize maxHeight="calc(100vh - 93px)" px="sm">
+              <ScrollArea.Autosize mah="calc(100vh - 93px)" px="sm">
                 {Collections}
               </ScrollArea.Autosize>
             </Stack>
@@ -151,7 +107,6 @@ const MyCollectionsDrawer = ({
 const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
-  const { classes } = useStyle();
   const [showSidebar, setShowSidebar] = useState(true);
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
@@ -166,7 +121,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
           p="xs"
           style={{ marginLeft: showSidebar ? 0 : -250 - 16 }}
         >
-          <Tooltip label="Toggle Sidebar" justify="flex-end" openDelay={500}>
+          <Tooltip label="Toggle Sidebar" position="right" openDelay={500}>
             <ActionIcon
               onClick={() => setShowSidebar((val) => !val)}
               className={classes.sidebarToggle}
@@ -223,7 +178,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                     </Center>
                   )}
                   <Card.Section ml={0}>
-                    <ScrollArea.Autosize maxHeight="calc(80vh - var(--header-height,0))">
+                    <ScrollArea.Autosize mah="calc(80vh - var(--header-height,0))">
                       {Collections}
                     </ScrollArea.Autosize>
                   </Card.Section>

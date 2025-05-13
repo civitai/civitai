@@ -1,4 +1,4 @@
-import { useMantineTheme, getPrimaryShade, useMantineColorScheme } from '@mantine/core';
+import { useMantineTheme, getPrimaryShade, useComputedColorScheme } from '@mantine/core';
 import {
   type Icon,
   type IconProps,
@@ -62,7 +62,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const {
     groupedCollections: {

@@ -44,30 +44,27 @@ export function ClubAdminUpdateForm({ clubAdmin, onSuccess, onCancel }: Props) {
     <Form form={form} onSubmit={handleSubmit}>
       <Stack gap={32}>
         <Grid gutter="xl">
-          <Grid.Col xs={12}>
+          <Grid.Col span={12}>
             <Stack gap={32}>
               <Stack gap="xl">
-                <InputCheckboxGroup
-                  name="permissions"
-                  orientation="vertical"
-                  label="Permissions"
-                  gap={8}
-                >
-                  {Object.keys(ClubAdminPermission).map((permission) => {
-                    return (
-                      <Checkbox
-                        key={permission}
-                        value={permission.toString()}
-                        label={
-                          <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
-                            <Text lineClamp={1} inherit>
-                              {getDisplayName(permission)}
-                            </Text>
-                          </Group>
-                        }
-                      />
-                    );
-                  })}
+                <InputCheckboxGroup name="permissions" label="Permissions">
+                  <Stack gap={8}>
+                    {Object.keys(ClubAdminPermission).map((permission) => {
+                      return (
+                        <Checkbox
+                          key={permission}
+                          value={permission.toString()}
+                          label={
+                            <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
+                              <Text lineClamp={1} inherit>
+                                {getDisplayName(permission)}
+                              </Text>
+                            </Group>
+                          }
+                        />
+                      );
+                    })}
+                  </Stack>
                 </InputCheckboxGroup>
               </Stack>
             </Stack>
@@ -77,7 +74,7 @@ export function ClubAdminUpdateForm({ clubAdmin, onSuccess, onCancel }: Props) {
           {onCancel && (
             <Button
               loading={updating}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onCancel?.();

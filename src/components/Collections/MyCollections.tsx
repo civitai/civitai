@@ -3,7 +3,6 @@ import {
   ScrollArea,
   Stack,
   TextInput,
-  createStyles,
   Skeleton,
   Text,
   ThemeIcon,
@@ -24,7 +23,6 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const { classes } = useStyles();
   const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery(
     { permission: CollectionContributorPermission.VIEW },
     { enabled: !!currentUser }
@@ -60,7 +58,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
   const FilterBox = (
     <TextInput
       variant="unstyled"
-      icon={<IconSearch size={20} />}
+      leftSection={<IconSearch size={20} />}
       onChange={(e) => setQuery(e.target.value)}
       value={query}
       placeholder="Filter"
@@ -72,7 +70,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
       {ownedFilteredCollections.map((c) => (
         <NavLink
           key={c.id}
-          className={classes.navItem}
+          radius="sm"
           onClick={() => selectCollection(c.id)}
           active={router.query?.collectionId === c.id.toString()}
           label={<Text>{c.name}</Text>}
@@ -82,7 +80,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
       {contributingFilteredCollections.map((c) => (
         <NavLink
           key={c.id}
-          className={classes.navItem}
+          radius="sm"
           onClick={() => selectCollection(c.id)}
           active={router.query?.collectionId === c.id.toString()}
           label={<Text>{c.name}</Text>}
@@ -131,10 +129,3 @@ type MyCollectionsProps = {
   pathnameOverride?: string;
   sortOrder?: SortOrder; // <-- ADDED THIS
 };
-
-const useStyles = createStyles((theme) => ({
-  navItem: {
-    borderRadius: theme.radius.sm,
-  },
-  header: {},
-}));

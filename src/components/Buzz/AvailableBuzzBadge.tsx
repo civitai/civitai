@@ -1,8 +1,8 @@
-import { Badge, Text, Group, useMantineColorScheme, useMantineTheme, rgba } from '@mantine/core';
+import { Badge, Text, Group, useComputedColorScheme, useMantineTheme, rgba } from '@mantine/core';
 import { UserBuzz } from '~/components/User/UserBuzz';
 
 export const AvailableBuzzBadge = () => {
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const theme = useMantineTheme();
 
   return (

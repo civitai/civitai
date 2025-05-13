@@ -16,7 +16,7 @@ import {
   TextInput,
   Title,
   Tooltip,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
@@ -277,7 +277,7 @@ export const AuctionTopSection = ({
 export const AuctionInfo = () => {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { ref: placeBidRef, inView: placeBidInView } = useInView();
   const router = useRouter();
   const { selectedAuction, selectedModel, validAuction, setSelectedModel } = useAuctionContext();

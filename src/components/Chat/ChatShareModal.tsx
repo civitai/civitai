@@ -25,7 +25,6 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import React, { useEffect, useState } from 'react';
-import { chatListStyles } from '~/components/Chat/ChatList';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -33,6 +32,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from '~/components/Chat/ChatList.module.css';
+import clsx from 'clsx';
 
 const { openModal: openChatShareModal, Modal } = createContextModal<{ message: string }>({
   name: 'chatShareModal',
@@ -42,7 +43,6 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
     const currentUser = useCurrentUser();
     const { setState } = useChatContext();
     const queryUtils = trpc.useUtils();
-    const { classes, cx } = chatListStyles();
     const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
     const [searchInput, setSearchInput] = useState<string>('');
     const [selectedChat, setSelectedChat] = useState<number | undefined>(undefined);
@@ -136,7 +136,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
       <Stack gap={0} h="100%">
         <Box p="sm" pt={0}>
           <TextInput
-            icon={<IconSearch size={16} />}
+            leftSection={<IconSearch size={16} />}
             placeholder="Filter by user"
             value={searchInput}
             onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
@@ -177,7 +177,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                   <Group
                     key={d.id}
                     wrap="nowrap"
-                    className={cx(classes.selectChat, {
+                    className={clsx(classes.selectChat, {
                       [classes.selectedChat]: d.id === selectedChat,
                     })}
                     onClick={() => {
@@ -193,11 +193,11 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                         <UserAvatar user={otherMembers[0].user} />
                       )}
                     </Box>
-                    <Stack sx={{ overflow: 'hidden' }} gap={0}>
+                    <Stack style={{ overflow: 'hidden' }} gap={0}>
                       <Highlight
                         size="sm"
                         fw={500}
-                        sx={{
+                        style={{
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -223,12 +223,12 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                         </Text>
                       )}
                     </Stack>
-                    <Group sx={{ marginLeft: 'auto' }} wrap="nowrap" gap={6}>
+                    <Group style={{ marginLeft: 'auto' }} wrap="nowrap" gap={6}>
                       {isModSender && (
                         <Tooltip
                           withArrow={false}
                           label="Moderator chat"
-                          sx={{ border: '1px solid gray' }}
+                          style={{ border: '1px solid gray' }}
                         >
                           <Image src="/images/civ-c.png" alt="Moderator" width={16} height={16} />
                         </Tooltip>

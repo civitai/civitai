@@ -1,4 +1,14 @@
-import { ActionIcon, Avatar, Button, Grid, Group, Stack, Text, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Avatar,
+  Button,
+  Grid,
+  Group,
+  Stack,
+  Text,
+  Tooltip,
+  useMantineTheme,
+} from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import React from 'react';
 import { z } from 'zod';
@@ -32,6 +42,7 @@ export function ClubTierUpsertForm({
   onSuccess?: () => void;
   onCancel?: () => void;
 }) {
+  const theme = useMantineTheme();
   const form = useForm({
     schema: formSchema,
     defaultValues: {
@@ -63,7 +74,7 @@ export function ClubTierUpsertForm({
     <Form form={form} onSubmit={handleSubmit}>
       <Stack gap={32}>
         <Grid gutter="xl">
-          <Grid.Col xs={12}>
+          <Grid.Col span={12}>
             <Stack gap={32}>
               <Stack gap="xl">
                 <InputText name="name" label="Title" placeholder="e.g.: Gold Tier" withAsterisk />
@@ -73,7 +84,7 @@ export function ClubTierUpsertForm({
                   label="Monthly Buzz"
                   description="The amount of Buzz that will be charged to users every month. Updating this value will not affect existing members, and they will keep paying the same amount they were paying when they joined the tier."
                   variant="filled"
-                  icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                   withAsterisk
                 />
                 <InputRTE
@@ -114,12 +125,12 @@ export function ClubTierUpsertForm({
                           onClick={() =>
                             form.setValue('coverImage', clubTier?.coverImage?.id ? null : undefined)
                           }
-                          sx={(theme) => ({
+                          style={{
                             position: 'absolute',
-                            top: theme.spacing.xs * 0.4,
-                            right: theme.spacing.xs * 0.4,
+                            top: 'calc(--mantine-spacing-xs * 0.4)',
+                            right: 'calc(--mantine-spacing-xs * 0.4)',
                             zIndex: 1,
-                          })}
+                          }}
                         >
                           <IconTrash />
                         </ActionIcon>
@@ -187,7 +198,7 @@ export function ClubTierUpsertForm({
           {onCancel && (
             <Button
               loading={upsertingTier}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onCancel?.();

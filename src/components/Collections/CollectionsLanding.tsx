@@ -13,12 +13,14 @@ import {
   Overlay,
   useMantineTheme,
   ThemeIcon,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function CollectionsLanding() {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   return (
     <Box maw={1000} mx="auto">
@@ -27,19 +29,21 @@ export function CollectionsLanding() {
           <Overlay
             blur={3}
             zIndex={10}
-            color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+            color={colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
             opacity={0.8}
             m={-8}
             radius="md"
           />
           <Stack
-            sx={(theme) => ({
-              zIndex: 11,
+            styles={{
+              root: {
+                zIndex: 11,
+              },
               [containerQuery.largerThan('sm')]: {
                 transform: 'translateX(-50%)',
                 left: '50%',
               },
-            })}
+            }}
             pos="absolute"
             top={0}
             maw={400}

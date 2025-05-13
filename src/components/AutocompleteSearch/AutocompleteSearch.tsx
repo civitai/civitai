@@ -10,7 +10,7 @@ import {
   Select,
   Stack,
   Text,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
@@ -193,7 +193,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 ) {
   // const currentUser = useCurrentUser();
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const router = useRouter();
   const isMobile = useIsMobile();

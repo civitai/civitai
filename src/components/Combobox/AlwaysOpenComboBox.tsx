@@ -1,5 +1,5 @@
 import { Combobox, ComboboxInput, ComboboxOptions, ComboboxOption } from '@headlessui/react';
-import { Divider, Input, Loader, ScrollArea, Text, createStyles } from '@mantine/core';
+import { Divider, Input, Loader, ScrollArea, Text } from '@mantine/core';
 import React, { Key, useState } from 'react';
 import { ComboboxOption as ComboboxOptionProps } from '~/components/Combobox/combobox.types';
 
@@ -26,7 +26,6 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
   showSelected,
   loading,
 }: Props<T, TOption>) {
-  const { classes } = useStyles();
   const [search, setSearch] = useState('');
 
   const filtered = search.length
@@ -69,7 +68,10 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
           mah={maxScrollHeight}
           type="always"
           offsetScrollbars
-          classNames={classes}
+          styles={{
+            scrollbar: { '&[data-orientation="horizontal"]': { display: 'none' } },
+            viewport: { paddingBottom: 0 },
+          }}
         >
           {loading ? (
             <div className="flex justify-center p-3">
@@ -121,10 +123,3 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
     </div>
   );
 }
-
-const useStyles = createStyles(() => ({
-  viewport: { paddingBottom: 0 },
-  scrollbar: {
-    '&[data-orientation="horizontal"]': { display: 'none' },
-  },
-}));

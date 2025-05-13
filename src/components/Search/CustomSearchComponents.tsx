@@ -26,7 +26,7 @@ import {
   Select,
   Text,
   TextInput,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
@@ -288,7 +288,7 @@ export const CustomSearchBox = forwardRef<
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const inputRef = useRef<HTMLInputElement>(null);
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const blurInput = () => inputRef.current?.blur();
   const focusInput = () => inputRef.current?.focus();

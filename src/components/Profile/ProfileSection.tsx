@@ -5,7 +5,7 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  useMantineColorScheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import React from 'react';
@@ -54,7 +54,7 @@ export const ProfileSectionPreview = ({
   );
 };
 export const ProfileSection = ({ children, title, icon, action }: Props) => {
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   return (
     <Stack gap="md">
       <Group justify="space-between" align="center">

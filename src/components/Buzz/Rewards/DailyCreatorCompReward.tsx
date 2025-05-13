@@ -11,7 +11,7 @@ import {
   Text,
   Title,
   UnstyledButton,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
   rgba,
 } from '@mantine/core';
@@ -78,7 +78,7 @@ export function DailyCreatorCompReward() {
     { enabled: features.buzz }
   );
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
   const minSelectedDate = dayjs(selectedDate).startOf('month').toDate();
   const maxSelectedDate = dayjs(selectedDate).endOf('month').toDate();

@@ -22,6 +22,7 @@ import {
   List,
   Box,
   Badge,
+  defaultVariantColorsResolver,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification } from '@mantine/notifications';
@@ -336,10 +337,10 @@ function InstancesManager() {
 function BigIndicator() {
   const theme = useMantineTheme();
   const { status } = useCivitaiLink();
-  const swatch = theme.fn.variant({
+  const swatch = defaultVariantColorsResolver({
     variant: 'filled',
-    primaryFallback: false,
     color: civitaiLinkStatusColors[status],
+    theme,
   });
   return swatch.background ? <ColorSwatch color={swatch.background} size={20} /> : null;
 }
@@ -450,7 +451,7 @@ function LinkButton() {
   return (
     <Box sx={{ position: 'relative' }}>
       <ActionIcon>
-        <Indicator color={color} showZero={!!color} dot={!!color}>
+        <Indicator color={color}>
           <IconScreenShare />
         </Indicator>
       </ActionIcon>
@@ -458,9 +459,9 @@ function LinkButton() {
         <Progress
           value={activityProgress}
           striped
-          animate
+          animated
           size="sm"
-          sx={{ position: 'absolute', bottom: -3, width: '100%' }}
+          style={{ position: 'absolute', bottom: -3, width: '100%' }}
         />
       )}
     </Box>
@@ -531,15 +532,16 @@ function RequestProgress({
     <Stack gap={2} {...props}>
       {progress && (
         <Group gap={4}>
-          <Progress
-            sx={{ width: '100%', flex: 1 }}
-            size="xl"
-            value={progress}
-            label={`${Math.floor(progress)}%`}
-            color={progress < 100 ? 'blue' : 'green'}
-            striped
-            animate
-          />
+          <Progress.Root style={{ width: '100%', flex: 1 }} size="xl">
+            <Progress.Section
+              value={progress}
+              color={progress < 100 ? 'blue' : 'green'}
+              striped
+              animated
+            >
+              <Progress.Label>{`${Math.floor(progress)}%`}</Progress.Label>
+            </Progress.Section>
+          </Progress.Root>
           <ActionIcon onClick={onCancel}>
             <IconX />
           </ActionIcon>

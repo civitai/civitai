@@ -10,7 +10,7 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
@@ -202,7 +202,7 @@ export const BuzzPurchase = ({
   ...props
 }: Props) => {
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const canUpgradeMembership = useCanUpgrade();
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);

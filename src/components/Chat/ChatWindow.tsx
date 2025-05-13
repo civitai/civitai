@@ -1,4 +1,4 @@
-import { createStyles, Grid } from '@mantine/core';
+import { Grid, useComputedColorScheme } from '@mantine/core';
 import React from 'react';
 import { ChatList } from '~/components/Chat/ChatList';
 import { useChatContext } from '~/components/Chat/ChatProvider';
@@ -6,16 +6,6 @@ import { ExistingChat } from '~/components/Chat/ExistingChat';
 import { NewChat } from '~/components/Chat/NewChat';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-
-const useStyles = createStyles((theme) => ({
-  chatList: {
-    borderRight: theme.colorScheme === 'dark' ? '1px solid #373A40' : '1px solid #CED4DA',
-    height: '100%',
-    // [containerQuery.smallerThan('xs')]: {
-    //   height: '200px',
-    // },
-  },
-}));
 
 export function ChatWindow() {
   return (
@@ -27,7 +17,7 @@ export function ChatWindow() {
 
 function ChatWindowContent() {
   const { state } = useChatContext();
-  const { classes } = useStyles();
+  const colorScheme = useComputedColorScheme('dark');
 
   const isMobile = useContainerSmallerThan(700);
 
@@ -40,7 +30,17 @@ function ChatWindowContent() {
   return (
     <Grid h="100%" m={0}>
       {/* List and Search Panel */}
-      <Grid.Col span={12} xs={4} p={0} className={classes.chatList}>
+      <Grid.Col
+        span={{
+          base: 12,
+          xs: 4,
+        }}
+        p={0}
+        style={{
+          borderRight: colorScheme === 'dark' ? '1px solid #373A40' : '1px solid #CED4DA',
+          height: '100%',
+        }}
+      >
         <ChatList />
       </Grid.Col>
       {/* Chat Panel */}

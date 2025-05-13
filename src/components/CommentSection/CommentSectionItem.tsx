@@ -150,9 +150,9 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
 
   return (
     <Group align="flex-start" justify="space-between" wrap="nowrap">
-      <Group align="flex-start" sx={{ flex: '1 1 0' }} wrap="nowrap">
+      <Group align="flex-start" style={{ flex: '1 1 0' }} wrap="nowrap">
         <UserAvatar user={comment.user} size="md" linkToProfile />
-        <Stack gap="xs" sx={{ flex: '1 1 0' }}>
+        <Stack gap="xs" style={{ flex: '1 1 0' }}>
           <Stack gap={0}>
             <Group gap={8} align="center">
               {!comment.user.deletedAt ? (
@@ -174,11 +174,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               </Text>
             </Group>
             {!isEditing ? (
-              <RenderHtml
-                html={comment.content}
-                sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-                withMentions
-              />
+              <RenderHtml html={comment.content} className="text-sm" withMentions />
             ) : (
               <RichTextEditor
                 value={editComment.content}

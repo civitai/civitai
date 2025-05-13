@@ -1,4 +1,4 @@
-import { Badge, BadgeProps, Group, MantineNumberSize } from '@mantine/core';
+import { Badge, BadgeProps, Group, MantineSpacing } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Fragment } from 'react';
 import OneKeyMap from '@essentials/one-key-map';
@@ -67,7 +67,7 @@ type Props<T> = {
   items: T[];
   renderItem: (item: T, index: number) => React.ReactNode;
   limit?: number;
-  spacing?: MantineNumberSize;
+  spacing?: MantineSpacing;
   grouped?: boolean;
   badgeProps?: Omit<BadgeProps, 'children'>;
 };

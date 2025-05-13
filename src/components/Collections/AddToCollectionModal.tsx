@@ -4,6 +4,7 @@ import {
   Checkbox,
   Group,
   Loader,
+  Portal,
   ScrollArea,
   Select,
   Stack,
@@ -263,31 +264,34 @@ function CollectionListForm({
                             }
                           />
                           {selectedItem && availableTags?.length > 0 && (
-                            <Select
-                              withinPortal
-                              withAsterisk
-                              placeholder="Select a tag for your entry in the contest"
-                              size="xs"
-                              label="Tag your entry"
-                              value={selectedItem.tagId?.toString() ?? null}
-                              onChange={(value) => {
-                                setSelectedCollections((curr) =>
-                                  curr.map((c) => {
-                                    if (c.collectionId === collection.id) {
-                                      return { ...c, tagId: value ? parseInt(value, 10) : null };
-                                    }
-                                    return c;
-                                  })
-                                );
-                              }}
-                              clearable
-                              autoFocus
-                              data={availableTags.map((tag) => ({
-                                value: tag.id.toString(),
-                                label: tag.name,
-                              }))}
-                              zIndex={400}
-                            />
+                            <Portal>
+                              <Select
+                                withAsterisk
+                                placeholder="Select a tag for your entry in the contest"
+                                size="xs"
+                                label="Tag your entry"
+                                value={selectedItem.tagId?.toString() ?? null}
+                                onChange={(value) => {
+                                  setSelectedCollections((curr) =>
+                                    curr.map((c) => {
+                                      if (c.collectionId === collection.id) {
+                                        return { ...c, tagId: value ? parseInt(value, 10) : null };
+                                      }
+                                      return c;
+                                    })
+                                  );
+                                }}
+                                clearable
+                                autoFocus
+                                data={availableTags.map((tag) => ({
+                                  value: tag.id.toString(),
+                                  label: tag.name,
+                                }))}
+                                style={{
+                                  zIndex: 400,
+                                }}
+                              />
+                            </Portal>
                           )}
                         </Stack>
                       );
@@ -353,34 +357,37 @@ function CollectionListForm({
                               }
                             />
                             {selectedItem && availableTags?.length > 0 && (
-                              <Select
-                                withinPortal
-                                withAsterisk
-                                placeholder="Select a tag for your entry in the contest"
-                                size="xs"
-                                label="Tag your entry"
-                                value={selectedItem.tagId?.toString() ?? null}
-                                zIndex={400}
-                                onChange={(value) => {
-                                  setSelectedCollections((curr) =>
-                                    curr.map((c) => {
-                                      if (c.collectionId === collection.id) {
-                                        return {
-                                          ...c,
-                                          tagId: value ? parseInt(value, 10) : null,
-                                        };
-                                      }
-                                      return c;
-                                    })
-                                  );
-                                }}
-                                clearable
-                                autoFocus
-                                data={availableTags.map((tag) => ({
-                                  value: tag.id.toString(),
-                                  label: tag.name,
-                                }))}
-                              />
+                              <Portal>
+                                <Select
+                                  withAsterisk
+                                  placeholder="Select a tag for your entry in the contest"
+                                  size="xs"
+                                  label="Tag your entry"
+                                  value={selectedItem.tagId?.toString() ?? null}
+                                  style={{
+                                    zIndex: 400,
+                                  }}
+                                  onChange={(value) => {
+                                    setSelectedCollections((curr) =>
+                                      curr.map((c) => {
+                                        if (c.collectionId === collection.id) {
+                                          return {
+                                            ...c,
+                                            tagId: value ? parseInt(value, 10) : null,
+                                          };
+                                        }
+                                        return c;
+                                      })
+                                    );
+                                  }}
+                                  clearable
+                                  autoFocus
+                                  data={availableTags.map((tag) => ({
+                                    value: tag.id.toString(),
+                                    label: tag.name,
+                                  }))}
+                                />
+                              </Portal>
                             )}
                           </Stack>
                         );
@@ -433,7 +440,7 @@ function NewCollectionForm({
     showNotification({
       id: NOTIFICATION_ID,
       loading: true,
-      disallowClose: true,
+      withCloseButton: false,
       autoClose: false,
       message: 'Creating collection...',
     });
@@ -510,7 +517,11 @@ function NewCollectionForm({
             name="read"
             label="Privacy"
             data={Object.values(collectionReadPrivacyData)}
-            itemComponent={SelectItem}
+            renderOption={(item) => {
+              const data =
+                collectionReadPrivacyData[item.option.value as CollectionReadConfiguration];
+              return <SelectItem {...data} {...item} />;
+            }}
           />
           {currentUser?.isModerator && (
             <>
@@ -542,7 +553,7 @@ function NewCollectionForm({
                     name="metadata.endsAt"
                     label="End Date"
                     placeholder="Select an end date"
-                    icon={<IconCalendar size={16} />}
+                    leftSection={<IconCalendar size={16} />}
                     clearable
                   />
                   <Text size="xs" color="dimmed">

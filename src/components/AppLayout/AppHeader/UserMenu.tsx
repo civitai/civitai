@@ -7,7 +7,7 @@ import {
   Popover,
   Tooltip,
   UnstyledButton,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
   getPrimaryShade,
 } from '@mantine/core';
@@ -142,7 +142,7 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
-  const { colorScheme, toggleColorScheme } = useMantineColorScheme();
+  const { colorScheme, toggleColorScheme } = useComputedColorScheme();
   const { logout } = useAccountContext();
 
   const { handleClose } = useUserMenuContext();

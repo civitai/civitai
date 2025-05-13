@@ -10,7 +10,7 @@ import {
   Drawer,
   ButtonProps,
   useMantineTheme,
-  useMantineColorScheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
@@ -29,7 +29,7 @@ export function BuzzWithdrawalRequestFilterDropdown({
   ...buttonProps
 }: Props) {
   const mobile = useIsMobile();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const [opened, setOpened] = useState(false);
   const filterLength =

@@ -37,7 +37,7 @@ export function Playing() {
   return (
     <ChoppedLayout
       title={
-        <Title align="center">
+        <Title className="text-center">
           Round {roundNumber}: {theme.name}
         </Title>
       }
@@ -72,12 +72,12 @@ function RoundPending({ theme, roundNumber }: RoundProps) {
       {roundNumber === 1 && (
         <Alert className="self-center">
           <Group justify="space-between">
-            <Text size={40}>🎉</Text>
+            <Text fz={40}>🎉</Text>
             <Stack align="center" gap={0}>
               <Text>Invite others to join!</Text>
               <Text className="text-xl font-bold uppercase">{gameCode}</Text>
             </Stack>
-            <Text size={40}>🎉</Text>
+            <Text fz={40}>🎉</Text>
           </Group>
         </Alert>
       )}
@@ -87,7 +87,7 @@ function RoundPending({ theme, roundNumber }: RoundProps) {
       >
         <Text
           className="absolute top-1/2 -ml-2 -mt-2 -translate-y-1/2 text-center text-8xl font-extrabold uppercase tracking-widest text-white opacity-0 transition-opacity duration-500 ease-in-out"
-          size={48}
+          fz={48}
           weight="bold"
           style={{
             opacity: imageLoaded ? 1 : 0,
@@ -152,7 +152,7 @@ function RoundSubmissions({ theme }: RoundProps) {
 
   if (spectating)
     return (
-      <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
+      <Alert radius="sm" color="green" style={{ zIndex: 10 }}>
         <Group gap="xs" wrap="nowrap" justify="center">
           <Text size="md" weight={500}>
             Spectating
@@ -173,7 +173,7 @@ function RoundSubmissions({ theme }: RoundProps) {
         </Button>
       )}
       {submitted && (
-        <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
+        <Alert radius="sm" color="green" style={{ zIndex: 10 }}>
           <Group gap="xs" wrap="nowrap" justify="center">
             <Text size="md" weight={500}>{`✅ We've got your submission`}</Text>
           </Group>
@@ -219,7 +219,7 @@ function SubmissionCountdown(props: BoxProps) {
       <Progress
         className="w-full"
         value={(timeRemaining / duration) * 100}
-        animate
+        animated
         color={endingSoon ? 'red' : 'blue'}
         h={24}
       />

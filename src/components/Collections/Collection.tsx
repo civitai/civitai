@@ -5,7 +5,6 @@ import {
   Button,
   Center,
   ContainerProps,
-  createStyles,
   Divider,
   Group,
   HoverCard,
@@ -17,6 +16,7 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconAlertCircle,
@@ -29,7 +29,7 @@ import {
 import { capitalize, truncate } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { CSSProperties, useState } from 'react';
+import React, { CSSProperties, useState } from 'react';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -253,7 +253,7 @@ const ImageCollection = ({
                     <IconPhoto size={16} stroke={1.5} />
                   </ThemeIcon>
                 }
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   updateCollectionCoverImageMutation.mutate(
@@ -328,7 +328,7 @@ const ImageCollection = ({
                 dropdownProps={{ className: toolSearchOpened ? '!overflow-visible' : undefined }}
               >
                 <Stack>
-                  <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
+                  <Divider label="Tools" className="text-sm font-bold" />
                   <ToolMultiSelect
                     value={query.tools ?? []}
                     onChange={(tools) => {
@@ -470,7 +470,7 @@ export function Collection({
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
   const router = useRouter();
-
+  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const { collection, permissions, isLoading } = useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
@@ -480,7 +480,6 @@ export function Collection({
       !!collection?.metadata?.maxItemsPerUser,
   });
 
-  const { classes } = useStyles({ bannerPosition: collection?.metadata?.bannerPosition });
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
 
@@ -488,14 +487,14 @@ export function Collection({
     return (
       <Stack w="100%" align="center">
         <Stack gap="md" align="center" maw={800}>
-          <Title order={1} inline>
+          <Title order={1} className="inline-block">
             Whoops!
           </Title>
-          <Text align="center">
+          <Text className="text-center">
             It looks like you landed on the wrong place.The collection you are trying to access does
             not exist or you do not have the sufficient permissions to see it.
           </Text>
-          <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+          <ThemeIcon size={128} radius={100} style={{ opacity: 0.5 }}>
             <IconCloudOff size={80} />
           </ThemeIcon>
         </Stack>
@@ -579,7 +578,7 @@ export function Collection({
                   {collection?.image && (
                     <Box
                       w={220}
-                      sx={(theme) => ({
+                      styles={{
                         overflow: 'hidden',
                         borderRadius: '8px',
                         boxShadow: theme.shadows.md,
@@ -587,11 +586,13 @@ export function Collection({
                           width: '100%',
                           marginBottom: theme.spacing.xs,
                         },
-                      })}
+                      }}
                     >
                       <AspectRatio ratio={3 / 2}>
                         <EdgeMedia
-                          className={classes.coverImage}
+                          style={{
+                            objectPosition: collection?.metadata?.bannerPosition ?? 'top center',
+                          }}
                           src={collection.image.url}
                           type={collection.image.type}
                           name={collection.image.name ?? collection.image.url}
@@ -608,17 +609,17 @@ export function Collection({
                       </AspectRatio>
                     </Box>
                   )}
-                  <Stack gap={8} sx={{ flex: 1 }}>
+                  <Stack gap={8} style={{ flex: 1 }}>
                     <Stack gap={0}>
                       <Group>
                         <Title
                           order={1}
                           lineClamp={1}
-                          sx={() => ({
+                          styles={{
                             [containerQuery.smallerThan('sm')]: {
                               fontSize: '28px',
                             },
-                          })}
+                          }}
                         >
                           {collection?.name ?? 'Loading...'}
                         </Title>
@@ -653,7 +654,7 @@ export function Collection({
                   </Stack>
                   {collection && permissions && (
                     <Stack>
-                      <Group gap={4} ml="auto" sx={{ alignSelf: 'flex-start' }} wrap="nowrap">
+                      <Group gap={4} ml="auto" style={{ alignSelf: 'flex-start' }} wrap="nowrap">
                         {collection.mode === CollectionMode.Contest &&
                         // Respect the submission period:
                         (!metadata.submissionEndDate ||
@@ -772,9 +773,8 @@ export function Collection({
 
                           return (
                             <Stack gap={0}>
-                              <Progress
-                                size="xl"
-                                sections={[
+                              <Progress.Root size="xl">
+                                {[
                                   ...statuses.map((status) => {
                                     const color =
                                       status === CollectionItemStatus.REVIEW
@@ -803,8 +803,19 @@ export function Collection({
                                         tooltip: `Remaining: ${remainingEntries}`,
                                       }
                                     : undefined,
-                                ].filter(isDefined)}
-                              />
+                                ]
+                                  .filter(isDefined)
+                                  .map((section) => {
+                                    return (
+                                      <Tooltip key={section.tooltip} label={section.tooltip}>
+                                        <Progress.Section
+                                          value={section.value}
+                                          color={section.color}
+                                        />
+                                      </Tooltip>
+                                    );
+                                  })}
+                              </Progress.Root>
                               <Tooltip label="Rejected entries do not count toward the allowed count.">
                                 <Text size="xs" weight="bold">
                                   Max entries per participant: {entryCountDetails.max}
@@ -877,11 +888,3 @@ export function Collection({
     </BrowsingLevelProvider>
   );
 }
-
-const useStyles = createStyles<string, { bannerPosition?: CSSProperties['objectPosition'] }>(
-  (_theme, params) => ({
-    coverImage: {
-      objectPosition: params.bannerPosition ?? 'top center',
-    },
-  })
-);

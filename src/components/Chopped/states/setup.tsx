@@ -247,7 +247,7 @@ export function Setup() {
         <NumberInput
           value={newGameState.maxPlayers}
           onChange={(value) => {
-            setNewGameState((state) => ({ ...state, maxPlayers: value! }));
+            setNewGameState((state) => ({ ...state, maxPlayers: Number(value!) }));
           }}
           size="md"
           min={2}

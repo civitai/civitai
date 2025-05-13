@@ -1,4 +1,4 @@
-import { Button, useMantineColorScheme } from '@mantine/core';
+import { Button, useComputedColorScheme } from '@mantine/core';
 import { IconClock } from '@tabler/icons-react';
 
 import { useModelQueryParams } from '~/components/Model/model.utils';
@@ -20,7 +20,7 @@ export function CategoryTags({
   includeEA?: boolean;
   includeAll?: boolean;
 }) {
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { set, tag: tagQuery } = useModelQueryParams();
 
   const { data: categories } = useCategoryTags({ entityType: TagTarget.Model });

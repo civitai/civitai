@@ -28,7 +28,7 @@ export default function CivitaiLinkSuccessModal({ context, id }: ContextModalPro
         <ThemeIcon color="green" size="xl" radius="xl">
           <IconCheck />
         </ThemeIcon>
-        <Title align="center">{`You're connected!`}</Title>
+        <Title className="text-center">{`You're connected!`}</Title>
       </Stack>
 
       <Form form={form} onSubmit={handleSubmit}>

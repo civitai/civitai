@@ -4,7 +4,7 @@ import {
   HoverCard,
   Text,
   ThemeIcon,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -43,7 +43,7 @@ export function BountyCard({ data }: Props) {
   const image = images?.[0];
   const expired = expiresAt < new Date();
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const { engagements } = useBountyEngagement();
 

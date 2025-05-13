@@ -5,7 +5,7 @@ import {
   ScrollArea,
   Anchor,
   useMantineTheme,
-  useMantineColorScheme,
+  useComputedColorScheme,
   rgba,
 } from '@mantine/core';
 import { useState } from 'react';
@@ -38,7 +38,7 @@ function Heading({
   const isFirstLevel = parentIndex === 1;
   const labelSize = isFirstLevel ? 'md' : 'sm';
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   return (
     <Stack gap={0}>

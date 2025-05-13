@@ -15,7 +15,6 @@ import {
   Divider,
   Input,
   Radio,
-  createStyles,
   Grid,
   Anchor,
   List,
@@ -104,7 +103,12 @@ export function ClubUpsertForm({
     <Form form={form} onSubmit={handleSubmit}>
       <Stack gap={32}>
         <Grid gutter="xl">
-          <Grid.Col xs={12} md={8}>
+          <Grid.Col
+            span={{
+              base: 12,
+              md: 8,
+            }}
+          >
             <Stack gap={32}>
               <Stack gap="xl">
                 <InputText
@@ -137,12 +141,12 @@ export function ClubUpsertForm({
                           onClick={() =>
                             form.setValue('avatar', club?.avatar?.id ? null : undefined)
                           }
-                          sx={(theme) => ({
+                          style={{
                             position: 'absolute',
-                            top: theme.spacing.xs * 0.4,
-                            right: theme.spacing.xs * 0.4,
+                            top: 'calc(--mantine-spacing-xs * 0.4)',
+                            right: 'calc(--mantine-spacing-xs * 0.4)',
                             zIndex: 1,
-                          })}
+                          }}
                         >
                           <IconTrash />
                         </ActionIcon>
@@ -176,12 +180,12 @@ export function ClubUpsertForm({
                           onClick={() =>
                             form.setValue('coverImage', club?.coverImage?.id ? null : undefined)
                           }
-                          sx={(theme) => ({
+                          style={{
                             position: 'absolute',
-                            top: theme.spacing.xs * 0.4,
-                            right: theme.spacing.xs * 0.4,
+                            top: 'calc(--mantine-spacing-xs * 0.4)',
+                            right: 'calc(--mantine-spacing-xs * 0.4)',
                             zIndex: 1,
-                          })}
+                          }}
                         >
                           <IconTrash />
                         </ActionIcon>
@@ -209,7 +213,12 @@ export function ClubUpsertForm({
               </Stack>
             </Stack>
           </Grid.Col>
-          <Grid.Col xs={12} md={4}>
+          <Grid.Col
+            span={{
+              base: 12,
+              md: 4,
+            }}
+          >
             <Stack>
               <Divider label="Properties" />
               <InputSwitch

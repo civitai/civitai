@@ -2,7 +2,7 @@ import {
   createStyles,
   TypographyStylesProvider,
   TypographyStylesProviderProps,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
   lighten,
   darken,
@@ -94,7 +94,7 @@ export function RenderHtml({
   ...props
 }: Props) {
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   html = useMemo(
     () =>

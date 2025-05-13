@@ -7,7 +7,7 @@ import {
   Group,
   Stack,
   Text,
-  useMantineColorScheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
@@ -26,7 +26,7 @@ export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
   ComboboxItem & { hit: SearchIndexDataMap['images'][number] }
 >(({ value, hit, ...props }, ref) => {
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 

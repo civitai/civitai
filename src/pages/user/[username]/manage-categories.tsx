@@ -14,7 +14,7 @@ import {
   Table,
   Text,
   ThemeIcon,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { TagTarget } from '~/shared/utils/prisma/enums';
@@ -62,7 +62,7 @@ export default function ManageCategories({
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
   const [selection, setSelection] = useState<number[]>([]);
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
     categories: true,

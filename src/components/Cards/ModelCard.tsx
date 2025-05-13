@@ -3,7 +3,7 @@ import {
   getPrimaryShade,
   Group,
   Text,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import {
@@ -40,7 +40,7 @@ import { trpc } from '~/utils/trpc';
 
 export function ModelCard({ data }: Props) {
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const image = data.images[0];
   const aspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 

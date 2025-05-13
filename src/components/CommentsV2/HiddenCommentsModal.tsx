@@ -12,7 +12,10 @@ export default function HiddenCommentsModal({ modelId }: { modelId: number }) {
     <Modal
       {...dialog}
       title="Hidden Comments"
-      closeButtonLabel="Close hidden comments modal"
+      closeButtonProps={{
+        'aria-label': 'Close hidden comments modal',
+        children: 'Close hidden comments modal',
+      }}
       size="xl"
       withCloseButton
     >

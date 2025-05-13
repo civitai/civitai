@@ -9,7 +9,7 @@ import {
   Card,
   Group,
   Divider,
-  useMantineColorScheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
@@ -23,7 +23,7 @@ import { auditMetaData } from '~/utils/metadata/audit';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const [meta, setMeta] = useState<ImageMetaProps | undefined>();
   const [nsfw, setNsfw] = useState<boolean>(false);
   const nodeJson = useGlobalValue('nodeJson');

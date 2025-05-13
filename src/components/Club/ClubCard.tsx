@@ -1,4 +1,13 @@
-import { Badge, Group, HoverCard, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
+import {
+  Badge,
+  Group,
+  HoverCard,
+  Stack,
+  Text,
+  ThemeIcon,
+  UnstyledButton,
+  useComputedColorScheme,
+} from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import cardClasses from '~/components/Cards/Cards.module.scss';
@@ -12,12 +21,14 @@ import { abbreviateNumber } from '../../utils/number-helpers';
 import { IconBadge } from '../IconBadge/IconBadge';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
+import clsx from 'clsx';
 
 const IMAGE_CARD_WIDTH = 450;
 
 export function ClubCard({ data }: Props) {
   const router = useRouter();
   const { id, name, coverImage, user, stats } = data;
+  const colorScheme = useComputedColorScheme('dark');
 
   return (
     <FeedCard href={`/clubs/${id}`} aspectRatio="square">
@@ -70,14 +81,14 @@ export function ClubCard({ data }: Props) {
           )}
         /> */}
         <Stack
-          className={cx(cardClasses.contentOverlay, cardClasses.bottom, cardClasses.fullOverlay)}
+          className={clsx(cardClasses.contentOverlay, cardClasses.bottom, cardClasses.fullOverlay)}
           gap="sm"
         >
           {user ? (
             user?.id !== -1 && (
               <UnstyledButton
                 sx={{ color: 'white', alignSelf: 'flex-start' }}
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
 
@@ -130,7 +141,7 @@ export function ClubCard({ data }: Props) {
               <Group gap="xs" wrap="nowrap">
                 <IconBadge
                   icon={<IconUsers size={14} />}
-                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore
@@ -140,7 +151,7 @@ export function ClubCard({ data }: Props) {
                 </IconBadge>
                 <IconBadge
                   icon={<IconArticle size={14} />}
-                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore
@@ -150,7 +161,7 @@ export function ClubCard({ data }: Props) {
                 </IconBadge>
                 <IconBadge
                   icon={<IconFiles size={14} />}
-                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore

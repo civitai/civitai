@@ -208,7 +208,7 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
           {onCancel && (
             <Button
               loading={upsertingClubPost}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onCancel?.();
@@ -276,7 +276,9 @@ export const ClubPostFromResourceModal = ({
               label: club.name,
             }))}
             value={selectedClubId?.toString() ?? ''}
-            onChange={(clubId: string) => setSelectedClubId(Number(clubId))}
+            onChange={(clubId) => {
+              setSelectedClubId(Number(clubId));
+            }}
           />
         ) : (
           <Text size="sm" color="dimmed">

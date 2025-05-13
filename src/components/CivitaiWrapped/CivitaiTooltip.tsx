@@ -4,7 +4,9 @@ const variants: Record<string, Partial<TooltipProps>> = {
   smallRounded: {
     offset: 5,
     radius: 'lg',
-    transitionDuration: 500,
+    transitionProps: {
+      duration: 500,
+    },
     openDelay: 100,
     closeDelay: 250,
     styles: {
@@ -20,7 +22,9 @@ const variants: Record<string, Partial<TooltipProps>> = {
   roundedOpaque: {
     // offset: 5,
     radius: 'lg',
-    transitionDuration: 200,
+    transitionProps: {
+      duration: 500,
+    },
     styles: {
       tooltip: {
         maxWidth: 500,

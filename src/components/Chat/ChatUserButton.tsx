@@ -1,4 +1,4 @@
-import { Button, ButtonProps, Group, useMantineTheme } from '@mantine/core';
+import { Button, ButtonProps, Group, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import { IconMessage2 } from '@tabler/icons-react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
@@ -18,6 +18,7 @@ export function ChatUserButton({
   const theme = useMantineTheme();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
+  const colorScheme = useComputedColorScheme('dark');
 
   const handleClick = () => {
     setState((prev) => ({
@@ -34,7 +35,7 @@ export function ChatUserButton({
   return (
     <LoginPopover>
       <Button
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
         color="gray"
         radius="xl"
         pl={8}

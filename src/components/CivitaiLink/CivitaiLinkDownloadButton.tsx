@@ -1,4 +1,4 @@
-import { Button, Flex, Text, Anchor, createStyles } from '@mantine/core';
+import { Button, Flex, Text, Anchor } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type LinkDownloadButtonProps = {
@@ -27,7 +27,7 @@ export function CivitaiLinkDownloadButton({
       >
         <Flex direction="column" justify="space-between" align="center">
           {text}
-          {isMember ? <Text className={classes.buttonSecondary}>{secondaryText}</Text> : null}
+          {isMember ? <Text fz={10}>{secondaryText}</Text> : null}
         </Flex>
       </Button>
       {isMember ? (

@@ -6,7 +6,7 @@ import {
   Stack,
   Text,
   Title,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import {
@@ -46,7 +46,7 @@ export const GeneratedImagesReward = () => {
       timeframe: DEFAULT_TIMEFRAME,
     });
   const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
 
   const options = useMemo<ChartOptions<'line'>>(

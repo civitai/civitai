@@ -1,12 +1,11 @@
 // @ts-nocheck
 import React, { forwardRef } from 'react';
-import { DefaultProps, MantineSize, useComponentDefaultProps, Box } from '@mantine/core';
+import { DefaultProps, MantineNumberSize, useComponentDefaultProps } from '@mantine/styles';
 
 import { ContainerCol } from './ContainerCol';
 import { ContainerGridProvider } from './ContainerGrid.context';
 import useStyles from './ContainerGrid.styles';
-
-type MantineNumberSize = MantineSize | number;
+import { Box } from '@mantine/core';
 
 export interface ContainerGridProps extends DefaultProps, React.ComponentPropsWithRef<'div'> {
   /** <Col /> components only */
@@ -82,7 +81,7 @@ export const ContainerGrid: GridComponent = forwardRef<HTMLDivElement, Container
       containerName,
       ...others
     } = useComponentDefaultProps('Grid', defaultProps, props);
-    const styles = useStyles(
+    const { classes, cx } = useStyles(
       { gutter, justify, align, gutterXs, gutterSm, gutterMd, gutterLg, gutterXl, containerName },
       { unstyled, name: 'ContainerGrid' }
     );
@@ -101,7 +100,7 @@ export const ContainerGrid: GridComponent = forwardRef<HTMLDivElement, Container
           containerName,
         }}
       >
-        <Box style={styles.root} className={className} {...others} ref={ref}>
+        <Box className={cx(classes.root, className)} {...others} ref={ref}>
           {children}
         </Box>
       </ContainerGridProvider>
