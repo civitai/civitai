@@ -141,7 +141,7 @@ export default function CosmeticShopMain() {
             <ShopFiltersDropdown filters={filters} setFilters={setFilters} />
           </div>
           <div className="flex flex-col gap-6">
-            {isEmpty(filters) && <MerchShowcaseSection type="projectOdyssey" className="order-2" />}
+            {isEmpty(filters) && <MerchShowcaseSection type="civitai" className="order-2" />}
             {isLoading ? (
               <Center p="xl">
                 <Loader />

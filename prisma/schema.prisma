@@ -3529,6 +3529,7 @@ enum ChangelogType {
   Bugfix
   Policy
   Update
+  Incident
 }
 
 model Changelog {
@@ -3544,6 +3545,7 @@ model Changelog {
   tags        String[]      @default([])
   disabled    Boolean       @default(false)
   titleColor  String?
+  sticky      Boolean       @default(false)
 }
 
 model NewOrderPlayer {
