@@ -11,7 +11,6 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronDown, IconConfetti } from '@tabler/icons-react';
@@ -68,7 +67,6 @@ export const AdvancedSettings = ({
         ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
       }
   );
-  const theme = useMantineTheme();
   const previous = usePrevious(selectedRun);
   const [openedSections, setOpenedSections] = useState<string[]>([]);
 
@@ -109,7 +107,7 @@ export const AdvancedSettings = ({
 
   // Set targetSteps automatically on value changes
   useEffect(() => {
-    const { maxTrainEpochs, numRepeats, trainBatchSize, engine } = selectedRun.params;
+    const { maxTrainEpochs, numRepeats, trainBatchSize } = selectedRun.params;
 
     const newSteps = Math.ceil(
       ((numImages || 1) * (numRepeats ?? 200) * maxTrainEpochs) / trainBatchSize
@@ -231,17 +229,11 @@ export const AdvancedSettings = ({
         multiple
         mt="xs"
         onChange={setOpenedSections}
-        styles={(theme) => ({
-          content: { padding: 0 },
-          item: {
-            overflow: 'hidden',
-            borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-            boxShadow: theme.shadows.sm,
-          },
-          control: {
-            padding: theme.spacing.sm,
-          },
-        })}
+        classNames={{
+          content: 'p-0',
+          item: 'overflow-hidden shadow-sm border-gray-3 dark:border-dark-4',
+          control: 'p-2',
+        }}
       >
         <Accordion.Item value="custom-prompts">
           <Accordion.Control>
@@ -306,21 +298,14 @@ export const AdvancedSettings = ({
           <Card withBorder mt="md" p="sm">
             <Card.Section inheritPadding withBorder py="sm">
               <Group justify="space-between">
-                <Text
-                  color={theme.colorScheme === 'dark' ? theme.colors.gray[6] : theme.colors.gray[5]}
-                >
+                <Text className="text-gray-5 dark:text-gray-6">
                   Training Parameters{' '}
                   <Text component="span" size="xs" fs="italic">
                     (disabled with &quot;Rapid Training&quot;)
                   </Text>
                 </Text>
                 <Box mr={4}>
-                  <IconChevronDown
-                    color={
-                      theme.colorScheme === 'dark' ? theme.colors.gray[6] : theme.colors.gray[5]
-                    }
-                    size={16}
-                  />
+                  <IconChevronDown className="text-gray-5 dark:text-gray-6" size={16} />
                 </Box>
               </Group>
             </Card.Section>
@@ -335,29 +320,13 @@ export const AdvancedSettings = ({
                     <Tooltip
                       label="Custom models will likely require parameter adjustments. Please carefully check these before submitting."
                       maw={300}
+                      classNames={{
+                        tooltip: 'border-gray-3 dark:border-dark-4',
+                        arrow:
+                          'border-r-gray-3 border-b-gray-3 dark:border-r-dark-4 dark:border-b-dark-4',
+                      }}
                       multiline
                       withArrow
-                      styles={(theme) => ({
-                        tooltip: {
-                          border: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[3]
-                          }`,
-                        },
-                        arrow: {
-                          borderRight: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[3]
-                          }`,
-                          borderBottom: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[3]
-                          }`,
-                        },
-                      })}
                     >
                       <IconAlertTriangle color="orange" size={16} />
                     </Tooltip>
@@ -399,13 +368,13 @@ export const AdvancedSettings = ({
                       <NumberInputWrapper
                         min={tOverride?.min ?? ts.min}
                         max={tOverride?.max ?? ts.max}
-                        precision={
+                        decimalScale={
                           ts.type === 'number'
                             ? getPrecision(ts.step ?? ts.default) || 4
                             : undefined
                         }
                         step={ts.step}
-                        sx={{ flexGrow: 1 }}
+                        className="grow"
                         disabled={disabled}
                         format="default"
                         value={selectedRun.params[ts.name] as number}

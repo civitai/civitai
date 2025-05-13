@@ -38,13 +38,7 @@ export function Username({
         size={size}
         weight={500}
         lineClamp={1}
-        sx={(theme) => ({
-          verticalAlign: 'middle',
-          filter:
-            theme.colorScheme === 'dark'
-              ? 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8))'
-              : 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.2))',
-        })}
+        className="align-middle drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)] dark:drop-shadow-[1px_1px_1px_rgba(0,0,0,0.2)]"
         inherit={inherit}
         {...additionalTextProps}
       >

@@ -2666,7 +2666,6 @@ export interface ModerationRule {
 export interface Changelog {
   id: number;
   title: string;
-  titleColor: string | null;
   content: string;
   link: string | null;
   cta: string | null;
@@ -2676,6 +2675,7 @@ export interface Changelog {
   type: ChangelogType;
   tags: string[];
   disabled: boolean;
+  titleColor: string | null;
 }
 
 export interface NewOrderPlayer {

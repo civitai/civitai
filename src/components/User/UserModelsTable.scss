@@ -1,0 +1,33 @@
+.header {
+  position: sticky;
+  top: 0;
+  transition: box-shadow 150ms ease;
+  z-index: 10;
+
+  @mixin dark {
+    background-color: var(--mantine-color-dark-7);
+  }
+  @mixin light {
+    background-color: var(--mantine-color-white);
+  }
+
+  &::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+
+    @mixin dark {
+      border-bottom: 1px solid var(--mantine-color-dark-7);
+    }
+
+    @mixin light {
+      border-bottom: 1px solid var(--mantine-color-gray-2);
+    }
+  }
+}
+
+.scrolled {
+  box-shadow: var(--mantine-shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.12));
+}

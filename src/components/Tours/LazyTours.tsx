@@ -1,4 +1,4 @@
-import { useMantineTheme } from '@mantine/core';
+import { useComputedColorScheme } from '@mantine/core';
 import { useCallback } from 'react';
 import Joyride, {
   ACTIONS,
@@ -17,7 +17,7 @@ const completeStatus: string[] = [STATUS.SKIPPED, STATUS.FINISHED];
 const nextEvents: string[] = [EVENTS.STEP_AFTER, EVENTS.TARGET_NOT_FOUND];
 
 export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers'>) {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme();
   const { closeTour, runTour, activeTour, steps, currentStep, run } = useTourContext();
 
   const handleJoyrideCallback = useCallback<Callback>(
@@ -75,10 +75,11 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
         styles={{
           options: {
             zIndex: 100000,
-            arrowColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
+            arrowColor:
+              colorScheme === 'dark' ? 'var(--mantine-color-dark-6)' : 'var(--mantine-color-white)',
           },
           spotlight: {
-            border: `2px solid ${theme.colors.cyan[4]}`,
+            border: '2px solid var(--mantine-color-cyan-4)',
             backgroundColor: 'rgba(255, 255, 255, 0.3)',
           },
         }}
