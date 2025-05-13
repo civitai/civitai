@@ -59,8 +59,10 @@ export const useKnightsNewOrderListener = ({
 
   // TODO.newOrder: rename this topic for global signals
   // useSignalTopic(SignalTopic.NewOrderPlayer);
-  useSignalTopic(playerData ? `${SignalTopic.NewOrderPlayer}:${playerData.id}` : undefined);
-  useSignalTopic(playerData ? `${SignalTopic.NewOrderQueue}:${playerData.rankType}` : undefined);
+  useSignalTopic(
+    playerData ? `${SignalTopic.NewOrderQueue}:${playerData.rankType}` : undefined,
+    true
+  );
 
   // Used to update player stats (exp, fervor, blessed buzz, rank, etc.)
   useSignalConnection(SignalMessages.NewOrderPlayerUpdate, async (data: PlayerUpdatePayload) => {

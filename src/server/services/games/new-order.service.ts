@@ -132,8 +132,8 @@ export async function smitePlayer({
 
   const newSmiteCount = await smitesCounter.increment({ id: playerId });
   signalClient
-    .topicSend({
-      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+    .send({
+      userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
       data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: newSmiteCount } },
     })
@@ -164,8 +164,8 @@ export async function cleanseAllSmites({
   if (data.count === 0) return; // Nothing done :shrug:
 
   signalClient
-    .topicSend({
-      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+    .send({
+      userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
       data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: 0 } },
     })
@@ -188,8 +188,8 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
 
   const smiteCount = await smitesCounter.decrement({ id: playerId });
   signalClient
-    .topicSend({
-      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+    .send({
+      userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
       data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: smiteCount } },
     })
@@ -406,8 +406,8 @@ export async function addImageRating({
     }).catch(() => null); // Ignore if it fails
 
     signalClient
-      .topicSend({
-        topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+      .send({
+        userId: playerId,
         target: SignalMessages.NewOrderPlayerUpdate,
         data: {
           action: NewOrderSignalActions.RankUp,
@@ -636,8 +636,8 @@ export async function updatePlayerStats({
   }
 
   signalClient
-    .topicSend({
-      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+    .send({
+      userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
       data: { action: NewOrderSignalActions.UpdateStats, stats },
     })
@@ -693,8 +693,8 @@ export async function resetPlayer({
 
   const acolyteRank = await getNewOrderRanks({ name: 'Acolyte' });
   signalClient
-    .topicSend({
-      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+    .send({
+      userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
       data: {
         action: NewOrderSignalActions.Reset,

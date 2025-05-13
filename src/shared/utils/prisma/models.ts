@@ -162,6 +162,8 @@ export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
 
+export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update";
+
 export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
 
 export type EntityMetric_EntityType_Type = "Image";
@@ -2659,6 +2661,21 @@ export interface ModerationRule {
   reason: string | null;
   createdById: number;
   createdBy?: User;
+}
+
+export interface Changelog {
+  id: number;
+  title: string;
+  titleColor: string | null;
+  content: string;
+  link: string | null;
+  cta: string | null;
+  effectiveAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  type: ChangelogType;
+  tags: string[];
+  disabled: boolean;
 }
 
 export interface NewOrderPlayer {
