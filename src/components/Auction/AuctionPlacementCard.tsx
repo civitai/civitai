@@ -321,7 +321,7 @@ const SectionBidInfo = ({
       className={
         mobile ? 'w-full border-t border-solid border-t-gray-4 dark:border-t-dark-4' : 'ml-[-16px]'
       }
-      sx={{
+      style={{
         flexGrow: 1,
         flexDirection: mobile ? 'row-reverse' : undefined,
         justifyContent: mobile ? 'space-between' : undefined,
@@ -339,7 +339,7 @@ const SectionBidInfo = ({
             iconProps={{
               size: 14,
             }}
-            sx={{
+            style={{
               fontSize: '1.25rem',
             }}
             asCounter={true}

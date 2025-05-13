@@ -1,4 +1,4 @@
-import { Button, ButtonProps, Group, useMantineTheme } from '@mantine/core';
+import { Button, ButtonProps, Group, useMantineColorScheme, useMantineTheme } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -20,6 +20,7 @@ export function TipBuzzButton({ toUserId, entityId, entityType, label, ...button
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
 
   const { trackAction } = useTrackEvent();
 
@@ -44,7 +45,7 @@ export function TipBuzzButton({ toUserId, entityId, entityType, label, ...button
   return (
     <LoginPopover>
       <Button
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
         color="gray"
         radius="xl"
         pl={8}

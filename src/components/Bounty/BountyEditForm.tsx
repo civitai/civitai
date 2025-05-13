@@ -1,14 +1,4 @@
-import {
-  ActionIcon,
-  Anchor,
-  Button,
-  createStyles,
-  Group,
-  Stack,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Anchor, Button, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconCalendar, IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -28,18 +18,7 @@ import { BountyGetById } from '~/types/router';
 import { BackButton } from '../BackButton/BackButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-
-const useStyles = createStyles((theme) => ({
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  fluid: {
-    maxWidth: '100% !important',
-  },
-}));
+import classes from './BountyEditForm.module.scss';
 
 const schema = updateBountyInputSchema
   .refine((data) => data.startsAt < data.expiresAt, {
@@ -53,7 +32,6 @@ const schema = updateBountyInputSchema
 
 export function BountyEditForm({ bounty }: Props) {
   const router = useRouter();
-  const { classes } = useStyles();
 
   const defaultValues = {
     ...bounty,
@@ -104,7 +82,7 @@ export function BountyEditForm({ bounty }: Props) {
                 name="startsAt"
                 label="Start Date"
                 placeholder="Select a starts date"
-                icon={<IconCalendar size={16} />}
+                leftSection={<IconCalendar size={16} />}
                 withAsterisk
                 minDate={minStartDate}
                 maxDate={maxStartDate}
@@ -114,7 +92,7 @@ export function BountyEditForm({ bounty }: Props) {
                 name="expiresAt"
                 label="Deadline"
                 placeholder="Select an end date"
-                icon={<IconCalendarDue size={16} />}
+                leftSection={<IconCalendarDue size={16} />}
                 withAsterisk
                 minDate={minExpiresDate}
                 maxDate={maxExpiresDate}

@@ -1,4 +1,4 @@
-import { AutocompleteItem, Center, Group, Skeleton, Stack, Text } from '@mantine/core';
+import { ComboboxItem, Center, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
@@ -18,7 +18,7 @@ import styles from './common.module.scss';
 
 export const BountiesSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: SearchIndexDataMap['bounties'][number] }
+  ComboboxItem & { hit: SearchIndexDataMap['bounties'][number] }
 >(({ value, hit, ...props }, ref) => {
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 

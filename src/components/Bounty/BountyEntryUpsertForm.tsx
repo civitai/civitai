@@ -190,11 +190,15 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this entry."} />
+      <ReadOnlyAlert
+        message={
+          "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this entry."
+        }
+      />
       <Stack gap="xl">
         <Group gap="md">
           <BackButton url={`/bounties/${bounty.id}`} />
-          <Title inline>{bountyEntry ? 'Update' : 'Submit new'} entry</Title>
+          <Title className="inline-block">{bountyEntry ? 'Update' : 'Submit new'} entry</Title>
           <FeatureIntroductionHelpButton
             feature="bounty-submit-entry"
             contentSlug={['feature-introduction', 'bounty-submit-entry']}
@@ -226,12 +230,12 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
         </Input.Wrapper>
         {images.length > 0 && (
           <SimpleGrid
-            gap="sm"
-            breakpoints={[
-              { minWidth: 'xs', cols: 1 },
-              { minWidth: 'sm', cols: 3 },
-              { minWidth: 'md', cols: 4 },
-            ]}
+            spacing="sm"
+            cols={{
+              base: 1,
+              sm: 2,
+              md: 4,
+            }}
           >
             {bountyEntryImages.map((image) => (
               <Paper
@@ -314,21 +318,23 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   ) : (
                     <>
                       <MediaHash {...file} />
-                      <Progress
-                        size="xl"
-                        value={file.progress}
-                        label={`${Math.floor(file.progress)}%`}
-                        color={file.progress < 100 ? 'blue' : 'green'}
-                        striped
-                        animate
-                      />
+                      <Progress.Root size="xl">
+                        <Progress.Section
+                          value={file.progress}
+                          color={file.progress < 100 ? 'blue' : 'green'}
+                          striped
+                          animated
+                        >
+                          <Progress.Label>{Math.floor(file.progress)}%</Progress.Label>
+                        </Progress.Section>
+                      </Progress.Root>
                     </>
                   )}
                 </Paper>
               ))}
           </SimpleGrid>
         )}
-        <Group gap="md" align="flex-start" sx={{ '& > *': { flexGrow: 1 } }}>
+        <Group gap="md" align="flex-start" className="*:grow">
           <InputMultiFileUpload
             name="sampleFiles"
             label={
@@ -578,7 +584,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             label="Unlock amount"
             description="Set a specific amount people have to award you before they can download your files. This only affects bounty files - sample files are always unlocked."
             labelProps={{ size: 'xl' }}
-            icon={<CurrencyIcon currency={currency} size={18} />}
+            leftSection={<CurrencyIcon currency={currency} size={18} />}
             format={currency !== Currency.BUZZ ? 'currency' : undefined}
             currency={currency}
             min={1}
@@ -625,7 +631,9 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
           <Button
             loading={bountyEntryUpsertMutation.isLoading && !creating}
             disabled={
-              bountyEntryUpsertMutation.isLoading || (!bountyEntry && !ownershipAcknowledgement) || !features.canWrite
+              bountyEntryUpsertMutation.isLoading ||
+              (!bountyEntry && !ownershipAcknowledgement) ||
+              !features.canWrite
             }
             onClick={() => setCreating(false)}
             type="submit"

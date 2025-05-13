@@ -1,4 +1,11 @@
-import { Badge, Group, Text } from '@mantine/core';
+import {
+  Badge,
+  getPrimaryShade,
+  Group,
+  Text,
+  useMantineColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   IconArchiveFilled,
   IconBolt,
@@ -32,6 +39,8 @@ import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ModelCard({ data }: Props) {
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const image = data.images[0];
   const aspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
@@ -72,6 +81,7 @@ export function ModelCard({ data }: Props) {
 
   return (
     <AspectRatioImageCard
+      // @ts-ignore
       style={{
         '--aspect-ratio': aspectRatio,
       }}
@@ -138,13 +148,13 @@ export function ModelCard({ data }: Props) {
                 className={cardClasses.chip}
                 variant="filled"
                 radius="xl"
-                sx={(theme) => ({
+                style={{
                   backgroundColor: isEarlyAccess
                     ? theme.colors.success[5]
                     : isUpdated
                     ? theme.colors.teal[5]
-                    : theme.colors.blue[theme.fn.primaryShade()],
-                })}
+                    : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
+                }}
               >
                 <Text color="white" size="xs" transform="capitalize">
                   {isEarlyAccess ? 'Early Access' : isUpdated ? 'Updated' : 'New'}
@@ -241,12 +251,12 @@ export function ModelCard({ data }: Props) {
                   data-reviewed={hasReview}
                   radius="xl"
                   title={`${Math.round(positiveRating * 100)}% of reviews are positive`}
-                  classNames={{ inner: 'gap-1' }}
+                  classNames={{ label: 'gap-1' }}
                 >
                   <Text color={hasReview ? 'success.5' : 'yellow'} component="span" mt={2}>
                     <ThumbsUpIcon size={20} filled={hasReview} strokeWidth={2.5} />
                   </Text>
-                  <Text size={16} weight={500}>
+                  <Text fz={16} component="span" weight={500}>
                     {abbreviateNumber(data.rank.thumbsUpCount)}
                   </Text>
                 </Badge>

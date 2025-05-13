@@ -6,6 +6,7 @@ import {
   Stack,
   Text,
   Title,
+  useMantineColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import {
@@ -45,7 +46,8 @@ export const GeneratedImagesReward = () => {
       timeframe: DEFAULT_TIMEFRAME,
     });
   const theme = useMantineTheme();
-  const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
+  const { colorScheme } = useMantineColorScheme();
+  const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
 
   const options = useMemo<ChartOptions<'line'>>(
     () => ({
@@ -152,7 +154,7 @@ export const GeneratedImagesReward = () => {
               onChange={(data) => setFilteredVersionIds(data.map((x) => Number(x)))}
               searchable
               placeholder="Search models"
-              nothingFound="No models found..."
+              nothingFoundMessage="No models found..."
               label="Filter models. "
               description="By default, we only show you your 10 most performant models. Only models with generated images are shown."
               limit={50}

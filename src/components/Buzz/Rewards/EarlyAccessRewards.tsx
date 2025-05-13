@@ -1,4 +1,13 @@
-import { Center, Loader, Paper, Stack, Text, Title, useMantineTheme } from '@mantine/core';
+import {
+  Center,
+  Loader,
+  Paper,
+  Stack,
+  Text,
+  Title,
+  useMantineColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -32,6 +41,8 @@ ChartJS.register(
 );
 
 export const EarlyAccessRewards = () => {
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const { userPaymentConfiguration } = useUserPaymentConfiguration();
   const { data: modelVersions = [], isLoading } =
     trpc.modelVersion.earlyAccessModelVersionsOnTimeframe.useQuery(
@@ -40,8 +51,7 @@ export const EarlyAccessRewards = () => {
         enabled: userPaymentConfiguration?.stripeAccountStatus === StripeConnectStatus.Approved,
       }
     );
-  const theme = useMantineTheme();
-  const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
+  const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
 
   const options = useMemo<ChartOptions<'line'>>(
     () => ({
@@ -81,7 +91,7 @@ export const EarlyAccessRewards = () => {
         },
       },
     }),
-    [theme.colorScheme]
+    [colorScheme]
   );
 
   const labels = useMemo(() => {

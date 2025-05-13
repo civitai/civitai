@@ -60,3 +60,81 @@
 .lifetimeBuzz {
   animation: pulse 1s ease-in-out infinite;
 }
+
+/**
+  * useBuzzButtonStyles
+  */
+
+.chipGroup {
+  gap: var(--mantine-spacing-md);
+
+  >* {
+    width: 100%;
+  }
+
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    gap: var(--mantine-spacing-md);
+  }
+}
+
+// Chip styling
+.chipLabel {
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  height: auto;
+  width: 100%;
+  border-radius: var(--mantine-radius-md);
+
+  &[data-variant='filled'] {
+    background-color: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-0));
+  }
+
+  &[data-checked] {
+    border: 2px solid var(--mantine-color-accent-5);
+    color: var(--mantine-color-accent-5);
+    padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+
+    &[data-variant='filled'],
+    &[data-variant='filled']:hover {
+      background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-white));
+    }
+  }
+}
+
+.chipCheckmark {
+  display: none;
+}
+
+.chipDisabled {
+  opacity: 0.3;
+}
+
+// Accordion styling
+.accordionItem {
+  background-color: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-0));
+
+  &:first-of-type,
+  &:first-of-type>[data-accordion-control] {
+    border-top-left-radius: var(--mantine-radius-md);
+    border-top-right-radius: var(--mantine-radius-md);
+  }
+
+  &:last-of-type,
+  &:last-of-type>[data-accordion-control] {
+    border-bottom-left-radius: var(--mantine-radius-md);
+    border-bottom-right-radius: var(--mantine-radius-md);
+  }
+
+  &[data-active='true'] {
+    border: 1px solid var(--mantine-color-accent-5);
+    background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-white));
+  }
+}
+
+// Icon styling
+.buzzIcon {
+  filter: drop-shadow(0 0 2px var(--mantine-color-accent-5));
+
+  &:not(:first-of-type) {
+    margin-left: -4px;
+  }
+}

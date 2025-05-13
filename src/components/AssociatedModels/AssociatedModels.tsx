@@ -7,6 +7,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  useMantineTheme,
 } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconRocketOff, IconSparkles } from '@tabler/icons-react';
@@ -37,6 +38,7 @@ export function AssociatedModels({
   ownerId: number;
   versionId?: number;
 }) {
+  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
@@ -67,9 +69,9 @@ export function AssociatedModels({
         my="xl"
         pt="xl"
         pb="xl"
-        sx={(theme) => ({
+        style={{
           background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-        })}
+        }}
       >
         {({ columnCount }) => (
           <Stack pb={columnCount > 1 && data.length ? 20 : undefined}>

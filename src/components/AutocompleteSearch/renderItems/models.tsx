@@ -1,5 +1,5 @@
 import {
-  AutocompleteItem,
+  ComboboxItem,
   Badge,
   Center,
   Group,
@@ -26,7 +26,7 @@ import styles from './common.module.scss';
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: SearchIndexDataMap['models'][number] }
+  ComboboxItem & { hit: SearchIndexDataMap['models'][number] }
 >(({ value, hit, ...props }, ref) => {
   const features = useFeatureFlags();
   const theme = useMantineTheme();
@@ -75,7 +75,7 @@ export const ModelSearchItem = forwardRef<
           </ThemeIcon>
         )}
       </Center>
-      <Stack gap={4} sx={{ flex: '1 !important' }}>
+      <Stack gap={4} style={{ flex: '1 !important' }}>
         <Group gap={8}>
           <Text>
             <Highlight attribute="name" hit={hit} classNames={styles} />

@@ -19,7 +19,7 @@ import {
   Loader,
   Alert,
   Badge,
-  SelectItemProps,
+  ComboboxItem,
   Box,
 } from '@mantine/core';
 import { AssociationType } from '~/shared/utils/prisma/enums';
@@ -242,7 +242,7 @@ export function AssociateModels({
   );
 }
 
-type SearchItemProps = SelectItemProps & { item: AssociatedResourceModel; nsfw: boolean };
+type SearchItemProps = ComboboxItem & { item: AssociatedResourceModel; nsfw: boolean };
 const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
   ({ value, item, nsfw, ...props }, ref) => {
     return (

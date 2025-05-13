@@ -1,7 +1,10 @@
-import { Badge, Text, Group } from '@mantine/core';
+import { Badge, Text, Group, useMantineColorScheme, useMantineTheme, rgba } from '@mantine/core';
 import { UserBuzz } from '~/components/User/UserBuzz';
 
 export const AvailableBuzzBadge = () => {
+  const { colorScheme } = useMantineColorScheme();
+  const theme = useMantineTheme();
+
   return (
     <Badge
       radius="xl"
@@ -9,10 +12,9 @@ export const AvailableBuzzBadge = () => {
       h="auto"
       py={4}
       px={12}
-      sx={(theme) => ({
-        backgroundColor:
-          theme.colorScheme === 'dark' ? theme.fn.rgba('#000', 0.31) : theme.colors.gray[0],
-      })}
+      style={{
+        backgroundColor: colorScheme === 'dark' ? rgba('#000', 0.31) : theme.colors.gray[0],
+      }}
     >
       <Group gap={4} wrap="nowrap">
         <Text size="xs" color="dimmed" transform="capitalize" weight={600}>

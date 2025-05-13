@@ -5,6 +5,7 @@ import {
   MantineSize,
   Text,
   Tooltip,
+  useMantineColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
@@ -15,20 +16,21 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from './buzz.utils';
 
-type Props = ButtonProps & {
-  buzzAmount: number;
-  message?: string | ((requiredBalance: number) => string);
-  label: React.ReactNode;
-  onPerformTransaction?: () => void;
-  purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
-  size?: MantineSize;
-  performTransactionOnPurchase?: boolean;
-  showPurchaseModal?: boolean;
-  error?: string;
-  transactionType?: 'Generation' | 'Default';
-  showTypePct?: boolean;
-  priceReplacement?: React.ReactNode;
-};
+type Props = ButtonProps &
+  Partial<React.ButtonHTMLAttributes<HTMLButtonElement>> & {
+    buzzAmount: number;
+    message?: string | ((requiredBalance: number) => string);
+    label: React.ReactNode;
+    onPerformTransaction?: () => void;
+    purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
+    size?: MantineSize;
+    performTransactionOnPurchase?: boolean;
+    showPurchaseModal?: boolean;
+    error?: string;
+    transactionType?: 'Generation' | 'Default';
+    showTypePct?: boolean;
+    priceReplacement?: React.ReactNode;
+  };
 
 export function BuzzTransactionButton({
   buzzAmount,
@@ -48,6 +50,7 @@ export function BuzzTransactionButton({
 }: Props) {
   const features = useFeatureFlags();
   const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const {
     conditionalPerformTransaction,
     hasRequiredAmount,
@@ -94,7 +97,7 @@ export function BuzzTransactionButton({
       )}
       classNames={{ inner: 'flex gap-8 justify-between items-center', label: 'w-full gap-2' }}
     >
-      <Text size={size ?? 14} ta={!hasCost ? 'center' : undefined} sx={{ flex: 1 }}>
+      <Text fz={size ?? 14} ta={!hasCost ? 'center' : undefined} sx={{ flex: 1 }}>
         {label}
       </Text>
       {priceReplacement}
@@ -112,7 +115,7 @@ export function BuzzTransactionButton({
           textColor={
             meetsTypeRequiredAmount && takesBlue ? theme.colors.blue[4] : theme.colors.yellow[7]
           }
-          color={theme.colorScheme === 'dark' ? 'dark.8' : 'gray.9'}
+          color={colorScheme === 'dark' ? 'dark.8' : 'gray.9'}
           typeDistrib={showTypePct ? typeDistrib : undefined}
         >
           {!hasRequiredAmount(buzzAmount) && (

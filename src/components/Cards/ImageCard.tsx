@@ -9,12 +9,14 @@ import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 
 export function ImageCard({ data }: Props) {
   const context = useImagesContext();
 
   return (
     <AspectRatioImageCard
+      // @ts-ignore
       style={{
         '--aspect-ratio': data.width && data.height ? data.width / data.height : 1,
       }}

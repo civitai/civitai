@@ -13,6 +13,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import clsx from 'clsx';
 
 export function ArticleCard({ data, aspectRatio }: Props) {
   const { id, title, coverImage, publishedAt, user, tags, stats } = data;
@@ -78,7 +79,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
           </div>
           <div className="flex items-center justify-between gap-1">
             <Badge
-              className={cx(cardClasses.statChip, cardClasses.chip)}
+              className={clsx(cardClasses.statChip, cardClasses.chip)}
               variant="light"
               radius="xl"
             >
@@ -100,7 +101,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
               </InteractiveTipBuzzButton>
             </Badge>
             <Badge
-              className={cx(cardClasses.statChip, cardClasses.chip)}
+              className={clsx(cardClasses.statChip, cardClasses.chip)}
               variant="light"
               radius="xl"
             >

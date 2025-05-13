@@ -3,7 +3,6 @@ import {
   Alert,
   Anchor,
   Button,
-  createStyles,
   Divider,
   Group,
   Input,
@@ -81,8 +80,9 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
-import { ReadOnlyAlert }  from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import classes from './BountyUpsertForm.module.scss';
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -124,78 +124,11 @@ const formSchema = upsertBountyInputSchema
     path: ['expiresAt'],
   });
 
-const useStyles = createStyles((theme) => ({
-  radioItemWrapper: {
-    '& .mantine-Group-root': {
-      alignItems: 'stretch',
-      [containerQuery.smallerThan('sm')]: {
-        flexDirection: 'column',
-      },
-    },
-  },
-
-  radioItem: {
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-    }`,
-    borderRadius: theme.radius.sm,
-    padding: theme.spacing.xs,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-    display: 'flex',
-    flex: 1,
-
-    '& > .mantine-Radio-body, & .mantine-Radio-label': {
-      width: '100%',
-    },
-
-    '& > .mantine-Switch-body, & .mantine-Switch-labelWrapper, & .mantine-Switch-label': {
-      width: '100%',
-    },
-  },
-
-  root: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-  },
-  label: {
-    textTransform: 'capitalize',
-  },
-  active: {
-    border: `2px solid ${theme.colors.blue[5]}`,
-    backgroundColor: 'transparent',
-  },
-
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  sectionTitle: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '18px',
-    },
-  },
-  fluid: {
-    [containerQuery.smallerThan('sm')]: {
-      maxWidth: '100% !important',
-    },
-  },
-  stickySidebar: {
-    position: 'sticky',
-    top: `calc(var(--header-height) + ${theme.spacing.md}px)`,
-
-    [containerQuery.smallerThan('md')]: {
-      position: 'relative',
-      top: 0,
-    },
-  },
-}));
-
 const lockableProperties = ['nsfw', 'poi'];
 
 export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const { classes } = useStyles();
   const features = useFeatureFlags();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
@@ -373,7 +306,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this bounty."} />
+      <ReadOnlyAlert
+        message={
+          "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this bounty."
+        }
+      />
       <Stack gap={32}>
         <Group gap="md" wrap="nowrap">
           <BackButton url="/bounties" />
@@ -490,15 +427,12 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 </Input.Wrapper>
                 {images.length > 0 && (
                   <SimpleGrid
-                    gap="sm"
-                    breakpoints={[
-                      { minWidth: 'xs', cols: 1 },
-                      { minWidth: 'sm', cols: 3 },
-                      {
-                        minWidth: 'md',
-                        cols: images.length > 3 ? 4 : images.length,
-                      },
-                    ]}
+                    spacing="sm"
+                    cols={{
+                      base: 1,
+                      sm: 3,
+                      md: images.length > 3 ? 4 : images.length,
+                    }}
                   >
                     {bountyImages.map((image) => (
                       <Paper
@@ -581,14 +515,16 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           ) : (
                             <>
                               <MediaHash {...file} />
-                              <Progress
-                                size="xl"
-                                value={file.progress}
-                                label={`${Math.floor(file.progress)}%`}
-                                color={file.progress < 100 ? 'blue' : 'green'}
-                                striped
-                                animate
-                              />
+                              <Progress.Root size="xl">
+                                <Progress.Section
+                                  value={file.progress}
+                                  color={file.progress < 100 ? 'blue' : 'green'}
+                                  striped
+                                  animated
+                                >
+                                  <Progress.Label>{Math.floor(file.progress)}%</Progress.Label>
+                                </Progress.Section>
+                              </Progress.Root>
                             </>
                           )}
                         </Paper>
@@ -603,7 +539,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         name="startsAt"
                         label="Start Date"
                         placeholder="Select a start date"
-                        icon={<IconCalendar size={16} />}
+                        leftSection={<IconCalendar size={16} />}
                         minDate={minStartDate}
                         maxDate={maxStartDate}
                         clearable={false}
@@ -614,10 +550,10 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         name="expiresAt"
                         label="Deadline"
                         placeholder="Select an end date"
-                        icon={<IconCalendarDue size={16} />}
+                        leftSection={<IconCalendarDue size={16} />}
                         minDate={minExpiresDate}
                         maxDate={maxExpiresDate}
-                        dateParser={(dateString) => new Date(Date.parse(dateString))}
+                        // dateParser={(dateString) => new Date(Date.parse(dateString))}
                         clearable={false}
                         withAsterisk
                       />
@@ -686,7 +622,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         min={constants.bounties.minCreateAmount}
                         max={constants.bounties.maxCreateAmount}
                         step={100}
-                        icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                        leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                         format={currency !== Currency.BUZZ ? 'currency' : undefined}
                         withAsterisk
                       />
@@ -900,7 +836,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 </Anchor>
                 .
               </Text>
-              <List size="xs" gap={8}>
+              <List size="xs" spacing={8}>
                 <List.Item>
                   <b>Real People Images</b>: Images of real people are not permitted.
                 </List.Item>
@@ -936,7 +872,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               color="yellow.7"
             />
           ) : (
-            <Button loading={upserting} type="submit" disabled={poi || hasPoiInNsfw || !features.canWrite}>
+            <Button
+              loading={upserting}
+              type="submit"
+              disabled={poi || hasPoiInNsfw || !features.canWrite}
+            >
               Save
             </Button>
           )}

@@ -110,7 +110,7 @@ export const CreateWithdrawalRequest = () => {
                     name="amount"
                     label="Buzz"
                     labelProps={{ size: 'xs' }}
-                    icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+                    leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                     format={undefined}
                     currency={Currency.BUZZ}
                     min={constants.buzz.minBuzzWithdrawal}

@@ -75,7 +75,7 @@ export const AuctionMyBids = () => {
 
       <Title order={3}>My Bids</Title>
       <TextInput
-        icon={<IconSearch size={16} />}
+        leftSection={<IconSearch size={16} />}
         placeholder="Filter items..."
         value={searchText}
         maxLength={150}

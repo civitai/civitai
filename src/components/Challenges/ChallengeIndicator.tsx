@@ -37,7 +37,7 @@ export function ChallengeIndicator() {
   const hasUnseen = !!challenges.filter((x) => !x.dismissed).length;
 
   return (
-    <Indicator color="red" size={12} disabled={!hasUnseen} dot inline>
+    <Indicator color="red" size={12} disabled={!hasUnseen} inline>
       <ActionIcon
         size="lg"
         className={clsx(hasUnseen && 'animate-wiggle')}

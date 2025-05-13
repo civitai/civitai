@@ -11,7 +11,9 @@ import {
   Text,
   Title,
   UnstyledButton,
+  useMantineColorScheme,
   useMantineTheme,
+  rgba,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
@@ -76,7 +78,8 @@ export function DailyCreatorCompReward() {
     { enabled: features.buzz }
   );
   const theme = useMantineTheme();
-  const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
+  const { colorScheme } = useMantineColorScheme();
+  const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
   const minSelectedDate = dayjs(selectedDate).startOf('month').toDate();
   const maxSelectedDate = dayjs(selectedDate).endOf('month').toDate();
 
@@ -194,7 +197,7 @@ export function DailyCreatorCompReward() {
   return (
     <>
       <Grid gutter="xs">
-        <Grid.Col xs={12} md={8}>
+        <Grid.Col span={{ base: 12, md: 8 }}>
           <Paper withBorder className={classes.tileCard} h="100%">
             <Stack p="md" h="100%">
               <Stack gap={0}>
@@ -212,7 +215,7 @@ export function DailyCreatorCompReward() {
                     }}
                   />
                 </Group>
-                <Group position="left" gap={4}>
+                <Group justify="flex-start" gap={4}>
                   <CurrencyIcon currency={Currency.BUZZ} size={24} />
                   <Text
                     size="xl"
@@ -245,7 +248,7 @@ export function DailyCreatorCompReward() {
             </Stack>
           </Paper>
         </Grid.Col>
-        <Grid.Col xs={12} md={4}>
+        <Grid.Col span={{ base: 12, md: 4 }}>
           <Paper className={classes.tileCard} h="100%" withBorder>
             <Stack gap={8} py="md">
               <Title order={3} px="md">
@@ -288,12 +291,12 @@ export function DailyCreatorCompReward() {
                             key={version.id}
                             py={4}
                             px={8}
-                            sx={(theme) => ({
+                            style={{
                               borderRadius: theme.radius.sm,
                               backgroundColor: isSelected
-                                ? theme.fn.rgba(theme.colors.yellow[7], 0.1)
+                                ? rgba(theme.colors.yellow[7], 0.1)
                                 : undefined,
-                            })}
+                            }}
                             onClick={() => {
                               setFilteredVersionIds((ids) =>
                                 isSelected

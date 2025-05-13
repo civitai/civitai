@@ -197,7 +197,7 @@ export const AwardBountyAction = ({
       ),
       centered: true,
       labels: { confirm: 'Award this entry', cancel: 'No, go back' },
-      confirmProps: { color: 'yellow.7', rightIcon: <IconAward size={20} /> },
+      confirmProps: { color: 'yellow.7', rightSection: <IconAward size={20} /> },
       onConfirm: () => {
         awardBountyEntryMutation({ id: bountyEntry.id });
         trackAction({ type: 'AwardBounty_Confirm' }).catch(() => undefined);

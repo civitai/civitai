@@ -1,5 +1,5 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Group, Image, Stack, Text, ThemeIcon } from '@mantine/core';
+import { ComboboxItem, Group, Image, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconDownload, IconUpload, IconUser, IconUsers } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
@@ -10,7 +10,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 export const UserSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: SearchIndexDataMap['users'][number] }
+  ComboboxItem & { hit: SearchIndexDataMap['users'][number] }
 >(({ value, hit, ...props }, ref) => {
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 

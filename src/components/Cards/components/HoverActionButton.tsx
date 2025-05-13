@@ -26,6 +26,7 @@ const HoverActionButton = ({
     <button
       style={{
         ...style,
+        // @ts-ignore
         '--size': size,
       }}
       onClick={onClick}

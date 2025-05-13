@@ -12,6 +12,7 @@ import {
   Stack,
   Text,
   Title,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconArrowRight, IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import {
@@ -133,7 +134,13 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
 
   return (
     <Grid>
-      <Grid.Col xs={12} md={7} sm={6}>
+      <Grid.Col
+        span={{
+          base: 12,
+          sm: 6,
+          md: 7,
+        }}
+      >
         <Stack h="100%">
           <Paper withBorder p="lg" radius="md" className={classes.tileCard} h="100%">
             <Stack gap="xl" h="100%">
@@ -258,7 +265,13 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
           </Paper>
         </Stack>
       </Grid.Col>
-      <Grid.Col xs={12} md={5} sm={6}>
+      <Grid.Col
+        span={{
+          base: 12,
+          sm: 6,
+          md: 5,
+        }}
+      >
         <Paper
           withBorder
           p="lg"

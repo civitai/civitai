@@ -82,7 +82,7 @@ export function usePurchaseBid() {
         title: 'Created bid successfully!',
         message: '',
         autoClose: 3000,
-        disallowClose: false,
+        withCloseButton: true,
       });
 
       if (!connected || !registeredTopics.includes(`${SignalTopic.Auction}:${auctionId}`)) {

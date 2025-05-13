@@ -265,7 +265,7 @@ export const FeatureList = ({ data }: { data: FeatureCardProps[] }) => {
   return (
     <List
       listStyleType="none"
-      gap={8}
+      spacing={8}
       icon={<CurrencyIcon currency="BUZZ" size={20} style={{ verticalAlign: 'middle' }} />}
     >
       {data.map((item, index) => (

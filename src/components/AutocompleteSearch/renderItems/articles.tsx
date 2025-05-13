@@ -1,5 +1,5 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Badge, Center, Group, Stack, ThemeIcon } from '@mantine/core';
+import { Badge, Center, ComboboxItem, Group, Stack, ThemeIcon } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import {
   IconBookmark,
@@ -19,7 +19,7 @@ import styles from './common.module.scss';
 
 export const ArticlesSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: SearchIndexDataMap['articles'][number] }
+  ComboboxItem & { hit: SearchIndexDataMap['articles'][number] }
 >(({ value, hit, ...props }, ref) => {
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
@@ -71,7 +71,7 @@ export const ArticlesSearchItem = forwardRef<
           </ThemeIcon>
         )}
       </Center>
-      <Stack gap={4} sx={{ flex: '1 !important' }}>
+      <Stack gap={4} style={{ flex: '1 !important' }}>
         <Highlight attribute="title" hit={hit} classNames={styles} />
         <Group gap={4}>
           <UserAvatar size="xs" user={user} withUsername />

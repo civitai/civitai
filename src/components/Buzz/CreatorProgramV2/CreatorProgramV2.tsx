@@ -401,12 +401,12 @@ const BankBuzzCard = () => {
           <NumberInputWrapper
             label="Buzz"
             labelProps={{ className: 'hidden' }}
-            icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+            leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
             value={toBank ? toBank : undefined}
             min={10000}
             max={maxBankable}
-            onChange={(value) => {
-              setToBank(Math.min(value ?? 10000, maxBankable));
+            onChange={(value: string | number) => {
+              setToBank(Math.min(Number(value ?? 10000), maxBankable));
             }}
             styles={{
               input: {
@@ -803,12 +803,12 @@ const WithdrawCashCard = () => {
               <NumberInputWrapper
                 label="Cash to Withdraw"
                 labelProps={{ className: 'hidden' }}
-                icon={<CurrencyIcon currency={Currency.USD} size={18} />}
+                leftSection={<CurrencyIcon currency={Currency.USD} size={18} />}
                 value={toWithdraw ? toWithdraw : undefined}
                 min={MIN_WITHDRAWAL_AMOUNT}
                 max={userCash?.ready ?? MIN_WITHDRAWAL_AMOUNT}
-                onChange={(value) => {
-                  setToWithdraw(value ?? MIN_WITHDRAWAL_AMOUNT);
+                onChange={(value: number | string) => {
+                  setToWithdraw(Number(value ?? MIN_WITHDRAWAL_AMOUNT));
                 }}
                 styles={{
                   input: {

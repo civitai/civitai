@@ -1,4 +1,4 @@
-import { Button, useMantineTheme } from '@mantine/core';
+import { Button, useMantineColorScheme } from '@mantine/core';
 import { IconClock } from '@tabler/icons-react';
 
 import { useModelQueryParams } from '~/components/Model/model.utils';
@@ -20,7 +20,7 @@ export function CategoryTags({
   includeEA?: boolean;
   includeAll?: boolean;
 }) {
-  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const { set, tag: tagQuery } = useModelQueryParams();
 
   const { data: categories } = useCategoryTags({ entityType: TagTarget.Model });
@@ -38,7 +38,7 @@ export function CategoryTags({
       {includeAll && (
         <Button
           className="uppercase"
-          variant={!_tag ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={!_tag ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
           color={!_tag ? 'blue' : 'gray'}
           onClick={() => _setTag(undefined)}
           size="compact-md"
@@ -54,7 +54,7 @@ export function CategoryTags({
             <Button
               key={tag.id}
               className="uppercase"
-              variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
               onClick={() => _setTag(!active ? tag.name : undefined)}
               size="compact-md"

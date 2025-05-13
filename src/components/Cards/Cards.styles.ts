@@ -1,4 +1,4 @@
-import { createStyles } from '@mantine/core';
+// import { createStyles } from '@mantine/core';
 import { constants } from '~/server/common/constants';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 
@@ -225,50 +225,50 @@ import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector'
 //   }
 // );
 
-export const useFrameStyles = createStyles<
-  string,
-  { frame?: string; texture?: ContentDecorationCosmetic['data']['texture'] }
->((theme, params) => {
-  const { frame, texture } = params;
-  const frameBackground = [texture?.url, frame].filter(Boolean).join(', ');
-  const framePadding = constants.cosmetics.frame.padding;
+// export const useFrameStyles = createStyles<
+//   string,
+//   { frame?: string; texture?: ContentDecorationCosmetic['data']['texture'] }
+// >((theme, params) => {
+//   const { frame, texture } = params;
+//   const frameBackground = [texture?.url, frame].filter(Boolean).join(', ');
+//   const framePadding = constants.cosmetics.frame.padding;
 
-  return {
-    root: {
-      padding: '0 !important',
-      color: 'white',
-      borderRadius: theme.radius.md,
-      cursor: 'pointer',
-      position: 'relative',
-      overflow: 'hidden',
-      backgroundColor: params.frame ? 'transparent' : undefined,
-      margin: params.frame ? -framePadding : undefined,
-    },
+//   return {
+//     root: {
+//       padding: '0 !important',
+//       color: 'white',
+//       borderRadius: theme.radius.md,
+//       cursor: 'pointer',
+//       position: 'relative',
+//       overflow: 'hidden',
+//       backgroundColor: params.frame ? 'transparent' : undefined,
+//       margin: params.frame ? -framePadding : undefined,
+//     },
 
-    frame: {
-      position: 'relative',
-      backgroundImage: frameBackground,
-      backgroundSize: texture?.size
-        ? `${texture.size.width}px ${texture.size.height}px, cover`
-        : undefined,
-      borderRadius: theme.radius.md,
-      zIndex: 2,
-      padding: framePadding,
-      boxShadow: 'inset 0 0 1px 1px rgba(255,255,255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.8)',
-    },
+//     frame: {
+//       position: 'relative',
+//       backgroundImage: frameBackground,
+//       backgroundSize: texture?.size
+//         ? `${texture.size.width}px ${texture.size.height}px, cover`
+//         : undefined,
+//       borderRadius: theme.radius.md,
+//       zIndex: 2,
+//       padding: framePadding,
+//       boxShadow: 'inset 0 0 1px 1px rgba(255,255,255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.8)',
+//     },
 
-    glow: {
-      position: 'relative',
-      '&:before': {
-        backgroundImage: params.frame,
-        content: '""',
-        width: '100%',
-        height: '100%',
-        filter: 'blur(5px)',
-        position: 'absolute',
-        top: 0,
-        left: 0,
-      },
-    },
-  };
-});
+//     glow: {
+//       position: 'relative',
+//       '&:before': {
+//         backgroundImage: params.frame,
+//         content: '""',
+//         width: '100%',
+//         height: '100%',
+//         filter: 'blur(5px)',
+//         position: 'absolute',
+//         top: 0,
+//         left: 0,
+//       },
+//     },
+//   };
+// });

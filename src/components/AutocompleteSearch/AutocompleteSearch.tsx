@@ -1,13 +1,17 @@
 import {
   ActionIcon,
-  AutocompleteItem,
   AutocompleteProps,
   Code,
+  ComboboxData,
+  ComboboxItem,
   Group,
   HoverCard,
+  Portal,
   Select,
   Stack,
   Text,
+  useMantineColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
@@ -188,6 +192,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   ref: React.ForwardedRef<{ focus: () => void }>
 ) {
   // const currentUser = useCurrentUser();
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const router = useRouter();
   const isMobile = useIsMobile();
@@ -204,7 +210,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
     : indexNameProp;
 
-  const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
   const [search, setSearch] = useState(query);
   const [filters, setFilters] = useState('');
   const [searchPageQuery, setSearchPageQuery] = useState('');
@@ -260,7 +266,19 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onClear?.();
   };
 
-  const handleItemClick = (item: AutocompleteItem) => {
+  const getItemFromValue = (value: string) => {
+    return (
+      items.find((i) => i.value === value) ?? {
+        key: 'view-more',
+        hit: null,
+        value,
+      }
+    );
+  };
+
+  const handleItemClick = (value: string) => {
+    const item = getItemFromValue(value);
+
     if (item.hit) {
       // when an item is clicked
       router.push(processHitUrl(item.hit));
@@ -272,7 +290,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       });
     }
 
-    setSelectedItem(item);
+    setSelectedItem({ label: item.key, value });
     onSubmit?.();
   };
 
@@ -338,28 +356,31 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
       <Group className={classes.wrapper} gap={0} wrap="nowrap">
-        <Select
-          classNames={{
-            root: classes.targetSelectorRoot,
-            input: classes.targetSelectorInput,
-            rightSection: classes.targetSelectorRightSection,
-          }}
-          maxDropdownHeight={280}
-          defaultValue={targetData[0].value}
-          // Ensure we disable search targets if they are not enabled
-          data={targetData.filter(
-            ({ value }) =>
-              (features.imageSearch ? true : value !== 'images') &&
-              (features.bounties ? true : value !== 'bounties') &&
-              (features.articles ? true : value !== 'articles') &&
-              (features.toolSearch ? true : value !== 'tools')
-          )}
-          rightSection={<IconChevronDown size={16} color="currentColor" />}
-          sx={{ flexShrink: 1 }}
-          onChange={(v: string | null) => onTargetChange(v as SearchIndexKey)}
-          autoComplete="off"
-          withinPortal
-        />
+        <Portal>
+          <Select
+            classNames={{
+              root: classes.targetSelectorRoot,
+              input: classes.targetSelectorInput,
+            }}
+            rightSectionProps={{
+              className: classes.targetSelectorRightSection,
+            }}
+            maxDropdownHeight={280}
+            defaultValue={targetData[0].value}
+            // Ensure we disable search targets if they are not enabled
+            data={targetData.filter(
+              ({ value }) =>
+                (features.imageSearch ? true : value !== 'images') &&
+                (features.bounties ? true : value !== 'bounties') &&
+                (features.articles ? true : value !== 'articles') &&
+                (features.toolSearch ? true : value !== 'tools')
+            )}
+            rightSection={<IconChevronDown size={16} color="currentColor" />}
+            style={{ flexShrink: 1 }}
+            onChange={(v: string | null) => onTargetChange(v as TKey)}
+            autoComplete="off"
+          />
+        </Portal>
         <ClearableAutoComplete
           ref={inputRef}
           key={indexName}
@@ -367,28 +388,29 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           classNames={classes}
           placeholder="Search Civitai"
           type="search"
-          nothingFound={
-            !canPerformQuery ? (
-              <Stack gap={0} align="center">
-                <Text>
-                  Due to your current browsing settings, searching for people of interest has been
-                  disabled.
-                </Text>
-                <Text size="xs">
-                  You may remove X and XXX browsing settings to search for these.
-                </Text>
-              </Stack>
-            ) : searchErrorState ? (
-              <Stack gap={0} align="center">
-                <Text>There was an error while performing your request&hellip;</Text>
-                <Text size="xs">Please try again later</Text>
-              </Stack>
-            ) : query && !hits.length ? (
-              <Stack gap={0} align="center">
-                <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-              </Stack>
-            ) : undefined
-          }
+          // TODO: Mantine7
+          // nothingFoundMessage={
+          //   !canPerformQuery ? (
+          //     <Stack gap={0} align="center">
+          //       <Text>
+          //         Due to your current browsing settings, searching for people of interest has been
+          //         disabled.
+          //       </Text>
+          //       <Text size="xs">
+          //         You may remove X and XXX browsing settings to search for these.
+          //       </Text>
+          //     </Stack>
+          //   ) : searchErrorState ? (
+          //     <Stack gap={0} align="center">
+          //       <Text>There was an error while performing your request&hellip;</Text>
+          //       <Text size="xs">Please try again later</Text>
+          //     </Stack>
+          //   ) : query && !hits.length ? (
+          //     <Stack gap={0} align="center">
+          //       <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+          //     </Stack>
+          //   ) : undefined
+          // }
           limit={
             results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
               ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
@@ -404,26 +426,31 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             ['Escape', blurInput],
             ['Enter', handleSubmit],
           ])}
-          onItemSubmit={handleItemClick}
-          itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
+          onOptionSubmit={(v) => handleItemClick(v)}
+          renderOption={({ option }) => {
+            const item = getItemFromValue(option.value);
+
+            const Render = IndexRenderItem[indexName] ?? ModelSearchItem;
+            return <Render {...item} />;
+          }}
+          // itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
           rightSection={
             <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
               <HoverCard.Target>
                 <Text
                   weight="bold"
-                  sx={(theme) => ({
+                  style={{
                     border: `1px solid ${
-                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                      colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
                     }`,
                     borderRadius: theme.radius.sm,
                     backgroundColor:
-                      theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-                    color:
-                      theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
+                      colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+                    color: colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
                     textAlign: 'center',
                     width: 24,
                     userSelect: 'none',
-                  })}
+                  }}
                 >
                   /
                 </Text>
@@ -440,7 +467,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             </HoverCard>
           }
           // prevent default filtering behavior
-          filter={() => true}
+          // filter={() => true}
           clearable={query.length > 0}
           maxDropdownHeight={isMobile ? 'calc(90vh - var(--header-height))' : undefined}
           {...autocompleteProps}

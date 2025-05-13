@@ -1,14 +1,11 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Center, Group, Stack, Text } from '@mantine/core';
+import { ComboboxItem, Center, Group, Stack, Text } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import {
-  ActionIconBadge,
-  ViewMoreItem,
-} from '~/components/AutocompleteSearch/renderItems/common';
+import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
@@ -19,9 +16,8 @@ import styles from './common.module.scss';
 
 export const CollectionsSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: SearchIndexDataMap['collections'][number] }
+  ComboboxItem & { hit: SearchIndexDataMap['collections'][number] }
 >(({ value, hit, ...props }, ref) => {
-
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { user, images, metrics } = hit;
@@ -64,7 +60,7 @@ export const CollectionsSearchItem = forwardRef<
           />
         )}
       </Center>
-      <Stack gap={8} sx={{ flex: '1 !important' }}>
+      <Stack gap={8} style={{ flex: '1 !important' }}>
         <Text>
           <Highlight attribute="name" hit={hit} classNames={styles} />
         </Text>

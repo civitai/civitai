@@ -8,11 +8,12 @@ import React, {
 } from 'react';
 import clsx from 'clsx';
 
-export type FilterButtonProps = ButtonProps & {
-  icon?: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
-  active?: boolean;
-  onClick?: MouseEventHandler<HTMLButtonElement>;
-};
+export type FilterButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
+  ButtonProps & {
+    icon?: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
+    active?: boolean;
+    onClick?: MouseEventHandler<HTMLButtonElement>;
+  };
 
 // This is a temporary component. Since this is only used for dropdown filters, I plan on making a more reusable dropdown/popover component later. - Briant
 export const FilterButton = forwardRef<HTMLButtonElement, FilterButtonProps>(

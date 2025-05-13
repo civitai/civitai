@@ -35,9 +35,7 @@ export function ToolCard({ data }: Props) {
               w="100%"
               h="100%"
               styles={{
-                figure: { height: '100%' },
-                imageWrapper: { height: '100%' },
-                image: { objectFit: 'cover', height: '100% !important' },
+                root: { objectFit: 'cover', height: '100% !important' },
               }}
             />
           )}
@@ -77,7 +75,7 @@ export function ToolCard({ data }: Props) {
           {data.alias && (
             <Button
               data-activity="generate:tool"
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
 

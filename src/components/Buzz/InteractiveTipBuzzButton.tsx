@@ -11,7 +11,7 @@ import {
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -30,12 +30,13 @@ import { useBuzzTransaction } from './buzz.utils';
 import classes from './InteractiveTipBuzzButton.module.scss';
 import clsx from 'clsx';
 
-type Props = UnstyledButtonProps & {
-  toUserId: number;
-  entityId: number;
-  entityType: string;
-  hideLoginPopover?: boolean;
-};
+type Props = UnstyledButtonProps &
+  React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    toUserId: number;
+    entityId: number;
+    entityType: string;
+    hideLoginPopover?: boolean;
+  };
 
 const CONFIRMATION_THRESHOLD = 100;
 const CLICK_AMOUNT = 10;
@@ -346,7 +347,7 @@ export function InteractiveTipBuzzButton({
         <UnstyledButton
           {...buttonProps}
           {...mouseHandlerProps}
-          onContextMenu={(e) => {
+          onContextMenu={(e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
             return false;

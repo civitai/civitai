@@ -1,6 +1,6 @@
 import React, { forwardRef } from 'react';
 import {
-  AutocompleteItem,
+  ComboboxItem,
   Badge,
   BadgeProps,
   Center,
@@ -24,7 +24,7 @@ import styles from './common.module.scss';
 
 export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: SearchIndexDataMap['images'][number] }
+  ComboboxItem & { hit: SearchIndexDataMap['images'][number] }
 >(({ value, hit, ...props }, ref) => {
   const { colorScheme } = useMantineColorScheme();
 
@@ -82,7 +82,7 @@ export const ImagesSearchItem = forwardRef<
           />
         )}
       </Center>
-      <Stack gap={8} sx={{ flex: '1 !important' }}>
+      <Stack gap={8} style={{ flex: '1 !important' }}>
         {!hit.hideMeta && hit.prompt && (
           <Text lineClamp={2} size="sm" inline>
             <Text weight={600} ml={1} span>

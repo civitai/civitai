@@ -10,10 +10,11 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  useMantineColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useBuzzButtonStyles } from '~/components/Buzz/styles';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
@@ -37,6 +38,8 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
+import classes from '~/components/Buzz/buzz.module.scss';
+import clsx from 'clsx';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -198,7 +201,8 @@ export const BuzzPurchase = ({
   purchaseSuccessMessage,
   ...props
 }: Props) => {
-  const { classes, cx, theme } = useBuzzButtonStyles();
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const canUpgradeMembership = useCanUpgrade();
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
@@ -283,7 +287,7 @@ export const BuzzPurchase = ({
 
   return (
     <Grid>
-      <Grid.Col span={12} md={canUpgradeMembership ? 6 : 12}>
+      <Grid.Col span={{ base: 12, md: canUpgradeMembership ? 6 : 12 }}>
         <Stack gap="md">
           {message && (
             <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" size="md">
@@ -301,9 +305,12 @@ export const BuzzPurchase = ({
             <Input.Wrapper error={error}>
               <Stack gap="xl" mb={error ? 5 : undefined}>
                 <Chip.Group
-                  className={classes.chipGroup}
                   value={selectedPrice?.id ?? ''}
-                  onChange={(priceId: string) => {
+                  onChange={(priceId: string | string[]) => {
+                    if (Array.isArray(priceId)) {
+                      return;
+                    }
+
                     const selectedPackage = packages.find((p) => p.id === priceId);
                     setCustomAmount(undefined);
                     setError('');
@@ -311,52 +318,54 @@ export const BuzzPurchase = ({
                     setActiveControl(null);
                   }}
                 >
-                  {packages.map((buzzPackage, index) => {
-                    if (!buzzPackage.unitAmount) return null;
+                  <Group className={classes.chipGroup}>
+                    {packages.map((buzzPackage, index) => {
+                      if (!buzzPackage.unitAmount) return null;
 
-                    const price = buzzPackage.unitAmount / 100;
-                    const buzzAmount = buzzPackage.buzzAmount ?? buzzPackage.unitAmount * 10;
-                    const disabled = !!minBuzzAmount ? buzzAmount < minBuzzAmount : false;
+                      const price = buzzPackage.unitAmount / 100;
+                      const buzzAmount = buzzPackage.buzzAmount ?? buzzPackage.unitAmount * 10;
+                      const disabled = !!minBuzzAmount ? buzzAmount < minBuzzAmount : false;
 
-                    return (
-                      <Chip
-                        key={buzzPackage.id}
-                        value={buzzPackage.id}
-                        variant="filled"
-                        classNames={{
-                          root: cx(disabled && classes.chipDisabled),
-                          label: classes.chipLabel,
-                          iconWrapper: classes.chipCheckmark,
-                        }}
-                        disabled={disabled}
-                      >
-                        <Group gap="sm" align="center">
-                          <Text color="accent.5">
-                            <BuzzTierIcon tier={index + 1} />
-                          </Text>
-                          {price ? (
-                            <Group gap={8} justify="space-between" sx={{ flexGrow: 1 }}>
-                              <Text size={20} weight={510} color="accent.5">
-                                {buzzAmount.toLocaleString()} Buzz
-                              </Text>
-                              <Text
-                                color={theme.colorScheme === 'dark' ? 'gray.0' : 'dark'}
-                                size={20}
-                                weight="bold"
-                                sx={{ fontVariantNumeric: 'tabular-nums' }}
-                              >
-                                ${price}
-                              </Text>
-                            </Group>
-                          ) : (
-                            <Text size="md" color="dimmed">
-                              I&apos;ll enter my own amount
+                      return (
+                        <Chip
+                          key={buzzPackage.id}
+                          value={buzzPackage.id}
+                          variant="filled"
+                          classNames={{
+                            root: clsx(disabled && classes.chipDisabled),
+                            label: classes.chipLabel,
+                            iconWrapper: classes.chipCheckmark,
+                          }}
+                          disabled={disabled}
+                        >
+                          <Group gap="sm" align="center">
+                            <Text color="accent.5">
+                              <BuzzTierIcon tier={index + 1} />
                             </Text>
-                          )}
-                        </Group>
-                      </Chip>
-                    );
-                  })}
+                            {price ? (
+                              <Group gap={8} justify="space-between" style={{ flexGrow: 1 }}>
+                                <Text fz={20} weight={510} color="accent.5">
+                                  {buzzAmount.toLocaleString()} Buzz
+                                </Text>
+                                <Text
+                                  color={colorScheme === 'dark' ? 'gray.0' : 'dark'}
+                                  fz={20}
+                                  weight="bold"
+                                  sx={{ fontVariantNumeric: 'tabular-nums' }}
+                                >
+                                  ${price}
+                                </Text>
+                              </Group>
+                            ) : (
+                              <Text size="md" color="dimmed">
+                                I&apos;ll enter my own amount
+                              </Text>
+                            )}
+                          </Group>
+                        </Chip>
+                      );
+                    })}
+                  </Group>
                 </Chip.Group>
 
                 <Accordion
@@ -379,10 +388,7 @@ export const BuzzPurchase = ({
                       <Group
                         gap={8}
                         align="flex-end"
-                        sx={{
-                          ['& > *']: { flexGrow: 1 },
-                        }}
-                        className="flex-col items-center"
+                        className="flex-col items-center *:grow"
                         wrap="nowrap"
                       >
                         <NumberInputWrapper
@@ -391,13 +397,13 @@ export const BuzzPurchase = ({
                           placeholder={`Minimum ${Number(
                             minBuzzAmountPrice * 10
                           ).toLocaleString()}`}
-                          icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+                          leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                           value={customAmount ? customAmount * 10 : undefined}
                           min={1000}
                           max={constants.buzz.maxChargeAmount * 10}
-                          onChange={(value) => {
+                          onChange={(value: string | number) => {
                             setError('');
-                            setCustomAmount(Math.ceil((value ?? 0) / 10));
+                            setCustomAmount(Math.ceil(Number(value ?? 0) / 10));
                           }}
                           step={100}
                           w="80%"
@@ -410,19 +416,21 @@ export const BuzzPurchase = ({
                           label="USD ($)"
                           labelProps={{ sx: { fontSize: 12, fontWeight: 590 } }}
                           placeholder={`Minimum $${formatPriceForDisplay(minBuzzAmountPrice)}`}
-                          icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
+                          leftSection={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
                           value={customAmount}
                           min={100}
                           step={100}
                           max={constants.buzz.maxChargeAmount}
-                          precision={2}
+                          allowDecimal
+                          fixedDecimalScale
+                          decimalScale={2}
                           rightSection={null}
                           rightSectionWidth="auto"
                           format="currency"
                           currency="USD"
-                          onChange={(value) => {
+                          onChange={(value: string | number) => {
                             setError('');
-                            setCustomAmount(value ?? 0);
+                            setCustomAmount(Number(value ?? 0));
                           }}
                           w="80%"
                         />
@@ -471,7 +479,7 @@ export const BuzzPurchase = ({
         </Stack>
       </Grid.Col>
       {canUpgradeMembership && (
-        <Grid.Col span={12} md={6}>
+        <Grid.Col span={{ base: 12, md: 6 }}>
           <MembershipUpsell buzzAmount={buzzAmount ?? 0} />
         </Grid.Col>
       )}

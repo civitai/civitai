@@ -263,7 +263,7 @@ export function ChatList() {
           <Button
             size="xs"
             variant="light"
-            styles={{ leftIcon: { marginRight: 6 } }}
+            styles={{ section: { marginRight: 6 } }}
             leftIcon={<IconCirclePlus size={18} />}
             onClick={() => {
               setState((prev) => ({ ...prev, isCreating: true, existingChatId: undefined }));
@@ -281,7 +281,7 @@ export function ChatList() {
       </Group>
       <Box p="sm" pt={0}>
         <TextInput
-          icon={<IconSearch size={16} />}
+          leftSection={<IconSearch size={16} />}
           placeholder="Filter by user"
           value={searchInput}
           onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
@@ -380,7 +380,7 @@ export function ChatList() {
                         )}
                       </Box>
                     </Indicator>
-                    <Stack sx={{ overflow: 'hidden' }} gap={0}>
+                    <Stack style={{ overflow: 'hidden' }} gap={0}>
                       <Highlight
                         size="sm"
                         fw={500}
@@ -410,12 +410,12 @@ export function ChatList() {
                         </Text>
                       )}
                     </Stack>
-                    <Group sx={{ marginLeft: 'auto' }} wrap="nowrap" gap={6}>
+                    <Group style={{ marginLeft: 'auto' }} wrap="nowrap" gap={6}>
                       {isModSender && (
                         <Tooltip
                           withArrow={false}
                           label="Moderator chat"
-                          sx={{ border: '1px solid gray' }}
+                          style={{ border: '1px solid gray' }}
                         >
                           <Image src="/images/civ-c.png" alt="Moderator" width={16} height={16} />
                         </Tooltip>

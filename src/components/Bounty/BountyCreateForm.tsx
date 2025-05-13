@@ -1,7 +1,6 @@
 import {
   ActionIcon,
   Button,
-  createStyles,
   Divider,
   Group,
   Input,
@@ -72,6 +71,7 @@ import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
+import classes from './BountyCreateForm.module.scss';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -109,75 +109,8 @@ const formSchema = createBountyInputSchema
     path: ['expiresAt'],
   });
 
-const useStyles = createStyles((theme) => ({
-  radioItemWrapper: {
-    '& .mantine-Group-root': {
-      alignItems: 'stretch',
-      [containerQuery.smallerThan('sm')]: {
-        flexDirection: 'column',
-      },
-    },
-  },
-
-  radioItem: {
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-    }`,
-    borderRadius: theme.radius.sm,
-    padding: theme.spacing.xs,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-    display: 'flex',
-    flex: 1,
-
-    '& > .mantine-Radio-body, & .mantine-Radio-label': {
-      width: '100%',
-    },
-
-    '& > .mantine-Switch-body, & .mantine-Switch-labelWrapper, & .mantine-Switch-label': {
-      width: '100%',
-    },
-  },
-
-  root: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-  },
-  label: {
-    textTransform: 'capitalize',
-  },
-  active: {
-    border: `2px solid ${theme.colors.blue[5]}`,
-    backgroundColor: 'transparent',
-  },
-
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  sectionTitle: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '18px',
-    },
-  },
-  fluid: {
-    [containerQuery.smallerThan('sm')]: {
-      maxWidth: '100% !important',
-    },
-  },
-  stickySidebar: {
-    position: 'sticky',
-    top: `calc(var(--header-height) + ${theme.spacing.md}px)`,
-
-    [containerQuery.smallerThan('md')]: {
-      position: 'relative',
-      top: 0,
-    },
-  },
-}));
-
 export function BountyCreateForm() {
   const router = useRouter();
-  const { classes } = useStyles();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
 
@@ -368,12 +301,12 @@ export function BountyCreateForm() {
                 </Input.Wrapper>
                 {imageFiles.length > 0 && (
                   <SimpleGrid
-                    gap="sm"
-                    breakpoints={[
-                      { minWidth: 'xs', cols: 1 },
-                      { minWidth: 'sm', cols: 3 },
-                      { minWidth: 'md', cols: imageFiles.length > 3 ? 4 : imageFiles.length },
-                    ]}
+                    spacing="sm"
+                    cols={{
+                      base: 1,
+                      sm: 3,
+                      md: imageFiles.length > 3 ? 4 : imageFiles.length,
+                    }}
                   >
                     {imageFiles
                       .slice()
@@ -417,14 +350,16 @@ export function BountyCreateForm() {
                           ) : (
                             <>
                               <MediaHash {...file} />
-                              <Progress
-                                size="xl"
-                                value={file.progress}
-                                label={`${Math.floor(file.progress)}%`}
-                                color={file.progress < 100 ? 'blue' : 'green'}
-                                striped
-                                animate
-                              />
+                              <Progress.Root size="xl">
+                                <Progress.Section
+                                  striped
+                                  animated
+                                  value={file.progress}
+                                  color={file.progress < 100 ? 'blue' : 'green'}
+                                >
+                                  <Progress.Label>{Math.floor(file.progress)}%</Progress.Label>
+                                </Progress.Section>
+                              </Progress.Root>
                             </>
                           )}
                         </Paper>
@@ -438,7 +373,7 @@ export function BountyCreateForm() {
                       name="startsAt"
                       label="Start Date"
                       placeholder="Select a start date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       withAsterisk
                       minDate={minStartDate}
                       maxDate={maxStartDate}
@@ -448,7 +383,7 @@ export function BountyCreateForm() {
                       name="expiresAt"
                       label="Deadline"
                       placeholder="Select an end date"
-                      icon={<IconCalendarDue size={16} />}
+                      leftSection={<IconCalendarDue size={16} />}
                       withAsterisk
                       minDate={minExpiresDate}
                       maxDate={maxExpiresDate}
@@ -498,7 +433,7 @@ export function BountyCreateForm() {
                     min={constants.bounties.minCreateAmount}
                     max={constants.bounties.maxCreateAmount}
                     step={100}
-                    icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                     format={currency !== Currency.BUZZ ? 'currency' : undefined}
                     withAsterisk
                   />

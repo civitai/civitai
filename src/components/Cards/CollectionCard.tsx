@@ -157,7 +157,7 @@ function CollectionCardHeader({
         <ActionIcon
           variant="transparent"
           p={0}
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
           }}
@@ -174,6 +174,7 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
   const coverImagesCount = coverImages.length;
 
   return (
+    // @ts-ignore
     <div style={{ '--aspect-ratio': 7 / 9 }}>
       {coverImages.map((image, i) => (
         <ImageGuard2 key={image.id} image={image} connectType="collection" connectId={data.id}>
@@ -227,6 +228,7 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
 
 export function ImageSrcCover({ data, coverSrcs }: { data: HeaderData; coverSrcs: string[] }) {
   return (
+    // @ts-ignore
     <div style={{ '--aspect-ratio': 7 / 9 }}>
       {coverSrcs.map((src) => (
         <EdgeMedia

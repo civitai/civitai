@@ -1,25 +1,6 @@
-import { Group, Paper, Switch, createStyles, Text, Stack, Checkbox } from '@mantine/core';
+import { Group, Paper, Switch, Text, Stack, Checkbox } from '@mantine/core';
 import { useQueryHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { toggleableBrowsingCategories } from '~/shared/constants/browsingLevel.constants';
-
-const useStyles = createStyles((theme) => ({
-  root: {
-    ['& > div']: {
-      ['&:hover']: {
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-        cursor: 'pointer',
-      },
-      ['&:not(:last-child)']: {
-        borderBottom: `1px ${
-          theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-        } solid`,
-      },
-    },
-  },
-  active: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-  },
-}));
 
 export function BrowsingCategories() {
   // const { classes, cx } = useStyles();
