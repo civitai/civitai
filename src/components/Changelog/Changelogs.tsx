@@ -12,6 +12,7 @@ import {
   Paper,
   Stack,
   Text,
+  Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue, useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -19,6 +20,7 @@ import {
   IconAlertCircle,
   IconExternalLink,
   IconMinus,
+  IconPinFilled,
   IconPlus,
   IconPointFilled,
   IconSortAscending,
@@ -148,9 +150,18 @@ const ChangelogItem = ({
                 )}
               >
                 {lastSeen < item.effectiveAt.getTime() && (
-                  <Text className="mr-1 inline-block">
-                    <IconPointFilled color="green" size={18} />
-                  </Text>
+                  <div className="mr-1 inline-block">
+                    <Tooltip label="New" withArrow position="top" withinPortal>
+                      <IconPointFilled color="green" size={18} />
+                    </Tooltip>
+                  </div>
+                )}
+                {item.sticky && (
+                  <div className="mr-1 inline-block">
+                    <Tooltip label="Sticky" withArrow position="top" withinPortal>
+                      <IconPinFilled color="yellow" size={18} />
+                    </Tooltip>
+                  </div>
                 )}
                 {item.title}
               </span>
@@ -271,6 +282,7 @@ const defaultValues: SchemaType = {
   type: ChangelogType.Feature,
   tags: [],
   disabled: false,
+  sticky: false,
 };
 
 const CreateChangelog = ({
@@ -432,6 +444,7 @@ const CreateChangelog = ({
               <InputText name="link" label="Link" placeholder="Link to commit/article..." />
               <InputText name="cta" label="CTA" placeholder="Link for CTA..." />
               <InputCheckbox name="disabled" label="Disabled" />
+              <InputCheckbox name="sticky" label="Sticky" />
               <Group position="right">
                 <Button variant="default" onClick={handleClose}>
                   Cancel
