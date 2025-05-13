@@ -1,4 +1,5 @@
 import { ButtonProps } from '@mantine/core';
+import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -10,9 +11,9 @@ import {
   BuzzWithdrawalRequestSort,
   ClubSort,
   CollectionSort,
+  GenerationSort,
   ImageSort,
   ImageSortHidden,
-  GenerationSort,
   ModelSort,
   PostSort,
   QuestionSort,
@@ -20,10 +21,9 @@ import {
   ToolSort,
 } from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
-import clsx from 'clsx';
 
 type SortFilterComponentProps = {
-  type: FilterSubTypes;
+  type: Exclude<FilterSubTypes, 'changelogs'>;
   ignoreNsfwLevel?: boolean;
   options?: { label: SortOption; value: SortOption }[];
 } & Omit<ButtonProps, 'children' | 'type'>;

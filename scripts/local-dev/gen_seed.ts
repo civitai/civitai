@@ -13,6 +13,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   ArticleEngagementType,
   Availability,
+  ChangelogType,
   CheckpointType,
   CollectionType,
   EntityMetric_MetricType_Type,
@@ -144,7 +145,7 @@ const insertClickhouseRows = async (table: string, data: any[][]) => {
 const truncateRows = async () => {
   console.log('Truncating tables');
   await pgDbWrite.query(
-    `TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew", "EntityMetric", "JobQueue", "KeyValue", "ImageRank", "ModelVersionRank", "UserRank", "TagRank", "ArticleRank", "CollectionRank" RESTART IDENTITY CASCADE`
+    `TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew", "EntityMetric", "JobQueue", "KeyValue", "ImageRank", "ModelVersionRank", "UserRank", "TagRank", "ArticleRank", "CollectionRank", "Changelog" RESTART IDENTITY CASCADE`
   );
 };
 
@@ -2924,6 +2925,46 @@ const genFeaturedModelVersions = (num: number, mvIds: number[]) => {
   return ret;
 };
 
+/**
+ * Changelog
+ */
+const genChangelogs = (num: number) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const created = faker.date.past({ years: 1 }).toISOString();
+
+    const row = [
+      step, // id
+      faker.lorem.sentence({ min: 2, max: 30 }), // title
+      `<p>${faker.lorem.paragraph({ min: 1, max: 50 })}</p>`, // content // TODO make this more html-y
+      randw([
+        { value: null, weight: 2 },
+        { value: `https://civitai.com/${faker.lorem.slug(5)}`, weight: 1 },
+      ]), // link
+      randw([
+        { value: null, weight: 3 },
+        { value: `https://civitai.com/${faker.lorem.slug(5)}`, weight: 1 },
+      ]), // cta
+      faker.date.past({ years: 1 }).toISOString(), // effectiveAt
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+      rand(Object.values(ChangelogType)), // type
+      rand(['{}', `{${faker.lorem.words({ min: 1, max: 10 }).split(' ').join(',')}}`]), // tags
+      randw([
+        { value: false, weight: 15 },
+        { value: true, weight: 1 },
+      ]), // disabled
+      rand(['blue', 'purple', 'red', 'orange', 'yellow', 'green', 'junk', null]), // titleColor
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+// ---
+// Data end
 // ---
 
 const genRows = async (truncate = true) => {
@@ -3129,6 +3170,9 @@ const genRows = async (truncate = true) => {
 
   const featuredModelVersions = genFeaturedModelVersions(auctions.length * 10, mvIds);
   await insertRows('FeaturedModelVersion', featuredModelVersions);
+
+  const changelogs = genChangelogs(Math.round(numRows / 4));
+  await insertRows('Changelog', changelogs);
 };
 
 /**

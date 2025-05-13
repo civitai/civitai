@@ -1,8 +1,9 @@
 import { Center, Divider, Group, Stack, Text } from '@mantine/core';
 import { IconClock } from '@tabler/icons-react';
+import type { ReactNode } from 'react';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
-export function EndOfFeed() {
+export function EndOfFeed({ text }: { text?: ReactNode }) {
   const node = useScrollAreaRef();
   return (
     <Stack mt="xl">
@@ -20,7 +21,7 @@ export function EndOfFeed() {
       <Center>
         <Stack spacing={0} align="center">
           <Text size="sm" color="dimmed">
-            Consider changing your period or filters to find more
+            {text ?? 'Consider changing your period or filters to find more'}
           </Text>
           <Text
             variant="link"

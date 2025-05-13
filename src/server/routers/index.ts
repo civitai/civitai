@@ -1,11 +1,13 @@
 import { auctionRouter } from '~/server/routers/auction.router';
 import { blocklistRouter } from '~/server/routers/blocklist.router';
+import { changelogRouter } from '~/server/routers/changelog.router';
 import { clubRouter } from '~/server/routers/club.router';
 import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
 import { clubPostRouter } from '~/server/routers/clubPost.router';
 import { commonRouter } from '~/server/routers/common.router';
 import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
+import { creatorProgramRouter } from '~/server/routers/creator-program.router';
 import { csamRouter } from '~/server/routers/csam.router';
 import { dailyChallengeRouter } from '~/server/routers/daily-challenge.router';
 import { donationGoalRouter } from '~/server/routers/donation-goal.router';
@@ -72,7 +74,6 @@ import { userLinkRouter } from './user-link.router';
 import { userPaymentConfigurationRouter } from './user-payment-configuration.router';
 import { userRouter } from './user.router';
 import { vaultRouter } from './vault.router';
-import { creatorProgramRouter } from '~/server/routers/creator-program.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -149,6 +150,7 @@ export const appRouter = router({
   vimeo: vimeoRouter,
   creatorProgram: creatorProgramRouter,
   auction: auctionRouter,
+  changelog: changelogRouter,
 });
 
 // export type definition of API

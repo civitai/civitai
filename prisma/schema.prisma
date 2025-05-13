@@ -3524,6 +3524,28 @@ model ModerationRule {
   createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
 }
 
+enum ChangelogType {
+  Feature
+  Bugfix
+  Policy
+  Update
+}
+
+model Changelog {
+  id          Int           @id @default(autoincrement())
+  title       String
+  content     String
+  link        String? // commit or article URL
+  cta         String? // if feature, link to it
+  effectiveAt DateTime
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  type        ChangelogType
+  tags        String[]      @default([])
+  disabled    Boolean       @default(false)
+  titleColor  String?
+}
+
 model NewOrderPlayer {
   userId        Int              @id @unique
   user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
