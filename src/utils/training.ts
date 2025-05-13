@@ -1,7 +1,7 @@
 import type JSZip from 'jszip';
 import type { BaseModel } from '~/server/common/constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
-import { getMimeTypeFromExt, IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { getMimeTypeFromExt, MEDIA_TYPE } from '~/server/common/mime-types';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsParams,
@@ -167,7 +167,7 @@ export async function unzipTrainingData<T = void>(
 
         const fileExt = getFileExtension(zname);
         const mimeType = getMimeTypeFromExt(fileExt);
-        if (!IMAGE_MIME_TYPE.includes(mimeType as any)) return;
+        if (!MEDIA_TYPE[mimeType as any]) return;
         const imgBlob = await zf.async('blob');
         return cb({ imgBlob, filename: zname, fileExt });
       })

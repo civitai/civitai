@@ -98,7 +98,7 @@ function getImageGenInput(params: InputParams) {
         operation: !params.sourceImage ? 'createImage' : 'editImage',
         images: params.sourceImage ? [params.sourceImage.url] : undefined,
         prompt: params.prompt,
-        size: !params.sourceImage ? `${params.width}x${params.height}` : 'auto',
+        size: !params.sourceImage ? `${params.width}x${params.height}` : undefined,
         // quality: params.openAIQuality,
         background: params.openAITransparentBackground ? 'transparent' : 'opaque',
         quality: params.openAIQuality,
