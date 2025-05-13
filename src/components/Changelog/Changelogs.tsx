@@ -62,6 +62,7 @@ const changelogTypeMap: { [K in ChangelogType]: { color: MantineColor; text: str
   Policy: { color: 'teal', text: 'Policy' },
   Feature: { color: 'green', text: 'Feature' },
   Update: { color: 'violet', text: 'Update' },
+  Incident: { color: 'red', text: 'Incident' },
 };
 
 // nb: set your editor tailwind to `"classAttributes": [... ".*TWStyles"]` for this to populate
@@ -520,7 +521,7 @@ export function Changelogs() {
     <Stack ref={ref}>
       <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Text size={26} weight="bold" className="w-full text-left sm:w-auto">
-          Changelog
+          Updates
         </Text>
 
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">

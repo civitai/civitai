@@ -3529,6 +3529,7 @@ enum ChangelogType {
   Bugfix
   Policy
   Update
+  Incident
 }
 
 model Changelog {
