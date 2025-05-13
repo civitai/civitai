@@ -25,11 +25,14 @@ export const sourceImageSchema = z.object({
 export const seedSchema = z.number().optional();
 const prioritySchema = z.nativeEnum(Priority).default('low').catch('low');
 
-export const baseGenerationSchema = z.object({
+const baseGenerationSchema = z.object({
   priority: prioritySchema,
-  process: z.nativeEnum(GenerationType).default('txt2vid').catch('txt2vid'),
   /** temporary property to satisfy type constraints */
   workflow: z.string().optional(),
+});
+
+export const baseVideoGenerationSchema = baseGenerationSchema.extend({
+  process: z.enum(['txt2vid', 'img2vid']).default('txt2vid'),
 });
 
 // export const textEnhancementSchema = baseGenerationSchema.extend({

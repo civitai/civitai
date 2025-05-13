@@ -43,7 +43,8 @@ export function VideoGenerationConfig2<
   }
 
   function inputFn(data: SchemaOutput): TOutput {
-    const transformed = transformFn?.(data) ?? data;
+    const softValidated = schema.parse(data) as SchemaOutput;
+    const transformed = transformFn?.(softValidated) ?? softValidated;
     return args.inputFn(transformed as any);
   }
 

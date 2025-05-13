@@ -1,8 +1,8 @@
-import { ViduVideoGenInput, ViduVideoGenModel, ViduVideoGenStyle } from '@civitai/client';
+import { ViduVideoGenInput, ViduVideoGenStyle } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
-  baseGenerationSchema,
+  baseVideoGenerationSchema,
   promptSchema,
   seedSchema,
   sourceImageSchema,
@@ -11,7 +11,7 @@ import { numberEnum } from '~/utils/zod-helpers';
 
 export const viduDuration = [4, 8] as const;
 
-const schema = baseGenerationSchema.extend({
+const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('vidu').catch('vidu'),
   sourceImage: sourceImageSchema.nullish(),
   endSourceImage: sourceImageSchema.nullish(),
@@ -20,12 +20,13 @@ const schema = baseGenerationSchema.extend({
   style: z.nativeEnum(ViduVideoGenStyle).optional().catch(ViduVideoGenStyle.GENERAL),
   duration: numberEnum(viduDuration).optional().catch(4),
   seed: seedSchema,
-  model: z.nativeEnum(ViduVideoGenModel).default('q1').catch('q1'),
+  model: z.literal('q1').default('q1').catch('q1'),
+  // model: z.nativeEnum(ViduVideoGenModel).default('q1').catch('q1'),
 });
 
 export const viduGenerationConfig = VideoGenerationConfig2({
-  label: 'Vidu',
-  whatIfProps: ['duration', 'sourceImage', 'endSourceImage', 'model'],
+  label: 'Vidu Q1',
+  whatIfProps: ['duration', 'sourceImage', 'endSourceImage', 'model', 'process'],
   metadataDisplayProps: ['style', 'duration', 'seed'],
   schema,
   processes: ['txt2vid', 'img2vid'],
@@ -37,26 +38,31 @@ export const viduGenerationConfig = VideoGenerationConfig2({
     model: 'q1',
   },
   transformFn: (data) => {
-    if (data.sourceImage) {
-      delete data.style;
-      console.log('delete style');
-    }
     if (data.model === 'q1') {
       delete data.duration;
-      console.log('delete duration');
     }
-    const process = data.sourceImage ? 'img2vid' : 'txt2vid';
-    return { ...data, process };
+    if (data.process === 'txt2vid') {
+      delete data.sourceImage;
+      delete data.endSourceImage;
+    } else {
+      delete data.style;
+    }
+
+    if (data.endSourceImage && !data.sourceImage) {
+      data.sourceImage = data.endSourceImage;
+      delete data.endSourceImage;
+    }
+    return data;
   },
   superRefine: (data, ctx) => {
-    if (!data.sourceImage && data.endSourceImage) {
+    if (data.process === 'img2vid' && !data.sourceImage) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'First frame is required',
+        message: 'Starting image is required',
         path: ['sourceImage'],
       });
     }
-    if (!data.sourceImage && !data.endSourceImage && !data.prompt?.length) {
+    if (data.process === 'txt2vid' && !data.prompt?.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Prompt is required',

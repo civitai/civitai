@@ -1,5 +1,5 @@
 import { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
-import { Button, Alert, Loader, Select, Text } from '@mantine/core';
+import { Button, Alert, Loader, Select, Text, SegmentedControl } from '@mantine/core';
 import {
   useVideoGenerationStore,
   useGenerationEngines,
@@ -70,13 +70,14 @@ export function VideoGenerationFormWrapper() {
       ) : (
         <>
           <Select
-            className="mx-2"
+            className="mx-2 mb-3"
             label="Tool"
             value={engine}
             description={selected?.message && !selected?.disabled ? selected.message : undefined}
             onChange={(engine) => setEngine(engine!)}
             data={data?.map(({ engine, label }) => ({ label, value: engine }))}
           />
+
           {engine && <VideoGenerationForm key={engine} engine={engine} />}
         </>
       )}

@@ -10,7 +10,7 @@ import { useGenerate } from '~/components/ImageGeneration/utils/generationReques
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+
 import { Form } from '~/libs/form';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
@@ -132,7 +132,6 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
     >
       <div className="flex flex-col gap-2 px-2">
         <InputsComponent />
-        <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
       </div>
       <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
         <DailyBoostRewardClaim />
@@ -178,12 +177,12 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   const config = videoGenerationConfig2[engine];
   const [query, setQuery] = useState<Record<string, any> | null>(null);
   const { getValues, watch } = useFormContext();
-  const [error, setError] = useState<string | null>(null);
+  // const [error, setError] = useState<string | null>(null);
   const isUploadingImageValue = useIsMutating({
     mutationKey: getQueryKey(trpc.orchestrator.imageUpload),
   });
   const isUploadingImage = isUploadingImageValue === 1;
-  const { data, isFetching } = trpc.orchestrator.whatIf.useQuery(
+  const { data, isFetching, error } = trpc.orchestrator.whatIf.useQuery(
     { $type: 'videoGen', data: query as Record<string, any> },
     { keepPreviousData: false, enabled: !!query && !isUploadingImage }
   );
@@ -202,11 +201,9 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
       try {
         const result = config.getWhatIfValues({ ...whatIfData, priority: formData.priority });
         setQuery(result);
-        setError(null);
       } catch (e: any) {
-        const { message, path } = JSON.parse(e.message)?.[0] as any;
+        console.log({ e });
         setQuery(null);
-        setError(`${path?.[0]}: ${message}`);
       }
     });
     return subscription.unsubscribe;

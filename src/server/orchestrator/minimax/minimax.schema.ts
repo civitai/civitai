@@ -2,12 +2,12 @@ import { MiniMaxVideoGenInput, MiniMaxVideoGenModel } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
-  baseGenerationSchema,
+  baseVideoGenerationSchema,
   promptSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 
-const schema = baseGenerationSchema.extend({
+const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('minimax').catch('minimax'),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
@@ -20,7 +20,12 @@ export const minimaxGenerationConfig = VideoGenerationConfig2({
   metadataDisplayProps: [],
   schema,
   processes: ['txt2vid', 'img2vid'],
-  transformFn: (data) => ({ ...data, process: data.sourceImage ? 'img2vid' : 'txt2vid' }),
+  transformFn: (data) => {
+    if (data.process === 'txt2vid') {
+      delete data.sourceImage;
+    }
+    return data;
+  },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {
       ctx.addIssue({

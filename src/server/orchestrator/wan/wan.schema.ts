@@ -6,7 +6,7 @@ import {
   seedSchema,
   promptSchema,
   resourceSchema,
-  baseGenerationSchema,
+  baseVideoGenerationSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
@@ -15,7 +15,7 @@ export const wanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
 export const wanDuration = [3, 5] as const;
 export const wanAspectRatioMap = AspectRatioMap([...wanAspectRatios], { multiplier: 16 });
 
-const schema = baseGenerationSchema.extend({
+const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('wan').catch('wan'),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,

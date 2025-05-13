@@ -3,26 +3,29 @@ import { Anchor, Input } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
+import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
 import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
 
 export function KlingFormInput() {
   const form = useFormContext();
-  const sourceImage = form.watch('sourceImage');
+  const process = form.watch('process');
+  const isTxt2Vid = process === 'txt2vid';
 
   return (
     <>
-      <InputSourceImageUpload name="sourceImage" label="Image (optional)" />
+      <InputVideoProcess name="process" />
+      {process === 'img2vid' && <InputSourceImageUpload name="sourceImage" />}
       <InputTextArea
-        required={!sourceImage}
+        required={isTxt2Vid}
         name="prompt"
         label="Prompt"
         placeholder="Your prompt goes here..."
         autosize
       />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
-      {!sourceImage && (
+      {isTxt2Vid && (
         <InputAspectRatioColonDelimited
           name="aspectRatio"
           label="Aspect Ratio"

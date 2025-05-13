@@ -11,6 +11,7 @@ import {
   lightricksDuration,
 } from '~/server/orchestrator/lightricks/lightricks.schema';
 import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
+import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 
 export function LightricksFormInput() {
   const form = useFormContext();
@@ -108,6 +109,7 @@ export function LightricksFormInput() {
         reverse
       />
       <InputSeed name="seed" label="Seed" />
+      <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
     </>
   );
 }

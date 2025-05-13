@@ -3,7 +3,7 @@ import z from 'zod';
 import { AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
-  baseGenerationSchema,
+  baseVideoGenerationSchema,
   promptSchema,
   resourceSchema,
   seedSchema,
@@ -16,7 +16,7 @@ export const hunyuanDuration = [3, 5] as const;
 
 const hunyuanAspectRatioMap = AspectRatioMap([...hunyuanAspectRatios], { multiplier: 16 });
 
-const schema = baseGenerationSchema.extend({
+const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('hunyuan').catch('hunyuan'),
   prompt: promptSchema,
   // sourceImage: sourceImageSchema.nullish(),

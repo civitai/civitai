@@ -5,7 +5,7 @@ import {
   negativePromptSchema,
   seedSchema,
   promptSchema,
-  baseGenerationSchema,
+  baseVideoGenerationSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
@@ -13,7 +13,7 @@ import { numberEnum } from '~/utils/zod-helpers';
 export const lightricksAspectRatios = ['16:9', '3:2', '1:1', '2:3'] as const;
 export const lightricksDuration = [5, 10] as const;
 
-const schema = baseGenerationSchema.extend({
+const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('lightricks').catch('lightricks'),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,

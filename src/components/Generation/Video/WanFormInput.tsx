@@ -8,6 +8,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
 import { wanAspectRatios, wanDuration } from '~/server/orchestrator/wan/wan.schema';
 import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
+import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 
 export function WanFormInput() {
   const form = useFormContext();
@@ -68,6 +69,7 @@ export function WanFormInput() {
         reverse
       />
       <InputSeed name="seed" label="Seed" />
+      <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
     </>
   );
 }

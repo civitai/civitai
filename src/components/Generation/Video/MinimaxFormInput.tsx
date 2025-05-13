@@ -1,16 +1,18 @@
 import { useFormContext } from 'react-hook-form';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
+import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { InputSwitch, InputTextArea } from '~/libs/form';
 
 export function MinimaxFormInput() {
   const form = useFormContext();
-  const sourceImage = form.watch('sourceImage');
+  const process = form.watch('process');
 
   return (
     <>
-      <InputSourceImageUpload name="sourceImage" label="Image (optional)" className="flex-1" />
+      <InputVideoProcess name="process" />
+      {process === 'img2vid' && <InputSourceImageUpload name="sourceImage" className="flex-1" />}
       <InputTextArea
-        required={!sourceImage}
+        required={process === 'txt2vid'}
         name="prompt"
         label="Prompt"
         placeholder="Your prompt goes here..."

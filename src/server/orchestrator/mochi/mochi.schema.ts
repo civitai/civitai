@@ -2,12 +2,12 @@ import { MochiVideoGenInput } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
-  baseGenerationSchema,
+  baseVideoGenerationSchema,
   promptSchema,
   seedSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 
-const schema = baseGenerationSchema.extend({
+const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('mochi').catch('mochi'),
   seed: seedSchema,
   prompt: promptSchema,

@@ -1,6 +1,6 @@
 import { HaiperVideoGenModel } from '@civitai/client';
 import {
-  baseGenerationSchema,
+  baseVideoGenerationSchema,
   negativePromptSchema,
   seedSchema,
   sourceImageSchema,
@@ -14,7 +14,7 @@ export const haiperAspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'] as const
 export const haiperDuration = [2, 4, 8] as const;
 export const haiperResolution = [720, 1080, 2160] as const;
 
-const schema = baseGenerationSchema.extend({
+const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('haiper').catch('haiper'),
   negativePrompt: negativePromptSchema,
   aspectRatio: z.enum(haiperAspectRatios).optional().catch('1:1'),

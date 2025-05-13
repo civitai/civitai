@@ -31,13 +31,7 @@ export function ImageCropModal(props: ImageCropperProps) {
   };
 
   return (
-    <Modal
-      {...dialog}
-      title="Crop Images"
-      size={768}
-      transitionDuration={0}
-      onClose={() => props.onCancel?.()}
-    >
+    <Modal {...dialog} title="Crop Images" size={768} transitionDuration={0} onClose={handleCancel}>
       <ImageCropperContent {...props} onCancel={handleCancel} onConfirm={handleConfirm} />
     </Modal>
   );

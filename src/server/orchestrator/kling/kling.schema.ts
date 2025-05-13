@@ -2,7 +2,7 @@ import { KlingMode, KlingModel, KlingVideoGenInput } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
-  baseGenerationSchema,
+  baseVideoGenerationSchema,
   negativePromptSchema,
   promptSchema,
   seedSchema,
@@ -12,7 +12,7 @@ import {
 export const klingAspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const klingDuration = ['5', '10'] as const;
 
-const schema = baseGenerationSchema.extend({
+const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('kling').catch('kling'),
   model: z.nativeEnum(KlingModel).default(KlingModel.V1_5).catch(KlingModel.V1_5),
   sourceImage: sourceImageSchema.nullish(),
@@ -34,8 +34,12 @@ export const klingGenerationConfig = VideoGenerationConfig2({
   defaultValues: { aspectRatio: '1:1' },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
-    if (data.sourceImage) delete data.aspectRatio;
-    return { ...data, process: data.sourceImage ? 'img2vid' : 'txt2vid' };
+    if (data.process === 'txt2vid') {
+      delete data.sourceImage;
+    } else {
+      delete data.aspectRatio;
+    }
+    return data;
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {

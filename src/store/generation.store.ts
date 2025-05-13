@@ -15,6 +15,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { isMobileDevice } from '~/hooks/useIsMobile';
 
 export type RunType = 'run' | 'remix' | 'replay';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
@@ -117,10 +118,21 @@ export const useGenerationStore = create<GenerationState>()(
       setData: async ({ type, remixOf, workflow, sourceImage, engine, ...data }) => {
         // TODO.Briant - cleanup at a later point in time
         useGenerationFormStore.setState({ type, workflow });
-        if (sourceImage) generationFormStore.setsourceImage(sourceImage);
+        // if (sourceImage) generationFormStore.setsourceImage(sourceImage);
         if (engine) useGenerationFormStore.setState({ engine });
         const { params } = await transformParams(data.params);
+        if (sourceImage) params.sourceImage = sourceImage;
+        if (type === 'video') {
+          params.process = params.sourceImage ? 'img2vid' : 'txt2vid';
+        } else if (type === 'image') {
+          params.process = params.sourceImage ? 'img2img' : 'txt2img';
+        }
+
         set((state) => {
+          if (isMobileDevice()) {
+            state.view = 'generate';
+          }
+
           state.remixOf = remixOf;
           state.data = {
             ...data,
@@ -222,24 +234,27 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
 export const useGenerationFormStore = create<{
   type: MediaType;
   engine?: string;
+  videoProcess: 'txt2vid' | 'img2vid';
   workflow?: string; // is this needed?
-  sourceImage?: SourceImageProps | null;
-  width?: number;
-  height?: number;
   // originalPrompt?: string;
-}>()(persist((set) => ({ type: 'image' }), { name: 'generation-form', version: 1.2 }));
+}>()(
+  persist((set) => ({ type: 'image', videoProcess: 'txt2vid' }), {
+    name: 'generation-form',
+    version: 1.2,
+  })
+);
 
 export const generationFormStore = {
   setType: (type: MediaType) => useGenerationFormStore.setState({ type }),
   setEngine: (engine: string) => useGenerationFormStore.setState({ engine }),
-  setsourceImage: async (sourceImage?: SourceImageProps | string | null) => {
-    useGenerationFormStore.setState({
-      sourceImage:
-        typeof sourceImage === 'string'
-          ? await getSourceImageFromUrl({ url: sourceImage })
-          : sourceImage,
-    });
-  },
+  // setsourceImage: async (sourceImage?: SourceImageProps | string | null) => {
+  //   useGenerationFormStore.setState({
+  //     sourceImage:
+  //       typeof sourceImage === 'string'
+  //         ? await getSourceImageFromUrl({ url: sourceImage })
+  //         : sourceImage,
+  //   });
+  // },
   reset: () => useGenerationFormStore.setState((state) => ({ type: state.type }), true),
 };
 
@@ -290,6 +305,6 @@ export const useRemixStore = create<{
 //   );
 // }
 
-export const generationStore2 = create<{ type: MediaType; engine?: string }>()(
-  persist((set) => ({ type: 'image' }), { name: 'generation', version: 1 })
-);
+// export const generationStore2 = create<{ type: MediaType; engine?: string }>()(
+//   persist((set) => ({ type: 'image' }), { name: 'generation', version: 1 })
+// );

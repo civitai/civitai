@@ -1,4 +1,4 @@
-import { Input, InputWrapperProps, CloseButton, ActionIcon } from '@mantine/core';
+import { Input, InputWrapperProps, CloseButton } from '@mantine/core';
 import { getImageData } from '~/utils/media-preprocessors';
 import { trpc } from '~/utils/trpc';
 import { useEffect, useState } from 'react';
@@ -7,14 +7,11 @@ import { maxOrchestratorImageFileSize, maxUpscaleSize } from '~/server/common/co
 import { withController } from '~/libs/form/hoc/withController';
 import { getBase64 } from '~/utils/file-utils';
 import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
-import { useLocalStorage } from '@mantine/hooks';
-
-import clsx from 'clsx';
 import { resizeImage } from '~/utils/image-utils';
-import { IconHistory } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 
 const key = 'img-uploads';
+const timeoutError = 'Gateway Time-out';
 export type SourceImageUploadProps = {
   value?: SourceImageProps | null;
   onChange?: (value?: SourceImageProps | null) => void;
@@ -30,6 +27,7 @@ export function SourceImageUpload({
   label,
   children,
   iconSize,
+  error: inputError,
   ...inputWrapperProps
 }: SourceImageUploadProps) {
   const [loaded, setLoaded] = useState(false);
@@ -82,9 +80,14 @@ export function SourceImageUpload({
   }
 
   useEffect(() => {
-    if (value && typeof value === 'string' && (value as string).length > 0) handleUrlChange(value);
-    else if (value && value instanceof Blob) handleDropCapture(value);
-  }, [value]);
+    if (!error || error === timeoutError) {
+      if (value && typeof value === 'string' && (value as string).length > 0)
+        handleUrlChange(value);
+      else if (value && value instanceof Blob) handleDropCapture(value);
+    } else if (error) {
+      onChange?.(null);
+    }
+  }, [value, error]);
 
   const _value = value instanceof Blob ? null : value;
 
@@ -107,18 +110,17 @@ export function SourceImageUpload({
     if (_value) addToHistory(_value);
   }, [_value]);
 
+  const _error = error ?? inputError;
+  const showError = !!_error && _error !== timeoutError;
+
   return (
     <>
-      <Input.Wrapper
-        {...inputWrapperProps}
-        error={error ?? inputWrapperProps.error}
-        className={className}
-      >
+      <Input.Wrapper {...inputWrapperProps} className={className}>
         {/* <ActionIcon size="xs">
             <IconHistory />
           </ActionIcon> */}
-        <div className="relative flex size-full items-stretch justify-center rounded-md bg-gray-2 dark:bg-dark-6">
-          {!_value ? (
+        {!_value ? (
+          <div className="flex size-full flex-col rounded-md">
             <ImageDropzone
               allowExternalImageDrop
               onDrop={handleDrop}
@@ -132,7 +134,10 @@ export function SourceImageUpload({
             >
               {children}
             </ImageDropzone>
-          ) : (
+            {showError && <Input.Error>{_error}</Input.Error>}
+          </div>
+        ) : (
+          <div className="relative flex size-full items-stretch justify-center rounded-md bg-gray-2 dark:bg-dark-6">
             <div className="flex max-h-96 justify-center ">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -156,8 +161,8 @@ export function SourceImageUpload({
                 </div>
               )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </Input.Wrapper>
     </>
   );

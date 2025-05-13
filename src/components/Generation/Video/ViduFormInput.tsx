@@ -8,15 +8,17 @@ import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImag
 import { useEffect } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
+import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 
 export function ViduFormInput() {
   const form = useFormContext();
+  const process = form.watch('process');
   const sourceImage = form.watch('sourceImage');
   const endSourceImage = form.watch('endSourceImage');
-  const hasImage = !!sourceImage || !!endSourceImage;
   const model = form.watch('model');
 
   useEffect(() => {
+    if (process === 'txt2vid') return;
     if (
       !sourceImage ||
       !endSourceImage ||
@@ -48,30 +50,31 @@ export function ViduFormInput() {
 
   return (
     <>
-      <div className="flex flex-col">
+      <InputVideoProcess name="process" />
+      {process === 'img2vid' && (
         <div className="flex justify-center gap-2">
           <InputSourceImageUpload
             name="sourceImage"
-            className="flex aspect-video flex-1 flex-col justify-center"
+            className="flex aspect-video flex-1 flex-col justify-start"
             iconSize={32}
           >
             <div className="flex flex-col items-center gap-2">
-              <span className="text-sm">Upload image</span>
+              <span className="text-sm">Starting image</span>
             </div>
           </InputSourceImageUpload>
           <InputSourceImageUpload
             name="endSourceImage"
-            className="flex aspect-video flex-1 flex-col justify-center"
+            className="flex aspect-video flex-1 flex-col justify-start"
             iconSize={32}
           >
             <div className="flex flex-col items-center gap-2">
-              <span className="text-sm">(Optional)</span>
+              <span className="text-sm">Ending image (optional)</span>
             </div>
           </InputSourceImageUpload>
         </div>
-      </div>
+      )}
       <InputTextArea
-        required={!hasImage}
+        required={process === 'txt2vid'}
         name="prompt"
         label="Prompt"
         placeholder="Your prompt goes here..."
@@ -90,15 +93,15 @@ export function ViduFormInput() {
           />
         </div>
       )}
-      {!hasImage && (
+      {process === 'txt2vid' && (
         <div className="flex flex-col gap-0.5">
           <Input.Label>Style</Input.Label>
           <InputSegmentedControl
             name="style"
-            data={Object.values(ViduVideoGenStyle).map((value) => ({
-              label: value,
-              value,
-            }))}
+            data={[
+              { label: 'General', value: ViduVideoGenStyle.GENERAL },
+              { label: 'Animation', value: ViduVideoGenStyle.ANIME },
+            ]}
           />
         </div>
       )}

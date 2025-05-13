@@ -7,6 +7,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
 import { hunyuanAspectRatios, hunyuanDuration } from '~/server/orchestrator/hunyuan/hunyuan.schema';
 import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
+import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 
 export function HunyuanFormInput() {
   const form = useFormContext();
@@ -66,6 +67,7 @@ export function HunyuanFormInput() {
         reverse
       />
       <InputSeed name="seed" label="Seed" />
+      <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
     </>
   );
 }
