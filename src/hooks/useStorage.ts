@@ -33,7 +33,12 @@ function serializeJSON<T>(value: T) {
 function deserializeJSON(value: string | undefined) {
   if (!value) return;
   try {
-    return JSON.parse(value);
+    const parsed = JSON.parse(value);
+    if (typeof parsed === 'string' && !isNaN(Date.parse(parsed))) {
+      return new Date(parsed);
+    }
+
+    return parsed;
   } catch {
     return value;
   }

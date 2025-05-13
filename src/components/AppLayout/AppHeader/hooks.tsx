@@ -1,6 +1,7 @@
 import { useMantineTheme, getPrimaryShade, useMantineColorScheme } from '@mantine/core';
 import {
   type Icon,
+  type IconProps,
   IconBarbell,
   IconBookmark,
   IconBookmarkEdit,
@@ -15,7 +16,7 @@ import {
   IconPhotoUp,
   IconPlayerPlayFilled,
   IconProgressBolt,
-  type IconProps,
+  IconSword,
   IconThumbUp,
   IconUpload,
   IconUser,
@@ -154,6 +155,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Auctions',
           newUntil: new Date('2025-04-07'),
+        },
+        {
+          href: '/games/knights-of-new-order',
+          visible: features.newOrderGame,
+          icon: IconSword,
+          color: theme.colors.yellow[theme.fn.primaryShade()],
+          label: 'Knights of New',
+          newUntil: new Date('2025-05-18'),
         },
         {
           href: '/product/link',

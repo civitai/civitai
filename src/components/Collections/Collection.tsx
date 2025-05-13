@@ -18,7 +18,6 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { CollectionItemStatus } from '@prisma/client';
 import {
   IconAlertCircle,
   IconCirclePlus,
@@ -82,6 +81,7 @@ import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enu
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import {
   Availability,
+  CollectionItemStatus,
   CollectionMode,
   CollectionType,
   MetricTimeframe,

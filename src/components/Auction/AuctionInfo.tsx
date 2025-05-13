@@ -16,9 +16,10 @@ import {
   TextInput,
   Title,
   Tooltip,
+  useMantineColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { DatePicker } from '@mantine/dates';
+import { DatePickerInput } from '@mantine/dates';
 import {
   IconAlertCircle,
   IconAlertTriangle,
@@ -59,21 +60,14 @@ import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { AuctionType, Currency, ModelType } from '~/shared/utils/prisma/enums';
-import { formatDate, stripTime } from '~/utils/date-helpers';
+import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { asOrdinal } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-const auctionQuerySchema = z.object({
-  // slug: z.string().optional(),
-  date: z.preprocess((val) => {
-    if (Array.isArray(val)) val = val[0]; // Take only first
-    // if (typeof val === 'string' || typeof val === 'number') return new Date(val);
-    if (typeof val === 'string') return dayjs(val).startOf('day').toDate();
-    return undefined;
-  }, z.date().optional()),
-});
+const auctionQuerySchema = z.object({ d: z.coerce.number().max(0).optional() });
+type AuctionQuerySchema = z.infer<typeof auctionQuerySchema>;
 
 const allCheckpointBaseModels = new Set(
   Object.values(baseModelResourceTypes)
@@ -114,105 +108,92 @@ const QuickBid = ({
 export const AuctionTopSection = ({
   refreshFunc,
   showHistory = true,
-  date,
-}: {
-  refreshFunc?: () => unknown;
-  showHistory?: boolean;
-  date?: Date;
-}) => {
+  d,
+}:
+  | {
+      showHistory: true;
+      d: number;
+      refreshFunc: () => unknown;
+    }
+  | {
+      showHistory: false;
+      d?: undefined;
+      refreshFunc?: () => unknown;
+    }) => {
   const features = useFeatureFlags();
   const { runTour } = useTourContext();
   const { drawerToggle, selectedAuction } = useAuctionContext();
   const { connected, registeredTopics } = useSignalContext();
   const router = useRouter();
-  const ref = useRef<HTMLInputElement>(null);
+  const ref = useRef<HTMLButtonElement>(null);
 
-  const today = dayjs().startOf('day').toDate();
+  const realD = d ?? 0;
+  const today = dayjs.utc();
+  const dToDayjs = today.add(realD, 'day');
+  const dToDate = dToDayjs.toDate();
+
+  // TODO maybe get oldest dates for all auctions (or all valid dates), set minDate
+  const minDate = dayjs.utc('2025-03-10');
+
+  const navigateDate = (newD: number) => {
+    const { d: currentD, ...queryRest } = router.query as AuctionQuerySchema;
+    return router.push(
+      {
+        query: {
+          ...queryRest,
+          ...(currentD !== newD && newD < 0 ? { d: newD } : undefined),
+        },
+      },
+      undefined,
+      { shallow: true }
+    );
+  };
 
   // {/*<Group className="sticky top-0 right-0">*/}
 
-  // TODO maybe get oldest dates for all auctions (or all valid dates), set minDate
-
-  const navigateDate = (d: Date) => {
-    const { date, ...queryRest } = router.query;
-    router
-      .push(
-        {
-          query: {
-            ...queryRest,
-            ...(d && d.getTime() !== today.getTime() ? { date: stripTime(d) } : undefined),
-          },
-        },
-        undefined,
-        { shallow: true }
-      )
-      .catch();
-  };
-
-  const minDate = new Date('2025-03-10');
-
   return (
     <Group justify="space-between" className="max-sm:justify-center">
-      <Group position="left">
+      <Group justify="flex-end">
         {showHistory && (
           <Tooltip label="View History">
             <Group gap={6}>
               <ActionIcon
-                disabled={(date ?? today).getTime() <= minDate.getTime()}
+                disabled={dToDayjs.valueOf() <= minDate.valueOf()}
                 className="disabled:opacity-50"
                 onClick={() => {
-                  const d = dayjs(date ?? today)
-                    .subtract(1, 'day')
-                    .toDate();
-                  navigateDate(d);
+                  navigateDate(realD - 1).catch();
                 }}
               >
                 <IconChevronLeft size={18} />
               </ActionIcon>
-              <DatePicker
+              <DatePickerInput
                 placeholder="View History"
-                value={date}
+                value={dToDate}
                 ref={ref}
                 onChange={(v) => {
-                  if (v !== date) {
-                    const { date, ...queryRest } = router.query;
-                    router
-                      .push(
-                        {
-                          query: {
-                            ...queryRest,
-                            ...(v && v !== today ? { date: stripTime(v) } : undefined),
-                          },
-                        },
-                        undefined,
-                        { shallow: true }
-                      )
-                      .then(() => {
-                        // nb: this is an incredibly stupid hack I have to do because mantine sucks
-                        //     and won't update the value without a blur event
-                        setTimeout(() => {
-                          ref.current?.blur();
-                        }, 1);
-                      });
-                  }
+                  const desired = !v ? 0 : dayjs.utc(v).diff(today, 'day');
+                  navigateDate(desired).then(() => {
+                    // nb: this is an incredibly stupid hack I have to do because mantine sucks
+                    //     and won't update the value without a blur event
+                    setTimeout(() => {
+                      ref.current?.blur();
+                    }, 1);
+                  });
                 }}
-                minDate={minDate}
-                maxDate={today}
-                inputFormat={!date || date.getTime() === today.getTime() ? '[Today]' : undefined}
+                minDate={minDate.toDate()}
+                maxDate={today.toDate()}
+                valueFormat={realD === 0 ? '[Today]' : undefined}
                 classNames={{ input: 'text-center' }}
                 radius="sm"
-                icon={<IconCalendar size={14} />}
+                leftSection={<IconCalendar size={14} />}
                 w={165}
                 size="xs"
               />
               <ActionIcon
-                disabled={(date ?? today).getTime() >= today.getTime()}
+                disabled={realD >= 0}
                 className="disabled:opacity-50"
                 onClick={() => {
-                  const d = dayjs(date ?? today)
-                    .add(1, 'day')
-                    .toDate();
-                  navigateDate(d);
+                  navigateDate(realD + 1).catch();
                 }}
               >
                 <IconChevronRight size={18} />
@@ -221,7 +202,7 @@ export const AuctionTopSection = ({
           </Tooltip>
         )}
       </Group>
-      <Group justify="flex-end">
+      <Group justify="flex-end" className="max-sm:justify-center">
         {(!connected ||
           (selectedAuction?.id &&
             !registeredTopics.includes(`${SignalTopic.Auction}:${selectedAuction?.id}`))) && (
@@ -296,6 +277,7 @@ export const AuctionTopSection = ({
 export const AuctionInfo = () => {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const { ref: placeBidRef, inView: placeBidInView } = useInView();
   const router = useRouter();
   const { selectedAuction, selectedModel, validAuction, setSelectedModel } = useAuctionContext();
@@ -304,16 +286,17 @@ export const AuctionInfo = () => {
   const searchLower = searchText.toLowerCase();
 
   const parseResult = useMemo(() => {
-    if (!router.isReady) return { date: undefined, hasError: false };
+    if (!router.isReady) return { d: undefined, hasError: false };
     const result = auctionQuerySchema.safeParse(router.query);
-    if (result.success) return { date: result.data.date, hasError: false };
-    return { date: undefined, hasError: true };
+    if (result.success) {
+      return { d: result.data.d, hasError: false };
+    }
+    return { d: undefined, hasError: true };
   }, [router.isReady, router.query]);
 
-  const today = dayjs().startOf('day').toDate();
   const showParseError = useRef(true);
-  const dateToUse = parseResult.hasError ? today : parseResult.date ?? today;
-  const canBid = dateToUse.getTime() === today.getTime();
+  const d = parseResult.hasError ? 0 : parseResult.d ?? 0;
+  const canBid = d === 0;
 
   const {
     data: auctionData,
@@ -323,7 +306,7 @@ export const AuctionInfo = () => {
     isError: isErrorAuctionData,
     refetch: refetchAuction,
   } = trpc.auction.getBySlug.useQuery(
-    { slug: selectedAuction?.auctionBase?.slug ?? '', date: dateToUse },
+    { slug: selectedAuction?.auctionBase?.slug ?? '', d },
     { enabled: validAuction && !!selectedAuction?.auctionBase?.slug }
   );
 
@@ -452,7 +435,7 @@ export const AuctionInfo = () => {
 
   return (
     <Stack w="100%" gap="sm">
-      <AuctionTopSection refreshFunc={refetchAuction} date={dateToUse} />
+      <AuctionTopSection showHistory={true} refreshFunc={refetchAuction} d={d} />
       {isErrorAuctionData ? (
         <Center>
           <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
@@ -583,7 +566,7 @@ export const AuctionInfo = () => {
                 <Overlay
                   blur={1}
                   zIndex={11}
-                  color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+                  color={colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
                   opacity={0.85}
                 />
                 <Stack
@@ -612,7 +595,7 @@ export const AuctionInfo = () => {
                       setSelectedModel(gVal);
                     }
                   }}
-                  sx={{
+                  style={{
                     flexGrow: 1,
                     justifyItems: 'center',
                     display: 'grid', // for firefox
@@ -681,12 +664,12 @@ export const AuctionInfo = () => {
                     // label="Buzz"
                     // labelProps={{ sx: { fontSize: 12, fontWeight: 590 } }}
                     placeholder="Enter Buzz..."
-                    icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+                    leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                     value={bidPrice}
                     min={1}
                     max={constants.buzz.maxChargeAmount}
                     onChange={(value) => {
-                      setBidPrice(value);
+                      setBidPrice(value ? Number(value) : undefined);
                     }}
                     step={100}
                     w={!mobile ? 170 : undefined}
@@ -727,10 +710,8 @@ export const AuctionInfo = () => {
                         withinPortal
                       >
                         <Badge
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                          color={
-                            validBid ? (theme.colorScheme === 'dark' ? 'gray' : 'gray.8') : 'dark'
-                          }
+                          variant={colorScheme === 'dark' ? 'filled' : 'light'}
+                          color={validBid ? (colorScheme === 'dark' ? 'gray' : 'gray.8') : 'dark'}
                           radius="xl"
                           pl={8}
                           pr={12}
@@ -756,7 +737,7 @@ export const AuctionInfo = () => {
                   setIsRecurring(e.target.checked);
                 }}
               />
-              <DatePicker
+              <DatePickerInput
                 placeholder="Forever"
                 value={recurUntil === 'forever' ? null : recurUntil}
                 onChange={(date) => {
@@ -765,7 +746,7 @@ export const AuctionInfo = () => {
                 }}
                 minDate={dayjs().add(1, 'day').toDate()}
                 radius="sm"
-                icon={<IconCalendar size={14} />}
+                leftSection={<IconCalendar size={14} />}
                 w={165}
                 size="xs"
               />
@@ -800,7 +781,7 @@ export const AuctionInfo = () => {
               Active Bids
             </Title>
             <TextInput
-              icon={<IconSearch size={16} />}
+              leftSection={<IconSearch size={16} />}
               placeholder="Filter items..."
               value={searchText}
               maxLength={150}

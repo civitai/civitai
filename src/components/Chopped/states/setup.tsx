@@ -81,7 +81,7 @@ export function Setup() {
 
   // Charge
   const server = useChoppedServer();
-  const { mutateAsync: startGame, isLoading } = trpc.games.startChoppedGame.useMutation({
+  const { mutateAsync: startGame, isLoading } = trpc.games.chopped.start.useMutation({
     onSuccess: (data) => {
       console.log('Game created', data);
       newGameState.code = data.code;

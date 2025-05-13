@@ -271,7 +271,7 @@ function BlurToggle({
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
 
-  if (safe) {
+  if (safe || alwaysVisible) {
     const isOwnerOrModerator = currentUser?.isModerator || (userId && currentUser?.id === userId);
     return isOwnerOrModerator || alwaysVisible ? (
       <Badge

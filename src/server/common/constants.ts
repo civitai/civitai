@@ -1317,3 +1317,13 @@ export const HOLIDAY_PROMO_VALUE = 0.2;
 export const MAX_APPEAL_MESSAGE_LENGTH = 220;
 
 export const FEATURED_MODEL_COLLECTION_ID = 104;
+
+export const newOrderConfig = {
+  baseExp: 100,
+  blessedBuzzConversionRatio: 0.001,
+  smiteSize: 10,
+  welcomeImageUrl: 'f2a97014-c0e2-48ba-bb7d-99435922850b',
+  cosmetics: {
+    badgeIds: { acolyte: 858, knight: 859, templar: 860 },
+  },
+};

@@ -13,6 +13,7 @@ import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
 import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
+import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
@@ -31,6 +32,7 @@ import {
 } from '~/server/jobs/event-engine-work';
 import { fullImageExistence } from '~/server/jobs/full-image-existence';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
+import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
@@ -135,6 +137,8 @@ export const jobs: Job[] = [
   retroactiveHashBlocking,
   ...creatorProgramJobs,
   handleAuctions,
+  ...newOrderJobs,
+  updateModelVersionNsfwLevelsJob,
 ];
 
 const log = createLogger('jobs', 'green');

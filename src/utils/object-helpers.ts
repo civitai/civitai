@@ -1,7 +1,16 @@
-import { isArray, isNil, omitBy, isNull, isObject } from 'lodash-es';
+import { isArray, isNil, isNull, isObject, isString, omitBy } from 'lodash-es';
 
-export function removeEmpty<T extends Record<string, unknown>>(obj: T): MakeUndefinedOptional<T> {
-  return omitBy<T>(obj, (value) => isNil(value) || (isArray(value) && !value.length)) as T;
+export function removeEmpty<T extends Record<string, unknown>>(
+  obj: T,
+  removeEmptyStrings = false
+): MakeUndefinedOptional<T> {
+  return omitBy<T>(
+    obj,
+    (value) =>
+      isNil(value) ||
+      (isArray(value) && !value.length) ||
+      (removeEmptyStrings && isString(value) && !value.length)
+  ) as T;
 }
 
 export function mergeWithPartial<T>(src: T, partial: Partial<T>) {

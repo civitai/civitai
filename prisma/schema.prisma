@@ -347,6 +347,7 @@ model User {
   bids                       Bid[]
   recurringBids              BidRecurring[]
   moderationRules            ModerationRule[]
+  playerInfo                 NewOrderPlayer?
 
   @@index([deletedAt])
 }
@@ -3521,6 +3522,70 @@ model ModerationRule {
 
   createdById Int
   createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+}
+
+enum ChangelogType {
+  Feature
+  Bugfix
+  Policy
+  Update
+}
+
+model Changelog {
+  id          Int           @id @default(autoincrement())
+  title       String
+  content     String
+  link        String? // commit or article URL
+  cta         String? // if feature, link to it
+  effectiveAt DateTime
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  type        ChangelogType
+  tags        String[]      @default([])
+  disabled    Boolean       @default(false)
+  titleColor  String?
+}
+
+model NewOrderPlayer {
+  userId        Int              @id @unique
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rankType      NewOrderRankType
+  rank          NewOrderRank     @relation(fields: [rankType], references: [type], onDelete: Cascade)
+  startAt       DateTime         @default(now())
+  exp           Int              @default(0)
+  fervor        Int              @default(0)
+  smiteReceived NewOrderSmite[]  @relation("smiteReceived")
+  smiteGiven    NewOrderSmite[]  @relation("smiteGiven")
+}
+
+enum NewOrderRankType {
+  Acolyte
+  Knight
+  Templar
+}
+
+model NewOrderRank {
+  type      NewOrderRankType @id
+  name      String
+  minExp    Int
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  iconUrl   String?
+  players   NewOrderPlayer[]
+}
+
+model NewOrderSmite {
+  id             Int            @id @default(autoincrement())
+  targetPlayerId Int
+  targetPlayer   NewOrderPlayer @relation("smiteReceived", fields: [targetPlayerId], references: [userId], onDelete: Cascade)
+  givenById      Int
+  givenBy        NewOrderPlayer @relation("smiteGiven", fields: [givenById], references: [userId], onDelete: Cascade)
+  size           Int
+  remaining      Int
+  reason         String?
+  createdAt      DateTime       @default(now())
+  cleansedAt     DateTime?
+  cleansedReason String?
 }
 
 /// @view

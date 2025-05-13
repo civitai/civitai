@@ -1,13 +1,20 @@
+<<<<<<< HEAD
 import { Button, Group, Menu, Text } from '@mantine/core';
+=======
+import { Badge, Button, createStyles, Group, Menu, Text } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
+>>>>>>> main
 import {
   IconCalendar,
   IconCaretDown,
   IconCategory,
+  IconContract,
   IconFileText,
   IconHome,
   IconLayoutList,
   IconMoneybag,
   IconPhoto,
+  IconPointFilled,
   IconProps,
   IconShoppingBag,
   IconTools,
@@ -21,6 +28,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getDisplayName } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './HomeContentToggle.module.scss';
 
@@ -28,7 +36,7 @@ type HomeOption = {
   key: string;
   url: string;
   icon: (props: IconProps) => JSX.Element;
-  highlight?: boolean;
+  new?: Date;
   grouped?: boolean;
   classes?: string[];
 };
@@ -89,6 +97,13 @@ export const homeOptions: HomeOption[] = [
     grouped: true,
   },
   {
+    key: 'updates',
+    url: '/changelog',
+    icon: (props: IconProps) => <IconContract {...props} />,
+    grouped: true,
+    // new: new Date('2025-05-26'),
+  },
+  {
     key: 'shop',
     url: '/shop',
     icon: (props: IconProps) => <IconShoppingBag {...props} />,
@@ -115,6 +130,13 @@ export function HomeTabs() {
   const activePath = router.pathname.split('/')[1] || 'home';
 
   const [moreOpened, setMoreOpened] = useState(false);
+  const [lastSeenChangelog] = useLocalStorage<number>({
+    key: 'last-seen-changelog',
+    defaultValue: 0,
+    getInitialValueInEffect: false,
+  });
+
+  const { data: latestChangelog } = trpc.changelog.getLatest.useQuery();
 
   const options = filterHomeOptions(features);
 
@@ -123,12 +145,13 @@ export function HomeTabs() {
       {options.map(({ key, ...value }) => {
         return (
           <Button
-            variant="default"
             key={key}
+            variant="default"
             component={Link}
             href={value.url}
             className={clsx('h-8 rounded-full border-none py-2 pl-3 pr-4', {
-              ['bg-gray-4 dark:bg-dark-4']: activePath === key,
+              ['bg-gray-4 dark:bg-dark-4']:
+                activePath === key || (activePath === 'changelog' && key === 'updates'),
               [classes.groupedOptions]: value.grouped,
               [classes.tabHighlight]: key === 'shop',
             })}
@@ -136,6 +159,10 @@ export function HomeTabs() {
           >
             {value.icon({ size: 16 })}
             <span className="text-base font-medium capitalize">{getDisplayName(key)}</span>
+            {key === 'updates' && (latestChangelog ?? 0) > lastSeenChangelog && (
+              <IconPointFilled color="green" size={20} />
+            )}
+            {!!value.new && value.new > new Date() && <Badge>New</Badge>}
           </Button>
         );
       })}
@@ -174,6 +201,10 @@ export function HomeTabs() {
                 >
                   <Group gap={8} wrap="nowrap">
                     <Text tt="capitalize">{getDisplayName(value.key)}</Text>
+                    {value.key === 'updates' && (latestChangelog ?? 0) > lastSeenChangelog && (
+                      <IconPointFilled color="green" size={20} />
+                    )}
+                    {!!value.new && value.new > new Date() && <Badge>New</Badge>}
                   </Group>
                 </Menu.Item>
               </Link>

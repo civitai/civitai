@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, AppShell, Button, Divider, Grid } from '@mantine/core';
+import { ActionIcon, AppShell, Button, Divider, Grid } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { ReactElement, RefObject, useRef, useState } from 'react';

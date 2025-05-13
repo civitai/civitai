@@ -7,15 +7,19 @@ import {
   browsingLevelDescriptions,
 } from '~/shared/constants/browsingLevel.constants';
 
+const unsupportedTags = ['incest', 'peeing', 'pg-13', 'r', 'x', 'xxx'];
+
 export default function BrowsingLevelGuide() {
   const dialog = useDialogContext();
   const { moderatedTags } = useHiddenPreferencesContext();
+
+  const filteredTags = moderatedTags.filter((x) => !unsupportedTags.includes(x.name.toLowerCase()));
 
   return (
     <Modal {...dialog} title="Browsing Level Guide">
       <Stack>
         {browsingLevels.map((browsingLevel) => {
-          const tags = moderatedTags.filter((x) => x.nsfwLevel === browsingLevel && !x.parentId);
+          const tags = filteredTags.filter((x) => x.nsfwLevel === browsingLevel && !x.parentId);
           return (
             <Card withBorder key={browsingLevel}>
               <Card.Section withBorder inheritPadding py="xs">

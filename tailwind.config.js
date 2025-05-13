@@ -140,6 +140,18 @@ module.exports = {
           8: '#66a80f',
           9: '#5c940d',
         },
+        gold: {
+          0: '#F6EDDF',
+          1: '#F2E4CF',
+          2: '#EDDBBF',
+          3: '#E9D2AF',
+          4: '#E5C99F',
+          5: '#E0C08F',
+          6: '#DCB77F',
+          7: '#D8AE6F',
+          8: '#D3A55F',
+          9: '#CD9848',
+        },
       },
       keyframes: {
         wiggle: {

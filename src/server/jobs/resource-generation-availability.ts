@@ -38,7 +38,10 @@ export const resourceGenerationAvailability = createJob(
         WHERE failed > CAST(requested AS FLOAT) / 2
         AND requested > 10;
       `
-      ).map(({ modelVersionId }) => modelVersionId);
+      )
+        .map(({ modelVersionId }) => modelVersionId)
+        // ensure OpenAi id not included in list of affected resources
+        .filter((id) => id !== 1733399);
 
       // Store new data
       await sysRedis.hSet(

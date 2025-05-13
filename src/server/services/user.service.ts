@@ -1471,11 +1471,12 @@ export const createUserReferral = async ({
 
 export const claimCosmetic = async ({ id, userId }: { id: number; userId: number }) => {
   const cosmetic = await dbRead.cosmetic.findUnique({
-    where: { id, source: CosmeticSource.Claim },
-    select: { id: true, availableStart: true, availableEnd: true },
+    where: { id, source: { in: [CosmeticSource.Claim, CosmeticSource.Trophy] } },
+    select: { id: true, availableStart: true, availableEnd: true, source: true },
   });
   if (!cosmetic) return null;
-  if (!(await isCosmeticAvailable(cosmetic.id, userId))) return null;
+  if (cosmetic.source === CosmeticSource.Claim && !(await isCosmeticAvailable(cosmetic.id, userId)))
+    return null;
 
   const userCosmetic = await dbRead.userCosmetic.findFirst({
     where: { userId, cosmeticId: cosmetic.id },
