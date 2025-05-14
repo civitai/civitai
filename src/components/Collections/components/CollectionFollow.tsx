@@ -1,14 +1,17 @@
+import { Button, ButtonProps, Group } from '@mantine/core';
+import { IconMinus, IconPlus, IconProgress } from '@tabler/icons-react';
 import React from 'react';
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
-import { Button, Group } from '@mantine/core';
-import { IconMinus, IconPlus, IconProgress } from '@tabler/icons-react';
-import { CollectionByIdModel } from '~/types/router';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useCollection } from '~/components/Collections/collection.utils';
 
-const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Props) => {
-  const utils = trpc.useContext();
+export const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Props) => {
+  const utils = trpc.useUtils();
+  
+  const { permissions: serverPermissions } = useCollection(collectionId);
+  const mergedPermissions = { ...serverPermissions, ...permissions };
 
   const { isLoading: creatingFollow, mutate: followCollection } =
     trpc.collection.follow.useMutation({
@@ -32,13 +35,13 @@ const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Prop
       },
       onError(error) {
         showErrorNotification({
-          title: 'Unable to follow this collection',
+          title: 'Unable to unfollow this collection',
           error: new Error(error.message),
         });
       },
     });
 
-  if ((!permissions.follow && !permissions.isContributor) || permissions.isOwner) {
+  if ((!mergedPermissions.follow && !mergedPermissions.isContributor) || mergedPermissions.isOwner) {
     // For contributors, we will still make it possible to un-follow
     return null;
   }
@@ -50,7 +53,7 @@ const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Prop
       return 'processing...';
     }
 
-    return permissions.isContributor ? 'Unfollow' : 'Follow';
+    return mergedPermissions.isContributor ? 'Unfollow' : 'Follow';
   })();
 
   const FollowBtnIcon = (() => {
@@ -58,7 +61,7 @@ const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Prop
       return IconProgress;
     }
 
-    return permissions.isContributor ? IconMinus : IconPlus;
+    return mergedPermissions.isContributor ? IconMinus : IconPlus;
   })();
 
   return (
@@ -68,8 +71,11 @@ const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Prop
         pl={4}
         pr={8}
         {...btnProps}
-        onClick={() => {
-          if (permissions.isContributor) {
+        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+          e.preventDefault();
+          e.stopPropagation();
+
+          if (mergedPermissions.isContributor) {
             unfollowCollection({ collectionId: collectionId });
           } else {
             followCollection({ collectionId: collectionId });
@@ -85,9 +91,7 @@ const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Prop
   );
 };
 
-type Props = {
+type Props = Omit<ButtonProps, 'onClick'> & {
   collectionId: number;
-  permissions: CollectionContributorPermissionFlags;
+  permissions?: CollectionContributorPermissionFlags;
 };
-
-export { CollectionFollowAction };
