@@ -1,6 +1,5 @@
 import {
   ButtonProps,
-  ChipProps,
   Divider,
   Indicator,
   Popover,
@@ -11,11 +10,12 @@ import {
 import { IconFilter } from '@tabler/icons-react';
 import { ReactNode, useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
+import { FilterChip } from '~/components/Filters/FilterChip';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { GenerationFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { FilterChip } from '~/components/Filters/FilterChip';
+import { titleCase } from '~/utils/string-helpers';
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -115,7 +115,7 @@ export function DumbMarkerFiltersDropdown({
                         setFilters({ marker: checked ? marker : undefined });
                       }}
                     >
-                      <span>{marker}</span>
+                      <span>{titleCase(marker)}</span>
                     </FilterChip>
                   );
                 })}

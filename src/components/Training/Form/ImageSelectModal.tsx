@@ -35,9 +35,10 @@ import {
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import {
-  ImageSelectFilter,
+import type {
+  ImageSelectProfileFilter,
   ImageSelectSource,
+  ImageSelectTrainingFilter,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
 import {
@@ -47,20 +48,23 @@ import {
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { ImageSelectFiltersTrainingDropdown } from '~/components/Training/Form/ImageSelectFilters';
+import {
+  ImageSelectFiltersProfileDropdown,
+  ImageSelectFiltersTrainingDropdown
+} from '~/components/Training/Form/ImageSelectFilters';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
-import {
+import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import { GeneratedImage } from '~/server/services/orchestrator';
+import type { NormalizedGeneratedImage } from '~/server/services/orchestrator';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { ImageGetMyInfinite, RecentTrainingData } from '~/types/router';
+import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
+import type { ImageGetMyInfinite, RecentTrainingData } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
@@ -75,9 +79,10 @@ import clsx from 'clsx';
 export type SelectedImage = {
   url: string;
   label: string;
+  type: MediaType;
 };
 
-type GennedImage = GeneratedImage & { params: TextToImageSteps[number]['params'] };
+type GennedMedia = NormalizedGeneratedImage & { params: TextToImageSteps[number]['params'] };
 type UploadedImage = Omit<ImageGetMyInfinite[number], 'meta'> & { meta: ImageMetaProps | null };
 type TrainedData = Omit<RecentTrainingData[number], 'metadata' | 'modelVersion'> & {
   metadata: FileMetadata | null;
@@ -102,6 +107,7 @@ export type ImageSelectModalProps = {
   title?: React.ReactNode;
   onSelect: (data: SelectedImage[]) => void;
   importedUrls: string[];
+  videoAllowed: boolean;
   selectSource?: ImageSelectSource;
 };
 
@@ -109,19 +115,23 @@ export default function ImageSelectModal({
   title,
   onSelect,
   importedUrls,
+  videoAllowed,
   selectSource = 'generation',
 }: ImageSelectModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
 
   const [selected, setSelected] = useState<SelectedImage[]>([]);
-  const [selectFilters, setSelectFilters] = useState<ImageSelectFilter>({
+  const [selectTrainingFilters, setSelectTrainingFilters] = useState<ImageSelectTrainingFilter>({
     hasLabels: null,
     labelType: null,
     statuses: [],
     types: [],
     mediaTypes: [],
     baseModels: [],
+  });
+  const [selectProfileFilters, setSelectProfileFilters] = useState<ImageSelectProfileFilter>({
+    mediaTypes: videoAllowed ? [] : [MediaType.image],
   });
 
   const {
@@ -132,7 +142,7 @@ export default function ImageSelectModal({
     fetchNextPage: fetchNextPageGenerations,
     // isError: isErrorGenerations,
   } = useGetTextToImageRequests(
-    { tags: [WORKFLOW_TAGS.IMAGE] },
+    { tags: videoAllowed ? [] : [WORKFLOW_TAGS.IMAGE] },
     { enabled: !!currentUser && selectSource === 'generation' }
   );
 
@@ -143,15 +153,13 @@ export default function ImageSelectModal({
     hasNextPage: hasNextPageUploaded,
     fetchNextPage: fetchNextPageUploaded,
     // isError: isErrorUploaded,
-  } = trpc.image.getMyImages.useInfiniteQuery(
-    {},
-    {
-      enabled: !!currentUser && selectSource === 'uploaded',
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-    }
-  );
+  } = trpc.image.getMyImages.useInfiniteQuery(selectProfileFilters, {
+    enabled: !!currentUser && selectSource === 'uploaded',
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  });
 
   // TODO debounce filters
+  // TODO only allow video types for videoAllowed
   const {
     data: dataTraining,
     isFetching: isLoadingTraining,
@@ -159,28 +167,26 @@ export default function ImageSelectModal({
     hasNextPage: hasNextPageTraining,
     fetchNextPage: fetchNextPageTraining,
     // isError: isErrorTraining,
-  } = trpc.modelFile.getRecentTrainingData.useInfiniteQuery(selectFilters, {
+  } = trpc.modelFile.getRecentTrainingData.useInfiniteQuery(selectTrainingFilters, {
     enabled: !!currentUser && selectSource === 'training',
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   });
 
-  // TODO allow videos
-  const generatedImages = useMemo(
+  const generatedMedia = useMemo(
     () =>
       steps.flatMap((step) =>
         step.images
-          .filter((x) => x.status === 'succeeded' && x.type === 'image' && !!x.completed)
-          .map((image) => {
-            if (image.type !== 'image' || !image.completed || image.status !== 'succeeded')
-              return null;
-            return { ...image, params: { ...step.params, seed: image.seed } };
+          .filter((x) => x.status === 'succeeded' && !!x.completed)
+          .map((asset) => {
+            if (!asset.completed || asset.status !== 'succeeded') return null;
+            return { ...asset, params: { ...step.params, seed: asset.seed } };
           })
           .filter(isDefined)
       ),
     [steps]
   );
 
-  const uploadedImages = useMemo(
+  const uploadedMedia = useMemo(
     () =>
       (dataUploaded?.pages.flatMap((x) => (!!x ? x.items : [])) ?? []).map((d) => ({
         ...d,
@@ -265,12 +271,22 @@ export default function ImageSelectModal({
                 </Button>
               </Group>
               {selectSource === 'generation' && (
-                <MarkerFiltersDropdown text="Filters" position="bottom-end" hideMediaTypes={true} />
+                <MarkerFiltersDropdown
+                  text="Filters"
+                  position="bottom-end"
+                  hideMediaTypes={!videoAllowed}
+                />
               )}
               {selectSource === 'training' && (
                 <ImageSelectFiltersTrainingDropdown
-                  selectFilters={selectFilters}
-                  setSelectFilters={setSelectFilters}
+                  selectFilters={selectTrainingFilters}
+                  setSelectFilters={setSelectTrainingFilters}
+                />
+              )}
+              {selectSource === 'uploaded' && videoAllowed && (
+                <ImageSelectFiltersProfileDropdown
+                  selectFilters={selectProfileFilters}
+                  setSelectFilters={setSelectProfileFilters}
                 />
               )}
             </Group>
@@ -287,9 +303,9 @@ export default function ImageSelectModal({
           ) : (
             <div className="flex flex-col gap-3 p-3">
               {selectSource === 'generation' ? (
-                <ImageGrid data={generatedImages} type={selectSource} />
+                <ImageGrid data={generatedMedia} type={selectSource} />
               ) : selectSource === 'uploaded' ? (
-                <ImageGrid data={uploadedImages} type={selectSource} />
+                <ImageGrid data={uploadedMedia} type={selectSource} />
               ) : selectSource === 'training' ? (
                 <ImageGrid data={trainingFiles} type={selectSource} />
               ) : (
@@ -317,24 +333,41 @@ const ImageGrid = ({
   type,
   data,
 }:
-  | { type: 'generation'; data: GennedImage[] }
+  | { type: 'generation'; data: GennedMedia[] }
   | { type: 'uploaded'; data: UploadedImage[] }
   | { type: 'training'; data: TrainedData[] }) => {
   if (!data || !data.length)
-    return <NoContent message={`No ${type === 'training' ? 'datasets' : 'files'} found`} />;
+    return <NoContent message={`No ${type === 'training' ? 'datasets' : 'assets'} found`} />;
 
   const grouped =
     type === 'generation'
-      ? groupBy(data, ({ workflowId }) => workflowId)
+      ? // ? groupBy(data, ({ workflowId }) => workflowId)
+        groupBy(data, ({ completed }) =>
+          !!completed
+            ? completed.toLocaleString(undefined, {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })
+            : 'Unknown Date'
+        )
       : type === 'uploaded'
       ? groupBy(data, ({ createdAt }) =>
           !!createdAt
-            ? createdAt.toLocaleString(undefined, { month: 'short', year: 'numeric' })
+            ? createdAt.toLocaleString(undefined, {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })
             : 'Unknown Date'
         )
       : groupBy(data, ({ createdAt }) =>
           !!createdAt
-            ? createdAt.toLocaleString(undefined, { month: 'short', year: 'numeric' })
+            ? createdAt.toLocaleString(undefined, {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })
             : 'Unknown Date'
         );
 
@@ -343,20 +376,21 @@ const ImageGrid = ({
       {Object.entries(grouped).map(([date, imgs], index) => (
         <Stack key={index}>
           <Title order={4} className="mb-2">
-            {type === 'generation'
-              ? formatDate(
-                  new Date(
-                    Math.max(
-                      ...imgs
-                        .map((i: GennedImage) =>
-                          i.completed ? new Date(i.completed).getTime() : null
-                        )
-                        .filter(isDefined)
-                    )
-                  ),
-                  'MMM D, YYYY h:mm:ss A'
-                )
-              : date}
+            {/*{type === 'generation'*/}
+            {/*  ? formatDate(*/}
+            {/*      new Date(*/}
+            {/*        Math.max(*/}
+            {/*          ...imgs*/}
+            {/*            .map((i: GennedMedia) =>*/}
+            {/*              i.completed ? new Date(i.completed).getTime() : null*/}
+            {/*            )*/}
+            {/*            .filter(isDefined)*/}
+            {/*        )*/}
+            {/*      ),*/}
+            {/*      'MMM D, YYYY h:mm:ss A'*/}
+            {/*    )*/}
+            {/*  : date}*/}
+            {date}
           </Title>
           <div
             className={clsx('p-2', styles.grid)}
@@ -367,8 +401,8 @@ const ImageGrid = ({
             }
           >
             {type === 'generation'
-              ? imgs.map((img: GennedImage) => (
-                  <ImageGridImage
+              ? imgs.map((img: GennedMedia) => (
+                  <ImageGridMedia
                     key={`${img.workflowId}_${img.stepName}_${img.id}`}
                     type={type}
                     img={img}
@@ -376,10 +410,10 @@ const ImageGrid = ({
                 ))
               : type === 'uploaded'
               ? imgs.map((img: UploadedImage) => (
-                  <ImageGridImage key={img.id} type={type} img={img} />
+                  <ImageGridMedia key={img.id} type={type} img={img} />
                 ))
               : imgs.map((img: TrainedData) => (
-                  <ImageGridImage key={img.id} type={type} img={img} />
+                  <ImageGridMedia key={img.id} type={type} img={img} />
                 ))}
           </div>
         </Stack>
@@ -388,11 +422,11 @@ const ImageGrid = ({
   );
 };
 
-const ImageGridImage = ({
+const ImageGridMedia = ({
   type,
   img,
 }:
-  | { type: 'generation'; img: GennedImage }
+  | { type: 'generation'; img: GennedMedia }
   | { type: 'uploaded'; img: UploadedImage }
   | { type: 'training'; img: TrainedData }) => {
   const { selected, setSelected, importedUrls } = useImageSelectContext();
@@ -418,6 +452,7 @@ const ImageGridImage = ({
                 : type === 'uploaded'
                 ? img.meta?.prompt ?? ''
                 : '',
+            type: type === 'training' ? 'image' : img.type,
           },
         ];
       } else {
@@ -608,7 +643,12 @@ const ImageGridImage = ({
   }
 
   return (
-    <div className="relative">
+    <div
+      className={`relative cursor-pointer${
+        isSelected ? ' shadow-[0_0_7px_3px] shadow-blue-8' : ''
+      }`}
+      onClick={onChange}
+    >
       {!selectable && (
         <Overlay
           blur={2}
@@ -620,15 +660,9 @@ const ImageGridImage = ({
       <EdgeMedia
         alt={`Imported Media - ${img.id}`}
         src={img.url}
-        className={`cursor-pointer${isSelected ? ' shadow-[0_0_7px_3px] shadow-blue-8' : ''}`}
-        style={{
-          height: '250px',
-          width: '100%',
-          // if we want to show full image, change objectFit to contain
-          objectFit: 'cover',
-          // object-position: top;
-        }}
-        onClick={onChange}
+        type={img.type}
+        className={`h-[250px] w-full object-cover`}
+        anim={true}
       />
 
       <div className="absolute left-2 top-2">

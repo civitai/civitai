@@ -27,6 +27,7 @@ export const createChangelogInput = z.object({
   type: z.nativeEnum(ChangelogType),
   tags: z.string().array().optional(),
   disabled: z.boolean().optional().default(false),
+  sticky: z.boolean().optional().default(false),
 });
 
 export type UpdateChangelogInput = z.infer<typeof updateChangelogInput>;

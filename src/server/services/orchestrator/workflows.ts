@@ -114,6 +114,7 @@ export async function submitWorkflow({
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');
     }
+    console.log({ message });
     switch (error.status) {
       case 400:
         throw throwBadRequestError(message);

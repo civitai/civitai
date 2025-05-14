@@ -1,6 +1,6 @@
 import { BuzzClientAccount, TransactionType } from '@civitai/client';
 import { z } from 'zod';
-import { imageSelectFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { imageSelectTrainingFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { ModelFileVisibility, TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -146,4 +146,4 @@ export const modelFileUpsertSchema = z.union([
 ]);
 
 export type RecentTrainingDataInput = z.infer<typeof recentTrainingDataSchema>;
-export const recentTrainingDataSchema = infiniteQuerySchema.merge(imageSelectFilterSchema);
+export const recentTrainingDataSchema = infiniteQuerySchema.merge(imageSelectTrainingFilterSchema);

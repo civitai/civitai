@@ -8,7 +8,7 @@ import {
   updateImageAcceptableMinorHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
-import { getByIdSchema, infiniteQuerySchema } from '~/server/schema/base.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addImageTechniques,
   addImageTools,
@@ -57,17 +57,18 @@ import {
   getEntitiesCoverImage,
   getImageSchema,
   getInfiniteImagesSchema,
+  getMyImagesInput,
   imageModerationSchema,
   imageRatingReviewInput,
   imageReviewQueueInputSchema,
+  removeImageResourceSchema,
   reportCsamImagesSchema,
   setVideoThumbnailSchema,
+  toggleImageFlagSchema,
   updateImageAcceptableMinorSchema,
   updateImageNsfwLevelSchema,
   updateImageTechniqueSchema,
   updateImageToolsSchema,
-  removeImageResourceSchema,
-  toggleImageFlagSchema,
 } from './../schema/image.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -209,7 +210,7 @@ export const imageRouter = router({
     .input(updateImageAcceptableMinorSchema)
     .mutation(updateImageAcceptableMinorHandler),
   getMyImages: protectedProcedure
-    .input(infiniteQuerySchema)
+    .input(getMyImagesInput)
     .query(({ input, ctx }) => getMyImages({ ...input, userId: ctx.user.id })),
   toggleImageFlag: moderatorProcedure
     .input(toggleImageFlagSchema)

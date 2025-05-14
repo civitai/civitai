@@ -12,7 +12,9 @@ export type Changelog = AsyncReturnType<typeof getChangelogs>['items'][number];
 export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: boolean }) => {
   const { hasFeature, limit, cursor, sortDir, search, dateBefore, dateAfter, types, tags } = input;
 
-  const where: Prisma.ChangelogWhereInput = {};
+  const where: Prisma.ChangelogWhereInput = {
+    sticky: false,
+  };
 
   if (!hasFeature) {
     where['disabled'] = false;
@@ -74,6 +76,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
         type: true,
         tags: true,
         disabled: true,
+        sticky: true,
       },
       where,
       take: limit + 1,
@@ -93,8 +96,51 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
       data.pop();
     }
 
+    const whereSticky: Prisma.ChangelogWhereInput = {
+      sticky: true,
+    };
+
+    if (!hasFeature) {
+      whereSticky['disabled'] = false;
+    }
+
+    const now = new Date();
+    const dateBeforeMod = hasFeature ? undefined : now;
+    whereSticky['effectiveAt'] = { lte: dateBeforeMod };
+
+    const stickyItems =
+      skip > 0
+        ? []
+        : await dbRead.changelog.findMany({
+            select: {
+              id: true,
+              title: true,
+              titleColor: true,
+              content: true,
+              link: true,
+              cta: true,
+              effectiveAt: true,
+              updatedAt: true,
+              type: true,
+              tags: true,
+              disabled: true,
+              sticky: true,
+            },
+            where: whereSticky,
+            orderBy: [
+              {
+                effectiveAt: 'desc',
+              },
+              {
+                id: 'desc',
+              },
+            ],
+          });
+
+    const retData = [...stickyItems, ...data];
+
     return {
-      items: data,
+      items: retData,
       nextCursor: hasMore ? skip + data.length : undefined,
     };
   } catch (error) {

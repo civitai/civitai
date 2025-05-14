@@ -764,6 +764,7 @@ export const ChangelogType = {
   Bugfix: 'Bugfix',
   Policy: 'Policy',
   Update: 'Update',
+  Incident: 'Incident',
 } as const;
 
 export type ChangelogType = (typeof ChangelogType)[keyof typeof ChangelogType];

@@ -19,7 +19,6 @@ import { isFlagProtected, moderatorProcedure, publicProcedure, router } from '~/
 export const changelogRouter = router({
   getInfinite: publicProcedure
     .input(getChangelogsInput)
-    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ input, ctx }) => getChangelogs({ ...input, hasFeature: ctx.features.changelogEdit })),
   create: moderatorProcedure
     .input(createChangelogInput)
@@ -33,7 +32,7 @@ export const changelogRouter = router({
     .input(deleteChangelogInput)
     .use(isFlagProtected('changelogEdit'))
     .mutation(({ input }) => deleteChangelog(input)),
-  getAllTags: publicProcedure.use(edgeCacheIt({ ttl: CacheTTL.xs })).query(() => getAllTags()),
+  getAllTags: publicProcedure.query(() => getAllTags()),
   getLatest: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(() => getLatestChangelog()),
