@@ -9,6 +9,7 @@ import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/
 import { wanAspectRatios, wanDuration } from '~/server/orchestrator/wan/wan.schema';
 import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 
 export function WanFormInput() {
   const form = useFormContext();
@@ -17,6 +18,7 @@ export function WanFormInput() {
 
   return (
     <>
+      <InputVideoProcess name="process" />
       {process === 'img2vid' && <InputSourceImageUpload name="sourceImage" className="flex-1" />}
       <InputResourceSelectMultipleStandalone
         name="resources"

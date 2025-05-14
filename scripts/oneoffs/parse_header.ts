@@ -18,6 +18,7 @@ const byteMap: Record<number, string> = {
   // 0
 };
 
+// usage: npx cross-env NODE_ENV=development tsx ./scripts/oneoffs/parse_header.ts
 async function main() {
   const mvs = await dbRead.modelVersion.findMany({
     where: {

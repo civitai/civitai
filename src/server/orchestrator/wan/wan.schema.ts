@@ -44,6 +44,9 @@ export const wanGenerationConfig = VideoGenerationConfig2({
   defaultValues: { aspectRatio: '1:1', duration: 5, cfgScale: 4, frameRate: 16 },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
+    if (!data.sourceImage) {
+      data.process = 'txt2vid';
+    }
     if (data.process === 'txt2vid') {
       delete data.sourceImage;
     } else if (data.process === 'img2vid') {
@@ -72,7 +75,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       sourceImage: sourceImage?.url,
       steps: 20,
       loras: resources.map(({ air, strength }) => ({ air, strength })),
-      // model: 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796',
+      model: 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796',
     };
   },
 });

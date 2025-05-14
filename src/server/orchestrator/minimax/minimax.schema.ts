@@ -21,6 +21,9 @@ export const minimaxGenerationConfig = VideoGenerationConfig2({
   schema,
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
+    if (!data.sourceImage) {
+      data.process = 'txt2vid';
+    }
     if (data.process === 'txt2vid') {
       delete data.sourceImage;
     }

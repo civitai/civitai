@@ -57,6 +57,9 @@ export const viduGenerationConfig = VideoGenerationConfig2({
     if (data.model === 'q1') {
       data.duration = 5;
     }
+    if (!data.sourceImage) {
+      data.process = 'txt2vid';
+    }
     if (data.process === 'txt2vid') {
       delete data.sourceImage;
       delete data.endSourceImage;
