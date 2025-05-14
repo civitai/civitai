@@ -1,21 +1,24 @@
 import { KlingMode, KlingModel, KlingVideoGenInput } from '@civitai/client';
 import z from 'zod';
-import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
-  imageEnhancementSchema,
+  baseVideoGenerationSchema,
   negativePromptSchema,
   promptSchema,
   seedSchema,
-  textEnhancementSchema,
+  sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 
 export const klingAspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const klingDuration = ['5', '10'] as const;
 
-const baseKlingSchema = z.object({
-  engine: z.literal('kling'),
-  workflow: z.string(),
+const schema = baseVideoGenerationSchema.extend({
+  engine: z.literal('kling').catch('kling'),
   model: z.nativeEnum(KlingModel).default(KlingModel.V1_5).catch(KlingModel.V1_5),
+  sourceImage: sourceImageSchema.nullish(),
+  prompt: promptSchema,
+  negativePrompt: negativePromptSchema,
+  aspectRatio: z.enum(klingAspectRatios).optional().catch('1:1'),
   enablePromptEnhancer: z.boolean().default(true),
   mode: z.nativeEnum(KlingMode).catch(KlingMode.STANDARD),
   duration: z.enum(klingDuration).default('5').catch('5'),
@@ -23,34 +26,37 @@ const baseKlingSchema = z.object({
   seed: seedSchema,
 });
 
-const klingTxt2VidSchema = textEnhancementSchema.merge(baseKlingSchema).extend({
-  negativePrompt: negativePromptSchema,
-  aspectRatio: z.enum(klingAspectRatios).default('1:1').catch('1:1'),
+export const klingGenerationConfig = VideoGenerationConfig2({
+  label: 'Kling',
+  whatIfProps: ['mode', 'duration'],
+  metadataDisplayProps: ['process', 'cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
+  schema,
+  defaultValues: { aspectRatio: '1:1' },
+  processes: ['txt2vid', 'img2vid'],
+  transformFn: (data) => {
+    if (!data.sourceImage) {
+      data.process = 'txt2vid';
+    }
+    if (data.process === 'txt2vid') {
+      delete data.sourceImage;
+    } else {
+      delete data.aspectRatio;
+    }
+    return data;
+  },
+  superRefine: (data, ctx) => {
+    if (!data.sourceImage && !data.prompt?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt is required',
+        path: ['prompt'],
+      });
+    }
+  },
+  inputFn: ({ sourceImage, ...args }): KlingVideoGenInput => {
+    return {
+      ...args,
+      sourceImage: sourceImage?.url,
+    };
+  },
 });
-
-const klingImg2VidSchema = imageEnhancementSchema
-  .merge(baseKlingSchema)
-  .extend({ prompt: promptSchema });
-
-const klingTxt2ImgConfig = new VideoGenerationConfig({
-  subType: 'txt2vid',
-  engine: 'kling',
-  schema: klingTxt2VidSchema,
-  metadataDisplayProps: ['cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
-});
-
-const klingImg2VidConfig = new VideoGenerationConfig({
-  subType: 'img2vid',
-  engine: 'kling',
-  schema: klingImg2VidSchema,
-  metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
-});
-
-export const klingVideoGenerationConfig = [klingTxt2ImgConfig, klingImg2VidConfig];
-
-export function KlingInput(
-  args: z.infer<(typeof klingVideoGenerationConfig)[number]['schema']>
-): KlingVideoGenInput {
-  const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
-  return { ...args, sourceImage };
-}

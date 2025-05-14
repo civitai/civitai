@@ -422,7 +422,7 @@ export function GenerationFormContent() {
       >
         {({ baseModel, fluxMode, draft, model, workflow, sourceImage }) => {
           // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
-          const isImg2Img = !workflow.startsWith('txt') || (isOpenAI && sourceImage);
+          const isImg2Img = workflow?.startsWith('txt') || (isOpenAI && sourceImage);
           const isDraft = isFlux
             ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
             : isSD3
@@ -573,6 +573,7 @@ export function GenerationFormContent() {
                                 control: classes.accordionControl,
                                 content: classes.accordionContent,
                               }}
+                              transitionDuration={0}
                             >
                               <Accordion.Item value="resources" className="border-b-0">
                                 <Accordion.Control
@@ -1047,6 +1048,7 @@ export function GenerationFormContent() {
                       control: classes.accordionControl,
                       content: classes.accordionContent,
                     }}
+                    transitionDuration={0}
                   >
                     <Accordion.Item value="advanced">
                       <Accordion.Control>
