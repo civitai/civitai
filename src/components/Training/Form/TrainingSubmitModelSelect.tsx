@@ -2,7 +2,6 @@ import {
   Anchor,
   Badge,
   Card,
-  createStyles,
   Group,
   Indicator,
   Input,
@@ -45,25 +44,6 @@ import {
 import { stringifyAIR } from '~/utils/string-helpers';
 import { type TrainingBaseModelType, trainingModelInfo } from '~/utils/training';
 
-const useStyles = createStyles((theme) => ({
-  // TODO is this working?
-  segControl: {
-    root: {
-      border: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-      }`,
-      background: 'none',
-      flexWrap: 'wrap',
-    },
-    label: {
-      paddingLeft: theme.spacing.sm,
-      paddingRight: theme.spacing.sm,
-    },
-  },
-}));
-
-const badgeWidth = 115;
-
 const ModelSelector = ({
   selectedRun,
   color,
@@ -85,8 +65,6 @@ const ModelSelector = ({
   isCustom?: boolean;
   isVideo?: boolean;
 }) => {
-  const { classes } = useStyles();
-
   const versions = Object.entries(trainingModelInfo).filter(([, v]) => v.type === baseType);
   if (!versions.length) return null;
 
@@ -100,7 +78,7 @@ const ModelSelector = ({
         size={16}
         styles={{ indicator: { top: '2px !important', right: '10px !important' } }}
       >
-        <Badge color={color} size="lg" radius="xs" px="xs" w={badgeWidth}>
+        <Badge color={color} size="lg" radius="xs" px="xs" w={115}>
           {name}
         </Badge>
       </Indicator>
@@ -121,7 +99,7 @@ const ModelSelector = ({
               value: k,
             };
           })}
-          value={value!} // TODO undefined vs null?
+          value={value ?? undefined} // TODO undefined vs null?
           onChange={(value) => {
             makeDefaultParams({
               base: value,
@@ -131,7 +109,7 @@ const ModelSelector = ({
           }}
           color="blue"
           size="xs"
-          className={classes.segControl}
+          classNames={{ root: 'flex-wrap bg-none border-gray-4 dark:border-dark-4', label: 'px-2' }}
           transitionDuration={0}
         />
       ) : (
