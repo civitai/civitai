@@ -23,6 +23,7 @@ import { trpc } from '~/utils/trpc';
 import { constants } from '~/server/common/constants';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
+import styles from './VaultItemsFiltersDropdown.module.scss';
 
 type Filters = Omit<GetPaginatedVaultItemsSchema, 'limit'>;
 
@@ -92,47 +93,49 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           }}
           multiple
         >
-          {Object.values(ModelType).map((type, index) => (
-            <FilterChip key={index} value={type}>
-              <span>{getDisplayName(type)}</span>
-            </FilterChip>
-          ))}
+          <Group gap={8}>
+            {Object.values(ModelType).map((type, index) => (
+              <FilterChip key={index} value={type}>
+                <span>{getDisplayName(type)}</span>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
         <Divider label="Category" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
           value={filters.categories ?? []}
           onChange={(categories) => {
-            setFilters({
-              categories,
-            });
+            setFilters({ categories });
           }}
           multiple
         >
-          {categories.map((category) => (
-            <FilterChip key={category.id} value={category.name}>
-              <Text component="span" transform="capitalize">
-                {getDisplayName(category.name)}
-              </Text>
-            </FilterChip>
-          ))}
+          <Group gap={8}>
+            {categories.map((category) => (
+              <FilterChip key={category.id} value={category.name}>
+                <Text component="span" transform="capitalize">
+                  {getDisplayName(category.name)}
+                </Text>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
         <Divider label="Base Model" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
           value={filters.baseModels ?? []}
           onChange={(baseModels) => {
-            setFilters({
-              baseModels,
-            });
+            setFilters({ baseModels });
           }}
           multiple
         >
-          {constants.baseModels.map((baseModel) => (
-            <FilterChip key={baseModel} value={baseModel}>
-              <Text component="span" transform="capitalize">
-                {baseModel}
-              </Text>
-            </FilterChip>
-          ))}
+          <Group gap={8}>
+            {constants.baseModels.map((baseModel) => (
+              <FilterChip key={baseModel} value={baseModel}>
+                <Text component="span" transform="capitalize">
+                  {baseModel}
+                </Text>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
         <Divider label="Created at" classNames={{ label: 'font-bold text-sm' }} />
         <Group grow>
@@ -207,15 +210,11 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          styles={{
-            content: {
-              height: 'auto',
-              maxHeight: 'calc(100dvh - var(--header-height))',
-              overflowY: 'auto',
-            },
-            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
-            header: { padding: '4px 8px' },
-            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          classNames={{
+            content: styles.content,
+            body: styles.body,
+            header: styles.header,
+            close: styles.close,
           }}
         >
           {dropdown}

@@ -65,7 +65,7 @@ export function TrainingWordBadge({ word, ...badgeProps }: BadgeProps & { word: 
             pr={2}
             {...badgeProps}
           >
-            <Group gap={5} align="center" wrap="nowrap" sx={{ whiteSpace: 'normal' }}>
+            <Group gap={5} align="center" wrap="nowrap" className="whitespace-normal">
               {word}
               {copied ? (
                 <IconCheck className="shrink-0 grow-0" stroke={2} size={14} />

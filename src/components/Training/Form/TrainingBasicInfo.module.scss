@@ -1,0 +1,30 @@
+.centerRadio {
+  .mantine-Group-root {
+    justify-content: space-between;
+    align-items: stretch;
+
+    @container (max-width: $mantine-breakpoint-sm) {
+      justify-content: center;
+    }
+  }
+
+  .mantine-Radio-inner {
+    display: none;
+  }
+
+  .mantine-Radio-label {
+    padding: var(--mantine-spacing-md);
+  }
+
+  .mantine-Radio-root {
+    border-radius: var(--mantine-radius-md);
+
+    &:hover {
+      background-color: rgba(var(--mantine-color-blue-2-rgb), 0.1);
+    }
+
+    &[data-checked] {
+      background-color: rgba(var(--mantine-color-blue-9-rgb), 0.2);
+    }
+  }
+}

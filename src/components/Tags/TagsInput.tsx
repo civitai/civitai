@@ -119,7 +119,7 @@ export function TagsInput({
           // size="lg"
           // radius="xs"
           className={styles.badge}
-          classNames={{ inner: styles.inner }}
+          classNames={{ label: styles.inner }}
           onClick={!adding ? open : undefined}
           tabIndex={0}
           onKeyDown={
@@ -180,7 +180,6 @@ export function TagsInput({
                 placeholder="Type to search..."
                 onItemSubmit={handleAddTag}
                 onBlur={handleClose}
-                withinPortal
                 autoFocus
               />
             ) : (

@@ -1,18 +1,14 @@
-import { MantineTheme } from '@mantine/core';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { lighten, MantineTheme, rgba } from '@mantine/core';
 import { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
 
 export const applyCosmeticThemeColors =
   (opts: ProfileBackgroundCosmetic['data']) => (theme: MantineTheme) => ({
     root: {
-      backgroundColor: `${opts.backgroundColor ?? theme.fn.rgba('#000', 0.31)} !important`,
+      backgroundColor: `${opts.backgroundColor ?? rgba('#000', 0.31)} !important`,
       color: `${opts.textColor ?? theme.colors.gray[0]} !important`,
 
       [`&:hover`]: {
-        backgroundColor: `${theme.fn.lighten(
-          opts.backgroundColor ?? theme.fn.rgba('#000', 0.31),
-          0.2
-        )} !important`,
+        backgroundColor: `${lighten(opts.backgroundColor ?? rgba('#000', 0.31), 0.2)} !important`,
       },
     },
   });

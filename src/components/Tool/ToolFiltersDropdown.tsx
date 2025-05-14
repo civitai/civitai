@@ -4,10 +4,11 @@ import {
   Chip,
   Divider,
   Drawer,
+  Group,
   Indicator,
   Popover,
   Stack,
-  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { ToolType } from '~/shared/utils/prisma/enums';
 import { IconFilter } from '@tabler/icons-react';
@@ -19,11 +20,12 @@ import { GetAllToolsSchema } from '~/server/schema/tool.schema';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
+import styles from './ToolFiltersDropdown.module.scss';
 
 const toolTypes = Object.keys(ToolType);
 
 export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme();
   const mobile = useIsMobile();
   const isClient = useIsClient();
 
@@ -56,12 +58,15 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
       classNames={{ root: 'leading-none', indicator: 'leading-relaxed	' }}
       inline
     >
-      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+      <FilterButton
+        {...buttonProps}
+        icon={IconFilter}
+        onClick={() => setOpened((o) => !o)}
+        active={opened}
+      >
         Filters
       </FilterButton>
     </Indicator>
@@ -72,24 +77,24 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
   const dropdown = (
     <Stack gap="lg">
       <Stack gap="md">
-        <Divider label="Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Type" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          gap={8}
           value={mergedFilters.type}
-          onChange={(type: ToolType) => handleChange({ type })}
-          my={4}
+          onChange={(type) => handleChange({ type: type as ToolType })}
         >
-          {toolTypes.map((tool, index) => (
-            <FilterChip key={index} value={tool}>
-              <span>{tool}</span>
-            </FilterChip>
-          ))}
+          <Group gap={8} my={4}>
+            {toolTypes.map((tool, index) => (
+              <FilterChip key={index} value={tool}>
+                <span>{tool}</span>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -108,15 +113,11 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          styles={{
-            drawer: {
-              height: 'auto',
-              maxHeight: 'calc(100dvh - var(--mantine-header-height))',
-              overflowY: 'auto',
-            },
-            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
-            header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          classNames={{
+            content: styles.content,
+            body: styles.body,
+            header: styles.header,
+            close: styles.close,
           }}
         >
           {dropdown}

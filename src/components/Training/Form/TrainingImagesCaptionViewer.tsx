@@ -2,7 +2,6 @@ import {
   Accordion,
   ActionIcon,
   Badge,
-  createStyles,
   Divider,
   Group,
   Paper,
@@ -25,16 +24,7 @@ import {
 } from '~/store/training.store';
 import { useDebouncer } from '~/utils/debouncer';
 import 'draft-js/dist/Draft.css';
-
-const useStyles = createStyles(() => ({
-  hiText: {
-    '.DraftEditor-root': {
-      height: '100px',
-      scrollbarWidth: 'thin',
-      overflowY: 'auto',
-    },
-  },
-}));
+import styles from './TrainingImagesCaptionViewer.module.scss';
 
 export const TrainingImagesCaptions = ({
   imgData,
@@ -47,7 +37,6 @@ export const TrainingImagesCaptions = ({
   mediaType: TrainingDetailsObj['mediaType'];
   searchCaption: string;
 }) => {
-  const { classes } = useStyles();
   const [captionTxt, setCaptionTxt] = useState('');
   const { autoLabeling } = useTrainingImageStore(
     (state) =>
@@ -64,7 +53,7 @@ export const TrainingImagesCaptions = ({
   }, [imgData.label]);
 
   return (
-    <Paper fz={12} p={6} mt={-6} radius={0} className={classes.hiText}>
+    <Paper fz={12} p={6} mt={-6} radius={0} className={styles.hiText}>
       <HighlightWithinTextarea
         placeholder="Add caption..."
         readOnly={autoLabeling.isRunning}
@@ -121,7 +110,7 @@ export const TrainingImagesCaptionViewer = ({
         <Accordion.Panel>
           <Group>
             <TextInput
-              icon={<IconSearch size={16} />}
+              leftSection={<IconSearch size={16} />}
               placeholder="Search captions"
               value={searchCaption}
               onChange={(event) => setSearchCaption(event.currentTarget.value.toLowerCase())}

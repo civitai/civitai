@@ -2,7 +2,6 @@ import {
   Accordion,
   Badge,
   Button,
-  createStyles,
   Divider,
   Group,
   Loader,
@@ -12,7 +11,6 @@ import {
   Switch,
   Text,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -20,6 +18,7 @@ import { showNotification } from '@mantine/notifications';
 import { IconAlertTriangle, IconConfetti, IconCopy, IconPlus, IconX } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
+import clsx from 'clsx';
 import dayjs from 'dayjs';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -80,17 +79,6 @@ const maxRuns = 5;
 
 const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan'];
 
-const useStyles = createStyles((theme) => ({
-  sticky: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    position: 'sticky',
-    top: 0,
-    zIndex: 5,
-    marginBottom: '-5px',
-    paddingBottom: '5px',
-  },
-}));
-
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
   const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
@@ -120,8 +108,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const status = useTrainingServiceStatus();
   const blockedModels = status.blockedModels ?? blockedCustomModels;
 
-  const { classes } = useStyles();
-  const theme = useMantineTheme();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
@@ -505,17 +491,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       <Accordion
         variant="separated"
         defaultValue={'model-details'}
-        styles={(theme) => ({
-          content: { padding: 0 },
-          item: {
-            overflow: 'hidden',
-            borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-            boxShadow: theme.shadows.sm,
-          },
-          control: {
-            padding: theme.spacing.sm,
-          },
-        })}
+        classNames={{
+          content: 'p-0',
+          item: 'overflow-hidden shadow-sm border-gray-3 dark:border-dark-4',
+          control: 'p-2',
+        }}
       >
         <Accordion.Item value="model-details">
           <Accordion.Control>Model Details</Accordion.Control>
@@ -562,7 +542,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         onChange={(event) => setMultiMode(event.currentTarget.checked)}
       />
 
-      <Stack className={classes.sticky} sx={!multiMode ? { display: 'none' } : {}}>
+      <Stack
+        className={clsx(
+          'sticky top-0 z-10 mb-[-5px] bg-white pb-[5px] dark:bg-dark-7',
+          !multiMode && 'hidden'
+        )}
+      >
         <Group mt="md" justify="space-between" wrap="nowrap">
           <Title order={5}>Training Runs</Title>
           <Group gap="xs" ml="sm">
@@ -570,17 +555,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               color="green"
               variant="light"
               size="compact-md"
-              leftIcon={<IconPlus size={16} />}
+              leftSection={<IconPlus size={16} />}
               disabled={runs.length >= maxRuns}
               onClick={() => {
                 addRun(model.id, thisMediaType);
                 setSelectedRunIndex(runs.length);
               }}
-              styles={{
-                leftIcon: {
-                  marginRight: 8,
-                },
-              }}
+              classNames={{ section: 'mr-2' }}
             >
               Add
             </Button>
@@ -588,17 +569,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               color="cyan"
               variant="light"
               size="compact-md"
-              leftIcon={<IconCopy size={16} />}
+              leftSection={<IconCopy size={16} />}
               disabled={runs.length >= maxRuns}
               onClick={() => {
                 addRun(model.id, thisMediaType, selectedRun);
                 setSelectedRunIndex(runs.length);
               }}
-              styles={{
-                leftIcon: {
-                  marginRight: 8,
-                },
-              }}
+              classNames={{ section: 'mr-2' }}
             >
               Duplicate
             </Button>
@@ -606,17 +583,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               color="red"
               variant="light"
               size="compact-md"
-              leftIcon={<IconX size={16} />}
+              leftSection={<IconX size={16} />}
               disabled={runs.length <= 1}
               onClick={() => {
                 removeRun(model.id, thisMediaType, selectedRun.id);
                 setSelectedRunIndex(0);
               }}
-              styles={{
-                leftIcon: {
-                  marginRight: 8,
-                },
-              }}
+              classNames={{ section: 'mr-2' }}
             >
               Remove
             </Button>
@@ -624,6 +597,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Group>
 
         <SegmentedControl
+          className="overflow-auto"
           data={runs.map((run, idx) => ({
             label: `Run #${idx + 1} (${
               !!run.customModel
@@ -638,7 +612,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             // const run = runs.find((r) => r.id === Number(value));
             setSelectedRunIndex(Number(value));
           }}
-          sx={{ overflow: 'auto' }}
         />
 
         <Divider />
@@ -778,11 +751,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             w="fit-content"
             px="md"
             py="xs"
-            style={{
-              backgroundColor:
-                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-              alignSelf: 'flex-end',
-            }}
+            className="self-end bg-gray-0 dark:bg-dark-6"
           >
             <Group gap="sm">
               <Badge>

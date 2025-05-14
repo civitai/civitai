@@ -4,7 +4,7 @@ import { Elements, PaymentElement } from '@stripe/react-stripe-js';
 import React from 'react';
 import { useStripePaymentMethodSetup } from '~/components/Buzz/useStripePaymentMethodSetup';
 import type { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stripe-js';
-import { Button, Center, Group, Loader, Stack, Text, useMantineTheme } from '@mantine/core';
+import { Button, Center, Group, Loader, Stack, Text, useComputedColorScheme } from '@mantine/core';
 
 type Props = {
   redirectUrl?: string;
@@ -14,7 +14,7 @@ type Props = {
 };
 export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props) => {
   const stripePromise = useStripePromise();
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme();
 
   const { data, isLoading, isFetching } = trpc.stripe.getSetupIntent.useQuery(
     { paymentMethodTypes },
@@ -43,7 +43,7 @@ export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props
 
   const options: StripeElementsOptions = {
     clientSecret,
-    appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
+    appearance: { theme: colorScheme === 'dark' ? 'night' : 'stripe' },
     locale: 'en',
   };
 

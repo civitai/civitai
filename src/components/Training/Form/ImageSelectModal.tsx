@@ -14,6 +14,7 @@ import {
   Stack,
   Text,
   Title,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import {
@@ -46,7 +47,6 @@ import {
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { ImageSelectFiltersTrainingDropdown } from '~/components/Training/Form/ImageSelectFilters';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
@@ -67,6 +67,8 @@ import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import styles from '~/components/Search/SearchLayout.module.scss';
+import clsx from 'clsx';
 
 // const take = 20;
 
@@ -318,8 +320,6 @@ const ImageGrid = ({
   | { type: 'generation'; data: GennedImage[] }
   | { type: 'uploaded'; data: UploadedImage[] }
   | { type: 'training'; data: TrainedData[] }) => {
-  const { classes, cx } = useSearchLayoutStyles();
-
   if (!data || !data.length)
     return <NoContent message={`No ${type === 'training' ? 'datasets' : 'files'} found`} />;
 
@@ -359,7 +359,7 @@ const ImageGrid = ({
               : date}
           </Title>
           <div
-            className={cx('p-2', classes.grid)}
+            className={clsx('p-2', styles.grid)}
             style={
               type === 'training'
                 ? { gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }
@@ -397,6 +397,7 @@ const ImageGridImage = ({
   | { type: 'training'; img: TrainedData }) => {
   const { selected, setSelected, importedUrls } = useImageSelectContext();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme();
 
   const compareKey = type === 'training' ? `${img.modelVersion.id}` : img.url;
 
@@ -478,7 +479,7 @@ const ImageGridImage = ({
             </IconBadge>
             {(metadata?.numCaptions || 0) > 0 && (
               <IconBadge
-                color={theme.colorScheme === 'dark' ? 'gray.2' : 'gray.8'}
+                color={colorScheme === 'dark' ? 'gray.2' : 'gray.8'}
                 icon={<IconCategory size={14} />}
                 tooltip="Label type"
               >
@@ -573,7 +574,7 @@ const ImageGridImage = ({
             <Overlay
               blur={2}
               zIndex={11}
-              color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+              color={colorScheme === 'dark' ? theme.colors.dark[7] : theme.white}
               opacity={0.8}
             />
           )}
@@ -583,8 +584,8 @@ const ImageGridImage = ({
                 // title="Dataset Details"
                 items={modelDetails}
                 labelWidth="80px"
+                className="text-xs"
                 withBorder
-                fontSize="xs"
               />
             </div>
           </div>
@@ -612,7 +613,7 @@ const ImageGridImage = ({
         <Overlay
           blur={2}
           zIndex={11}
-          color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+          color={colorScheme === 'dark' ? theme.colors.dark[7] : theme.white}
           opacity={0.8}
         />
       )}

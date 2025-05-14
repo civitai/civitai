@@ -2,7 +2,6 @@ import { Grid, Card, Text, Anchor, Stack, Group } from '@mantine/core';
 import { IconMail, IconQuestionMark, IconWand, IconProps } from '@tabler/icons-react';
 import { IconBook, IconBrandDiscord } from '@tabler/icons-react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';
-import { trpc } from '~/utils/trpc';
 
 const SUPPORT_OPTIONS = [
   {
@@ -43,7 +42,7 @@ const SUPPORT_OPTIONS = [
 export function SupportContent() {
   return (
     <Grid gutter="xl">
-      <Grid.Col xs={12} md={6}>
+      <Grid.Col span={{ base: 12, md: 6 }}>
         <Stack gap="lg">
           {SUPPORT_OPTIONS.map((option) => (
             <Card key={option.title} shadow="xs" radius={12} p="md" pr="lg">
@@ -68,15 +67,8 @@ export function SupportContent() {
           ))}
         </Stack>
       </Grid.Col>
-      <Grid.Col xs={12} md={6}>
-        <AssistantChat
-          width="100%"
-          height="100%"
-          sx={{
-            height: '100%',
-            minHeight: 500,
-          }}
-        />
+      <Grid.Col span={{ base: 12, md: 6 }}>
+        <AssistantChat width="100%" height="100%" className="h-full min-h-[500px]" />
       </Grid.Col>
       <Grid.Col>
         <Text size="md">

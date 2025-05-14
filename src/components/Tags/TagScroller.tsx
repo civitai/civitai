@@ -1,4 +1,4 @@
-import { Button, useMantineTheme } from '@mantine/core';
+import { Button, useComputedColorScheme } from '@mantine/core';
 
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 
@@ -12,7 +12,7 @@ export function TagScroller({
   value?: number[];
   onChange?: (value: number[]) => void;
 }) {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme();
 
   const handleChange = (tagId: number, shouldAdd: boolean) => {
     const tags = [...value];
@@ -36,7 +36,7 @@ export function TagScroller({
         return (
           <Button
             key={tag.id}
-            variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
             color={active ? 'blue' : 'gray'}
             onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               const shouldAdd = e.ctrlKey;

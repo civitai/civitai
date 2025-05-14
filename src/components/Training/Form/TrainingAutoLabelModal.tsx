@@ -201,7 +201,7 @@ const AutoTagSection = ({
         min={autoLabelLimits.tag.tags.min}
         max={autoLabelLimits.tag.tags.max}
         onChange={(value) => {
-          setAutoTagging(modelId, mediaType, { maxTags: value });
+          setAutoTagging(modelId, mediaType, { maxTags: Number(value) });
         }}
       />
       <NumberInputWrapper
@@ -216,10 +216,10 @@ const AutoTagSection = ({
         value={autoTagging.threshold}
         min={autoLabelLimits.tag.threshold.min}
         max={autoLabelLimits.tag.threshold.max}
-        precision={1}
+        decimalScale={1}
         step={0.1}
         onChange={(value) => {
-          setAutoTagging(modelId, mediaType, { threshold: value });
+          setAutoTagging(modelId, mediaType, { threshold: Number(value) });
         }}
       />
 
@@ -383,10 +383,10 @@ const AutoCaptionSection = ({
         value={autoCaptioning.temperature}
         min={autoLabelLimits.caption.temperature.min}
         max={autoLabelLimits.caption.temperature.max}
-        precision={2}
+        decimalScale={2}
         step={0.01}
         onChange={(value) => {
-          setAutoCaptioning(modelId, mediaType, { temperature: value });
+          setAutoCaptioning(modelId, mediaType, { temperature: Number(value) });
         }}
         disabled={disabled}
       />
@@ -404,7 +404,7 @@ const AutoCaptionSection = ({
         min={autoLabelLimits.caption.maxNewTokens.min}
         max={autoLabelLimits.caption.maxNewTokens.max}
         onChange={(value) => {
-          setAutoCaptioning(modelId, mediaType, { maxNewTokens: value });
+          setAutoCaptioning(modelId, mediaType, { maxNewTokens: Number(value) });
         }}
         disabled={disabled}
       />

@@ -1,15 +1,4 @@
-import {
-  Badge,
-  Button,
-  createStyles,
-  Group,
-  Image,
-  Input,
-  Radio,
-  Stack,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { Badge, Button, Group, Image, Input, Radio, Stack, Text, Tooltip } from '@mantine/core';
 import { IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -27,10 +16,10 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { trainingStore } from '~/store/training.store';
 import { TrainingModelData } from '~/types/router';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import styles from './TrainingBasicInfo.module.scss';
 
 type tmTypes = TrainingDetailsObj['type'];
 type tMediaTypes = TrainingDetailsObj['mediaType'];
@@ -68,34 +57,6 @@ const trainingModelTypesMap: {
     type: 'vid',
   },
 };
-
-const useStyles = createStyles((theme) => ({
-  centerRadio: {
-    '& .mantine-Group-root': {
-      justifyContent: 'space-between',
-      alignItems: 'stretch',
-      [containerQuery.smallerThan('sm')]: {
-        justifyContent: 'center',
-      },
-    },
-    '& .mantine-Radio-inner': {
-      display: 'none',
-    },
-    '& .mantine-Radio-label': {
-      padding: theme.spacing.md,
-    },
-    '& .mantine-Radio-root': {
-      borderRadius: theme.radius.md,
-      // TODO [bw] check for dark theme here
-      '&:hover': {
-        backgroundColor: theme.fn.rgba(theme.colors.blue[2], 0.1),
-      },
-      '&[data-checked]': {
-        backgroundColor: theme.fn.rgba(theme.colors.blue[9], 0.2),
-      },
-    },
-  },
-}));
 
 const RadioImg = ({
   value,
@@ -171,8 +132,6 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   const thisTrainingDetails = thisModelVersion?.trainingDetails as TrainingDetailsObj | undefined;
   const existingTrainingModelType = thisTrainingDetails?.type ?? undefined;
   const existingTrainingMediaType = thisTrainingDetails?.mediaType ?? 'image';
-
-  const { classes } = useStyles();
 
   const thisStep = 1;
 
@@ -373,16 +332,17 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           <InputSegmentedControl
             name="trainingMediaType"
             radius="sm"
+            className="border-gray-4 dark:border-dark-4"
             data={constants.trainingMediaTypes.map((mt) => {
               const videoNotAllowed = mt === 'video' && !features.videoTraining;
 
               return {
                 label: (
                   <Tooltip
-                    withinPortal
                     disabled={!videoNotAllowed}
                     // label={videoNotAllowed ? 'Currently available to subscribers only' : undefined}
                     label="Temporarily disabled - check back soon!"
+                    withinPortal
                   >
                     <Group gap="xs" justify="center">
                       {mt === 'video' ? <IconVideo size={18} /> : <IconPhoto size={16} />}
@@ -398,17 +358,10 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
               };
             })}
             fullWidth
-            styles={(theme) => ({
-              root: {
-                border: `1px solid ${
-                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-                }`,
-              },
-            })}
           />
         </Input.Wrapper>
         <InputRadioGroup
-          className={classes.centerRadio} // why is this not easier to do?
+          className={styles.centerRadio}
           name="trainingModelType"
           label="Choose your LoRA type"
           withAsterisk

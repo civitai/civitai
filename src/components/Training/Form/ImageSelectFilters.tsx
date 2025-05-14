@@ -24,6 +24,7 @@ import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { titleCase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
 import { isDefined } from '~/utils/type-guards';
+import styles from './ImageSelectFilters.module.scss';
 
 export function ImageSelectFiltersTrainingDropdown({
   selectFilters,
@@ -75,8 +76,6 @@ export function ImageSelectFiltersTrainingDropdown({
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
@@ -100,7 +99,7 @@ export function ImageSelectFiltersTrainingDropdown({
   const dropdown = (
     <Stack gap="lg" p="md">
       <Stack gap="md">
-        <Divider label="Labels" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Labels" classNames={{ label: 'font-bold text-sm' }} />
         <Chip
           {...chipProps}
           checked={selectFilters.hasLabels === true}
@@ -110,7 +109,7 @@ export function ImageSelectFiltersTrainingDropdown({
           <span>Has Labels</span>
         </Chip>
 
-        <Divider label="Label Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Label Type" classNames={{ label: 'font-bold text-sm' }} />
         <Group gap={8} my={4}>
           {constants.autoLabel.labelTypes.map((lt) => (
             <Chip
@@ -126,73 +125,73 @@ export function ImageSelectFiltersTrainingDropdown({
           ))}
         </Group>
 
-        <Divider label="Training Status" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Training Status" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          gap={8}
           value={selectFilters.statuses}
-          onChange={(sts: TrainingStatus[]) => setSelectFilters((f) => ({ ...f, statuses: sts }))}
+          onChange={(sts) => setSelectFilters((f) => ({ ...f, statuses: sts as TrainingStatus[] }))}
           multiple
-          my={4}
         >
-          {Object.values(TrainingStatus).map((ts) => (
-            <Chip
-              key={ts}
-              value={ts}
-              {...chipProps}
-              color={trainingStatusFields[ts]?.color ?? 'gray'}
-            >
-              <span>{ts === 'InReview' ? 'Ready' : ts}</span>
-            </Chip>
-          ))}
+          <Group gap={8} my={4}>
+            {Object.values(TrainingStatus).map((ts) => (
+              <Chip
+                key={ts}
+                value={ts}
+                {...chipProps}
+                color={trainingStatusFields[ts]?.color ?? 'gray'}
+              >
+                <span>{ts === 'InReview' ? 'Ready' : ts}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
 
-        <Divider label="Media Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Media Type" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          gap={8}
           value={selectFilters.mediaTypes}
-          onChange={(ts: TrainingDetailsObj['mediaType'][]) =>
-            setSelectFilters((f) => ({ ...f, mediaTypes: ts }))
+          onChange={(ts) =>
+            setSelectFilters((f) => ({ ...f, mediaTypes: ts as TrainingDetailsObj['mediaType'][] }))
           }
           multiple
-          my={4}
         >
-          {constants.trainingMediaTypes.map((ty) => (
-            <Chip key={ty} value={ty} {...chipProps}>
-              <span>{titleCase(ty)}</span>
-            </Chip>
-          ))}
+          <Group gap={8} my={4}>
+            {constants.trainingMediaTypes.map((ty) => (
+              <Chip key={ty} value={ty} {...chipProps}>
+                <span>{titleCase(ty)}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
 
-        <Divider label="Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Type" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          gap={8}
           value={selectFilters.types}
-          onChange={(ts: TrainingDetailsObj['type'][]) =>
-            setSelectFilters((f) => ({ ...f, types: ts }))
+          onChange={(ts) =>
+            setSelectFilters((f) => ({ ...f, types: ts as TrainingDetailsObj['type'][] }))
           }
           multiple
-          my={4}
         >
-          {constants.trainingModelTypes.map((ty) => (
-            <Chip key={ty} value={ty} {...chipProps}>
-              <span>{ty}</span>
-            </Chip>
-          ))}
+          <Group gap={8} my={4}>
+            {constants.trainingModelTypes.map((ty) => (
+              <Chip key={ty} value={ty} {...chipProps}>
+                <span>{ty}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
 
-        <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Base model" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          gap={8}
           value={selectFilters.baseModels}
-          onChange={(bms: BaseModel[]) => setSelectFilters((f) => ({ ...f, baseModels: bms }))}
+          onChange={(bms) => setSelectFilters((f) => ({ ...f, baseModels: bms as BaseModel[] }))}
           multiple
-          my={4}
         >
-          {baseModelsList.map((baseModel, index) => (
-            <Chip key={index} value={baseModel} {...chipProps}>
-              <span>{baseModel}</span>
-            </Chip>
-          ))}
+          <Group gap={8} my={4}>
+            {baseModelsList.map((baseModel, index) => (
+              <Chip key={index} value={baseModel} {...chipProps}>
+                <span>{baseModel}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
 
@@ -218,18 +217,12 @@ export function ImageSelectFiltersTrainingDropdown({
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          styles={{
-            root: {
-              zIndex: 400,
-            },
-            drawer: {
-              height: 'auto',
-              maxHeight: 'calc(100dvh - var(--header-height))',
-              overflowY: 'auto',
-            },
-            body: { padding: 0, overflowY: 'auto' },
-            header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          classNames={{
+            root: styles.root,
+            content: styles.content,
+            body: styles.body,
+            header: styles.header,
+            close: styles.close,
           }}
         >
           {dropdown}

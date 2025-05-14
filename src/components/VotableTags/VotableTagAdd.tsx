@@ -1,12 +1,4 @@
-import {
-  Autocomplete,
-  Badge,
-  Group,
-  lighten,
-  Portal,
-  TextInput,
-  useMantineTheme,
-} from '@mantine/core';
+import { Autocomplete, Badge, Group, lighten, TextInput, useMantineTheme } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { IconPlus } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
@@ -65,28 +57,26 @@ export function VotableTagAdd({ addTag, autosuggest }: VotableTagAddProps) {
         {!adding ? (
           <span>Tag</span>
         ) : autosuggest ? (
-          <Portal>
-            <Autocomplete
-              variant="unstyled"
-              classNames={{ dropdown: 'max-w-[300px]', input: 'uppercase font-bold text-[11px]' }}
-              value={search}
-              onChange={setSearch}
-              data={
-                data?.items.map((tag) => ({
-                  id: tag.id,
-                  value: tag.name,
-                  name: getDisplayName(tag.name),
-                })) ?? []
-              }
-              placeholder="Type to search..."
-              onOptionSubmit={(item) => {
-                addTag(item);
-                handleClose();
-              }}
-              onBlur={handleClose}
-              autoFocus
-            />
-          </Portal>
+          <Autocomplete
+            variant="unstyled"
+            classNames={{ dropdown: 'max-w-[300px]', input: 'uppercase font-bold text-[11px]' }}
+            value={search}
+            onChange={setSearch}
+            data={
+              data?.items.map((tag) => ({
+                id: tag.id,
+                value: tag.name,
+                name: getDisplayName(tag.name),
+              })) ?? []
+            }
+            placeholder="Type to search..."
+            onOptionSubmit={(item) => {
+              addTag(item);
+              handleClose();
+            }}
+            onBlur={handleClose}
+            autoFocus
+          />
         ) : (
           <form
             onSubmit={(e) => {

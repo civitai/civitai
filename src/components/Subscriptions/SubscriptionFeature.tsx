@@ -65,7 +65,6 @@ export const SubscriptionFeature = ({
 };
 
 export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: number }) => {
-  const currentUser = useCurrentUser();
   const { subscription } = useActiveSubscription();
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const purchasesMultiplier = multipliers.purchasesMultiplier ?? 1;
