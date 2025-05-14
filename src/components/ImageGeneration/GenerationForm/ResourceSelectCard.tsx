@@ -4,7 +4,7 @@ import {
   Badge,
   Button,
   Group,
-  GroupPosition,
+  GroupProps,
   Overlay,
   Paper,
   Popover,
@@ -12,7 +12,6 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -39,23 +38,17 @@ type Props = {
   onSwap?: VoidFunction;
   disabled?: boolean;
   hideVersion?: boolean;
-  groupPosition?: GroupPosition;
+  groupPosition?: GroupProps['justify'];
   showAsCheckpoint?: boolean;
 };
 
 export const ResourceSelectCard = (props: Props) => {
   const isCheckpoint = props.resource.model.type === ModelType.Checkpoint;
-  const theme = useMantineTheme();
 
   return (
     <div className="relative">
       {props.disabled && (
-        <Overlay
-          blur={3}
-          zIndex={10}
-          color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
-          opacity={0.8}
-        />
+        <Overlay blur={3} zIndex={10} className="bg-white dark:bg-dark-7" opacity={0.8} />
       )}
       {isCheckpoint || props.showAsCheckpoint ? (
         <CheckpointInfo {...props} />
@@ -77,7 +70,7 @@ function CheckpointInfo({
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
 
   return (
-    <Group gap="xs" position={groupPosition ?? 'apart'} wrap="nowrap">
+    <Group gap="xs" justify={groupPosition ?? 'space-between'} wrap="nowrap">
       <Group gap={4} wrap="nowrap">
         {unavailable ? (
           <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
@@ -107,21 +100,18 @@ function CheckpointInfo({
         <Stack gap={2}>
           <Text
             component={Link}
-            sx={(theme) => ({
-              cursor: 'pointer',
-              color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-              overflowWrap: 'anywhere',
-            })}
+            className="cursor-pointer text-black dark:text-white"
+            style={{ overflowWrap: 'anywhere' }}
             href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
             rel="nofollow noindex"
-            color="initial"
+            c="initial"
             lineClamp={1}
             weight={590}
           >
             {resource.model.name}
           </Text>
           {!hideVersion && (
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               {resource.name}
             </Text>
           )}
@@ -156,7 +146,6 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
   const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
-  const theme = useMantineTheme();
 
   return (
     <Group gap="xs" justify="space-between" wrap="nowrap">
@@ -227,7 +216,7 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
               <Popover position="bottom" withArrow width={200}>
                 <Popover.Target>
                   <ActionIcon size={18} color="yellow.7" variant="filled">
-                    <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />
+                    <IconBolt className="text-dark-9" fill="currentColor" size={16} />
                   </ActionIcon>
                 </Popover.Target>
                 <Popover.Dropdown>
@@ -241,12 +230,12 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
         {hasStrength && onUpdate && !unavailable && (
           <div className="flex w-full items-center gap-2">
             <NumberSlider
+              className="flex-1"
               value={resource.strength}
               onChange={(strength) => onUpdate({ ...resource, strength: strength ?? 1 })}
               min={!isSameMinMaxStrength ? resource.minStrength : -1}
               max={!isSameMinMaxStrength ? resource.maxStrength : 2}
               step={0.05}
-              sx={{ flex: 1 }}
               reverse
             />
           </div>

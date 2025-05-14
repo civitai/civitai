@@ -16,6 +16,7 @@ import {
   ScrollArea,
   SimpleGrid,
   Card,
+  useComputedColorScheme,
 } from '@mantine/core';
 import {
   IconInfoCircle,
@@ -30,8 +31,7 @@ import { trpc } from '~/utils/trpc';
 import classes from './RunPartners.module.scss';
 
 export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
-  const { theme, classes } = useStyles();
-
+  const colorScheme = useComputedColorScheme();
   const { data: strategies = [], isLoading: strategiesLoading } =
     trpc.modelVersion.getRunStrategies.useQuery({ id: modelVersionId });
   const { data: partners, isLoading: partnersLoading } = trpc.partner.getAll.useQuery();
@@ -51,7 +51,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
   const defaultBadgeProps: BadgeProps = {
     variant: 'outline',
     radius: 'sm',
-    color: theme.colorScheme === 'dark' ? 'gray' : 'dark',
+    color: colorScheme === 'dark' ? 'gray' : 'dark',
     styles: {
       root: { textTransform: 'none', userSelect: 'none' },
     },
@@ -140,9 +140,9 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                   <Group justify="space-between" p="sm">
                     <Group gap="xs">
                       <Text>{name}</Text>
-                      <Popover width={400} withinPortal withArrow justify="flex-end">
+                      <Popover width={400} withinPortal withArrow>
                         <Popover.Target>
-                          <Center style={{ cursor: 'pointer' }}>
+                          <Center className="cursor-pointer">
                             <IconInfoCircle size={20} />
                           </Center>
                         </Popover.Target>
@@ -250,7 +250,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
           <Loader />
         </Center>
       ) : !!partnersWithStrategies?.length ? (
-        <ScrollArea.Autosize maxHeight="55vh">
+        <ScrollArea.Autosize mah="55vh">
           <Stack>
             {renderPremiumPartners(premiumPartners)}
             {renderPartners(availablePartners)}

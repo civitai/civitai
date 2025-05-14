@@ -487,7 +487,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
 const AutocompleteSearchContent = React.forwardRef(AutocompleteSearchContentInner);
 
-const IndexRenderItem: Record<SearchIndexKey, React.FC> = {
+const IndexRenderItem: Record<SearchIndexKey, React.ComponentType<any>> = {
   models: ModelSearchItem,
   articles: ArticlesSearchItem,
   users: UserSearchItem,

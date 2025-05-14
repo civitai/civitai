@@ -2,7 +2,7 @@ import { AutocompleteProps, Group, Select, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconChevronDown } from '@tabler/icons-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Configure, InstantSearch, useSearchBox } from 'react-instantsearch';
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
@@ -210,9 +210,30 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   });
 
   const items = useMemo(() => {
-    const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: '' }));
+    const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: String(hit.id) }));
     return items;
   }, [filtered]);
+
+  const getItemFromValue = useCallback(
+    (value: string) => {
+      const item = items.find((item) => item.value === value);
+      if (!item) return null;
+
+      return item.hit;
+    },
+    [items]
+  );
+
+  const renderOption = useCallback<NonNullable<AutocompleteProps['renderOption']>>(
+    ({ option }) => {
+      const hit = getItemFromValue(option.value);
+      if (!hit) return null;
+
+      const RenderItem = IndexRenderItem[indexName] ?? ModelSearchItem;
+      return <RenderItem item={hit} />;
+    },
+    [getItemFromValue, indexName]
+  );
 
   useEffect(() => {
     // Only set the query when the debounced search changes
@@ -254,13 +275,14 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         placeholder={placeholder ?? 'Search Civitai'}
         type="search"
         maxDropdownHeight={300}
-        nothingFound={
-          !hits.length ? (
-            <Stack gap={0} align="center">
-              <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-            </Stack>
-          ) : undefined
-        }
+        // TODO: Mantine7
+        // nothingFound={
+        //   !hits.length ? (
+        //     <Stack gap={0} align="center">
+        //       <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+        //     </Stack>
+        //   ) : undefined
+        // }
         limit={
           results && results.nbHits > dropdownItemLimit
             ? dropdownItemLimit + 1 // Allow one more to show more results option
@@ -272,22 +294,23 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         onChange={setSearch}
         onClear={() => setSearch('')}
         // onBlur={() => (!isMobile ? onClear?.() : undefined)}
-        onOptionSubmit={(item) => {
-          if (item.hit) {
+        onOptionSubmit={(value) => {
+          const item = getItemFromValue(value);
+          if (item) {
             onItemSelected(
               {
-                entityId: item.hit.id,
+                entityId: item.id,
                 entityType: SearchIndexEntityTypes[searchIndexMap[indexName]],
               },
-              item.hit
+              item
             );
 
             setSearch('');
           }
         }}
-        itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
+        renderOption={renderOption}
         // prevent default filtering behavior
-        filter={() => true}
+        filter={({ options }) => options}
         clearable={query.length > 0}
         {...autocompleteProps}
       />

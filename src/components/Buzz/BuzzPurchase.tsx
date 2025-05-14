@@ -490,8 +490,6 @@ export const BuzzPurchase = ({
 const iconSizesRatio = [1, 1.3, 1.6];
 
 const BuzzTierIcon = ({ tier }: { tier: number }) => {
-  const { classes } = useBuzzButtonStyles();
-
   return (
     <Group gap={-4} wrap="nowrap">
       {Array.from({ length: 3 }).map((_, i) => (
