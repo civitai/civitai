@@ -52,7 +52,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 5.8 **Delinquent Accounts.** Civitai may suspend or terminate access to the Service, including fee-based portions of the Service, for any account for which any amount is due but unpaid. In addition to the amount due for the Service, a delinquent account will be charged with fees or charges that are incidental to any chargeback or collection of any the unpaid amount, including collection fees. If your payment method is no longer valid at the time a renewal Subscription Fee is due, then Civitai reserves the right to delete your account and any information or User Content (defined below) associated with your Account without any liability to you.
 
-1. **Licenses**
+6. **Licenses**
 
 - 6.1 **Limited License.** Subject to your complete and ongoing compliance with these Terms, Civitai grants you, solely for your personal, non-commercial use, a limited, non-exclusive, non-transferable, non-sublicensable, revocable license to: (a) install and use one object code copy of any mobile or other downloadable application associated with the Service (whether installed by you or pre-installed on your mobile device by the device manufacturer or a wireless telephone provider) on a mobile device that you own or control; and (b) access and use the Service.
 
@@ -151,7 +151,7 @@ In addition to the categories of explicitly prohibited content above, certain ty
 
 - 9.7 **Reporting and Appeals.** You are encouraged to report any inappropriate User Content that violate these Terms or our published policies. Reports can be submitted through our standard reporting mechanism, and should include relevant information to assist in the investigation. We reserve the right to suspend or terminate the accounts of Users who are found to be repeatedly violating these Terms or our published policies. Users can request an explanation or appeal a moderation decision by submitting an appeal through our Appeal Form for further review.
 
-1.  **Communications**
+10. **Communications**
 
 - 10.1 **Push Notifications.** When you install our app on your mobile device, you agree to receive push notifications, which are messages an app sends you on your mobile device when you are not in the app. You can turn off notifications by visiting your mobile device’s “settings” page.
 
@@ -222,9 +222,9 @@ In addition to the categories of explicitly prohibited content above, certain ty
 
 - 12.7 **False Notifications of Claimed Infringement or Counter Notifications.** The Copyright Act provides at 17 U.S.C. § 512(f) that: “[a]ny person who knowingly materially misrepresents under [Section 512 of the Copyright Act (17 U.S.C. § 512)] (1) that material or activity is infringing, or (2) that material or activity was removed or disabled by mistake or misidentification, will be liable for any damages, including costs and attorneys’ fees, incurred by the alleged infringer, by any copyright owner or copyright owner’s authorized licensee, or by a service provider, who is injured by such misrepresentation, as the result of [Civitai] relying upon such misrepresentation in removing or disabling access to the material or activity claimed to be infringing, or in replacing the removed material or ceasing to disable access to it.” Civitai reserves the right to seek damages from any party that submits a Notification of Claimed Infringement or Counter Notification in violation of the law.
 
-1.  **Modification of Terms.** We may, from time to time, change these Terms. Please check these Terms periodically for changes. Revisions will be effective immediately except that, for existing Users, material revisions will be effective 30 days after posting or notice to you of the revisions unless otherwise stated. We may require that you accept modified Terms in order to continue to use the Service. If you do not agree to the modified Terms, then you should remove your User Content and discontinue your use of the Service. Except as expressly permitted in this Section 13 (Modification of Terms), these Terms may be amended only by a written agreement signed by authorized representatives of the parties to these Terms.
+13.  **Modification of Terms.** We may, from time to time, change these Terms. Please check these Terms periodically for changes. Revisions will be effective immediately except that, for existing Users, material revisions will be effective 30 days after posting or notice to you of the revisions unless otherwise stated. We may require that you accept modified Terms in order to continue to use the Service. If you do not agree to the modified Terms, then you should remove your User Content and discontinue your use of the Service. Except as expressly permitted in this Section 13 (Modification of Terms), these Terms may be amended only by a written agreement signed by authorized representatives of the parties to these Terms.
 
-2.  **Term, Termination, and Modification of the Service**
+14. **Term, Termination, and Modification of the Service**
 
 - 14.1 **Term.** These Terms are effective beginning when you accept the Terms or first download, install, access, or use the Service, and ending when terminated as described in Section 14.2 (Termination).
 
