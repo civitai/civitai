@@ -13,6 +13,7 @@ import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvi
 import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 import { IconX } from '@tabler/icons-react';
 import { InputSourceImageUpscale } from '~/components/Generation/Input/SourceImageUpscale';
+import { GenForm } from '~/components/Generation/Form/GenForm';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -51,7 +52,7 @@ export function UpscaleEnhancementModal({
   return (
     <Modal {...dialog} title="Upscale Enhancement">
       <GenerationProvider>
-        <Form form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <GenForm form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
           <InputSourceImageUpscale
             name="sourceImage"
             removable={false}
@@ -73,7 +74,7 @@ export function UpscaleEnhancementModal({
           >
             Upscale
           </GenerateButton>
-        </Form>
+        </GenForm>
       </GenerationProvider>
     </Modal>
   );

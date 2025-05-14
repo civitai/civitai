@@ -37,6 +37,7 @@ import { HaiperFormInput } from '~/components/Generation/Video/HaiperFormInput';
 import { MochiFormInput } from '~/components/Generation/Video/MochiFormInput';
 import { LightricksFormInput } from '~/components/Generation/Video/LightrixFormInput';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
+import { GenForm } from '~/components/Generation/Form/GenForm';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
@@ -125,7 +126,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
     return <div className="flex items-center justify-center p-3">Form not implemented</div>;
 
   return (
-    <Form
+    <GenForm
       form={form}
       onSubmit={handleSubmit}
       className="relative flex h-full flex-1 flex-col justify-between gap-2"
@@ -167,7 +168,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
           </DismissibleAlert>
         )}
       </div>
-    </Form>
+    </GenForm>
   );
 }
 

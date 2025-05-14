@@ -8,6 +8,7 @@ export const workflowUpdateSchema = workflowIdSchema.extend({
   metadata: z.record(z.any()),
 });
 
+export type WorkflowQuerySchema = z.input<typeof workflowQuerySchema>;
 export const workflowQuerySchema = z.object({
   take: z.number().default(20),
   cursor: z.string().optional(),

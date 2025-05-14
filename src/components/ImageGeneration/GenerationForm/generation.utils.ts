@@ -14,20 +14,22 @@ import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generat
 // );
 
 const defaultServiceStatus = generationStatusSchema.parse({});
-export const useGenerationStatus = () => {
-  const currentUser = useCurrentUser();
-  const { data, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
+export function useGetGenerationStatus() {
+  return trpc.generation.getStatus.useQuery(undefined, {
     cacheTime: 60,
+    placeholderData: defaultServiceStatus,
     trpc: { context: { skipBatch: true } },
   });
+}
+export const useGenerationStatus = () => {
+  const currentUser = useCurrentUser();
+  const { data = defaultServiceStatus, isLoading } = useGetGenerationStatus();
 
   return useMemo(() => {
-    const status = data ?? defaultServiceStatus;
-    if (currentUser?.isModerator) status.available = true; // Always have generation available for mods
+    if (currentUser?.isModerator) data.available = true; // Always have generation available for mods
     const tier = currentUser?.tier ?? 'free';
-    const limits = status.limits[tier];
-
-    return { ...status, tier, limits, isLoading };
+    const limits = data.limits[tier];
+    return { ...data, tier, limits, isLoading };
   }, [data, currentUser, isLoading]);
 };
 

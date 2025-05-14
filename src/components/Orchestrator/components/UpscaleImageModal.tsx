@@ -23,6 +23,7 @@ import { trpc } from '~/utils/trpc';
 import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 import { showErrorNotification } from '~/utils/notifications';
 import { IconX } from '@tabler/icons-react';
+import { GenForm } from '~/components/Generation/Form/GenForm';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -61,7 +62,7 @@ export function UpscaleImageModal({
   return (
     <Modal {...dialog} title="Upscale">
       <GenerationProvider>
-        <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
+        <GenForm form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
           <InputSourceImageUpscale
             name="sourceImage"
             removable={false}
@@ -83,7 +84,7 @@ export function UpscaleImageModal({
           >
             Upscale
           </GenerateButton>
-        </Form>
+        </GenForm>
       </GenerationProvider>
     </Modal>
   );

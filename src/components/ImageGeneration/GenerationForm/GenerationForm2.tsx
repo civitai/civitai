@@ -36,6 +36,7 @@ import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewar
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { GenForm } from '~/components/Generation/Form/GenForm';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageById } from '~/components/Image/ById/ImageById';
@@ -410,7 +411,7 @@ export function GenerationFormContent() {
   const disablePriority = runsOnFalAI || isOpenAI;
 
   return (
-    <Form
+    <GenForm
       form={form}
       onSubmit={handleSubmit}
       onError={handleError}
@@ -1402,7 +1403,7 @@ export function GenerationFormContent() {
           );
         }}
       </Watch>
-    </Form>
+    </GenForm>
   );
 }
 

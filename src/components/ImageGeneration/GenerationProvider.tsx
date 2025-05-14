@@ -54,9 +54,15 @@ const createGenerationStore = () =>
   );
 
 const GenerationContext = createContext<GenerationStore | null>(null);
-export function useGenerationContext<T>(selector: (state: GenerationState) => T) {
+
+export function useGenerationContextStore() {
   const store = useContext(GenerationContext);
   if (!store) throw new Error('missing GenerationProvider');
+  return store;
+}
+
+export function useGenerationContext<T>(selector: (state: GenerationState) => T) {
+  const store = useGenerationContextStore();
   return useStore(store, selector);
 }
 
