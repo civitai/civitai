@@ -40,7 +40,7 @@ const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSiz
 /**
  * Gets explicit avatar size in pixels
  */
-const getRawAvatarSize = (size: MantineNumberSize) => {
+const getRawAvatarSize = (size: MantineSpacing) => {
   if (typeof size === 'number') return size;
 
   // Based off Mantine avatar sizes
@@ -63,7 +63,7 @@ const getRawAvatarSize = (size: MantineNumberSize) => {
 /**
  * Gets explicit avatar size in pixels
  */
-const getRawAvatarRadius = (radius: MantineNumberSize, theme: MantineTheme) => {
+const getRawAvatarRadius = (radius: MantineSpacing, theme: MantineTheme) => {
   if (typeof radius === 'number') return radius;
   if (radius === 'xl') return '50%';
 
@@ -123,10 +123,10 @@ export function UserAvatar({
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
 
   const imageSize = getRawAvatarSize(
-    (avatarProps?.size ?? avatarSize ?? size) as MantineNumberSize
+    (avatarProps?.size ?? avatarSize ?? size) as MantineSpacing
   );
   const imageRadius = getRawAvatarRadius(
-    (avatarProps?.radius ?? radius) as MantineNumberSize,
+    (avatarProps?.radius ?? radius) as MantineSpacing,
     theme
   );
   const nsfwLevel = avatarUser.profilePicture?.nsfwLevel ?? 0;
@@ -273,14 +273,14 @@ type Props = {
   subText?: React.ReactNode;
   subTextForce?: boolean;
   size?: MantineSize;
-  spacing?: MantineNumberSize;
+  spacing?: MantineSpacing;
   badge?: React.ReactElement<BadgeProps> | null;
   linkToProfile?: boolean;
   textSize?: MantineSize;
   subTextSize?: MantineSize;
   includeAvatar?: boolean;
-  radius?: MantineNumberSize;
-  avatarSize?: MantineNumberSize;
+  radius?: MantineSpacing;
+  avatarSize?: MantineSpacing;
   userId?: number;
   indicatorProps?: Omit<IndicatorProps, 'children'>;
   badgeSize?: number;

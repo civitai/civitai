@@ -49,5 +49,5 @@ type Props = {
   mapLabel?: (data: { value: number; label: string }) => React.ReactNode;
   onChange?: (value: number) => void;
   value?: number;
-  spacing?: MantineNumberSize;
+  spacing?: MantineSpacing;
 };

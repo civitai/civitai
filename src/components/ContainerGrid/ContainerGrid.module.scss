@@ -1,0 +1,40 @@
+:root {
+  --grid-gutter: 0;
+  --grid-justify: flex-start;
+  --grid-align: stretch;
+
+  /* Breakpoint-specific variables */
+  --grid-gutter-xs: var(--grid-gutter);
+  --grid-gutter-sm: var(--grid-gutter);
+  --grid-gutter-md: var(--grid-gutter);
+  --grid-gutter-lg: var(--grid-gutter);
+  --grid-gutter-xl: var(--grid-gutter);
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: var(--grid-justify);
+  align-content: var(--grid-align);
+  margin: calc(var(--grid-gutter) / -2);
+
+  @container (min-width: var(--mantine-breakpoint-xs)) {
+    margin: calc(var(--grid-gutter-xs) / -2);
+  }
+
+  @container (min-width: var(--mantine-breakpoint-sm)) {
+    margin: calc(var(--grid-gutter-sm) / -2);
+  }
+
+  @container (min-width: var(--mantine-breakpoint-md)) {
+    margin: calc(var(--grid-gutter-md) / -2);
+  }
+
+  @container (min-width: var(--mantine-breakpoint-lg)) {
+    margin: calc(var(--grid-gutter-lg) / -2);
+  }
+
+  @container (min-width: var(--mantine-breakpoint-xl)) {
+    margin: calc(var(--grid-gutter-xl) / -2);
+  }
+}

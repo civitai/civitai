@@ -167,5 +167,5 @@ declare global {
     authChecked?: boolean;
   }
 
-  type MantineNumberSize = MantineSize | number;
+  type MantineSpacing = MantineSize | number;
 }

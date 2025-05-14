@@ -1,0 +1,86 @@
+:root {
+  --col-gutter: 0;
+  --col-columns: 12;
+  --col-grow: 0;
+  --col-offset: 0;
+  --col-span: auto;
+  --col-order: 0;
+
+  /* Breakpoint-specific variables */
+  --col-gutter-xs: var(--col-gutter);
+  --col-gutter-sm: var(--col-gutter);
+  --col-gutter-md: var(--col-gutter);
+  --col-gutter-lg: var(--col-gutter);
+  --col-gutter-xl: var(--col-gutter);
+
+  --col-offset-xs: var(--col-offset);
+  --col-offset-sm: var(--col-offset);
+  --col-offset-md: var(--col-offset);
+  --col-offset-lg: var(--col-offset);
+  --col-offset-xl: var(--col-offset);
+
+  --col-span-xs: var(--col-span);
+  --col-span-sm: var(--col-span);
+  --col-span-md: var(--col-span);
+  --col-span-lg: var(--col-span);
+  --col-span-xl: var(--col-span);
+
+  --col-order-xs: var(--col-order);
+  --col-order-sm: var(--col-order);
+  --col-order-md: var(--col-order);
+  --col-order-lg: var(--col-order);
+  --col-order-xl: var(--col-order);
+}
+
+.col {
+  box-sizing: border-box;
+  flex-grow: var(--col-grow);
+  order: var(--col-order);
+  padding: calc(var(--col-gutter) / 2);
+  margin-left: calc(100% / var(--col-columns) * var(--col-offset));
+  flex-basis: calc(100% / var(--col-columns) * var(--col-span));
+  flex-shrink: 0;
+  width: auto;
+  width: calc(100% / var(--col-columns) * var(--col-span));
+  max-width: calc(100% / var(--col-columns) * var(--col-span));
+
+  @container (min-width: var(--mantine-breakpoint-xs)) {
+    order: var(--col-order-xs);
+    padding: calc(var(--col-gutter-xs) / 2);
+    margin-left: calc(100% / var(--col-columns) * var(--col-offset-xs));
+    flex-basis: calc(100% / var(--col-columns) * var(--col-span-xs));
+    max-width: calc(100% / var(--col-columns) * var(--col-span-xs));
+  }
+
+  @container (min-width: var(--mantine-breakpoint-sm)) {
+    order: var(--col-order-sm);
+    padding: calc(var(--col-gutter-sm) / 2);
+    margin-left: calc(100% / var(--col-columns) * var(--col-offset-sm));
+    flex-basis: calc(100% / var(--col-columns) * var(--col-span-sm));
+    max-width: calc(100% / var(--col-columns) * var(--col-span-sm));
+  }
+
+  @container (min-width: var(--mantine-breakpoint-md)) {
+    order: var(--col-order-md);
+    padding: calc(var(--col-gutter-md) / 2);
+    margin-left: calc(100% / var(--col-columns) * var(--col-offset-md));
+    flex-basis: calc(100% / var(--col-columns) * var(--col-span-md));
+    max-width: calc(100% / var(--col-columns) * var(--col-span-md));
+  }
+
+  @container (min-width: var(--mantine-breakpoint-lg)) {
+    order: var(--col-order-lg);
+    padding: calc(var(--col-gutter-lg) / 2);
+    margin-left: calc(100% / var(--col-columns) * var(--col-offset-lg));
+    flex-basis: calc(100% / var(--col-columns) * var(--col-span-lg));
+    max-width: calc(100% / var(--col-columns) * var(--col-span-lg));
+  }
+
+  @container (min-width: var(--mantine-breakpoint-xl)) {
+    order: var(--col-order-xl);
+    padding: calc(var(--col-gutter-xl) / 2);
+    margin-left: calc(100% / var(--col-columns) * var(--col-offset-xl));
+    flex-basis: calc(100% / var(--col-columns) * var(--col-span-xl));
+    max-width: calc(100% / var(--col-columns) * var(--col-span-xl));
+  }
+}

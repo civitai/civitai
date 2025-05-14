@@ -29,7 +29,7 @@ export function ResourceReviewMenu({
 }: {
   reviewId: number;
   userId: number;
-  size?: MantineNumberSize;
+  size?: MantineSpacing;
   review: Pick<
     ResourceReviewPagedModel,
     | 'id'

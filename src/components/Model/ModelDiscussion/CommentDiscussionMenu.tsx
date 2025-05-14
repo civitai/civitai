@@ -235,6 +235,6 @@ export function CommentDiscussionMenu({
 
 type Props = MenuProps & {
   comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked' | 'hidden' | 'modelId'>;
-  size?: MantineNumberSize;
+  size?: MantineSpacing;
   hideLockOption?: boolean;
 };

@@ -30,7 +30,7 @@ export function GeneratedImageActions({
   actionIconSize = 'lg',
   iconSize = 20,
 }: {
-  actionIconSize?: MantineNumberSize;
+  actionIconSize?: MantineSpacing;
   iconSize?: number;
 }) {
   const router = useRouter();

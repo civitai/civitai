@@ -4,13 +4,13 @@ import {
   Grid,
   Modal,
   Stack,
-  createStyles,
   Text,
   CloseButton,
   Group,
   Button,
   Loader,
   UnstyledButton,
+  useMantineTheme,
 } from '@mantine/core';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
@@ -34,26 +34,13 @@ import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
 type Props = { shopItem: CosmeticShopItemGetById };
 
-const useStyles = createStyles((theme) => ({
-  sample: {
-    padding: theme.spacing.lg,
-  },
-  preview: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    padding: theme.spacing.lg,
-  },
-  text: {
-    color: theme.colorScheme === 'dark' ? theme.colors.white : theme.colors.black,
-  },
-}));
-
 export const CosmeticShopItemPurchaseCompleteModal = ({
   shopItem,
   userCosmetic,
 }: Props & { userCosmetic: { cosmeticId: number; claimKey: string } }) => {
   const dialog = useDialogContext();
   const { cosmetic } = shopItem;
-  const { classes, theme } = useStyles();
+  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const { equip, isLoading } = useEquipProfileDecoration();
   const router = useRouter();
@@ -79,11 +66,11 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
     <Modal {...dialog} size="md" withCloseButton={false} radius="lg">
       <Stack gap="xl" px="md">
         <Group justify="space-between">
-          <Text className={classes.text}>You got a shiny new thing!</Text>
+          <Text className="text-black dark:text-white">You got a shiny new thing!</Text>
           <CloseButton onClick={dialog.onClose} />
         </Group>
 
-        <Box className={classes.preview} style={{ borderRadius: theme.radius.lg }}>
+        <Box p="lg" className="bg-gray-0 dark:bg-dark-8" style={{ borderRadius: theme.radius.lg }}>
           <CosmeticPreview cosmetic={cosmetic} />
         </Box>
 
@@ -123,7 +110,6 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
   const dialog = useDialogContext();
   const { cosmetic } = shopItem;
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
-  const { classes } = useStyles();
   const { data: userCosmetics, isLoading } = useQueryUserCosmetics();
   const { equip, isLoading: isEquipping } = useEquipProfileDecoration();
   const hasCosmetic = Object.values(userCosmetics ?? {})
@@ -170,17 +156,17 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
       withCloseButton={false}
       radius="lg"
       styles={{
-        modal: {
+        content: {
           padding: '0 !important',
           overflow: 'hidden',
         },
       }}
     >
       <Grid m={0}>
-        <Grid.Col span={12} md={5} className={classes.sample}>
+        <Grid.Col span={{ base: 12, md: 5 }} p="lg">
           <Stack gap="lg" px="md" h="100%">
             <Group justify="space-between" wrap="nowrap">
-              <Text className={classes.text} size="sm">
+              <Text className="text-black dark:text-white" size="sm">
                 {getDisplayName(cosmetic.type)}
               </Text>
               <CloseButton className="show-mobile" onClick={dialog.onClose} />
@@ -188,7 +174,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
             <Center my="auto" h={250}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
             </Center>
-            <Text className={classes.text} mt="auto" weight="bold" size="lg">
+            <Text className="text-black dark:text-white" mt="auto" weight="bold" size="lg">
               {shopItem.title}
             </Text>
             {isLoading && (
@@ -234,7 +220,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
             )}
           </Stack>
         </Grid.Col>
-        <Grid.Col span={12} md={7} className={classes.preview}>
+        <Grid.Col span={{ base: 12, md: 7 }} p="lg" className="  bg-gray-0 dark:bg-dark-8">
           <Stack gap={0} h={0} align="flex-end" className="hide-mobile">
             <CloseButton onClick={dialog.onClose} />
           </Stack>

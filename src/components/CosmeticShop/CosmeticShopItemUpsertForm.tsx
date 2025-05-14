@@ -7,7 +7,7 @@ import {
   Input,
   Paper,
   Select,
-  SelectItemProps,
+  ComboboxItem,
   Stack,
   Text,
 } from '@mantine/core';
@@ -47,10 +47,10 @@ type Props = {
   onCancel?: () => void;
 };
 
-type CosmeticSearchSelectItemProps = { name: string; description: string } & SelectItemProps;
+type CosmeticSearchComboboxItem = { name: string; description: string | null } & ComboboxItem;
 
-const CosmeticSearchSelectItem = forwardRef<HTMLDivElement, CosmeticSearchSelectItemProps>(
-  ({ name, description, ...others }: CosmeticSearchSelectItemProps, ref) => (
+const CosmeticSearchSelectItem = forwardRef<HTMLDivElement, CosmeticSearchComboboxItem>(
+  ({ name, description, ...others }: CosmeticSearchComboboxItem, ref) => (
     <div ref={ref} {...others}>
       <Stack gap={0}>
         <Text size="sm">{name}</Text>
@@ -91,11 +91,18 @@ const CosmeticSearch = ({
     <Select
       label="Cosmetic"
       description="Select a cosmetic to make into a product. Search by name"
-      onChange={(cosmeticId: string) => onCosmeticSelected(Number(cosmeticId))}
+      onChange={(cosmeticId) => {
+        onCosmeticSelected(Number(cosmeticId));
+      }}
       onSearchChange={(query) => setFilters({ ...filters, name: query })}
       searchValue={filters.name}
-      nothingFound="No options"
-      itemComponent={CosmeticSearchSelectItem}
+      nothingFoundMessage="No options"
+      renderOption={(item) => {
+        const itemData = data.find((d) => d.value === item.option.value);
+        if (!itemData) return null;
+
+        return <CosmeticSearchSelectItem {...item} {...itemData} />;
+      }}
       data={data}
       searchable
       withAsterisk
@@ -233,7 +240,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
               description="The amount of Buzz required to purchase 1 instance of this item"
               min={500}
               step={100}
-              icon={<CurrencyIcon currency="BUZZ" size={16} />}
+              leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
               format={undefined}
               withAsterisk
             />
@@ -256,14 +263,14 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
               name="availableFrom"
               label="Available From"
               placeholder="Select a start date"
-              icon={<IconCalendar size={16} />}
+              leftSection={<IconCalendar size={16} />}
               clearable
             />
             <InputDatePicker
               name="availableTo"
               label="Available To"
               placeholder="Select an end date"
-              icon={<IconCalendarDue size={16} />}
+              leftSection={<IconCalendarDue size={16} />}
               clearable
             />
           </Group>
@@ -318,7 +325,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             {onCancel && (
               <Button
                 loading={upsertingShopItem}
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   onCancel?.();
