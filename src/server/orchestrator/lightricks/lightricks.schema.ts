@@ -28,14 +28,18 @@ const schema = baseVideoGenerationSchema.extend({
 
 export const lightricksGenerationConfig = VideoGenerationConfig2({
   label: 'Lightricks',
-  whatIfProps: ['duration', 'cfgScale', 'steps'],
-  metadataDisplayProps: ['cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
+  whatIfProps: ['duration', 'cfgScale', 'steps', 'process'],
+  metadataDisplayProps: ['process', 'cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
   schema,
   defaultValues: { aspectRatio: '3:2' },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
-    if (data.sourceImage) delete data.aspectRatio;
-    return { ...data, process: data.sourceImage ? 'img2vid' : 'txt2vid' };
+    if (data.process === 'txt2vid') {
+      delete data.sourceImage;
+    } else if (data.process === 'img2vid') {
+      delete data.aspectRatio;
+    }
+    return data;
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {

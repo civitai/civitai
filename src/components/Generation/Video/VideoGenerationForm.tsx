@@ -130,7 +130,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
       onSubmit={handleSubmit}
       className="relative flex h-full flex-1 flex-col justify-between gap-2"
     >
-      <div className="flex flex-col gap-2 px-2">
+      <div className="flex flex-col gap-3 px-2">
         <InputsComponent />
       </div>
       <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">

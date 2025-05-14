@@ -30,6 +30,7 @@ const schema = baseVideoGenerationSchema.extend({
 export const wanGenerationConfig = VideoGenerationConfig2({
   label: 'Wan',
   whatIfProps: [
+    'process',
     'duration',
     'steps',
     'aspectRatio',
@@ -38,13 +39,17 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     'resources',
     'sourceImage',
   ],
-  metadataDisplayProps: ['cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
+  metadataDisplayProps: ['process', 'cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
   schema,
   defaultValues: { aspectRatio: '1:1', duration: 5, cfgScale: 4, frameRate: 16 },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
-    if (data.sourceImage) delete data.aspectRatio;
-    return { ...data, process: data.sourceImage ? 'img2vid' : 'txt2vid' };
+    if (data.process === 'txt2vid') {
+      delete data.sourceImage;
+    } else if (data.process === 'img2vid') {
+      delete data.aspectRatio;
+    }
+    return data;
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {

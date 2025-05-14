@@ -1,7 +1,5 @@
 import { Priority } from '@civitai/client';
 import z from 'zod';
-import { maxUpscaleSize } from '~/server/common/constants';
-import { GenerationType } from '~/server/orchestrator/infrastructure/base.enums';
 
 export const promptSchema = z
   .string()
@@ -34,16 +32,6 @@ const baseGenerationSchema = z.object({
 export const baseVideoGenerationSchema = baseGenerationSchema.extend({
   process: z.enum(['txt2vid', 'img2vid']).default('txt2vid'),
 });
-
-// export const textEnhancementSchema = baseGenerationSchema.extend({
-//   type: z.literal(GenerationType.txt2vid).catch(GenerationType.txt2vid),
-//   prompt: promptSchema,
-// });
-
-// export const imageEnhancementSchema = baseGenerationSchema.extend({
-//   type: z.literal(GenerationType.img2vid).catch(GenerationType.img2vid),
-//   sourceImage: sourceImageSchema,
-// });
 
 export type ResourceInput = z.input<typeof resourceSchema>;
 export const resourceSchema = z.object({

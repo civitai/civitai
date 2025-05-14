@@ -16,8 +16,8 @@ const schema = baseVideoGenerationSchema.extend({
 
 export const minimaxGenerationConfig = VideoGenerationConfig2({
   label: 'Hailuo by MiniMax',
-  whatIfProps: [],
-  metadataDisplayProps: [],
+  whatIfProps: ['process'],
+  metadataDisplayProps: ['process'],
   schema,
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {

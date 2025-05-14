@@ -34,7 +34,7 @@ export const hunyuanGenerationConfig = VideoGenerationConfig2({
   label: 'Hunyuan',
   whatIfProps: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft', 'resources'],
   schema,
-  metadataDisplayProps: ['cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
+  metadataDisplayProps: ['process', 'cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
   defaultValues: { aspectRatio: '1:1' },
   processes: ['txt2vid'],
   transformFn: (data) => ({ ...data, process: 'txt2vid' }),

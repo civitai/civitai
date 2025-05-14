@@ -12,24 +12,25 @@ import { InputRequestPriority } from '~/components/Generation/Input/RequestPrior
 
 export function WanFormInput() {
   const form = useFormContext();
-  const sourceImage = form.watch('sourceImage');
+  const process = form.watch('process');
+  const isTxt2Img = process === 'txt2vid';
 
   return (
     <>
-      <InputSourceImageUpload name="sourceImage" label="Image (optional)" className="flex-1" />
+      {process === 'img2vid' && <InputSourceImageUpload name="sourceImage" className="flex-1" />}
       <InputResourceSelectMultipleStandalone
         name="resources"
         options={{ resources: baseModelResourceTypes.WanVideo }}
         buttonLabel="Add additional resource"
       />
       <InputTextArea
-        required={!sourceImage}
+        required={isTxt2Img}
         name="prompt"
         label="Prompt"
         placeholder="Your prompt goes here..."
         autosize
       />
-      {!sourceImage && (
+      {isTxt2Img && (
         <InputAspectRatioColonDelimited
           name="aspectRatio"
           label="Aspect Ratio"

@@ -30,13 +30,17 @@ export const haiperGenerationConfig = VideoGenerationConfig2({
   label: 'Haiper',
   description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
   whatIfProps: ['duration'],
-  metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
+  metadataDisplayProps: ['process', 'aspectRatio', 'duration', 'seed', 'resolution'],
   schema,
   defaultValues: { aspectRatio: '1:1' },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
-    if (data.sourceImage) delete data.aspectRatio;
-    return { ...data, process: data.sourceImage ? 'img2vid' : 'txt2vid' };
+    if (data.process === 'txt2vid') {
+      delete data.sourceImage;
+    } else if (data.process === 'img2vid') {
+      delete data.aspectRatio;
+    }
+    return data;
   },
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {

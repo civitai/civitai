@@ -18,7 +18,7 @@ export const mochiGenerationConfig = VideoGenerationConfig2({
   label: 'Mochi',
   description: `Mochi 1 preview, by creators [https://www.genmo.ai](https://www.genmo.ai) is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation`,
   whatIfProps: [],
-  metadataDisplayProps: [],
+  metadataDisplayProps: ['process'],
   schema,
   processes: ['txt2vid'],
   transformFn: (data) => ({ ...data, process: 'txt2vid' }),

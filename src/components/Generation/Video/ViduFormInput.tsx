@@ -1,7 +1,11 @@
 import { useFormContext } from 'react-hook-form';
-import { Input } from '@mantine/core';
-import { InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
-import { viduDuration } from '~/server/orchestrator/vidu/vidu.schema';
+import { Input, Radio } from '@mantine/core';
+import { InputRadioGroup, InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
+import {
+  viduAspectRatios,
+  viduDurations,
+  viduMovementAmplitudes,
+} from '~/server/orchestrator/vidu/vidu.schema';
 import { ViduVideoGenStyle } from '@civitai/client';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
@@ -9,6 +13,7 @@ import { useEffect } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
+import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 
 export function ViduFormInput() {
   const form = useFormContext();
@@ -16,6 +21,7 @@ export function ViduFormInput() {
   const sourceImage = form.watch('sourceImage');
   const endSourceImage = form.watch('endSourceImage');
   const model = form.watch('model');
+  const isTxt2Vid = process === 'txt2vid';
 
   useEffect(() => {
     if (process === 'txt2vid') return;
@@ -74,37 +80,58 @@ export function ViduFormInput() {
         </div>
       )}
       <InputTextArea
-        required={process === 'txt2vid'}
+        required={isTxt2Vid}
         name="prompt"
         label="Prompt"
         placeholder="Your prompt goes here..."
         autosize
       />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+      {model === 'q1' && isTxt2Vid && (
+        <InputAspectRatioColonDelimited
+          name="aspectRatio"
+          label="Aspect Ratio"
+          options={viduAspectRatios}
+        />
+      )}
       {model !== 'q1' && (
         <div className="flex flex-col gap-0.5">
           <Input.Label>Duration</Input.Label>
           <InputSegmentedControl
             name="duration"
-            data={viduDuration.map((value) => ({
+            data={viduDurations.map((value) => ({
               label: `${value}s`,
               value,
             }))}
           />
         </div>
       )}
-      {process === 'txt2vid' && (
-        <div className="flex flex-col gap-0.5">
-          <Input.Label>Style</Input.Label>
-          <InputSegmentedControl
-            name="style"
-            data={[
-              { label: 'General', value: ViduVideoGenStyle.GENERAL },
-              { label: 'Animation', value: ViduVideoGenStyle.ANIME },
-            ]}
-          />
-        </div>
+      {isTxt2Vid && (
+        // <div className="flex flex-col gap-0.5">
+        //   <Input.Label>Style</Input.Label>
+        //   <InputSegmentedControl
+        //     name="style"
+        //     data={[
+        //       { label: 'General', value: ViduVideoGenStyle.GENERAL },
+        //       { label: 'Animation', value: ViduVideoGenStyle.ANIME },
+        //     ]}
+        //   />
+        // </div>
+        <InputRadioGroup name="style" label="Style" offset={4}>
+          {[
+            { label: 'General', value: ViduVideoGenStyle.GENERAL },
+            { label: 'Animation', value: ViduVideoGenStyle.ANIME },
+          ].map(({ label, value }) => (
+            <Radio key={value} value={value} label={label} />
+          ))}
+        </InputRadioGroup>
       )}
+
+      <InputRadioGroup name="movementAmplitude" label="Movement amplitude" offset={4}>
+        {viduMovementAmplitudes.map((option) => (
+          <Radio key={option} value={option} label={option} />
+        ))}
+      </InputRadioGroup>
 
       <InputSeed name="seed" label="Seed" />
     </>
