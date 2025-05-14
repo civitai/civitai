@@ -1,10 +1,9 @@
 .imgOverlay {
-  border-bottom: 1px solid var(--mantine-color-gray-2);
+  border-bottom: light-dark(
+    1px solid var(--mantine-color-gray-2),
+    1px solid var(--mantine-color-dark-5)
+  );
   position: relative;
-
-  @mixin dark {
-    border-bottom: 1px solid var(--mantine-color-dark-5);
-  }
 
   &:hover .trashIcon {
     display: flex;

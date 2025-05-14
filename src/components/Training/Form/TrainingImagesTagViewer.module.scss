@@ -16,9 +16,8 @@
   left: 0;
   border: 0;
   border-radius: 4px;
-  background-color: rgba(var(--mantine-color-dark-5-rgb), 0.9);
-  
-  @mixin light {
-    background-color: rgba(var(--mantine-color-gray-2-rgb), 0.9);
-  }
+  background-color: light-dark(
+    alpha(var(--mantine-color-gray-2), 0.9),
+    alpha(var(--mantine-color-dark-5), 0.9)
+  );
 }
