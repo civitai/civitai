@@ -5,11 +5,13 @@ import produce from 'immer';
 import { cloneDeep } from 'lodash-es';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GenerationReactType, SignalMessages } from '~/server/common/enums';
-import {
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { GenerationReactType, GenerationSort, SignalMessages } from '~/server/common/enums';
+import type {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
 } from '~/server/schema/orchestrator/textToImage.schema';
@@ -19,21 +21,21 @@ import {
   TagsPatchSchema,
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
+import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
 import {
   queryGeneratedImageWorkflows,
   WorkflowStepFormatted,
 } from '~/server/services/orchestrator/common';
-import { IWorkflow, IWorkflowsInfinite } from '~/server/services/orchestrator/orchestrator.schema';
+import type {
+  IWorkflow,
+  IWorkflowsInfinite,
+} from '~/server/services/orchestrator/orchestrator.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
-import { GenerationSort } from '~/server/common/enums';
-import { useFiltersContext } from '~/providers/FiltersProvider';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { numberWithCommas } from '~/utils/number-helpers';
 
 type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>

@@ -1,8 +1,15 @@
 import dayjs from 'dayjs';
 import { z } from 'zod';
+import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
-import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
+import {
+  baseQuerySchema,
+  infiniteQuerySchema,
+  paginationSchema,
+  periodModeSchema,
+} from '~/server/schema/base.schema';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   ImageGenerationProcess,
   MediaType,
@@ -12,7 +19,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -462,3 +468,6 @@ export const toggleImageFlagSchema = z.object({
   id: z.number(),
   flag: z.enum(['minor', 'poi']),
 });
+
+export type GetMyImagesInput = z.infer<typeof getMyImagesInput>;
+export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema);

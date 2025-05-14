@@ -40,7 +40,7 @@ import {
   userContentOverviewCache,
 } from '~/server/redis/caches';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import type { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
@@ -48,8 +48,8 @@ import {
   GetEntitiesCoverImage,
   GetImageInput,
   GetInfiniteImagesOutput,
+  GetMyImagesInput,
   ImageEntityType,
-  ToggleImageFlagInput,
   imageMetaOutput,
   ImageMetaProps,
   ImageModerationSchema,
@@ -62,6 +62,7 @@ import {
   RemoveImageResourceSchema,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
+  ToggleImageFlagInput,
   UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
   UpdateImageTechniqueOutput,
@@ -4857,16 +4858,21 @@ export async function createImageResources({
 }
 
 export const getMyImages = async ({
+  mediaTypes,
   userId,
   limit,
   cursor = 0,
-}: InfiniteQueryInput & { userId: number }) => {
+}: GetMyImagesInput & { userId: number }) => {
+  const allowedMediaTypes = mediaTypes.filter((x) => x !== MediaType.audio);
+
   try {
-    const images = await dbRead.image.findMany({
-      select: { id: true, url: true, meta: true, createdAt: true },
+    const media = await dbRead.image.findMany({
+      select: { id: true, url: true, meta: true, createdAt: true, type: true },
       where: {
         userId,
-        type: MediaType.image,
+        type: {
+          in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
+        },
         postId: { not: null },
         ingestion: ImageIngestionStatus.Scanned,
       },
@@ -4876,13 +4882,13 @@ export const getMyImages = async ({
     });
 
     let nextCursor: number | undefined;
-    if (images.length > limit) {
-      const nextItem = images.pop();
+    if (media.length > limit) {
+      const nextItem = media.pop();
       nextCursor = nextItem?.id;
     }
 
     return {
-      items: images,
+      items: media,
       nextCursor,
     };
   } catch (error) {
