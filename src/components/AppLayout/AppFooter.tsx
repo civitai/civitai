@@ -1,18 +1,18 @@
 import { Button, Text } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { useRef, useState } from 'react';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import clsx from 'clsx';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { IconArrowUp } from '@tabler/icons-react';
+import clsx from 'clsx';
+import { useRef, useState } from 'react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ChatPortal } from '~/components/Chat/ChatProvider';
-import { FeatureAccess } from '~/server/services/feature-flags.service';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { useDomainColor } from '~/hooks/useDomainColor';
-import { ColorDomain } from '~/server/common/constants';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ColorDomain } from '~/server/common/constants';
+import { FeatureAccess } from '~/server/services/feature-flags.service';
 
 const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   domains?: ColorDomain[];
@@ -84,6 +84,11 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     key: 'content-removal',
     href: '/content/content-removal-request',
     children: 'Content Removal',
+  },
+  {
+    key: 'careers',
+    href: '/content/careers',
+    children: 'Careers',
   },
 ];
 
