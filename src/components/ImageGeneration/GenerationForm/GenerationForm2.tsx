@@ -422,7 +422,7 @@ export function GenerationFormContent() {
       >
         {({ baseModel, fluxMode, draft, model, workflow, sourceImage }) => {
           // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
-          const isImg2Img = workflow?.startsWith('txt') || (isOpenAI && sourceImage);
+          const isImg2Img = workflow?.startsWith('img') || (isOpenAI && sourceImage);
           const isDraft = isFlux
             ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
             : isSD3
