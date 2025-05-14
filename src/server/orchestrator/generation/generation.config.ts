@@ -18,6 +18,7 @@ export type OrchestratorEngine2 = keyof typeof videoGenerationConfig2;
 type VideoGenerationConfig = (typeof videoGenerationConfig2)[keyof typeof videoGenerationConfig2];
 export type VideoGenerationSchema2 = z.infer<VideoGenerationConfig['schema']>;
 export const videoGenerationConfig2 = {
+  vidu: viduGenerationConfig,
   minimax: minimaxGenerationConfig,
   kling: klingGenerationConfig,
   lightricks: lightricksGenerationConfig,
@@ -25,7 +26,6 @@ export const videoGenerationConfig2 = {
   mochi: mochiGenerationConfig,
   hunyuan: hunyuanGenerationConfig,
   wan: wanGenerationConfig,
-  vidu: viduGenerationConfig,
 };
 
 export function getVideoGenerationConfig(key: string): VideoGenerationConfig | undefined {

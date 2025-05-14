@@ -42,6 +42,16 @@ export const viduGenerationConfig = VideoGenerationConfig2({
     model: 'q1',
     aspectRatio: '1:1',
   },
+  whatIfFn: (data) => {
+    if (data.process === 'img2vid' && !data.sourceImage) {
+      data.sourceImage = {
+        url: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/3fdba611-f34d-4a68-8bf8-3805629652d3/original=true,quality=90/4a0f3c58d8c6a370bc926efe3279cbad.jpeg',
+        width: 375,
+        height: 442,
+      };
+    }
+    return data;
+  },
   transformFn: (data) => {
     if (data.model === 'q1') {
       delete data.duration;

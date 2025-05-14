@@ -6,6 +6,7 @@ import { Point, Area, MediaSize } from 'react-easy-crop/types';
 import { IconZoomIn, IconZoomOut } from '@tabler/icons-react';
 import getCroppedImg from '~/utils/image-utils';
 import clsx from 'clsx';
+import { isMobileDevice } from '~/hooks/useIsMobile';
 
 type ImageProps = { url: string; width: number; height: number; label?: string };
 type ImageCropperProps = { images: ImageProps[]; onCancel?: () => void; onConfirm: OnConfirmFn };
@@ -31,7 +32,14 @@ export function ImageCropModal(props: ImageCropperProps) {
   };
 
   return (
-    <Modal {...dialog} title="Crop Images" size={768} transitionDuration={0} onClose={handleCancel}>
+    <Modal
+      {...dialog}
+      title="Crop Images"
+      size={768}
+      transitionDuration={0}
+      onClose={handleCancel}
+      fullScreen={isMobileDevice()}
+    >
       <ImageCropperContent {...props} onCancel={handleCancel} onConfirm={handleConfirm} />
     </Modal>
   );

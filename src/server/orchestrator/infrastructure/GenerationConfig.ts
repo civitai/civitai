@@ -2,18 +2,18 @@ import { VideoGenInput } from '@civitai/client';
 import { RefinementCtx, z } from 'zod';
 
 type VideoGenProcesses = 'txt2vid' | 'img2vid';
-type WithSubType = { process: VideoGenProcesses };
 export function VideoGenerationConfig2<
   TSchema extends z.AnyZodObject = z.AnyZodObject,
   TOutput extends VideoGenInput = VideoGenInput,
   TDefaults extends z.input<TSchema> = z.input<TSchema>,
   SchemaOutput = z.infer<TSchema>,
-  RefinementOutput extends WithSubType = SchemaOutput & TDefaults & WithSubType
+  RefinementOutput = SchemaOutput & TDefaults
 >({
   defaultValues,
   superRefine,
   schema,
   transformFn,
+  whatIfFn = (args) => args,
   ...args
 }: {
   label: string;
@@ -23,6 +23,7 @@ export function VideoGenerationConfig2<
   processes: VideoGenProcesses[];
   schema: TSchema;
   defaultValues?: TDefaults;
+  whatIfFn?: (arg: SchemaOutput) => SchemaOutput;
   superRefine?: (arg: RefinementOutput, ctx: RefinementCtx) => void;
   transformFn: (args: SchemaOutput) => RefinementOutput;
   inputFn: (args: RefinementOutput) => TOutput;
@@ -39,7 +40,9 @@ export function VideoGenerationConfig2<
   }
 
   function getWhatIfValues(data: any) {
-    return schema.parse({ ...defaultValues, ...data });
+    const whatIfDefaults = { ...defaultValues, ...data };
+    const parsed = schema.parse(whatIfDefaults) as SchemaOutput;
+    return whatIfFn(parsed);
   }
 
   function inputFn(data: SchemaOutput): TOutput {

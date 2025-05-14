@@ -65,7 +65,7 @@ export function ViduFormInput() {
             iconSize={32}
           >
             <div className="flex flex-col items-center gap-2">
-              <span className="text-sm">Starting image</span>
+              <span className="text-center text-sm">Starting image</span>
             </div>
           </InputSourceImageUpload>
           <InputSourceImageUpload
@@ -74,7 +74,7 @@ export function ViduFormInput() {
             iconSize={32}
           >
             <div className="flex flex-col items-center gap-2">
-              <span className="text-sm">Ending image (optional)</span>
+              <span className="text-center text-sm">Ending image (optional)</span>
             </div>
           </InputSourceImageUpload>
         </div>
