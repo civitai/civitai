@@ -75,7 +75,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       sourceImage: sourceImage?.url,
       steps: 20,
       loras: resources.map(({ air, strength }) => ({ air, strength })),
-      model: 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796',
+      model: !sourceImage ? 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796' : undefined,
     };
   },
 });

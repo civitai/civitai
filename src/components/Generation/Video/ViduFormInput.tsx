@@ -1,5 +1,5 @@
 import { useFormContext } from 'react-hook-form';
-import { Input, Radio } from '@mantine/core';
+import { Input, Radio, Text } from '@mantine/core';
 import { InputRadioGroup, InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
 import {
   viduAspectRatios,
@@ -123,11 +123,11 @@ export function ViduFormInput() {
         name="movementAmplitude"
         label={
           <div className="flex gap-1">
-            <span>Movement amplitude</span>
+            <span>Movement Amplitude</span>
             <InfoPopover size="sm" withArrow iconProps={{ size: 16 }} width={420}>
               <div className="flex flex-col">
-                <span>Control the scale of camera movements and subject actions.</span>
-                <span className="text-xs">Default auto (fits most use cases)</span>
+                <Text>Control the scale of camera movements and subject actions.</Text>
+                <Text>Default: Auto (fits most use cases)</Text>
               </div>
             </InfoPopover>
           </div>

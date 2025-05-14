@@ -234,11 +234,10 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
 export const useGenerationFormStore = create<{
   type: MediaType;
   engine?: string;
-  videoProcess: 'txt2vid' | 'img2vid';
   workflow?: string; // is this needed?
   // originalPrompt?: string;
 }>()(
-  persist((set) => ({ type: 'image', videoProcess: 'txt2vid' }), {
+  persist((set) => ({ type: 'image' }), {
     name: 'generation-form',
     version: 1.2,
   })
