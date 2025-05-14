@@ -1,0 +1,7 @@
+.liveNow {
+  cursor: pointer;
+
+  &::before {
+    animation: blink 2s linear infinite;
+  }
+}

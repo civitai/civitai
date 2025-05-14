@@ -2,7 +2,6 @@ import { IndexToLabel, useSearchStore } from '~/components/Search/useSearchState
 import { useInstantSearch, usePagination, useSearchBox } from 'react-instantsearch';
 import {
   Box,
-  createStyles,
   Group,
   SegmentedControl,
   SegmentedControlItem,
@@ -42,7 +41,6 @@ import {
 } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isDefined } from '~/utils/type-guards';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { searchIndexMap } from '~/components/Search/search.types';
 
 export const SearchHeader = () => {
@@ -255,7 +253,7 @@ export const SearchHeader = () => {
                 color="gray"
                 radius="xl"
                 p={11}
-                className={searchLayoutStyles.filterButton}
+                className={searchLayoutClasses.filterButton}
               >
                 <IconFilter />
               </ThemeIcon>

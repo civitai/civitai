@@ -46,9 +46,9 @@ export const CosmeticSample = ({
       return (
         <div style={{ width: values.badgeSize }}>
           <FeedCard
+            className="!m-0"
             aspectRatio="square"
             frameDecoration={cosmetic as ContentDecorationCosmetic}
-            sx={{ margin: '0 !important' }}
           >
             <div className="size-full bg-gray-100 dark:bg-dark-7" />
           </FeedCard>

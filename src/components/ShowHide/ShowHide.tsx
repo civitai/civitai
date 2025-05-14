@@ -1,5 +1,6 @@
 import { Badge } from '@mantine/core';
 
+// TODO.mantine: Not used anywhere, delete?
 export function ShowHide({ status = 'show', position = 'absolute', ...props }: Props) {
   return (
     <Badge
