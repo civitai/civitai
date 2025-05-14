@@ -14,6 +14,8 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { titleCase } from '~/utils/string-helpers';
 
 export function ViduFormInput() {
   const form = useFormContext();
@@ -94,7 +96,7 @@ export function ViduFormInput() {
           options={viduAspectRatios}
         />
       )}
-      {model !== 'q1' && (
+      {/* {model !== 'q1' && (
         <div className="flex flex-col gap-0.5">
           <Input.Label>Duration</Input.Label>
           <InputSegmentedControl
@@ -105,18 +107,8 @@ export function ViduFormInput() {
             }))}
           />
         </div>
-      )}
+      )} */}
       {isTxt2Vid && (
-        // <div className="flex flex-col gap-0.5">
-        //   <Input.Label>Style</Input.Label>
-        //   <InputSegmentedControl
-        //     name="style"
-        //     data={[
-        //       { label: 'General', value: ViduVideoGenStyle.GENERAL },
-        //       { label: 'Animation', value: ViduVideoGenStyle.ANIME },
-        //     ]}
-        //   />
-        // </div>
         <InputRadioGroup name="style" label="Style" offset={4}>
           {[
             { label: 'General', value: ViduVideoGenStyle.GENERAL },
@@ -127,9 +119,23 @@ export function ViduFormInput() {
         </InputRadioGroup>
       )}
 
-      <InputRadioGroup name="movementAmplitude" label="Movement amplitude" offset={4}>
+      <InputRadioGroup
+        name="movementAmplitude"
+        label={
+          <div className="flex gap-1">
+            <span>Movement amplitude</span>
+            <InfoPopover size="sm" withArrow iconProps={{ size: 16 }} width={420}>
+              <div className="flex flex-col">
+                <span>Control the scale of camera movements and subject actions.</span>
+                <span className="text-xs">Default auto (fits most use cases)</span>
+              </div>
+            </InfoPopover>
+          </div>
+        }
+        offset={4}
+      >
         {viduMovementAmplitudes.map((option) => (
-          <Radio key={option} value={option} label={option} />
+          <Radio key={option} value={option} label={titleCase(option)} />
         ))}
       </InputRadioGroup>
 

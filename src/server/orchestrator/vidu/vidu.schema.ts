@@ -20,7 +20,8 @@ const schema = baseVideoGenerationSchema.extend({
   prompt: promptSchema,
   enablePromptEnhancer: z.boolean().default(true),
   style: z.nativeEnum(ViduVideoGenStyle).optional().catch(ViduVideoGenStyle.GENERAL),
-  duration: numberEnum(viduDurations).optional().catch(4),
+  duration: z.number().optional(),
+  // duration: numberEnum(viduDurations).optional().catch(4),
   seed: seedSchema,
   aspectRatio: z.enum(viduAspectRatios).optional().catch('1:1'),
   movementAmplitude: z.enum(viduMovementAmplitudes).default('auto').catch('auto'),
@@ -54,7 +55,7 @@ export const viduGenerationConfig = VideoGenerationConfig2({
   },
   transformFn: (data) => {
     if (data.model === 'q1') {
-      delete data.duration;
+      data.duration = 5;
     }
     if (data.process === 'txt2vid') {
       delete data.sourceImage;
@@ -68,7 +69,8 @@ export const viduGenerationConfig = VideoGenerationConfig2({
       data.sourceImage = data.endSourceImage;
       delete data.endSourceImage;
     }
-    return data;
+    // TODO - get Koen to update the api spec so that I don't have to cast the duration type
+    return { ...data, duration: data.duration as (typeof viduDurations)[number] };
   },
   superRefine: (data, ctx) => {
     if (data.process === 'img2vid' && !data.sourceImage) {

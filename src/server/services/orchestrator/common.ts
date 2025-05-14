@@ -604,16 +604,10 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           height = 480;
           aspectRatio = width / height;
           break;
-        case 'vidu':
-          width = 1280;
-          height = 720;
-          aspectRatio = width / height;
-          break;
         default: {
-          if (params.aspectRatio) {
-            const [rw, rh] = params.aspectRatio.split(':').map(Number);
-            aspectRatio = rw / rh;
-          }
+          if (!params.aspectRatio) params.aspectRatio = '16:9';
+          const [rw, rh] = params.aspectRatio.split(':').map(Number);
+          aspectRatio = rw / rh;
           break;
         }
       }
@@ -639,8 +633,8 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url + '.mp4',
-            width: width ?? 1080,
-            height: height ?? 1080,
+            width: output?.video?.width ?? width ?? 1080,
+            height: output?.video?.height ?? height ?? 1080,
             queuePosition: job.queuePosition,
             aspectRatio,
             blockedReason: image.blockedReason,

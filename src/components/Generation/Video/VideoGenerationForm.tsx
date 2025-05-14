@@ -83,7 +83,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   });
 
   function handleReset() {
-    form.reset(config.getDefaultValues());
+    form.reset(config.getDefaultValues(), { keepDefaultValues: false });
   }
 
   function handleSubmit(data: Record<string, unknown>) {
