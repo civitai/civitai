@@ -11,9 +11,9 @@ import {
   Text,
   ThemeIcon,
   Title,
-  createStyles,
 } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconInfoTriangleFilled } from '@tabler/icons-react';
+import clsx from 'clsx';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -38,13 +38,28 @@ import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schem
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
 import { JoinRedirectReason, joinRedirectReasons } from '~/utils/join-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
+import classes from './index.module.scss';
+
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ssg, features }) => {
+    await ssg?.subscriptions.getPlans.prefetch({});
+    await ssg?.subscriptions.getUserSubscription.prefetch();
+    if (!isDev && (!features?.isGreen || !features?.canBuyBuzz))
+      return {
+        redirect: {
+          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?sync-account=blue`,
+          statusCode: 302,
+          basePath: false,
+        },
+      };
+  },
+});
 
 export default function Pricing() {
   const router = useRouter();
-  const { classes, cx } = useStyles();
-  const { returnUrl = '/', reason } = router.query as {
+  const { reason } = router.query as {
     returnUrl: string;
     reason: JoinRedirectReason;
   };
@@ -124,14 +139,12 @@ export default function Pricing() {
               </div>
             </Alert>
           )}
-          <Title align="center" className={classes.title}>
-            Memberships
-          </Title>
-          <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
+          <Title className={clsx(classes.title, 'text-center')}>Memberships</Title>
+          <Text align="center" className={classes.introText} style={{ lineHeight: 1.25 }}>
             As the leading generative AI community, we&rsquo;re adding new features every week. Help
             us keep the community thriving by becoming a Supporter and get exclusive perks.
           </Text>
-          <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
+          <Text align="center" className={classes.introText} style={{ lineHeight: 1.25 }}>
             Your Membership provides full access across all Civitai domains, ensuring the same great
             benefits and features wherever you explore
           </Text>
@@ -240,11 +253,11 @@ export default function Pricing() {
             </Center>
           ) : (
             <ContainerGrid justify="center">
-              <ContainerGrid.Col md={3} sm={6} xs={12}>
+              <ContainerGrid.Col span={{ base: 12, sm: 6, md: 3 }}>
                 <Card className={classes.card}>
                   <Stack style={{ height: '100%' }}>
                     <Stack gap="md" mb="md">
-                      <Title className={classes.cardTitle} order={2} align="center" mb="sm">
+                      <Title className={clsx(classes.cardTitle, 'text-center')} order={2} mb="sm">
                         Free
                       </Title>
                       <Center style={{ opacity: 0.3 }}>
@@ -290,53 +303,3 @@ export default function Pricing() {
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: 24,
-    },
-  },
-  introText: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: 14,
-    },
-  },
-  image: {
-    [containerQuery.smallerThan('sm')]: {
-      width: 96,
-      marginBottom: theme.spacing.xs,
-    },
-  },
-  cardTitle: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: 20,
-    },
-  },
-  card: {
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.lg,
-  },
-  price: {
-    fontSize: 48,
-    fontWeight: 'bold',
-  },
-}));
-
-export const getServerSideProps = createServerSideProps({
-  useSSG: true,
-  resolver: async ({ ssg, features }) => {
-    await ssg?.subscriptions.getPlans.prefetch({});
-    await ssg?.subscriptions.getUserSubscription.prefetch();
-    if (!isDev && (!features?.isGreen || !features?.canBuyBuzz))
-      return {
-        redirect: {
-          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?sync-account=blue`,
-          statusCode: 302,
-          basePath: false,
-        },
-      };
-  },
-});

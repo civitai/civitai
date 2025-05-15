@@ -40,8 +40,16 @@ export default function AspectRatioExplorer() {
         <Button onClick={addAspectRatio}>Add</Button>
       </div>
       <div className="flex gap-3">
-        <NumberInput label="Multiplier" value={multiplier} onChange={setMultiplier} />
-        <NumberInput label="Resolution" value={resolution} onChange={setResolution} />
+        <NumberInput
+          label="Multiplier"
+          value={multiplier}
+          onChange={(value) => setMultiplier(typeof value === 'number' ? value : undefined)}
+        />
+        <NumberInput
+          label="Resolution"
+          value={resolution}
+          onChange={(value) => setResolution(typeof value === 'number' ? value : undefined)}
+        />
       </div>
 
       {!!aspectRatioList.length && resolution && (

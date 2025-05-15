@@ -31,7 +31,7 @@ import { trpc } from '~/utils/trpc';
 import classes from './RunPartners.module.scss';
 
 export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { data: strategies = [], isLoading: strategiesLoading } =
     trpc.modelVersion.getRunStrategies.useQuery({ id: modelVersionId });
   const { data: partners, isLoading: partnersLoading } = trpc.partner.getAll.useQuery();

@@ -54,7 +54,7 @@ const schema = z.object({
 
 const BuzzFeatures = (props: Omit<ListProps, 'children'>) => {
   return (
-    <List listStyleType="none" gap="sm" {...props}>
+    <List listStyleType="none" spacing="sm" {...props}>
       {BUZZ_FEATURE_LIST.map((feature) => (
         <List.Item key={feature}>
           <Group wrap="nowrap">
@@ -92,7 +92,7 @@ export default function PurchaseBuzz() {
         >
           <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
         </Center>
-        <Title order={1} align="center">
+        <Title order={1} className="text-center">
           Thank you! 🎉
         </Title>
         <Text size="lg" align="center" mb="lg">
@@ -109,7 +109,7 @@ export default function PurchaseBuzz() {
             </Stack>
           ) : (
             <Stack>
-              <Title order={3} align="center">
+              <Title order={3} className="text-center">
                 Where to go from here?
               </Title>
               <BuzzFeatures />

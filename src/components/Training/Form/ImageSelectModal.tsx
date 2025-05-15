@@ -50,7 +50,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import {
   ImageSelectFiltersProfileDropdown,
-  ImageSelectFiltersTrainingDropdown
+  ImageSelectFiltersTrainingDropdown,
 } from '~/components/Training/Form/ImageSelectFilters';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
@@ -431,7 +431,7 @@ const ImageGridMedia = ({
   | { type: 'training'; img: TrainedData }) => {
   const { selected, setSelected, importedUrls } = useImageSelectContext();
   const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const compareKey = type === 'training' ? `${img.modelVersion.id}` : img.url;
 

@@ -5,7 +5,6 @@ import {
   Center,
   Chip,
   Container,
-  Divider,
   Group,
   Image,
   Loader,
@@ -15,11 +14,9 @@ import {
   Stack,
   Text,
   Title,
-  createStyles,
   HoverCard,
 } from '@mantine/core';
 import { IconAlertCircle, IconBrandSpeedtest, IconCircleCheck } from '@tabler/icons-react';
-import { IconCheck } from '@tabler/icons-react';
 import { IconArrowUpRight } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -30,8 +27,8 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BuildBudget, BuildFeatures } from '~/server/schema/build-guide.schema';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
-import dayjs from 'dayjs';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import classes from './index.module.scss';
 
 const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
 const processors = ['AMD', 'Intel'] as const;
@@ -41,58 +38,6 @@ type State = {
   selectedProcessor: (typeof processors)[number];
 };
 
-const useStyles = createStyles((theme) => ({
-  section: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
-
-    [theme.fn.smallerThan('sm')]: {
-      padding: theme.spacing.md,
-    },
-  },
-
-  component: {
-    '&:not(:first-of-type)': {
-      paddingTop: theme.spacing.sm,
-      borderTop: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-      }`,
-    },
-  },
-
-  componentTitleWrapper: {
-    [theme.fn.smallerThan('sm')]: {
-      flexDirection: 'row-reverse',
-      width: '100%',
-    },
-  },
-
-  // Chip styles
-  chipLabel: {
-    '&[data-variant="filled"]': {
-      '&[data-checked]': {
-        '&, &:hover': {
-          color: theme.colors.blue[4],
-          backgroundColor: theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.2),
-          padding: `0 ${theme.spacing.lg}px`,
-        },
-      },
-    },
-  },
-
-  chipIconWrapper: { display: 'none' },
-
-  hideMobile: {
-    [theme.fn.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-  hideDesktop: {
-    [theme.fn.largerThan('sm')]: {
-      display: 'none',
-    },
-  },
-}));
-
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg }) => {
@@ -100,9 +45,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const aDayAgo = dayjs().subtract(1, 'day').toDate();
 export default function BuildPage() {
-  const { classes } = useStyles();
   const [state, setState] = useState<State>({ selectedBudget: 'Mid', selectedProcessor: 'AMD' });
   const { data: builds, isLoading } = trpc.buildGuide.getAll.useQuery();
   const buildName = `${state.selectedBudget}_${state.selectedProcessor}`.toLowerCase();
@@ -129,25 +72,26 @@ export default function BuildPage() {
                   Select your budget
                 </Text>
                 <Chip.Group
-                  gap={4}
                   value={state.selectedBudget}
                   onChange={(value) =>
                     setState((curr) => ({ ...curr, selectedBudget: value as BuildBudget }))
                   }
                 >
-                  {buildBudgets.map((budget) => (
-                    <Chip
-                      key={budget}
-                      classNames={{
-                        label: classes.chipLabel,
-                        iconWrapper: classes.chipIconWrapper,
-                      }}
-                      value={budget}
-                      variant="filled"
-                    >
-                      <span>{budget}</span>
-                    </Chip>
-                  ))}
+                  <Group gap={4}>
+                    {buildBudgets.map((budget) => (
+                      <Chip
+                        key={budget}
+                        classNames={{
+                          label: classes.chipLabel,
+                          iconWrapper: classes.chipIconWrapper,
+                        }}
+                        value={budget}
+                        variant="filled"
+                      >
+                        <span>{budget}</span>
+                      </Chip>
+                    ))}
+                  </Group>
                 </Chip.Group>
               </Stack>
               <Stack gap={8}>
@@ -155,7 +99,6 @@ export default function BuildPage() {
                   Processor
                 </Text>
                 <Chip.Group
-                  gap={4}
                   value={state.selectedProcessor}
                   onChange={(value) =>
                     setState((curr) => ({
@@ -164,19 +107,21 @@ export default function BuildPage() {
                     }))
                   }
                 >
-                  {processors.map((processor) => (
-                    <Chip
-                      key={processor}
-                      classNames={{
-                        label: classes.chipLabel,
-                        iconWrapper: classes.chipIconWrapper,
-                      }}
-                      value={processor}
-                      variant="filled"
-                    >
-                      <span>{processor}</span>
-                    </Chip>
-                  ))}
+                  <Group gap={4}>
+                    {processors.map((processor) => (
+                      <Chip
+                        key={processor}
+                        classNames={{
+                          label: classes.chipLabel,
+                          iconWrapper: classes.chipIconWrapper,
+                        }}
+                        value={processor}
+                        variant="filled"
+                      >
+                        <span>{processor}</span>
+                      </Chip>
+                    ))}
+                  </Group>
                 </Chip.Group>
               </Stack>
             </Group>
@@ -249,12 +194,7 @@ export default function BuildPage() {
                       radius="sm"
                       px="lg"
                       py="sm"
-                      sx={(theme) => ({
-                        backgroundColor:
-                          theme.colorScheme === 'dark'
-                            ? theme.colors.dark[5]
-                            : theme.colors.gray[0],
-                      })}
+                      className="bg-gray-0 dark:bg-dark-5"
                       withBorder
                     >
                       <Group gap="lg" align="start" wrap="nowrap">
@@ -367,10 +307,10 @@ function PriceTag({
 
   return (
     <Group className={className} gap={4} align="start" wrap="nowrap">
-      <Text size={size} weight={600} color={color} inline>
+      <Text fz={size} weight={600} c={color} inline>
         ${intPart}
       </Text>
-      <Text size={decimalFontSize} weight={600} color={color ?? 'dimmed'} inline>
+      <Text fz={decimalFontSize} weight={600} c={color ?? 'dimmed'} inline>
         {decimalPart}
       </Text>
     </Group>

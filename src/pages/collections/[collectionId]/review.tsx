@@ -10,9 +10,9 @@ import {
   Stack,
   Text,
   Title,
+  TooltipProps,
   UnstyledButton,
 } from '@mantine/core';
-import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { showNotification } from '@mantine/notifications';
 import {
   IconCheck,
@@ -61,6 +61,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
+import clsx from 'clsx';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -303,7 +304,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
       />
       <AspectRatioImageCard
         onClick={() => toggleSelected(collectionItem.id)}
-        className={cx({
+        className={clsx({
           ['opacity-60']:
             selected || (collectionItem.status && !statuses.includes(collectionItem.status)),
         })}
@@ -334,7 +335,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                       variant="transparent"
                       size="lg"
                       target="_blank"
-                      onClick={(e) => {
+                      onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
                         e.stopPropagation();
                       }}
                     >
@@ -363,8 +364,8 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             )}
             {reviewData.user && reviewData.user.id !== -1 && (
               <UnstyledButton
-                sx={{ color: 'white' }}
-                onClick={(e) => {
+                className="text-white"
+                onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                   e.preventDefault();
                   e.stopPropagation();
 

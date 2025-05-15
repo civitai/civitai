@@ -229,14 +229,7 @@ function MerchShowcaseSection({
           in Paris, each unique design is limited to an edition of 25.
         </Text>
       </div> */}
-      <SimpleGrid
-        gap="md"
-        breakpoints={[
-          { minWidth: 'xs', cols: 1 },
-          { minWidth: 'sm', cols: 3 },
-          { minWidth: 'lg', cols: 4 },
-        ]}
-      >
+      <SimpleGrid spacing="md" cols={{ base: 1, sm: 3, lg: 4 }}>
         {displayedItems.map((product) => (
           <ProductItem key={product.imageUrl} {...product} />
         ))}
@@ -279,11 +272,11 @@ function ProductItem({
         )}
       </div>
       <div className="flex flex-col gap-2">
-        <Text size={22} weight="bold">
+        <Text size="22px" lh={1.2} weight="bold">
           {name}
         </Text>
         {description && (
-          <Text size={16} lineClamp={3}>
+          <Text size="md" lineClamp={3}>
             {description}
           </Text>
         )}

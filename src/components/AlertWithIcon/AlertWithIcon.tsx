@@ -7,6 +7,7 @@ import {
   Text,
   Stack,
   MantineSize,
+  ThemeIconProps,
 } from '@mantine/core';
 import { ReactNode } from 'react';
 
@@ -49,7 +50,7 @@ type AlertWithIconProps = AlertProps & {
   icon: ReactNode;
   iconColor?: MantineColor;
   size?: 'xs' | 'sm' | 'md' | 'lg';
-  iconSize?: MantineSize;
+  iconSize?: ThemeIconProps['size'];
 };
 
 const titleSize: Record<NonNullable<AlertWithIconProps['size']>, MantineSize> = {

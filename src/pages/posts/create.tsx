@@ -161,7 +161,7 @@ export default Page(
               description="Select a resource to ensure that all uploaded images receive correct resource attribution"
               placeholder="Select a resource"
               value={modelVersionId ? String(modelVersionId) : undefined}
-              nothingFound={versionsLoading ? 'Loading...' : 'No resources found'}
+              nothingFoundMessage={versionsLoading ? 'Loading...' : 'No resources found'}
               data={versions.map(({ id, name }) => ({ label: name, value: id.toString() }))}
               onChange={(value) =>
                 router.replace({ query: { ...params, modelVersionId: value } }, undefined, {

@@ -96,7 +96,7 @@ function Home() {
     <>
       <Container size="xl">
         <Stack gap={4}>
-          <Title order={3} mb={0} sx={{ lineHeight: 1 }}>
+          <Title order={3} mb={0} lh={1}>
             Link your account
           </Title>
           <Text mb="md" color="dimmed">

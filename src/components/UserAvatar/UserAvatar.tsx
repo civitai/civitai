@@ -93,7 +93,7 @@ export function UserAvatar({
   className,
 }: Props) {
   const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { canViewNsfw } = useFeatureFlags();
   const browsingLevel = useBrowsingLevelDebounced();
 
@@ -122,13 +122,8 @@ export function UserAvatar({
   textSize ??= mapAvatarTextSize[size].textSize;
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
 
-  const imageSize = getRawAvatarSize(
-    (avatarProps?.size ?? avatarSize ?? size) as MantineSpacing
-  );
-  const imageRadius = getRawAvatarRadius(
-    (avatarProps?.radius ?? radius) as MantineSpacing,
-    theme
-  );
+  const imageSize = getRawAvatarSize((avatarProps?.size ?? avatarSize ?? size) as MantineSpacing);
+  const imageRadius = getRawAvatarRadius((avatarProps?.radius ?? radius) as MantineSpacing, theme);
   const nsfwLevel = avatarUser.profilePicture?.nsfwLevel ?? 0;
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||

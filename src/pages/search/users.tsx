@@ -6,7 +6,7 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
-import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { SearchLayout } from '~/components/Search/SearchLayout';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
@@ -18,6 +18,7 @@ import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import classes from '~/components/Search/SearchLayout.module.scss';
 
 export default function UserSearch() {
   return (
@@ -50,7 +51,6 @@ const RenderFilters = () => {
 export function UserHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'users'>();
   const { status } = useInstantSearch();
-  const { classes, cx } = useSearchLayoutStyles();
 
   const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
     type: 'users',
@@ -73,12 +73,12 @@ export function UserHitList() {
         <Center>
           <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
-              <Text color="dimmed">{hiddenCount} users have been hidden due to your settings.</Text>
+              <Text c="dimmed">{hiddenCount} users have been hidden due to your settings.</Text>
             )}
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <ThemeIcon size={128} radius={100} className="opacity-50">
               <IconCloudOff size={80} />
             </ThemeIcon>
-            <Title order={1} inline>
+            <Title order={1} lh={1}>
               No users found
             </Title>
             <Text align="center">
@@ -115,19 +115,19 @@ export function UserHitList() {
   return (
     <Stack>
       {hiddenCount > 0 && (
-        <Text color="dimmed">{hiddenCount} users have been hidden due to your settings.</Text>
+        <Text c="dimmed">{hiddenCount} users have been hidden due to your settings.</Text>
       )}
-      <Box
-        className={cx(classes.grid)}
+      <div
+        className={classes.grid}
         style={{
           // Overwrite default sizing here.
           gridTemplateColumns: `repeat(auto-fill, minmax(350px, 1fr))`,
         }}
       >
-        {items.map((hit) => {
-          return <UserCard key={hit.id} data={hit} />;
-        })}
-      </Box>
+        {items.map((hit) => (
+          <UserCard key={hit.id} data={hit} />
+        ))}
+      </div>
       {hits.length > 0 && !isLastPage && (
         <InViewLoader
           loadFn={showMore}

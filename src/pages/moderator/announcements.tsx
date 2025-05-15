@@ -89,7 +89,7 @@ export function AnnouncementsPage() {
       })}
       {data && (
         <div className="flex justify-end">
-          <Pagination page={page} total={data.totalPages} onChange={handlePaginationChange} />
+          <Pagination value={page} total={data.totalPages} onChange={handlePaginationChange} />
         </div>
       )}
     </div>

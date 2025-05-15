@@ -1,4 +1,4 @@
-import { createStyles, SegmentedControl, Stack, Title } from '@mantine/core';
+import { SegmentedControl, Stack, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
@@ -8,7 +8,7 @@ import { Meta } from '~/components/Meta/Meta';
 // import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import styles from './index.module.scss';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
@@ -17,39 +17,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 //   },
 // });
 
-const useStyles = createStyles((theme) => ({
-  label: {
-    padding: '6px 16px',
-    textTransform: 'capitalize',
-    backgroundColor:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.gray[3], 0.06)
-        : theme.fn.rgba(theme.colors.gray[9], 0.06),
-  },
-  labelActive: {
-    backgroundColor: 'transparent',
-    '&,&:hover': {
-      color: theme.colors.dark[9],
-    },
-  },
-  active: {
-    backgroundColor: theme.white,
-  },
-  root: {
-    backgroundColor: 'transparent',
-    gap: 8,
-    marginLeft: -4,
-
-    [containerQuery.smallerThan('sm')]: {
-      overflow: 'auto hidden',
-      maxWidth: '100%',
-    },
-  },
-  control: { border: 'none !important' },
-}));
-
 function BountiesPage() {
-  const { classes } = useStyles();
   const router = useRouter();
   const query = router.query;
   const engagement = constants.bounties.engagementTypes.find(
@@ -74,7 +42,7 @@ function BountiesPage() {
             <Stack gap="xl" align="flex-start">
               <Title>My Bounties</Title>
               <SegmentedControl
-                classNames={classes}
+                classNames={styles}
                 transitionDuration={0}
                 radius="xl"
                 mb="xl"

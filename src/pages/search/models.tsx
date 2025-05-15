@@ -2,7 +2,6 @@ import { Stack, Box, Center, Loader, Title, Text, ThemeIcon } from '@mantine/cor
 import { useInstantSearch } from 'react-instantsearch';
 
 import {
-  ApplyCustomFilter,
   BrowsingLevelFilter,
   ChipRefinementList,
   ClearRefinements,
@@ -15,7 +14,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
-import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { SearchLayout } from '~/components/Search/SearchLayout';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import { useRouter } from 'next/router';
@@ -105,7 +104,6 @@ const RenderFilters = () => {
 export function ModelsHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
   const { status } = useInstantSearch();
-  const { classes } = useSearchLayoutStyles();
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
 
@@ -130,12 +128,12 @@ export function ModelsHitList() {
       <div className="flex items-center justify-center">
         <Stack gap="md" align="center" maw={800}>
           {hiddenCount > 0 && (
-            <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
+            <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
           )}
-          <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+          <ThemeIcon size={128} radius={100} className="opacity-50">
             <IconCloudOff size={80} />
           </ThemeIcon>
-          <Title order={1} inline>
+          <Title order={1} lh={1}>
             No models found
           </Title>
           <Text align="center">
@@ -150,38 +148,38 @@ export function ModelsHitList() {
 
     if (loading) {
       return (
-        <Box>
+        <div>
           <Center mt="md">
             <Loader />
           </Center>
-        </Box>
+        </div>
       );
     }
 
     return (
-      <Box>
+      <div>
         <Center mt="md">
           {/* Just enough time to avoid blank random page */}
           <TimeoutLoader renderTimeout={() => <>{NotFound}</>} delay={150} />
         </Center>
-      </Box>
+      </div>
     );
   }
 
   if (loadingPreferences) {
     return (
-      <Box>
+      <div>
         <Center mt="md">
           <Loader />
         </Center>
-      </Box>
+      </div>
     );
   }
 
   return (
     <Stack>
       {hiddenCount > 0 && (
-        <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
+        <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
       <MasonryGrid
         data={items as any}

@@ -1,4 +1,4 @@
-import { createStyles, Group, Stack, ThemeIcon, Title } from '@mantine/core';
+import { Group, Stack, ThemeIcon, Title } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { ClubsInfinite } from '~/components/Club/Infinite/ClubsInfinite';
@@ -10,11 +10,11 @@ import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { FeatureIntroduction } from '../../components/FeatureIntroduction/FeatureIntroduction';
+import classes from './index.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features }) => {
-    console.log('features', features);
     if (!features?.clubs) return { notFound: true };
 
     // return {
@@ -26,46 +26,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const useStyles = createStyles((theme) => ({
-  label: {
-    padding: '6px 16px',
-    textTransform: 'capitalize',
-    backgroundColor:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.gray[3], 0.06)
-        : theme.fn.rgba(theme.colors.gray[9], 0.06),
-  },
-  labelActive: {
-    backgroundColor: 'transparent',
-    '&,&:hover': {
-      color: theme.colors.dark[9],
-    },
-  },
-  active: {
-    backgroundColor: theme.white,
-  },
-  root: {
-    backgroundColor: 'transparent',
-    gap: 8,
-
-    [theme.fn.smallerThan('sm')]: {
-      overflow: 'auto hidden',
-      maxWidth: '100%',
-    },
-  },
-  control: { border: 'none !important' },
-
-  filtersWrapper: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-
-      '> *': { flexGrow: 1 },
-    },
-  },
-}));
-
 export default function ClubsPage() {
-  const { classes } = useStyles();
   const router = useRouter();
   const query = router.query;
 

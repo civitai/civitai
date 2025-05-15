@@ -1,14 +1,4 @@
-import {
-  Box,
-  Button,
-  Container,
-  createStyles,
-  Group,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-} from '@mantine/core';
+import { Button, Container, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   Icon3dCubeSphere,
@@ -20,10 +10,11 @@ import {
 import { Meta } from '~/components/Meta/Meta';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+
+import classes from '~/styles/utils.module.scss';
+import clsx from 'clsx';
 
 export default function CivitaiVault() {
-  const { classes, cx } = useStyles();
   const isMobile = useIsMobile();
 
   return (
@@ -55,9 +46,9 @@ export default function CivitaiVault() {
               View Whitepaper
             </Button>
           </Group>
-          <Box className={classes.gradientContainer}>
+          <div className="relative mb-6">
             <YoutubeEmbed videoId="7j_sakwGK8M" />
-          </Box>
+          </div>
           <Stack gap={12}>
             <Title className={classes.heading3} order={3}>
               Open-sourcing text-to-scent
@@ -129,7 +120,7 @@ export default function CivitaiVault() {
               </ThemeIcon>
 
               <Stack gap={0}>
-                <Title className={classes.heading4} order={4} color="yellow">
+                <Title className={clsx(classes.heading4, 'text-yellow-6')} order={4}>
                   WARNING
                 </Title>
                 <Text>
@@ -164,11 +155,11 @@ export default function CivitaiVault() {
           <Stack gap={0}>
             <Text
               size="xs"
-              color="dimmed"
+              c="dimmed"
             >{`* Some smells may be confusing or difficult to distinguish to inexperienced users.`}</Text>
             <Text
               size="xs"
-              color="dimmed"
+              c="dimmed"
             >{`** While ODOR brings a new dimension to sensory technology, its full bouquet of features blossoms in the fertile ground of imagination. As we continue to explore the frontiers of possibility, remember that the essence of discovery often lies in the journey, not just the destination. Happy explorations!`}</Text>
           </Stack>
         </Stack>
@@ -176,44 +167,3 @@ export default function CivitaiVault() {
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  cta: {
-    height: 52,
-  },
-  heroTitle: {
-    fontSize: 32,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
-    [containerQuery.largerThan('md')]: {
-      fontSize: 40,
-    },
-  },
-  heroText: {
-    fontSize: 14,
-    fontWeight: 500,
-  },
-  heading3: {
-    fontSize: 32,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
-  },
-  heading4: {
-    fontSize: 20,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
-  },
-
-  gradientContainer: {
-    position: 'relative',
-    marginBottom: 24,
-  },
-  gradientBox: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: 'linear-gradient(180deg, rgba(26, 27, 30, 0.00) 50%, #1A1B1E 100%)',
-  },
-}));

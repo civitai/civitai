@@ -33,7 +33,7 @@ export function UserStatBadges({
   colorOverrides,
 }: Props) {
   const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   return (
     <Group gap={8} justify="space-between">

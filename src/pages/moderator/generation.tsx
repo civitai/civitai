@@ -101,7 +101,7 @@ export default function GenerationPage() {
             enableStickyHeader
             manualPagination
             mantineTableProps={{
-              sx: { tableLayout: 'fixed' },
+              style: { tableLayout: 'fixed' },
             }}
             initialState={{ density: 'xs' }}
             state={{

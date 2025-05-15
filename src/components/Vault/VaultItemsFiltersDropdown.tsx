@@ -29,7 +29,7 @@ type Filters = Omit<GetPaginatedVaultItemsSchema, 'limit'>;
 
 export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps }: Props) {
   const mobile = useIsMobile();
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery({
     entityType: ['Model'],
     sort: TagSort.MostModels,

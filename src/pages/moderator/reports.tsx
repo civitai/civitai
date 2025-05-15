@@ -11,7 +11,7 @@ import {
   MantineSize,
   Menu,
   SegmentedControl,
-  SelectItem,
+  ComboboxItem,
   Stack,
   Text,
   Title,
@@ -161,7 +161,7 @@ export default function Reports() {
               ({
                 label: getDisplayName(x),
                 value: x,
-              } as SelectItem)
+              } as ComboboxItem)
           ) as any,
         },
       },
@@ -180,7 +180,7 @@ export default function Reports() {
               ({
                 label: getDisplayName(x),
                 value: x,
-              } as SelectItem)
+              } as ComboboxItem)
           ) as any,
         },
       },
@@ -225,7 +225,7 @@ export default function Reports() {
             <SegmentedControl
               size="sm"
               data={Object.values(ReportEntity).map((x) => ({ label: upperFirst(x), value: x }))}
-              onChange={handleTypeChange}
+              onChange={(type) => handleTypeChange(type as ReportEntity)}
               value={type}
             />
           </Group>
@@ -244,11 +244,9 @@ export default function Reports() {
             enableHiding={false}
             enableGlobalFilter={false}
             mantineTableContainerProps={{
-              sx: { maxHeight: 'calc(100vh - 360px)' },
+              className: 'max-h-[calc(100vh-360px)]',
             }}
-            initialState={{
-              density: 'sm',
-            }}
+            initialState={{ density: 'md' }}
             state={{
               isLoading,
               pagination,
@@ -331,12 +329,8 @@ function ReportDrawer({
       padding="md"
       shadow="sm"
       zIndex={500}
-      styles={{
-        drawer: {
-          borderLeft: `1px solid ${
-            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-          }`,
-        },
+      classNames={{
+        content: 'border-l border-l-gray-3 dark:border-l-dark-4',
       }}
     >
       {report && (

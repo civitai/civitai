@@ -27,8 +27,8 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
+import classes from './index.module.css';
 
 export function Home() {
   const { data: homeBlocks = [], isLoading: isLoadingHomeBlocks } =
@@ -61,17 +61,7 @@ export function Home() {
       {isLoading ? (
         <PageLoader />
       ) : (
-        <Box
-          className="-mt-3"
-          sx={(theme) => ({
-            '& > *:nth-of-type(even)': {
-              background:
-                theme.colorScheme === 'dark'
-                  ? theme.colors.dark[8]
-                  : theme.fn.darken(theme.colors.gray[0], 0.01),
-            },
-          })}
-        >
+        <div className={classes.container}>
           <BrowsingLevelProvider browsingLevel={sfwBrowsingLevelsFlag}>
             {homeBlocks.map((homeBlock, i) => {
               const showAds = i % 2 === 1 && i > 0;
@@ -120,17 +110,7 @@ export function Home() {
                     <IsClient>
                       <Group mb="md" justify="space-between">
                         <Group>
-                          <Title
-                            sx={(theme) => ({
-                              fontSize: 32,
-
-                              [containerQuery.smallerThan('sm')]: {
-                                fontSize: 24,
-                              },
-                            })}
-                          >
-                            Images
-                          </Title>
+                          <Title className="text-2xl @sm:text-3xl">Images</Title>
                           <Popover withArrow width={380}>
                             <Popover.Target>
                               <Box
@@ -185,22 +165,12 @@ export function Home() {
                     <IsClient>
                       <Group mb="md" justify="space-between">
                         <Group>
-                          <Title
-                            sx={(theme) => ({
-                              fontSize: 32,
-
-                              [containerQuery.smallerThan('sm')]: {
-                                fontSize: 24,
-                              },
-                            })}
-                          >
-                            Models
-                          </Title>
+                          <Title className="text-2xl @sm:text-3xl">Models</Title>
                           <Popover withArrow width={380}>
                             <Popover.Target>
                               <Box
                                 display="inline-block"
-                                sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                                style={{ lineHeight: 0.3, cursor: 'pointer' }}
                                 color="white"
                               >
                                 <IconInfoCircle size={20} />
@@ -251,7 +221,7 @@ export function Home() {
               </Box>
             )}
           </BrowsingLevelProvider>
-        </Box>
+        </div>
       )}
     </>
   );

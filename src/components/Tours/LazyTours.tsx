@@ -17,7 +17,7 @@ const completeStatus: string[] = [STATUS.SKIPPED, STATUS.FINISHED];
 const nextEvents: string[] = [EVENTS.STEP_AFTER, EVENTS.TARGET_NOT_FOUND];
 
 export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers'>) {
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { closeTour, runTour, activeTour, steps, currentStep, run } = useTourContext();
 
   const handleJoyrideCallback = useCallback<Callback>(

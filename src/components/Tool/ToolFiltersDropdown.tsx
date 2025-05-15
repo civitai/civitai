@@ -25,7 +25,7 @@ import styles from './ToolFiltersDropdown.module.scss';
 const toolTypes = Object.keys(ToolType);
 
 export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const isClient = useIsClient();
 

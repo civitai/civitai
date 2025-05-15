@@ -14,7 +14,7 @@ type Props = {
 };
 export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props) => {
   const stripePromise = useStripePromise();
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const { data, isLoading, isFetching } = trpc.stripe.getSetupIntent.useQuery(
     { paymentMethodTypes },

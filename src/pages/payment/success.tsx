@@ -37,7 +37,7 @@ export default function PaymentSuccess() {
       <Meta title="Successful Payment | Civitai" deIndex />
       <Container size="xs" mb="lg">
         <Stack>
-          <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
+          <Alert radius="sm" color="green" className="z-10">
             <Group gap="xs" wrap="nowrap" justify="center">
               <ThemeIcon color="green" size="lg">
                 <IconCircleCheck />
@@ -56,7 +56,7 @@ export default function PaymentSuccess() {
           >
             <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
           </Center>
-          <Title order={1} align="center">
+          <Title order={1} className="text-center">
             Thank you! 🎉
           </Title>
           <Text size="lg" align="center" mb="lg">

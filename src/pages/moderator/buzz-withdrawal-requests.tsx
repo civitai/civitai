@@ -22,7 +22,7 @@ import {
   Tooltip,
   TooltipProps,
 } from '@mantine/core';
-import { DatePicker } from '@mantine/dates';
+import { DatePickerInput } from '@mantine/dates';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconCashBanknote,
@@ -327,25 +327,25 @@ export default function ModeratorBuzzWithdrawalRequests() {
         </Group>
         <Group justify="space-between">
           <Group>
-            <DatePicker
+            <DatePickerInput
               label="From"
               placeholder="Start date"
               value={filters.from ?? undefined}
               onChange={(date) => {
                 setFilters({ ...filters, from: date ?? undefined });
               }}
-              clearButtonLabel="Clear"
               disabled={selectionEnabled}
+              clearable
             />
-            <DatePicker
+            <DatePickerInput
               label="To"
               placeholder="End date"
               value={filters.to ?? undefined}
               onChange={(date) => {
                 setFilters({ ...filters, to: date ?? undefined });
               }}
-              clearButtonLabel="Clear"
               disabled={selectionEnabled}
+              clearable
             />
             <TextInput
               label="Filter by username"
@@ -498,7 +498,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                       {selectionEnabled ? (
                         <Checkbox
                           checked={isSelected}
-                          onChange={(event) => {
+                          onChange={() => {
                             setSelection((curr) => ({
                               ...curr,
                               values: !isSelected
@@ -524,7 +524,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
               <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                 <Pagination
-                  page={filters.page}
+                  value={filters.page}
                   onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                   total={pagination.totalPages}
                 />

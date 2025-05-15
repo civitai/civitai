@@ -42,7 +42,7 @@ function ContestBanUserModal() {
       await queryUtils.user.getAll.invalidate({ contestBanned: true });
       dialog.onClose();
     },
-    onError(_error, _vars, context) {
+    onError() {
       showErrorNotification({
         error: new Error('Unable to ban user, please try again.'),
       });
@@ -114,19 +114,17 @@ export default function ContestsBans() {
     data: users = [],
     isLoading,
     isFetching,
-  } = trpc.user.getAll.useQuery(
-    {
-      contestBanned: true,
-    },
-  );
+  } = trpc.user.getAll.useQuery({
+    contestBanned: true,
+  });
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onSuccess() {
       await queryUtils.user.getAll.invalidate({ contestBanned: true });
     },
-    onError(_error, _vars, context) {
+    onError() {
       showErrorNotification({
         error: new Error('Unable to ban user, please try again.'),
       });
@@ -174,7 +172,7 @@ export default function ContestsBans() {
             </Center>
           ) : users?.length ?? 0 ? (
             <Stack>
-              <Table highlightOnHover withBorder>
+              <Table highlightOnHover withTableBorder>
                 <thead>
                   <tr>
                     <th>Username</th>
@@ -195,7 +193,7 @@ export default function ContestsBans() {
                         {user.meta?.contestBanDetails?.detailsInternal ? (
                           <RenderHtml
                             html={user.meta?.contestBanDetails?.detailsInternal}
-                            sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                            style={(theme) => ({ fontSize: theme.fontSizes.sm })}
                           />
                         ) : (
                           'N/A'

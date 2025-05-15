@@ -126,7 +126,7 @@ export default function Confirm() {
   const isConfirmed = air.status === 'connected';
   return (
     <Container>
-      <Title order={1} align="center" mb="lg">
+      <Title order={1} className="text-center" mb="lg">
         Studio Member Confirmation
       </Title>
       {!isMember ? notMember : isConfirmed ? confirmed : confirmEmail}

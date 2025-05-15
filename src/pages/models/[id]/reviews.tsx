@@ -15,7 +15,6 @@ import {
   Text,
   ThemeIcon,
   Title,
-  createStyles,
 } from '@mantine/core';
 import { IconLock, IconMessage, IconMessageCircleOff, IconPhoto } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -260,7 +259,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
     <Card className={classes.card} shadow="sm" radius="md" w="100%" p="xl" withBorder>
       <Stack gap="sm">
         {(review.exclude || isCreator) && (
-          <Group position="left">
+          <Group justify="start">
             <Badge color="red">Excluded from count</Badge>
           </Group>
         )}
@@ -312,7 +311,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
             subTextForce
             avatarSize={40}
             size="lg"
-            gap="md"
+            spacing="md"
             withUsername
             linkToProfile
           />

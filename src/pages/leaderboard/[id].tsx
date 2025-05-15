@@ -14,7 +14,6 @@ import {
   Stack,
   Text,
   Title,
-  createStyles,
   SegmentedControl,
   SegmentedControlProps,
   Alert,
@@ -37,8 +36,9 @@ import { env } from '~/env/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { constants } from '~/server/common/constants';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import classes from './[id].module.scss';
+import clsx from 'clsx';
 
 const excludeLegendsRegex = /Donors|Knights/i;
 
@@ -51,8 +51,7 @@ const leaderboardQuerySchema = z.object({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, ctx }) => {
-    const { id, date } = leaderboardQuerySchema.parse(ctx.query);
+  resolver: async ({ ssg }) => {
     await ssg?.leaderboard.getLeaderboards.prefetch();
   },
 });
@@ -61,7 +60,6 @@ export default function Leaderboard() {
   const { query, replace } = useRouter();
   const { id, date, position, board } = leaderboardQuerySchema.parse(query);
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
   const isDisabled = id === 'images-rater';
   // const isDisabled = false;
 
@@ -314,18 +312,11 @@ const LegendsToggle = (props: Omit<SegmentedControlProps, 'data' | 'onChange' | 
       ]}
       size="xs"
       value={board}
-      onChange={setBoard}
+      onChange={(board) => setBoard(board as 'season' | 'legend')}
       color="blue"
       ml="auto"
       orientation="horizontal"
-      styles={(theme) => ({
-        root: {
-          border: `1px solid ${
-            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-          }`,
-          background: 'none',
-        },
-      })}
+      className="border border-gray-4 bg-none dark:border-dark-4"
       {...props}
     />
   );
@@ -357,18 +348,9 @@ const UserPosition = ({
   return (
     <Badge
       color={top10 ? 'yellow' : top100 ? 'blue' : 'gray'}
+      className={clsx(classes.userPosition, top10 && classes.top10, top100 && classes.top100)}
       variant="outline"
-      sx={(theme) => ({
-        ':hover': {
-          transition: 'background-color 300ms ease',
-          backgroundColor: top10
-            ? theme.fn.rgba(theme.colors.yellow[5], 0.2)
-            : top100
-            ? theme.fn.rgba(theme.colors.blue[5], 0.2)
-            : undefined,
-        },
-      })}
-      onClick={(event) => {
+      onClick={(event: React.MouseEvent<HTMLDivElement>) => {
         event.stopPropagation();
         event.preventDefault();
 
@@ -379,57 +361,3 @@ const UserPosition = ({
     </Badge>
   );
 };
-
-const useStyles = createStyles((theme) => ({
-  title: {
-    [containerQuery.smallerThan('xs')]: {
-      fontSize: 28,
-    },
-  },
-  slogan: {
-    [containerQuery.smallerThan('xs')]: {
-      fontSize: theme.fontSizes.sm,
-    },
-  },
-  navItem: {
-    borderRight: `1px solid ${theme.colors.gray[theme.colorScheme === 'dark' ? 9 : 2]}`,
-    '&[data-active="true"]': {
-      borderRightColor: theme.colors.blue[theme.colorScheme === 'dark' ? 9 : 2],
-    },
-  },
-  sidebar: {
-    display: 'block',
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-
-  drawerButton: {
-    display: 'none',
-    [containerQuery.smallerThan('sm')]: {
-      marginLeft: 'auto',
-      display: 'block',
-    },
-  },
-
-  drawerHeader: {
-    padding: theme.spacing.xs,
-    marginBottom: 0,
-    boxShadow: theme.shadows.sm,
-  },
-
-  legendsToggleSm: {
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-
-  legendsToggle: {
-    width: '100%',
-    marginTop: theme.spacing.xs,
-    marginBottom: theme.spacing.xs,
-    [containerQuery.largerThan('sm')]: {
-      display: 'none',
-    },
-  },
-}));

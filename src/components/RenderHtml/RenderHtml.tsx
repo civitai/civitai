@@ -2,7 +2,6 @@ import {
   TypographyStylesProvider,
   TypographyStylesProviderProps,
   useComputedColorScheme,
-  useMantineTheme,
   lighten,
   darken,
 } from '@mantine/core';
@@ -92,7 +91,6 @@ export function RenderHtml({
   allowCustomStyles = true,
   ...props
 }: Props) {
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
   html = useMemo(

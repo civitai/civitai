@@ -231,7 +231,7 @@ export default function CosmeticStoreProducts() {
                         </Badge>
                       </td>
                       <td>
-                        <ActionIcon component={Link} href={`/moderator/rewards/update/test`}>
+                        <ActionIcon component={Link} href="/moderator/rewards/update/test">
                           <IconEdit />
                         </ActionIcon>
                       </td>
@@ -243,7 +243,7 @@ export default function CosmeticStoreProducts() {
                 <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                   <Pagination
-                    page={filters.page}
+                    value={filters.page}
                     onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                     total={pagination.totalPages}
                   />

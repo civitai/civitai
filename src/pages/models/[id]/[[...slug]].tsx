@@ -7,7 +7,6 @@ import {
   Button,
   Center,
   Container,
-  createStyles,
   Divider,
   Group,
   Loader,
@@ -18,6 +17,7 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -51,7 +51,7 @@ import {
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -124,7 +124,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import {
@@ -136,6 +135,8 @@ import {
 } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
+
+import classes from './[[...slug]].module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -264,7 +265,7 @@ export default function ModelDetailsV2({
   const currentUser = useCurrentUser();
 
   const router = useRouter();
-  const { classes, theme } = useStyles();
+  const colorScheme = useComputedColorScheme('dark');
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
@@ -302,9 +303,11 @@ export default function ModelDetailsV2({
   const isModerator = currentUser?.isModerator ?? false;
   const isCreator = model?.user.id === currentUser?.id;
   const isOwner = isCreator || isModerator;
-  const publishedVersions = !isOwner
-    ? model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? []
-    : model?.modelVersions ?? [];
+  const publishedVersions = useMemo(() => {
+    return !isOwner
+      ? model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? []
+      : model?.modelVersions ?? [];
+  }, [isOwner, model?.modelVersions]);
   const latestVersion =
     publishedVersions.find((version) => version.id === modelVersionId) ??
     publishedVersions[0] ??
@@ -514,7 +517,7 @@ export default function ModelDetailsV2({
         shallow: true,
       });
     }
-  }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel]);
+  }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel, router]);
 
   useEffect(() => {
     if (!canLoadBelowTheFold) return;
@@ -626,7 +629,7 @@ export default function ModelDetailsV2({
           <Stack gap="xl">
             <Stack gap="xs">
               <Stack gap={4}>
-                <Group align="flex-start" sx={{ justifyContent: 'space-between' }} wrap="nowrap">
+                <Group align="flex-start" justify="space-between" wrap="nowrap">
                   <Group className={classes.titleWrapper} align="center">
                     <Title className={classes.title} order={1} lineClamp={2}>
                       {model?.name}
@@ -650,7 +653,7 @@ export default function ModelDetailsV2({
                                 filled={isFavorite}
                               />
                             }
-                            sx={{ cursor: 'pointer' }}
+                            className="cursor-pointer"
                             onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
                           >
                             <Text className={classes.modelBadgeText}>
@@ -688,7 +691,7 @@ export default function ModelDetailsV2({
                           radius="sm"
                           size="lg"
                           icon={<IconBookmark size={18} />}
-                          sx={{ cursor: 'pointer' }}
+                          className="cursor-pointer"
                           onClick={handleCollect}
                         >
                           <Text className={classes.modelBadgeText}>
@@ -706,13 +709,7 @@ export default function ModelDetailsV2({
                         <IconBadge
                           radius="sm"
                           size="lg"
-                          icon={
-                            <IconBolt
-                              size={18}
-                              color="yellow.7"
-                              style={{ fill: theme.colors.yellow[7] }}
-                            />
-                          }
+                          icon={<IconBolt size={18} color="yellow.7" fill="currentColor" />}
                         >
                           <Text
                             className={classes.modelBadgeText}
@@ -776,7 +773,11 @@ export default function ModelDetailsV2({
                       modelId={model.id}
                       userId={model.user.id}
                     />
-                    <Menu position="bottom-end" transition="pop-top-right" withinPortal>
+                    <Menu
+                      position="bottom-end"
+                      transitionProps={{ transition: 'pop-top-right' }}
+                      withinPortal
+                    >
                       <Menu.Target>
                         <ActionIcon className={classes.headerButton} variant="light">
                           <IconDotsVertical />
@@ -842,7 +843,7 @@ export default function ModelDetailsV2({
                               {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
                             </Menu.Item>
                             <Menu.Item
-                              color={theme.colors.red[6]}
+                              color="red.6"
                               icon={<IconTrash size={14} stroke={1.5} />}
                               onClick={() => handleDeleteModel({ permanently: true })}
                             >
@@ -853,7 +854,7 @@ export default function ModelDetailsV2({
                         {currentUser && isOwner && !modelDeleted && (
                           <>
                             <Menu.Item
-                              color={theme.colors.red[6]}
+                              color="red.6"
                               icon={<IconTrash size={14} stroke={1.5} />}
                               onClick={() => handleDeleteModel()}
                             >
@@ -1023,7 +1024,7 @@ export default function ModelDetailsV2({
                         legacyBehavior
                         passHref
                       >
-                        <Badge component="a" size="sm" color="blue" sx={{ cursor: 'pointer' }}>
+                        <Badge component="a" size="sm" color="blue" className="cursor-pointer">
                           {category.name}
                         </Badge>
                       </Link>
@@ -1043,8 +1044,8 @@ export default function ModelDetailsV2({
                           component="a"
                           size="sm"
                           color="gray"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
-                          sx={{ cursor: 'pointer' }}
+                          variant={colorScheme === 'dark' ? 'filled' : undefined}
+                          className="cursor-pointer"
                         >
                           {tag.name}
                         </Badge>
@@ -1196,7 +1197,7 @@ export default function ModelDetailsV2({
           (!model.locked && !model.meta?.commentsLocked ? (
             <Container size="xl" my="xl">
               <Stack gap="md">
-                <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
+                <Group ref={discussionSectionRef} justify="space-between">
                   <Group gap="xs">
                     <Title order={2} data-tour="model:discussion">
                       Discussion
@@ -1268,93 +1269,3 @@ export default function ModelDetailsV2({
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  actions: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  titleWrapper: {
-    gap: theme.spacing.xs,
-
-    [containerQuery.smallerThan('md')]: {
-      gap: theme.spacing.xs * 0.4,
-    },
-  },
-
-  title: {
-    wordBreak: 'break-word',
-    [containerQuery.smallerThan('md')]: {
-      fontSize: 24,
-      width: '100%',
-      paddingBottom: 0,
-    },
-  },
-
-  engagementBar: {
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-
-  mobileCarousel: {
-    display: 'none',
-    [containerQuery.smallerThan('md')]: {
-      display: 'block',
-    },
-  },
-  desktopCarousel: {
-    display: 'block',
-    [containerQuery.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-
-  modelBadgeText: {
-    fontSize: theme.fontSizes.md,
-    [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.sm,
-    },
-  },
-
-  discussionActionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  // Increase carousel control arrow size
-  control: {
-    svg: {
-      width: 24,
-      height: 24,
-
-      [containerQuery.smallerThan('sm')]: {
-        minWidth: 16,
-        minHeight: 16,
-      },
-    },
-  },
-
-  headerButton: {
-    width: 32,
-    height: 32,
-
-    ['> svg']: {
-      width: 16,
-      height: 16,
-    },
-
-    [containerQuery.largerThan('md')]: {
-      width: 44,
-      height: 44,
-
-      ['> svg']: {
-        width: 20,
-        height: 20,
-      },
-    },
-  },
-}));

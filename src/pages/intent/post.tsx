@@ -10,7 +10,6 @@ import {
   ThemeIcon,
   Timeline,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
 import { IconCheck, IconMinus, IconX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -88,7 +87,6 @@ type ParseProgress = {
 export default function IntentPost() {
   const router = useRouter();
   const queryUtils = trpc.useUtils();
-  const theme = useMantineTheme();
   const [readyData, setReadyData] = useState<PostQuerySchema | undefined>();
   const [creatingPost, setCreatingPost] = useState<string | undefined>();
   const [previewUrl, setPreviewUrl] = useState<{ url: string; type: 'video' | 'image' }>();
@@ -350,14 +348,7 @@ export default function IntentPost() {
       <Container my="lg" size="xs">
         <Stack>
           <Title order={2}>Create New Post</Title>
-          <Paper
-            p="sm"
-            withBorder
-            style={{
-              background:
-                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-            }}
-          >
+          <Paper p="sm" className="bg-gray-1 dark:bg-dark-6" withBorder>
             <Timeline color="green" active={activeStep} bulletSize={22} lineWidth={1}>
               {progress.map((p, idx) => {
                 const Icon =
@@ -391,7 +382,7 @@ export default function IntentPost() {
                     title={p.title}
                     // color={color}
                   >
-                    <Group position="left" align="start">
+                    <Group justify="start" align="start">
                       <Stack mt="xs" gap={6}>
                         {p.errors.length > 0 ? (
                           p.errors.map((e, idx) => (

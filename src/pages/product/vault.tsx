@@ -1,24 +1,11 @@
-import {
-  Box,
-  Button,
-  Container,
-  createStyles,
-  Group,
-  Image,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-} from '@mantine/core';
+import { Button, Container, Group, Image, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCloudPlus, IconDownload, IconMapSearch, IconRadar2 } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function CivitaiVault() {
-  const { classes, cx } = useStyles();
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isMember;
   const buttonData = {
@@ -37,13 +24,15 @@ export default function CivitaiVault() {
         <Stack gap={40}>
           <Group justify="space-between">
             <Stack gap={12}>
-              <Title className={classes.heroTitle}>Civitai Vault</Title>
+              <Title className="text-3xl font-bold text-gray-9 @md:text-4xl dark:text-white">
+                Civitai Vault
+              </Title>
               {isMember ? (
-                <Text className={classes.heroText} sx={{ lineHeight: 1.25 }}>
+                <Text className="text-sm font-medium" sx={{ lineHeight: 1.25 }}>
                   Keep Your Favorite Models Forever
                 </Text>
               ) : (
-                <Text className={classes.heroText} sx={{ lineHeight: 1.25 }}>
+                <Text className="text-sm font-medium" sx={{ lineHeight: 1.25 }}>
                   ❤️ Civitai Vault is only available to Supporters
                 </Text>
               )}
@@ -61,17 +50,22 @@ export default function CivitaiVault() {
               {buttonData.text}
             </Button>
           </Group>
-          <Box className={classes.gradientContainer}>
+          <div className="relative mb-6">
             <Image
               src="/images/product/vault/lp-main.png"
               alt="check out the vault"
               width="100%"
               height="auto"
             />
-            <Box className={classes.gradientBox} />
-          </Box>
+            <div
+              className="absolute inset-0"
+              style={{
+                background: 'linear-gradient(180deg, rgba(26, 27, 30, 0.00) 50%, #1A1B1E 100%)',
+              }}
+            />
+          </div>
           <Stack gap={12}>
-            <Title className={classes.heading3} order={3}>
+            <Title className="text-3xl font-bold text-gray-9 dark:text-white" order={3}>
               Keep Your Favorite Models Forever
             </Title>
             <Text>
@@ -85,7 +79,7 @@ export default function CivitaiVault() {
               </ThemeIcon>
 
               <Stack gap={0}>
-                <Title className={classes.heading4} order={4}>
+                <Title className="text-xl font-bold text-gray-9 dark:text-white" order={4}>
                   Effortlessly Save Models
                 </Title>
                 <Text>
@@ -100,7 +94,7 @@ export default function CivitaiVault() {
               </ThemeIcon>
 
               <Stack gap={0}>
-                <Title className={classes.heading4} order={4}>
+                <Title className="text-xl font-bold text-gray-9 dark:text-white" order={4}>
                   Intuitive Organization Tools
                 </Title>
                 <Text>
@@ -116,7 +110,7 @@ export default function CivitaiVault() {
               </ThemeIcon>
 
               <Stack gap={0}>
-                <Title className={classes.heading4} order={4}>
+                <Title className="text-xl font-bold text-gray-9 dark:text-white" order={4}>
                   Download on Demand
                 </Title>
                 <Text>
@@ -131,9 +125,9 @@ export default function CivitaiVault() {
               </ThemeIcon>
 
               <Stack gap={0}>
-                <Title className={classes.heading4} order={4}>
+                <Title className="text-xl font-bold text-gray-9 dark:text-white" order={4}>
                   Automatic Updates{' '}
-                  <Text color="dimmed" component="span" size="xs">
+                  <Text c="dimmed" component="span" size="xs">
                     Coming Soon
                   </Text>
                 </Title>
@@ -171,11 +165,11 @@ export default function CivitaiVault() {
           <Stack gap={0}>
             <Text
               size="xs"
-              color="dimmed"
+              c="dimmed"
             >{`*Upon cancellation of your membership, you will have 7 days to download things from your Vault after which they will remain in your Vault for 23 more days, but you will be unable to download them.`}</Text>
             <Text
               size="xs"
-              color="dimmed"
+              c="dimmed"
             >{`**Models that are removed from the site for Terms of Service violations will also be removed from your Vault.`}</Text>
           </Stack>
         </Stack>
@@ -183,44 +177,3 @@ export default function CivitaiVault() {
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  cta: {
-    height: 52,
-  },
-  heroTitle: {
-    fontSize: 32,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
-    [containerQuery.largerThan('md')]: {
-      fontSize: 40,
-    },
-  },
-  heroText: {
-    fontSize: 14,
-    fontWeight: 500,
-  },
-  heading3: {
-    fontSize: 32,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
-  },
-  heading4: {
-    fontSize: 20,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
-  },
-
-  gradientContainer: {
-    position: 'relative',
-    marginBottom: 24,
-  },
-  gradientBox: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: 'linear-gradient(180deg, rgba(26, 27, 30, 0.00) 50%, #1A1B1E 100%)',
-  },
-}));

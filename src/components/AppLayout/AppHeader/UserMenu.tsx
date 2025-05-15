@@ -142,7 +142,7 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
-  const { colorScheme, toggleColorScheme } = useComputedColorScheme();
+  const { colorScheme, toggleColorScheme } = useComputedColorScheme('dark');
   const { logout } = useAccountContext();
 
   const { handleClose } = useUserMenuContext();

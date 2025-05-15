@@ -1,4 +1,4 @@
-import { Box, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { useInstantSearch } from 'react-instantsearch';
 
 import { IconCloudOff } from '@tabler/icons-react';
@@ -14,10 +14,11 @@ import {
 import { CollectionsSearchIndexSortBy } from '~/components/Search/parsers/collection.parser';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { SearchHeader } from '~/components/Search/SearchHeader';
-import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { SearchLayout } from '~/components/Search/SearchLayout';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import classes from '~/components/Search/SearchLayout.module.scss';
 
 export default function CollectionSearch() {
   return (
@@ -52,7 +53,6 @@ const RenderFilters = () => {
 export function CollectionHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'collections'>();
   const { status } = useInstantSearch();
-  const { classes, cx } = useSearchLayoutStyles();
 
   const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
     type: 'collections',
@@ -61,28 +61,28 @@ export function CollectionHitList() {
 
   if (loadingPreferences) {
     return (
-      <Box>
+      <div>
         <Center mt="md">
           <Loader />
         </Center>
-      </Box>
+      </div>
     );
   }
 
   if (hits.length === 0) {
     const NotFound = (
-      <Box>
+      <div>
         <Center>
           <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
-              <Text color="dimmed">
+              <Text c="dimmed">
                 {hiddenCount} collections have been hidden due to your settings.
               </Text>
             )}
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <ThemeIcon size={128} radius={100} className="opacity-50">
               <IconCloudOff size={80} />
             </ThemeIcon>
-            <Title order={1} inline>
+            <Title order={1} lh={1}>
               No collections found
             </Title>
             <Text align="center">
@@ -91,38 +91,38 @@ export function CollectionHitList() {
             </Text>
           </Stack>
         </Center>
-      </Box>
+      </div>
     );
 
     const loading = status === 'loading' || status === 'stalled';
 
     if (loading) {
       return (
-        <Box>
+        <div>
           <Center mt="md">
             <Loader />
           </Center>
-        </Box>
+        </div>
       );
     }
 
     return (
-      <Box>
+      <div>
         <Center mt="md">
           {/* Just enough time to avoid blank random page */}
           <TimeoutLoader renderTimeout={() => <>{NotFound}</>} delay={150} />
         </Center>
-      </Box>
+      </div>
     );
   }
 
   return (
     <Stack>
       {hiddenCount > 0 && (
-        <Text color="dimmed">{hiddenCount} collections have been hidden due to your settings.</Text>
+        <Text c="dimmed">{hiddenCount} collections have been hidden due to your settings.</Text>
       )}
-      <Box
-        className={cx(classes.grid)}
+      <div
+        className={classes.grid}
         style={{
           // Overwrite default sizing here.
           gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
@@ -147,7 +147,7 @@ export function CollectionHitList() {
             />
           );
         })}
-      </Box>
+      </div>
       {/* <MasonryGrid data={items} render={ArticleCard} itemId={(x) => x.id} empty={<NoContent />} /> */}
       {hits.length > 0 && !isLastPage && (
         <InViewLoader

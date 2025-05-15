@@ -62,7 +62,7 @@ export default function Contests() {
             </Center>
           ) : flatData?.length ?? 0 ? (
             <Stack>
-              <Table highlightOnHover withBorder>
+              <Table highlightOnHover withTableBorder>
                 <thead>
                   <tr>
                     <th>Contest Name</th>

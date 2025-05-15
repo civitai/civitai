@@ -13,12 +13,11 @@ import {
   Alert,
   Anchor,
   BadgeProps,
-  Box,
   Button,
   Card,
   Center,
   CloseButton,
-  createStyles,
+  ColorSchemeScript,
   Group,
   Loader,
   MantineProvider,
@@ -30,6 +29,7 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -66,7 +66,6 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { Availability, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { ConnectProps, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -105,75 +104,12 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = containerQuery.smallerThan('md');
-  const isDesktop = containerQuery.largerThan('md');
-  return {
-    root: {
-      width: '100vw',
-      height: '100vh',
-      display: 'flex',
-      position: 'relative',
-      overflow: 'hidden',
-
-      [isMobile]: {
-        overflow: 'scroll',
-      },
-    },
-    carousel: {
-      flex: 1,
-      alignItems: 'stretch',
-    },
-    active: { ref: getRef('active') },
-    imageLoading: {
-      opacity: '50%',
-    },
-    sidebar: {
-      width: 457,
-      borderRadius: 0,
-      borderLeft: `1px solid ${theme.colors.dark[4]}`,
-      display: 'flex',
-      flexDirection: 'column',
-
-      [isMobile]: {
-        position: 'absolute',
-        overflow: 'auto',
-        top: '100%',
-        left: 0,
-        width: '100%',
-        height: '100%',
-        transition: '.3s ease transform',
-        // transform: 'translateY(100%)',
-        zIndex: 20,
-
-        [`&.${getRef('active')}`]: {
-          transform: 'translateY(-100%)',
-        },
-      },
-    },
-    mobileOnly: { [isDesktop]: { display: 'none' } },
-    desktopOnly: { [isMobile]: { display: 'none' } },
-    info: {
-      position: 'absolute',
-      bottom: theme.spacing.md,
-      right: theme.spacing.md,
-    },
-    // Overwrite scrollArea generated styles
-    scrollViewport: {
-      '& > div': {
-        minHeight: '100%',
-        display: 'flex !important',
-      },
-    },
-  };
-});
-
 export default function BountyEntryDetailsPage({
   id,
   entryId,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
-  const { theme } = useStyles();
+  const colorScheme = useComputedColorScheme('dark');
   const { data: bounty, isLoading: isLoadingBounty } = trpc.bounty.getById.useQuery({ id });
   const { data: bountyEntry, isLoading: isLoadingEntry } = trpc.bountyEntry.getById.useQuery({
     id: entryId,
@@ -272,11 +208,7 @@ export default function BountyEntryDetailsPage({
   const awardSection = benefactor && benefactor.awardedToId === bountyEntry.id && (
     <Alert color="yellow" radius={0}>
       <Group gap="xs">
-        <ThemeIcon
-          // @ts-ignore: transparent variant does work
-          variant="transparent"
-          color="yellow.6"
-        >
+        <ThemeIcon variant="transparent" color="yellow.6">
           <IconTrophy size={20} fill="currentColor" />
         </ThemeIcon>
         <Text>You awarded this entry</Text>
@@ -295,7 +227,7 @@ export default function BountyEntryDetailsPage({
           <Button
             radius="xl"
             color="gray"
-            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            variant={colorScheme === 'dark' ? 'filled' : 'light'}
             size="compact-md"
             fullWidth
             component="a"
@@ -311,10 +243,10 @@ export default function BountyEntryDetailsPage({
         <Button
           radius="xl"
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           size="compact-md"
           fullWidth
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             e.preventDefault();
             e.stopPropagation();
 
@@ -355,18 +287,12 @@ export default function BountyEntryDetailsPage({
             size="compact-md"
             radius="xl"
             color="gray"
-            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            variant={colorScheme === 'dark' ? 'filled' : 'light'}
             fullWidth
             onClick={onClick}
           >
             <Group gap={4} wrap="nowrap">
-              <ThemeIcon
-                // @ts-ignore: transparent variant does work
-                variant="transparent"
-                // @ts-ignore: overrides size to fit content
-                size="auto"
-                color="yellow.6"
-              >
+              <ThemeIcon variant="transparent" size="auto" color="yellow.6">
                 <IconTrophy size={14} fill="currentColor" />
               </ThemeIcon>
               <Text size="xs">Award bounty</Text>
@@ -379,7 +305,7 @@ export default function BountyEntryDetailsPage({
           size="compact-md"
           radius="xl"
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           fullWidth
         >
           <Group gap={4} wrap="nowrap">
@@ -395,7 +321,7 @@ export default function BountyEntryDetailsPage({
               radius="xl"
               color="gray"
               size="md"
-              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              variant={colorScheme === 'dark' ? 'filled' : 'light'}
             >
               <IconDotsVertical size={16} />
             </ActionIcon>
@@ -422,24 +348,18 @@ export default function BountyEntryDetailsPage({
       multiple
       defaultValue={['files']}
       my={0}
-      styles={(theme) => ({
-        content: { padding: 0 },
-        item: {
-          overflow: 'hidden',
-          borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-          boxShadow: theme.shadows.sm,
-        },
-        control: {
-          padding: theme.spacing.sm,
-        },
-      })}
+      classNames={{
+        content: 'p-0',
+        item: 'overflow-hidden border-gray-3 shadow-sm dark:border-dark-4',
+        control: 'p-3',
+      }}
     >
       <Accordion.Item
         value="files"
-        sx={(theme) => ({
+        style={{
           borderColor:
-            !isLoadingFiles && !filesCount ? `${theme.colors.red[4]} !important` : undefined,
-        })}
+            !isLoadingFiles && !filesCount ? 'var(--mantine-color-red-4) !important' : undefined,
+        }}
       >
         <Accordion.Control>
           <Group justify="space-between">
@@ -454,7 +374,7 @@ export default function BountyEntryDetailsPage({
               </Center>
             ) : filesCount > 0 ? (
               <ScrollArea.Autosize mah={300}>
-                <SimpleGrid cols={1} gap={2}>
+                <SimpleGrid cols={1} spacing={2}>
                   {files.map((file) => {
                     const isLocked = !file.url;
                     return (
@@ -509,13 +429,6 @@ export default function BountyEntryDetailsPage({
                                   </ThemeIcon>
                                 </Tooltip>
                               )}
-                              {/* TODO.bounty: bring this back once we allowing split bounties */}
-                              {/* {(file.metadata.unlockAmount ?? 0) > 0 && (
-                                <CurrencyBadge
-                                  currency={file.metadata.currency ?? Currency.BUZZ}
-                                  unitAmount={file.metadata.unlockAmount ?? 0}
-                                />
-                              )} */}
                             </Group>
                           </Group>
                         </Stack>
@@ -605,17 +518,20 @@ export default function BountyEntryDetailsPage({
 }
 
 BountyEntryDetailsPage.getLayout = (page: React.ReactElement) => (
-  <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
-    <Notifications />
-    {page}
-  </MantineProvider>
+  <>
+    <ColorSchemeScript forceColorScheme="dark" />
+    <MantineProvider forceColorScheme="dark">
+      <Notifications />
+      {page}
+    </MantineProvider>
+  </>
 );
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
   color: 'gray',
   className: 'h-9 min-w-9 rounded-full normal-case',
-  classNames: { inner: 'flex gap-1 items-center' },
+  classNames: { label: 'flex gap-1 items-center' },
 };
 
 const sharedActionIconProps: Partial<Omit<ActionIconProps, 'children'>> = {
@@ -654,7 +570,6 @@ export function BountyEntryCarousel({
   } | null;
 }) {
   const { images } = bountyEntry;
-  const { classes } = useCarrouselStyles();
   const queryUtils = trpc.useUtils();
 
   const carouselNavigation = useCarouselNavigation({ items: images, onChange: onImageChange });
@@ -716,95 +631,12 @@ export function BountyEntryCarousel({
         )}
       </ImageGuard2>
       {isDeletingImage && (
-        <Box className={classes.loader}>
+        <div className="absolute left-1/2 top-1/2 z-[1] -translate-x-1/2 -translate-y-1/2">
           <Center>
             <Loader />
           </Center>
-        </Box>
+        </div>
       )}
     </div>
   );
 }
-
-const useCarrouselStyles = createStyles((theme, _props, getRef) => {
-  return {
-    root: {
-      position: 'relative',
-    },
-    loader: {
-      position: 'absolute',
-      top: '50%',
-      left: '50%',
-      transform: 'translate(-50%,-50%)',
-      zIndex: 1,
-    },
-    imageLoading: {
-      pointerEvents: 'none',
-      opacity: 0.5,
-    },
-    center: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-
-    prev: { ref: getRef('prev') },
-    next: { ref: getRef('next') },
-    control: {
-      position: 'absolute',
-      // top: 0,
-      // bottom: 0,
-      top: '50%',
-      transform: 'translateY(-50%)',
-      zIndex: 10,
-
-      svg: {
-        height: 50,
-        width: 50,
-      },
-
-      [`&.${getRef('prev')}`]: {
-        left: 0,
-      },
-      [`&.${getRef('next')}`]: {
-        right: 0,
-      },
-
-      '&:hover': {
-        color: theme.colors.blue[3],
-      },
-    },
-    indicators: {
-      position: 'absolute',
-      bottom: theme.spacing.md,
-      top: undefined,
-      left: 0,
-      right: 0,
-      display: 'flex',
-      flexDirection: 'row',
-      justifyContent: 'center',
-      gap: 8,
-      pointerEvents: 'none',
-    },
-
-    indicator: {
-      pointerEvents: 'all',
-      width: 25,
-      height: 5,
-      borderRadius: 10000,
-      backgroundColor: theme.white,
-      boxShadow: theme.shadows.sm,
-      opacity: 0.6,
-      transition: `opacity 150ms ${theme.transitionTimingFunction}`,
-
-      '&[data-active]': {
-        opacity: 1,
-      },
-    },
-  };
-});

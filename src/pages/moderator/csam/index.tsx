@@ -2,8 +2,7 @@ import { MRT_ColumnDef, MRT_PaginationState, MantineReactTable } from 'mantine-r
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
-import { QS } from '~/utils/qs';
-import { formatDate, formatDateNullable } from '~/utils/date-helpers';
+import { formatDateNullable } from '~/utils/date-helpers';
 import { Container, Stack, Group, Title, Badge } from '@mantine/core';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -87,7 +86,7 @@ export default function CsamReports() {
   );
 
   const statsArr = Object.entries(stats ?? {})
-    .filter(([_, count]) => count > 0)
+    .filter(([, count]) => count > 0)
     .map(([key, count]) => ({ label: key, count }));
 
   if (!csamReports) return <NotFound />;
@@ -118,11 +117,9 @@ export default function CsamReports() {
           enableHiding={false}
           enableGlobalFilter={false}
           mantineTableContainerProps={{
-            sx: { maxHeight: 'calc(100vh - 360px)' },
+            style: { maxHeight: 'calc(100vh - 360px)' },
           }}
-          initialState={{
-            density: 'sm',
-          }}
+          initialState={{ density: 'xs' }}
           state={{
             isLoading,
             pagination,

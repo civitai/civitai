@@ -11,7 +11,7 @@ export default function SupportPage() {
       />
       <Container size="md" py="xl">
         <Stack gap={32}>
-          <Title size={32} weight={600} color="gray.1">
+          <Title size={32} className="font-semibold text-gray-1">
             Let&apos;s pick a support option that works for you
           </Title>
           <SupportContent />

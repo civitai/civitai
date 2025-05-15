@@ -12,9 +12,8 @@ import {
   Stack,
   Textarea,
   Title,
-  useMantineTheme,
+  TooltipProps,
 } from '@mantine/core';
-import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import {
   IconExternalLink,
   IconPlus,
@@ -155,7 +154,6 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const selected = useStore(useCallback((state) => state.selected[image.id] ?? false, [image.id]));
   const toggleSelected = useStore((state) => state.toggleSelected);
 
-  const theme = useMantineTheme();
   const entityUrl = getImageEntityUrl(image);
 
   const { ref: inViewRef, inView } = useInView();
@@ -167,12 +165,18 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
       shadow="sm"
       withBorder
       ref={mergedRef as any}
-      style={{
+      style={(theme) => ({
         minHeight: height,
         outline: selected
-          ? `3px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`
+          ? `3px solid ${
+              theme.colors[theme.primaryColor][
+                typeof theme.primaryShade === 'number'
+                  ? theme.primaryShade
+                  : theme.primaryShade.dark
+              ]
+            }`
           : undefined,
-      }}
+      })}
       onClick={() => toggleSelected(image.id)}
     >
       <>
@@ -182,12 +186,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               <Checkbox
                 checked={selected}
                 size="lg"
-                sx={{
-                  position: 'absolute',
-                  top: 5,
-                  right: 5,
-                  zIndex: 9,
-                }}
+                className="absolute left-[5px] top-[5px] z-10"
               />
               <EdgeMedia
                 src={image.url}
@@ -204,7 +203,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     style={{ position: 'absolute', bottom: '5px', left: '5px' }}
                     size="lg"
                     target="_blank"
-                    onClick={(e) => {
+                    onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
                       e.stopPropagation();
                     }}
                   >

@@ -138,7 +138,7 @@ export default function ModeratorModels() {
               </Center>
             ) : !!data?.items.length ? (
               <Stack>
-                <List listStyleType="none" gap="md">
+                <List listStyleType="none" spacing="md">
                   {data?.items.map((model) => {
                     const hasVersion = !!model.modelVersion;
                     const unpublishedAt =
@@ -157,17 +157,9 @@ export default function ModeratorModels() {
                     return (
                       <List.Item
                         key={model.id}
-                        sx={(theme) => ({
-                          padding: theme.spacing.sm,
-                          border: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[2]
-                          }`,
-                          '& > *': { width: '100%' },
-                        })}
+                        className="border border-gray-2 p-2 dark:border-dark-4"
                       >
-                        <Stack gap={8}>
+                        <Stack className="w-full" gap={8}>
                           <Group justify="space-between" align="flex-start" wrap="nowrap">
                             {hasVersion ? (
                               <Badge color="violet" radius="xl">
@@ -229,7 +221,7 @@ export default function ModeratorModels() {
                   <Group justify="space-between">
                     <Text>Total {pagination.totalItems} items</Text>
                     <Pagination
-                      page={state.page}
+                      value={state.page}
                       onChange={(page) => setState((s) => ({ ...s, page }))}
                       total={pagination.totalPages}
                     />

@@ -72,9 +72,7 @@ export default function CosmeticStoreProducts() {
           </Text>
         </Stack>
       ),
-      groupProps: {
-        position: 'center',
-      },
+      groupProps: { justify: 'center' },
       labels: { confirm: 'Delete Shop Item', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => onDelete(),
@@ -209,7 +207,7 @@ export default function CosmeticStoreProducts() {
                 <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                   <Pagination
-                    page={filters.page}
+                    value={filters.page}
                     onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                     total={pagination.totalPages}
                   />

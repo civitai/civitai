@@ -1,18 +1,7 @@
-import {
-  Container,
-  Stack,
-  Title,
-  Text,
-  Alert,
-  ThemeIcon,
-  Group,
-  Button,
-  Center,
-  Loader,
-} from '@mantine/core';
+import { Container, Stack, Title, Text, Group, Button, Center, Loader } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { CheckoutEventsData } from '@paddle/paddle-js';
-import { IconCancel, IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
+import { IconCancel, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -78,7 +67,7 @@ export default function CompletePaddlePaymentTransaction() {
       <Meta title="Successful Payment | Civitai" deIndex />
       <Container size="xs" mb="lg">
         <Stack align="center">
-          <Title order={1} align="center" mb="xl">
+          <Title order={1} className="text-center" mb="xl">
             Complete your Payment
           </Title>
           {!closed && !success && (
@@ -89,7 +78,7 @@ export default function CompletePaddlePaymentTransaction() {
           {closed && !success && (
             <Stack align="center">
               <IconCancel color="red" size={32} />
-              <Title order={3} align="center">
+              <Title order={3} className="text-center">
                 Looks like you canceled the payment
               </Title>
               <Text align="center">
@@ -112,7 +101,7 @@ export default function CompletePaddlePaymentTransaction() {
               >
                 <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
               </Center>
-              <Title order={1} align="center">
+              <Title order={1} className="text-center">
                 Thank you! 🎉
               </Title>
               <Text size="lg" align="center" mb="lg">

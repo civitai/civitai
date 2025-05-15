@@ -26,7 +26,7 @@ export function AdaptiveFiltersDropdown({
   const mobile = useIsMobile();
   const isClient = useIsClient();
   const [opened, setOpened] = useState(false);
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const target = (
     <Indicator

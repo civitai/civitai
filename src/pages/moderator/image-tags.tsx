@@ -277,12 +277,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
           checked={selected}
           readOnly
           size="lg"
-          sx={{
-            position: 'absolute',
-            top: 5,
-            right: 5,
-            zIndex: 9,
-          }}
+          className="absolute left-[5px] top-[5px] z-10"
         />
         <ImageGuard2 image={image}>
           {(safe) => (
@@ -307,10 +302,10 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                       <ActionIcon
                         component="a"
                         variant="transparent"
-                        style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                        className="absolute bottom-[5px] left-[5px]"
                         size="lg"
                         target="_blank"
-                        onClick={(e) => {
+                        onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
                           e.stopPropagation();
                         }}
                       >

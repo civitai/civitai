@@ -26,7 +26,6 @@ import {
   useQueryClub,
 } from '~/components/Club/club.utils';
 import { ClubManagementNavigation } from '~/components/Club/ClubManagementNavigation';
-import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -36,6 +35,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from '~/components/Club/ClubPost/ClubFeed/ClubFeed.module.scss';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -96,7 +96,6 @@ export const getServerSideProps = createServerSideProps({
 export default function ManageClub({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
   const { club, loading } = useQueryClub({ id });
-  const { classes } = useClubFeedStyles();
   const { deleteClub, deletingClub } = useMutateClub();
   const { isOwner, isModerator, permissions } = useClubContributorStatus({ clubId: id });
 
@@ -270,12 +269,10 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
             )}
           </Stack>
           <Grid>
-            <Grid.Col xs={12} md={2}>
+            <Grid.Col span={{ base: 12, md: 2 }}>
               <ClubManagementNavigation id={id} />
             </Grid.Col>
-            <Grid.Col xs={12} md={10}>
-              {children}
-            </Grid.Col>
+            <Grid.Col span={{ base: 12, md: 10 }}>{children}</Grid.Col>
           </Grid>
         </Stack>
       </Container>

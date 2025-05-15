@@ -12,7 +12,7 @@ export function TagScroller({
   value?: number[];
   onChange?: (value: number[]) => void;
 }) {
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const handleChange = (tagId: number, shouldAdd: boolean) => {
     const tags = [...value];

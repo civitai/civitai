@@ -5,7 +5,7 @@ import {
   Group,
   Stack,
   Title,
-  SelectItem,
+  ComboboxItem,
   MantineColor,
   Tooltip,
   Text,
@@ -152,7 +152,7 @@ export default function Tags() {
         filterVariant: 'select',
         mantineFilterSelectProps: {
           data: Object.values(TagType).map(
-            (x) => ({ label: getDisplayName(x), value: getDisplayName(x) } as SelectItem)
+            (x) => ({ label: getDisplayName(x), value: getDisplayName(x) } as ComboboxItem)
           ) as any,
         },
       },
@@ -251,18 +251,16 @@ export default function Tags() {
           columns={columns}
           data={tags}
           enableSelectAll
-          rowVirtualizerProps={{ overscan: 2 }} //optionally customize the row virtualizer
+          rowVirtualizerOptions={{ overscan: 2 }} //optionally customize the row virtualizer
           enableRowSelection
           enableHiding={false}
           enableBottomToolbar={false}
           enableGlobalFilter={false}
           enablePagination={false}
           enableRowVirtualization
-          mantineTableContainerProps={{ sx: { maxHeight: 'calc(100vh - 360px)' } }}
+          mantineTableContainerProps={{ className: 'max-h-[calc(100vh-360px)]' }}
           onSortingChange={setSorting}
-          initialState={{
-            density: 'sm',
-          }}
+          initialState={{ density: 'md' }}
           state={{ isLoading, sorting }}
           getRowId={(x) => x.id?.toString()}
           renderTopToolbarCustomActions={({ table }) => {

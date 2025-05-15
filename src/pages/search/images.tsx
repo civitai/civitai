@@ -1,7 +1,6 @@
-import { Box, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { RefinementListProps, useInstantSearch } from 'react-instantsearch';
 import {
-  ApplyCustomFilter,
   BrowsingLevelFilter,
   ChipRefinementList,
   DateRangeRefinement,
@@ -123,16 +122,16 @@ function ImagesHitList() {
 
   if (hits.length === 0) {
     const NotFound = (
-      <Box>
+      <div>
         <Center>
           <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
               <Text color="dimmed">{hiddenCount} images have been hidden due to your settings</Text>
             )}
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <ThemeIcon size={128} radius={100} className="opacity-50">
               <IconCloudOff size={80} />
             </ThemeIcon>
-            <Title order={1} inline>
+            <Title order={1} lh={1}>
               No images found
             </Title>
             <Text align="center">
@@ -141,38 +140,38 @@ function ImagesHitList() {
             </Text>
           </Stack>
         </Center>
-      </Box>
+      </div>
     );
 
     const loading = status === 'loading' || status === 'stalled';
 
     if (loading) {
       return (
-        <Box>
+        <div>
           <Center mt="md">
             <Loader />
           </Center>
-        </Box>
+        </div>
       );
     }
 
     return (
-      <Box>
+      <div>
         <Center mt="md">
           {/* Just enough time to avoid blank random page */}
           <TimeoutLoader renderTimeout={() => <>{NotFound}</>} delay={150} />
         </Center>
-      </Box>
+      </div>
     );
   }
 
   if (loadingPreferences) {
     return (
-      <Box>
+      <div>
         <Center mt="md">
           <Loader />
         </Center>
-      </Box>
+      </div>
     );
   }
 

@@ -14,9 +14,8 @@ import {
   Text,
   Textarea,
   Title,
-  useMantineTheme,
+  TooltipProps,
 } from '@mantine/core';
-import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { useMergedRef } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
@@ -196,7 +195,7 @@ export default function Images() {
               <SegmentedControl
                 size="sm"
                 data={segments}
-                onChange={handleTypeChange}
+                onChange={(type) => handleTypeChange(type as ImageReviewType)}
                 value={type}
               />
             </Group>
@@ -279,7 +278,6 @@ export default function Images() {
 function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const selected = useStore(useCallback((state) => state.selected[image.id] ?? false, [image.id]));
   const toggleSelected = useStore((state) => state.toggleSelected);
-  const theme = useMantineTheme();
 
   const hasReport = !!image.report;
   const hasAppeal = !!image.appeal;
@@ -295,13 +293,19 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
       shadow="sm"
       withBorder
       ref={mergedRef as any}
-      style={{
+      style={(theme) => ({
         minHeight: height,
         outline: selected
-          ? `3px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`
+          ? `3px solid ${
+              theme.colors[theme.primaryColor][
+                typeof theme.primaryShade === 'number'
+                  ? theme.primaryShade
+                  : theme.primaryShade.dark
+              ]
+            }`
           : undefined,
         opacity: !image.needsReview && !pendingReport ? 0.2 : undefined,
-      }}
+      })}
     >
       <>
         <Card.Section sx={{ height: `${height}px` }} className="relative">
@@ -381,7 +385,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           )}
         </Card.Section>
         {hasReport && (
-          <Stack gap={8} p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
+          <Stack gap={8} p="xs" style={{ cursor: 'auto', color: 'initial' }}>
             <Group justify="space-between" wrap="nowrap">
               <Stack gap={2}>
                 <Text size="xs" color="dimmed" inline>
@@ -475,7 +479,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         )}
         {image.needsReview === 'appeal' && hasAppeal && (
           <Card.Section p="xs">
-            <Stack gap={8} sx={{ cursor: 'auto', color: 'initial' }}>
+            <Stack gap={8} style={{ cursor: 'auto', color: 'initial' }}>
               <Group justify="space-between" wrap="nowrap">
                 <Stack gap={2}>
                   <Text size="xs" color="dimmed" inline>

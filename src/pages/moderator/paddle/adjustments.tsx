@@ -20,7 +20,6 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { usePaddleAdjustmentsInfinite } from '~/components/Paddle/util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { usePaddle } from '~/providers/PaddleProvider';
 
 import { AdjustmentAction, GetPaddleAdjustmentsSchema } from '~/server/schema/paddle.schema';
 import { formatDate } from '~/utils/date-helpers';
@@ -33,8 +32,7 @@ export default function ModeratorPaddleAdjustments() {
     customerId: [],
     subscriptionId: [],
   });
-  const { paddle } = usePaddle();
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
   const { adjustments, isLoading, isFetching, fetchNextPage, hasNextPage } =
     usePaddleAdjustmentsInfinite(debouncedFilters);
   const featureFlags = useFeatureFlags();
@@ -108,7 +106,7 @@ export default function ModeratorPaddleAdjustments() {
               })),
             ]}
             value={filters.action ?? 'all'}
-            onChange={(value: string) =>
+            onChange={(value) =>
               setFilters({
                 ...filters,
                 action: value === 'all' ? undefined : (value as (typeof AdjustmentAction)[number]),

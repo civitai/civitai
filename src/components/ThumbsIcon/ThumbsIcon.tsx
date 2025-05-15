@@ -8,7 +8,7 @@ import {
 } from '@tabler/icons-react';
 
 export function ThumbsUpIcon({ filled, ...iconProps }: Props) {
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   return filled ? (
     <IconThumbUpFilled
@@ -21,7 +21,7 @@ export function ThumbsUpIcon({ filled, ...iconProps }: Props) {
 }
 
 export function ThumbsDownIcon({ filled, ...iconProps }: Props) {
-  const colorScheme = useComputedColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   return filled ? (
     <IconThumbDownFilled

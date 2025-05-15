@@ -1,4 +1,4 @@
-import { Center, Group, Stack, Tabs, Text, ThemeIcon, createStyles } from '@mantine/core';
+import { Center, Group, Stack, Tabs, Text, ThemeIcon } from '@mantine/core';
 import { IconClockHour9 } from '@tabler/icons-react';
 import { IconGridDots, IconLock } from '@tabler/icons-react';
 import React from 'react';
@@ -34,7 +34,6 @@ export const getServerSideProps = createServerSideProps({
 
 function GeneratePage() {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
 
@@ -62,22 +61,26 @@ function GeneratePage() {
       <Tabs
         variant="pills"
         value={view}
-        onTabChange={(view) => {
+        onChange={(view) => {
           // tab can be null
           if (view) setView(view as GenerationPanelView);
         }}
         radius="xl"
         color="gray"
-        classNames={classes}
+        classNames={{
+          root: 'flex flex-1 flex-col overflow-hidden',
+          panel: 'size-full',
+          list: 'w-full border-b border-b-gray-2 dark:border-b-dark-5',
+        }}
         keepMounted={false}
       >
         <Tabs.List px="md" py="xs">
           <Group justify="space-between" w="100%">
             <Group align="flex-start" gap="xs">
-              <Tabs.Tab value="queue" icon={<IconClockHour9 size={16} />}>
+              <Tabs.Tab value="queue" leftSection={<IconClockHour9 size={16} />}>
                 Queue
               </Tabs.Tab>
-              <Tabs.Tab value="feed" icon={<IconGridDots size={16} />}>
+              <Tabs.Tab value="feed" leftSection={<IconGridDots size={16} />}>
                 Feed
               </Tabs.Tab>
             </Group>
@@ -100,40 +103,4 @@ function GeneratePage() {
 export default Page(GeneratePage, {
   scrollable: false,
   subNav: null,
-});
-
-const useStyles = createStyles((theme) => {
-  // const sidebarWidth = 400;
-  // const sidebarWidthLg = 600;
-  return {
-    // mobileContent: {
-    //   position: 'fixed',
-    //   top: 'var(--header-height)',
-    //   left: 0,
-    //   right: 0,
-    //   bottom: 0,
-    // },
-    // tab: {
-    //   '&[data-active]': {
-    //     backgroundColor: theme.fn.rgba(theme.colors.blue[7], 0.7),
-    //   },
-    // },
-    root: {
-      flex: 1,
-      display: 'flex',
-      flexDirection: 'column',
-      overflow: 'hidden',
-    },
-    panel: {
-      height: '100%',
-      width: '100%',
-    },
-    tabsList: {
-      width: '100%',
-      borderBottom:
-        theme.colorScheme === 'dark'
-          ? `1px solid ${theme.colors.dark[5]}`
-          : `1px solid ${theme.colors.gray[2]}`,
-    },
-  };
 });
