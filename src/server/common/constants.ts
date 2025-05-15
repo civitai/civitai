@@ -92,11 +92,9 @@ export const constants = {
     'HiDream',
     'OpenAI',
     'Other',
-    // 'Wan Video 1.3B T2V',
-    // 'Wan Video 14B T2V',
-    // 'Wan Video 14B I2V',
-    // 'Wan Video 14B I2V 480p',
-    // 'Wan Video 14B I2V 720p',
+    'Wan Video 1.3B T2V',
+    'Wan Video 14B T2V',
+    'Wan Video 14B I2V',
   ],
   hiddenBaseModels: [
     'ODOR',
@@ -722,9 +720,12 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   LTXV: baseLicenses['ltxv license'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
-  'Wan Video': baseLicenses['apache 2.0'],
   HiDream: baseLicenses['mit'],
   OpenAI: baseLicenses['openai'],
+  'Wan Video': baseLicenses['apache 2.0'],
+  'Wan Video 1.3B T2V': baseLicenses['apache 2.0'],
+  'Wan Video 14B T2V': baseLicenses['apache 2.0'],
+  'Wan Video 14B I2V': baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
