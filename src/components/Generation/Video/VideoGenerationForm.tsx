@@ -192,7 +192,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query
 
   useEffect(() => {
-    const subscription = watch(() => {
+    function handleFormData() {
       const formData = getValues();
       const whatIfData = config.whatIfProps.reduce<Record<string, unknown>>(
         (acc, prop) => ({ ...acc, [prop]: formData[prop] }),
@@ -206,6 +206,10 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
         console.log({ e });
         setQuery(null);
       }
+    }
+    handleFormData();
+    const subscription = watch(() => {
+      handleFormData();
     });
     return subscription.unsubscribe;
   }, [engine]);
