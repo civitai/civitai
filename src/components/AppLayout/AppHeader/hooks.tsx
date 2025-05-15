@@ -160,7 +160,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           href: '/games/knights-of-new-order',
           visible: features.newOrderGame,
           icon: IconSword,
-          color: theme.colors.yellow[theme.fn.primaryShade()],
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Knights of New',
           newUntil: new Date('2025-05-18'),
         },
@@ -231,6 +231,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const isMuted = currentUser?.muted ?? false;
   const canCreate = features.canWrite;
 

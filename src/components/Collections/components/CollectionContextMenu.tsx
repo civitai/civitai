@@ -133,7 +133,7 @@ export function CollectionContextMenu({
               py={0}
               h={14}
               w="100%"
-              align="left"
+              justify="flex-start"
               style={{
                 display: 'flex',
                 alignItems: 'start',

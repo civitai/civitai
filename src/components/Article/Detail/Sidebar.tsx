@@ -1,4 +1,10 @@
-import { Accordion, SimpleGrid, Stack, useMantineTheme } from '@mantine/core';
+import {
+  Accordion,
+  SimpleGrid,
+  Stack,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconList, IconPaperclip } from '@tabler/icons-react';
 
@@ -12,6 +18,7 @@ import utilClasses from '~/lib/helpers.module.scss';
 export function Sidebar({ articleId, attachments, creator }: Props) {
   const { nestedHeadings } = useHeadingsData();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const [activeAccordion, setActiveAccordion] = useLocalStorage<string>({
     key: 'article-active-accordion',
@@ -23,7 +30,6 @@ export function Sidebar({ articleId, attachments, creator }: Props) {
 
   return (
     <aside
-      className={classes.sidebar}
       style={{
         position: 'sticky',
         top: 70 + theme.spacing.xl,
@@ -40,8 +46,7 @@ export function Sidebar({ articleId, attachments, creator }: Props) {
               content: { padding: 0 },
               item: {
                 overflow: 'hidden',
-                borderColor:
-                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+                borderColor: colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
                 boxShadow: theme.shadows.sm,
               },
               control: {
@@ -66,7 +71,7 @@ export function Sidebar({ articleId, attachments, creator }: Props) {
                     Attachments
                   </Accordion.Control>
                   <Accordion.Panel>
-                    <SimpleGrid cols={1} gap={2}>
+                    <SimpleGrid cols={1} spacing={2}>
                       {attachments.map((attachment) => (
                         <AttachmentCard key={attachment.id} {...attachment} />
                       ))}

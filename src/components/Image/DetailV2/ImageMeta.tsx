@@ -147,7 +147,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             </div>
             <div className="flex flex-wrap gap-2">
               {simpleMeta.map(({ label, content }) => (
-                <Badge key={label} classNames={{ inner: 'flex gap-1 items-center leading-snug' }}>
+                <Badge key={label} classNames={{ root: 'flex gap-1 items-center leading-snug' }}>
                   <span>{label}:</span>
                   {content}
                 </Badge>

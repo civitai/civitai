@@ -10,8 +10,9 @@ import {
   useComputedColorScheme,
   useMantineTheme,
   getPrimaryShade,
+  useMantineColorScheme,
 } from '@mantine/core';
-import { useHotkeys } from '@mantine/hooks';
+import { useColorScheme, useHotkeys } from '@mantine/hooks';
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -142,7 +143,7 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
-  const { colorScheme, toggleColorScheme } = useComputedColorScheme('dark');
+  const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const { logout } = useAccountContext();
 
   const { handleClose } = useUserMenuContext();
@@ -371,10 +372,10 @@ function ActionButtons({ close }: { close: () => void }) {
 
 function CustomUserAvatar({ data }: { data: CivitaiAccount }) {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { avatarUrl, email, username } = data;
   const imageUrl = useGetEdgeUrl(avatarUrl, { width: 96 });
-  const avatarBgColor =
-    theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
+  const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   return (
     <Tooltip label={email}>
@@ -469,7 +470,7 @@ function BuzzMenuItem() {
         radius="xl"
         px={12}
         size="compact-xs"
-        onClick={(e) => {
+        onClick={(e: React.MouseEvent) => {
           e.preventDefault();
           e.stopPropagation();
           onBuyBuzz({});

@@ -44,7 +44,7 @@ function ChatWindowContent() {
         <ChatList />
       </Grid.Col>
       {/* Chat Panel */}
-      <Grid.Col span={12} xs={8} p={0} h="100%">
+      <Grid.Col span={{ base: 12, xs: 8 }} p={0} h="100%">
         {!state.existingChatId ? <NewChat /> : <ExistingChat />}
       </Grid.Col>
     </Grid>

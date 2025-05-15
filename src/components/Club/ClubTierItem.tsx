@@ -6,7 +6,6 @@ import { useRouter } from 'next/router';
 import React from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useClubContributorStatus, useMutateClub } from '~/components/Club/club.utils';
-import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 // import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -22,6 +21,7 @@ import { calculateClubTierNextBillingDate } from '~/utils/clubs';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from '~/components/Club/ClubPost/ClubFeed.module.css';
 
 export const ClubMembershipStatus = ({ clubId }: { clubId: number }) => {
   const { data: membership } = trpc.clubMembership.getClubMembershipOnClub.useQuery({
@@ -161,7 +161,6 @@ export const TierCoverImage = ({
 
 export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const router = useRouter();
-  const { classes } = useClubFeedStyles();
   const { isOwner, isLoading: isLoadingOwnership } = useClubContributorStatus({
     clubId: clubTier.clubId,
   });

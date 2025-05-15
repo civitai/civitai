@@ -1,8 +1,8 @@
-import { ActionIcon, Group, useComputedColorScheme } from '@mantine/core';
+import { ActionIcon, Group, useMantineColorScheme } from '@mantine/core';
 import { IconMoonStars, IconSun } from '@tabler/icons-react';
 
 export function ColorSchemeToggle() {
-  const { colorScheme, toggleColorScheme } = useComputedColorScheme('dark');
+  const { colorScheme, toggleColorScheme } = useMantineColorScheme();
 
   return (
     <Group justify="center">

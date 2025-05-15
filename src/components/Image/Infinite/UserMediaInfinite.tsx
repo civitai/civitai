@@ -88,10 +88,10 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   <Chip.Group
                     value={reactions ?? []}
                     onChange={(reactions) => replace({ reactions: reactions as ReviewReactions[] })}
-                    className={classes.chipGroup}
                     multiple
                   >
-                    <Group gap={4} wrap="nowrap">
+                    <Group gap={4} wrap="nowrap"                     className={classes.chipGroup}
+                    >
                       {availableReactions.map((reaction, index) => (
                         <Chip
                           key={index}

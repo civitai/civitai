@@ -1,5 +1,5 @@
 import { useFormContext } from 'react-hook-form';
-import { Input, Radio, Text } from '@mantine/core';
+import { Group, Input, Radio, Text } from '@mantine/core';
 import { InputRadioGroup, InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
 import {
   viduAspectRatios,
@@ -109,13 +109,15 @@ export function ViduFormInput() {
         </div>
       )} */}
       {isTxt2Vid && (
-        <InputRadioGroup name="style" label="Style" offset={4}>
-          {[
-            { label: 'General', value: ViduVideoGenStyle.GENERAL },
-            { label: 'Animation', value: ViduVideoGenStyle.ANIME },
-          ].map(({ label, value }) => (
-            <Radio key={value} value={value} label={label} />
-          ))}
+        <InputRadioGroup name="style" label="Style">
+          <Group gap={4}>
+            {[
+              { label: 'General', value: ViduVideoGenStyle.GENERAL },
+              { label: 'Animation', value: ViduVideoGenStyle.ANIME },
+            ].map(({ label, value }) => (
+              <Radio key={value} value={value} label={label} />
+            ))}
+          </Group>
         </InputRadioGroup>
       )}
 
@@ -132,11 +134,12 @@ export function ViduFormInput() {
             </InfoPopover>
           </div>
         }
-        offset={4}
       >
-        {viduMovementAmplitudes.map((option) => (
-          <Radio key={option} value={option} label={titleCase(option)} />
-        ))}
+        <Group gap={4}>
+          {viduMovementAmplitudes.map((option) => (
+            <Radio key={option} value={option} label={titleCase(option)} />
+          ))}
+        </Group>
       </InputRadioGroup>
 
       <InputSeed name="seed" label="Seed" />

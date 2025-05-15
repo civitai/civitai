@@ -4,6 +4,7 @@ import {
   Card,
   Center,
   Collapse,
+  ComboboxItem,
   Divider,
   Group,
   Loader,
@@ -124,7 +125,7 @@ const ChangelogItem = ({
     });
   };
 
-  const typeMapped = changelogTypeMap[item.type];
+  const typeMapped = changelogTypeMap[item.type as ChangelogType];
   const titleGradient = !item.titleColor
     ? titleGradientTWStyles['blue']
     : titleGradientTWStyles[item.titleColor] ?? titleGradientTWStyles['blue'];
@@ -132,7 +133,7 @@ const ChangelogItem = ({
   return (
     <Card withBorder shadow="sm" p="md" radius="md">
       <Card.Section withBorder inheritPadding py="md">
-        <Stack spacing="sm">
+        <Stack gap="sm">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between">
             <Badge
               color={typeMapped.color}
@@ -152,14 +153,14 @@ const ChangelogItem = ({
               >
                 {lastSeen < item.effectiveAt.getTime() && (
                   <div className="mr-1 inline-block">
-                    <Tooltip label="New" withArrow position="top" withinPortal>
+                    <Tooltip label="New" withArrow withinPortal>
                       <IconPointFilled color="green" size={18} />
                     </Tooltip>
                   </div>
                 )}
                 {item.sticky && (
                   <div className="mr-1 inline-block">
-                    <Tooltip label="Sticky" withArrow position="top" withinPortal>
+                    <Tooltip label="Sticky" withArrow withinPortal>
                       <IconPinFilled color="yellow" size={18} />
                     </Tooltip>
                   </div>
@@ -178,8 +179,8 @@ const ChangelogItem = ({
             </Badge>
           </div>
 
-          <Group position="apart">
-            <Group spacing="xs">
+          <Group justify="space-between">
+            <Group gap="xs">
               <Text size="md">{dayjs(item.effectiveAt).format('MMM DD, YYYY')}</Text>
               {item.updatedAt.getTime() > item.effectiveAt.getTime() && (
                 <Text size="sm" color="dimmed">
@@ -198,7 +199,7 @@ const ChangelogItem = ({
               )}
             </Group>
             {item.tags.length && (
-              <Group spacing="xs">
+              <Group gap="xs">
                 {item.tags.map((tag) => (
                   <Badge key={tag} color="blue" variant="light">
                     {tag}
@@ -231,10 +232,10 @@ const ChangelogItem = ({
 
       {(item.link || canEdit) && (
         <Card.Section inheritPadding py="sm">
-          <Group position="apart" className="w-full">
+          <Group justify="space-between" className="w-full">
             <div>
               {canEdit && (
-                <Group spacing="xs">
+                <Group gap="xs">
                   <Button
                     onClick={() => {
                       setEditingItem(item);
@@ -403,7 +404,7 @@ const CreateChangelog = ({
       <Collapse in={opened}>
         <Form form={form} onSubmit={handleSubmit}>
           <Paper withBorder mt="md" p="lg">
-            <Stack spacing="lg">
+            <Stack gap="lg">
               <InputText name="title" label="Title" placeholder="Title..." withAsterisk />
               <InputSelect
                 name="titleColor"
@@ -433,12 +434,13 @@ const CreateChangelog = ({
               <InputMultiSelect
                 name="tags"
                 label="Tags"
-                data={allTagData}
+                data={allTagData as ComboboxItem[]}
                 loading={loadingTagData}
                 limit={50}
                 placeholder="Tags..."
-                getCreateLabel={(query) => `+ Create ${query}`}
-                creatable
+                // TODO: Mantine7
+                // getCreateLabel={(query) => `+ Create ${query}`}
+                // creatable
                 clearable
                 searchable
               />
@@ -446,7 +448,7 @@ const CreateChangelog = ({
               <InputText name="cta" label="CTA" placeholder="Link for CTA..." />
               <InputCheckbox name="disabled" label="Disabled" />
               <InputCheckbox name="sticky" label="Sticky" />
-              <Group position="right">
+              <Group justify="flex-end">
                 <Button variant="default" onClick={handleClose}>
                   Cancel
                 </Button>
@@ -520,7 +522,7 @@ export function Changelogs() {
   return (
     <Stack ref={ref}>
       <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <Text size={26} weight="bold" className="w-full text-left sm:w-auto">
+        <Text fz={26} weight="bold" className="w-full text-left sm:w-auto">
           Updates
         </Text>
 
@@ -574,7 +576,7 @@ export function Changelogs() {
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
-          <Stack spacing="xl">
+          <Stack gap="xl">
             {flatData.map((c) => (
               <ChangelogItem
                 key={c.id}

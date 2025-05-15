@@ -26,7 +26,6 @@ const startTime = dayjs().startOf('hour').toDate();
 
 export function EventContributors({ event, endDate }: { event: string; endDate: Date }) {
   const { contributors, loading } = useQueryEventContributors({ event });
-  const { classes } = useStyles();
 
   const topDayContributors = contributors?.day.slice(0, 4) ?? [];
   const topAllTimeContributors = contributors?.allTime.slice(0, 4) ?? [];

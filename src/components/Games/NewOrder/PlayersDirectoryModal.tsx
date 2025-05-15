@@ -69,7 +69,7 @@ export default function PlayersDirectoryModal() {
             className="w-full"
             placeholder="Search for players..."
             type="search"
-            icon={<IconSearch size={16} />}
+            leftSection={<IconSearch size={16} />}
             onChange={(e) => setDebouncedSearch(e.currentTarget.value || undefined)}
           />
         )}

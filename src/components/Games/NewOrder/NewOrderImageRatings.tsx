@@ -36,7 +36,7 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel, ratings }: Props
           }`}
         >
           <h2 className="text-lg font-semibold text-white">Raters</h2>
-          <ScrollArea.Autosize maxHeight={400}>
+          <ScrollArea.Autosize mah={400}>
             <div className="flex flex-col gap-2">
               {ratings?.map(({ player, rating }) => {
                 const loading = smitePayload?.playerId === player.id && applyingSmite;

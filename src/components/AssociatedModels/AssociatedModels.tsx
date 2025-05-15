@@ -7,6 +7,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
@@ -41,6 +42,7 @@ export function AssociatedModels({
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const colorScheme = useComputedColorScheme();
   const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
 
   const browsingLevel = useBrowsingLevelDebounced();
@@ -70,7 +72,7 @@ export function AssociatedModels({
         pt="xl"
         pb="xl"
         style={{
-          background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+          background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
         }}
       >
         {({ columnCount }) => (

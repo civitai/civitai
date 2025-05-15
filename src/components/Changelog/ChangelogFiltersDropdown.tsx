@@ -1,11 +1,14 @@
 import {
   Button,
   Chip,
+  ComboboxItem,
   Divider,
   Drawer,
+  Group,
   Indicator,
   Popover,
   Stack,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { DatePicker } from '@mantine/dates';
@@ -35,7 +38,7 @@ const ChangelogTagSelect = ({
       onChange={onChange}
       loading={isLoading}
       placeholder="Select tags..."
-      data={data}
+      data={data as ComboboxItem[]}
       searchable
       clearable
     />
@@ -46,6 +49,7 @@ export function ChangelogFiltersDropdown() {
   const theme = useMantineTheme();
   const mobile = useIsMobile();
   const [opened, setOpened] = useState(false);
+  const colorScheme = useComputedColorScheme('dark');
 
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state.changelogs,
@@ -75,8 +79,6 @@ export function ChangelogFiltersDropdown() {
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
       inline
     >
       <FilterButton
@@ -91,36 +93,37 @@ export function ChangelogFiltersDropdown() {
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
-        <Divider label="Types" labelProps={{ weight: 'bold', size: 'sm' }} />
+    <Stack gap="lg">
+      <Stack gap="md">
+        <Divider label="Types" className="text-sm font-bold" />
         <Chip.Group
-          spacing={8}
           multiple
           value={filters.types ?? []}
-          onChange={(types: ChangelogType[]) => {
+          onChange={(types) => {
             setFilters({
               ...filters,
-              types,
+              types: types as ChangelogType[],
             });
           }}
         >
-          {Object.values(ChangelogType).map((type, index) => (
-            <FilterChip key={index} value={type}>
-              <span>{getDisplayName(type)}</span>
-            </FilterChip>
-          ))}
+          <Group gap={8}>
+            {Object.values(ChangelogType).map((type, index) => (
+              <FilterChip key={index} value={type}>
+                <span>{getDisplayName(type)}</span>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
-      <Stack spacing="md">
-        <Divider label="Tags" labelProps={{ weight: 'bold', size: 'sm' }} />
+      <Stack gap="md">
+        <Divider label="Tags" className="text-sm font-bold" />
         <ChangelogTagSelect
           value={filters.tags ?? []}
           onChange={(tags) => setFilters({ ...filters, tags })}
         />
       </Stack>
-      <Stack spacing="md">
-        <Divider label="Before" labelProps={{ weight: 'bold', size: 'sm' }} />
+      <Stack gap="md">
+        <Divider label="Before" className="text-sm font-bold" />
         <DatePicker
           placeholder="Choose a date..."
           value={filters.dateBefore ?? null}
@@ -132,8 +135,8 @@ export function ChangelogFiltersDropdown() {
           }}
         />
       </Stack>
-      <Stack spacing="md">
-        <Divider label="After" labelProps={{ weight: 'bold', size: 'sm' }} />
+      <Stack gap="md">
+        <Divider label="After" className="text-sm font-bold" />
         <DatePicker
           placeholder="Choose a date..."
           value={filters.dateAfter ?? null}
@@ -148,7 +151,7 @@ export function ChangelogFiltersDropdown() {
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >

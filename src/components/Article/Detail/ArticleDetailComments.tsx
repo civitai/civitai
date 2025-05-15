@@ -135,7 +135,9 @@ const HiddenCommentsModal = ({ opened, onClose, entityId, userId }: HiddenCommen
       radius="lg"
       opened={opened}
       onClose={onClose}
-      closeButtonLabel="Close hidden comments"
+      closeButtonProps={{
+        'aria-label': 'Close hidden comments',
+      }}
       withCloseButton
     >
       <Divider mx="-md" />

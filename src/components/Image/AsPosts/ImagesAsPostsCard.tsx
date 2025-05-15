@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Badge,
+  getPrimaryShade,
   Group,
   HoverCard,
   Menu,
@@ -10,6 +11,7 @@ import {
   ThemeIcon,
   ThemeIconProps,
   Tooltip,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import {
@@ -66,6 +68,7 @@ export function ImagesAsPostsCard({
   height: number;
 }) {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
 
@@ -241,7 +244,7 @@ export function ImagesAsPostsCard({
           ...cosmetic?.data,
           ...(pinned
             ? {
-                border: theme.colors.orange[theme.fn.primaryShade()],
+                border: theme.colors.orange[getPrimaryShade(theme, colorScheme)],
                 borderWidth: 2,
               }
             : undefined),

@@ -12,7 +12,7 @@ export function LevelUp({ className }: { className?: string }) {
           style: { marginTop: -210 },
         }}
       />
-      <Text size={48} ta="center" weight={500} mt={-90} mb={10} lh={1}>
+      <Text fz={48} ta="center" weight={500} mt={-90} mb={10} lh={1}>
         Level up!
       </Text>
     </Card>
