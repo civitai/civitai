@@ -89,12 +89,12 @@ export const constants = {
     'CogVideoX',
     'NoobAI',
     'Wan Video',
+    'Wan Video 1.3B t2v',
+    'Wan Video 14B t2v',
+    'Wan Video 14B i2v',
     'HiDream',
     'OpenAI',
     'Other',
-    'Wan Video 1.3B T2V',
-    'Wan Video 14B T2V',
-    'Wan Video 14B I2V',
   ],
   hiddenBaseModels: [
     'ODOR',
@@ -109,6 +109,7 @@ export const constants = {
     'Stable Cascade',
     'SDXL 1.0 LCM',
     'OpenAI',
+    'Wan Video',
   ] as string[],
   modelFileTypes: [
     'Model',
@@ -553,7 +554,24 @@ export const baseModelSets = {
   WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
   HiDream: new BaseModelSet({ name: 'HiDream', baseModels: ['HiDream'] }),
   OpenAI: new BaseModelSet({ name: 'OpenAI', baseModels: ['OpenAI'] }),
+  WanVideo1_3B_T2V: new BaseModelSet({
+    name: 'Wan Video 1.3B t2v',
+    baseModels: ['Wan Video 1.3B t2v'],
+  }),
+  WanVideo14B_T2V: new BaseModelSet({
+    name: 'Wan Video 14B t2v',
+    baseModels: ['Wan Video 14B t2v'],
+  }),
+  WanVideo14B_I2V: new BaseModelSet({
+    name: 'Wan Video 14B i2v',
+    baseModels: ['Wan Video 14B i2v'],
+  }),
 };
+/*
+'Wan Video 1.3B T2V',
+'Wan Video 14B T2V',
+'Wan Video 14B I2V',
+*/
 
 // the ecosystem in the air just needs to start with a corresponding orchestrator controller ecosystem
 // const test = [
@@ -723,9 +741,9 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   HiDream: baseLicenses['mit'],
   OpenAI: baseLicenses['openai'],
   'Wan Video': baseLicenses['apache 2.0'],
-  'Wan Video 1.3B T2V': baseLicenses['apache 2.0'],
-  'Wan Video 14B T2V': baseLicenses['apache 2.0'],
-  'Wan Video 14B I2V': baseLicenses['apache 2.0'],
+  'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
+  'Wan Video 14B t2v': baseLicenses['apache 2.0'],
+  'Wan Video 14B i2v': baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

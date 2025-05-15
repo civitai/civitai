@@ -551,8 +551,13 @@ export const baseModelResourceTypes = {
     { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
   HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
-  WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
   OpenAI: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.OpenAI.baseModels }],
+  WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
+  WanVideo1_3B_T2V: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
+  ],
+  WanVideo14B_T2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_T2V.baseModels }],
+  WanVideo14B_I2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V.baseModels }],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)

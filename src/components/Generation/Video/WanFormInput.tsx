@@ -1,30 +1,56 @@
-import { Anchor, Input } from '@mantine/core';
+import { Anchor, Input, Radio } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
-import { wanAspectRatios, wanDuration } from '~/server/orchestrator/wan/wan.schema';
+import {
+  InputNumberSlider,
+  InputRadioGroup,
+  InputSegmentedControl,
+  InputTextArea,
+} from '~/libs/form';
+import { wanAspectRatios, wanDuration, wanModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
+import { useEffect, useMemo } from 'react';
 
 export function WanFormInput() {
   const form = useFormContext();
   const process = form.watch('process');
+  const model = form.getValues('model');
   const isTxt2Img = process === 'txt2vid';
+  const availableModels = useMemo(
+    () => wanModelMap[process as keyof typeof wanModelMap] ?? [],
+    [process]
+  );
+  const resources = availableModels.find((x) => x.value === model)?.resources;
+
+  useEffect(() => {
+    const model = form.getValues('model');
+    if (!availableModels.find((x) => x.value === model)) {
+      form.setValue('model', availableModels[0].value);
+    }
+  }, [availableModels]);
 
   return (
     <>
       <InputVideoProcess name="process" />
+      <InputRadioGroup label="Model" name="model">
+        {availableModels.map(({ label, value }) => (
+          <Radio key={value} label={label} value={value} />
+        ))}
+      </InputRadioGroup>
       {process === 'img2vid' && <InputSourceImageUpload name="sourceImage" className="flex-1" />}
-      <InputResourceSelectMultipleStandalone
-        name="resources"
-        options={{ resources: baseModelResourceTypes.WanVideo }}
-        buttonLabel="Add additional resource"
-      />
+      {!!resources?.length && (
+        <InputResourceSelectMultipleStandalone
+          name="resources"
+          options={{ resources: [...resources, ...baseModelResourceTypes.WanVideo] }}
+          buttonLabel="Add additional resource"
+        />
+      )}
       <InputTextArea
         required={isTxt2Img}
         name="prompt"

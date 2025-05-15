@@ -9,11 +9,34 @@ import {
   baseVideoGenerationSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
+import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const wanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
 export const wanDuration = [3, 5] as const;
 export const wanAspectRatioMap = AspectRatioMap([...wanAspectRatios], { multiplier: 16 });
+
+export const wanModelMap = {
+  txt2vid: [
+    {
+      label: 'Wan Video 1.3B t2v',
+      value: 'urn:air:wanvideo:checkpoint:civitai:1329096@1500646',
+      resources: baseModelResourceTypes.WanVideo1_3B_T2V,
+    },
+    {
+      label: 'Wan Video 14B t2v',
+      value: 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796',
+      resources: baseModelResourceTypes.WanVideo14B_T2V,
+    },
+  ],
+  img2vid: [
+    {
+      label: 'Wan Video 14B i2v',
+      value: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
+      resources: baseModelResourceTypes.WanVideo14B_I2V,
+    },
+  ],
+};
 
 const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('wan').catch('wan'),
@@ -25,6 +48,7 @@ const schema = baseVideoGenerationSchema.extend({
   duration: numberEnum(wanDuration).optional().catch(5),
   seed: seedSchema,
   resources: z.array(resourceSchema.passthrough()).default([]),
+  model: z.string().optional(),
 });
 
 export const wanGenerationConfig = VideoGenerationConfig2({
@@ -41,7 +65,14 @@ export const wanGenerationConfig = VideoGenerationConfig2({
   ],
   metadataDisplayProps: ['process', 'cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
   schema,
-  defaultValues: { aspectRatio: '1:1', duration: 5, cfgScale: 4, frameRate: 16 },
+  defaultValues: {
+    process: 'txt2vid',
+    model: wanModelMap['txt2vid'][1].value,
+    aspectRatio: '1:1',
+    duration: 5,
+    cfgScale: 4,
+    frameRate: 16,
+  },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
     if (!data.sourceImage) {
@@ -75,7 +106,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       sourceImage: sourceImage?.url,
       steps: 20,
       loras: resources.map(({ air, strength }) => ({ air, strength })),
-      model: !sourceImage ? 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796' : undefined,
+      // model: !sourceImage ? 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796' : undefined,
     };
   },
 });
