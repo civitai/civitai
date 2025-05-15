@@ -604,14 +604,25 @@ function GeneratedImageWorkflowMenuItems({
     (!!step.params.workflow && !(step.params.workflow in notSelectableMap)) ||
     !!(step.params as any).engine;
 
+  async function handleRemix(seed?: number) {
+    handleCloseImageLightbox();
+    generationStore.setData({
+      resources: step.resources as any,
+      params: { ...(step.params as any), seed },
+      remixOfId: step.metadata?.remixOfId,
+      type: image.type,
+      workflow: step.params.workflow,
+      engine: (step.params as any).engine,
+    });
+  }
+
   async function handleGenerate(
-    { seed, ...rest }: Partial<TextToImageParams> = {},
+    { ...rest }: Partial<TextToImageParams> = {},
     {
       type,
       workflow: workflow,
-      sourceImage,
       engine,
-    }: { type: MediaType; workflow?: string; sourceImage?: string; engine?: string } = {
+    }: { type: MediaType; workflow?: string; engine?: string } = {
       type: image.type,
       workflow: step.params.workflow,
     }
@@ -619,11 +630,14 @@ function GeneratedImageWorkflowMenuItems({
     handleCloseImageLightbox();
     generationStore.setData({
       resources: step.resources as any,
-      params: { ...(step.params as any), seed, ...rest },
+      params: {
+        ...(step.params as any),
+        ...rest,
+        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+      },
       remixOfId: step.metadata?.remixOfId,
       type,
       workflow: workflow ?? step.params.workflow,
-      sourceImage: sourceImage ?? (step.params as any).sourceImage,
       engine: engine ?? (step.params as any).engine,
     });
   }
@@ -713,14 +727,14 @@ function GeneratedImageWorkflowMenuItems({
       {canRemix && !workflowsOnly && (
         <>
           <Menu.Item
-            onClick={() => handleGenerate()}
+            onClick={() => handleRemix()}
             icon={<IconArrowsShuffle size={14} stroke={1.5} />}
           >
             Remix
           </Menu.Item>
-          {!isBlocked && (
+          {!isBlocked && image.seed && (
             <Menu.Item
-              onClick={() => handleGenerate({ seed: image.seed })}
+              onClick={() => handleRemix(image.seed)}
               icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
             >
               Remix (with seed)
