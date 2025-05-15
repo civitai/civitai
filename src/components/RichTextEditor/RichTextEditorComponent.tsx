@@ -1,12 +1,4 @@
-import {
-  createStyles,
-  CSSObject,
-  Group,
-  Input,
-  InputWrapperProps,
-  MantineSize,
-  Text,
-} from '@mantine/core';
+import { Group, Input, InputWrapperProps, MantineSize, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
@@ -28,7 +20,7 @@ import {
   useEditor,
 } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect, useImperativeHandle, useRef } from 'react';
+import { CSSProperties, useEffect, useImperativeHandle, useRef } from 'react';
 import slugify from 'slugify';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
@@ -37,7 +29,6 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getRandomId, validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
@@ -51,7 +42,7 @@ import classes from './RichTextEditorComponent.module.scss';
 //   xl: '90px',
 // };
 
-const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
+const mapEditorSize: Omit<Record<MantineSize, CSSProperties>, 'xs'> = {
   sm: {
     minHeight: 30,
     fontSize: 14,

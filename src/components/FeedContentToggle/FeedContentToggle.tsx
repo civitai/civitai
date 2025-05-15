@@ -8,13 +8,7 @@ const statuses: SegmentedControlItem[] = [
 ];
 
 export function FeedContentToggle(props: Props) {
-  return (
-    <SegmentedControl
-      {...props}
-      data={statuses}
-      className={classes.feedContentToggle}
-    />
-  );
+  return <SegmentedControl {...props} data={statuses} className={classes.feedContentToggle} />;
 }
 
-type Props = Omit<SegmentedControlProps, 'data'>
+type Props = Omit<SegmentedControlProps, 'data'>;

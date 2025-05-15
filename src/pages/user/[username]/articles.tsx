@@ -75,8 +75,8 @@ function UserArticlesPage() {
                   size="xs"
                   value={section}
                   onChange={(section) => {
-                    setSection(section);
-                    replace({ section });
+                    setSection(section as 'published' | 'draft');
+                    replace({ section: section as 'published' | 'draft' });
                   }}
                 />
               )}

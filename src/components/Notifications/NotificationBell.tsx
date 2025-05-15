@@ -31,12 +31,9 @@ export function NotificationBell() {
       <div onClick={toggleDrawer} ref={setToggle} style={{ height: '28px' }}>
         <Indicator
           color="red"
-          overflowCount={99}
-          label={count.all}
+          label={count.all > 99 ? '99+' : count.all}
           size={16}
           offset={4}
-          showZero={false}
-          dot={false}
           withBorder
           inline
           className="text-sm font-bold"
@@ -44,7 +41,6 @@ export function NotificationBell() {
             indicator: {
               height: '20px !important',
               cursor: 'pointer',
-              '> span': { marginBottom: '2px' },
             },
           }}
         >

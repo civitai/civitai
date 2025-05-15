@@ -9,9 +9,7 @@ import {
   useQueryResourceReviewTotals,
 } from '~/components/ResourceReview/resourceReview.utils';
 import { StarRating } from '~/components/StartRating/StarRating';
-import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { ResourceReviewRatingTotals } from '~/types/router';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import classes from './ResourceReviewSummary.module.scss';
 
@@ -136,7 +134,6 @@ ResourceReviewSummary.Simple = function Simple({
 }) {
   const { rating, count, loading } = useSummaryContext();
   const roundedRating = roundRating(rating ?? initialRating ?? 0);
-  const { classes } = useStyles();
 
   if (loading && initialRating === undefined && initialCount === undefined) {
     return null;
@@ -149,7 +146,7 @@ ResourceReviewSummary.Simple = function Simple({
         color="gray"
         size="lg"
         icon={<StarRating value={roundedRating} />}
-        sx={{ cursor: 'pointer' }}
+        className="cursor-pointer"
         onClick={onClick}
       >
         <Text className={classes.badgeText}>{abbreviateNumber(count ?? 0)}</Text>

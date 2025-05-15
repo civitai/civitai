@@ -35,17 +35,7 @@ export function OnboardingTos() {
         title="Terms of Service"
         description="Please take a moment to review and accept our terms of service."
       />
-      <ScrollArea
-        style={{ height: 400 }}
-        type="auto"
-        p="md"
-        style={{
-          height: 400,
-          border: `1px solid ${
-            colorScheme === 'light' ? theme.colors.gray[9] : theme.colors.gray[7]
-          }`,
-        }}
-      >
+      <ScrollArea type="auto" p="md" className="h-[400px] border border-gray-9 dark:border-gray-7">
         {termsLoading ? (
           <Center h={366}>
             <Loader size="lg" />

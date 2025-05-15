@@ -35,8 +35,8 @@ import { IconAlertCircle, IconPlus } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
-import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
+import classes from '~/components/Club/ClubPost/ClubFeed/ClubFeed.module.css';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -103,7 +103,6 @@ export const getServerSideProps = createServerSideProps({
 export default function ManageClubTiers({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { classes } = useClubFeedStyles();
   const { club, loading } = useQueryClub({ id });
   const {
     data: tiers = [],

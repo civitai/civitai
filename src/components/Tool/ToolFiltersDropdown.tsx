@@ -142,7 +142,7 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
   );
 }
 
-type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
+type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon' | 'style'> & {
   query?: Partial<GetAllToolsSchema>;
   onChange?: (params: Partial<GetAllToolsSchema>) => void;
 };

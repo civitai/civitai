@@ -19,7 +19,6 @@ import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
-import { useCompensationPool } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -761,7 +760,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   // TODO: Mantine7 - Figure this one out. We need this.
                   // getCreateLabel={(query) => `+ Create ${query}`}
                   max={isTextualInversion ? 1 : undefined}
-                  creatable
                   clearable
                   searchable
                   required

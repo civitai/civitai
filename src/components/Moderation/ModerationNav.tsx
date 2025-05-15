@@ -19,7 +19,6 @@ export function ModerationNav() {
         { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
         { label: 'Rewards', href: '/moderator/rewards' },
         { label: 'Auditor', href: '/moderator/auditor' },
-        { label: 'Rater', href: '/research/rater' },
         { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },

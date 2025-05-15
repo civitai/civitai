@@ -9,6 +9,7 @@ import {
   Popover,
   ScrollArea,
   Stack,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
@@ -18,7 +19,6 @@ import type {
   ImageSelectProfileFilter,
   ImageSelectTrainingFilter,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { useFilterStyles } from '~/components/ImageGeneration/GenerationForm/ResourceSelectFilters';
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -28,7 +28,7 @@ import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { titleCase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
 import { isDefined } from '~/utils/type-guards';
-import styles from './ImageSelectFilters.module.scss';
+import classes from './ImageSelectFilters.module.scss';
 
 export function ImageSelectFiltersTrainingDropdown({
   selectFilters,
@@ -37,9 +37,9 @@ export function ImageSelectFiltersTrainingDropdown({
   selectFilters: ImageSelectTrainingFilter;
   setSelectFilters: React.Dispatch<React.SetStateAction<ImageSelectTrainingFilter>>;
 }) {
-  const { classes, theme, cx } = useFilterStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
+  const colorScheme = useComputedColorScheme('dark');
 
   const [opened, setOpened] = useState(false);
 
@@ -86,8 +86,8 @@ export function ImageSelectFiltersTrainingDropdown({
       <Button
         color="gray"
         radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
+        rightIcon={<IconChevronDown className={opened ? classes.opened : undefined} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
         size="compact-md"
@@ -202,7 +202,7 @@ export function ImageSelectFiltersTrainingDropdown({
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -222,11 +222,11 @@ export function ImageSelectFiltersTrainingDropdown({
           size="90%"
           position="bottom"
           classNames={{
-            root: styles.root,
-            content: styles.content,
-            body: styles.body,
-            header: styles.header,
-            close: styles.close,
+            root: classes.root,
+            content: classes.content,
+            body: classes.body,
+            header: classes.header,
+            close: classes.close,
           }}
         >
           {dropdown}
@@ -261,9 +261,10 @@ export function ImageSelectFiltersProfileDropdown({
   selectFilters: ImageSelectProfileFilter;
   setSelectFilters: React.Dispatch<React.SetStateAction<ImageSelectProfileFilter>>;
 }) {
-  const { classes, theme, cx } = useFilterStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
+  const colorScheme = useComputedColorScheme('dark');
+
   const [opened, setOpened] = useState(false);
 
   const filterLength = (selectFilters.mediaTypes?.length ?? 0) > 0 ? 1 : 0;
@@ -281,21 +282,19 @@ export function ImageSelectFiltersProfileDropdown({
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
       <Button
         color="gray"
         radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
+        rightIcon={<IconChevronDown className={opened ? classes.opened : undefined} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
         compact
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} className="flex-nowrap">
           <IconFilter size={16} />
           Filters
         </Group>
@@ -304,9 +303,9 @@ export function ImageSelectFiltersProfileDropdown({
   );
 
   const dropdown = (
-    <Stack spacing="lg" p="md">
-      <Stack spacing="md">
-        <Divider label="Media Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+    <Stack gap="lg" p="md">
+      <Stack gap="md">
+        <Divider label="Media Type" className="text-sm font-bold" />
         <div className="flex gap-2">
           <FilterChip
             checked={!selectFilters.mediaTypes.length}
@@ -332,7 +331,7 @@ export function ImageSelectFiltersProfileDropdown({
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -351,18 +350,12 @@ export function ImageSelectFiltersProfileDropdown({
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          styles={{
-            root: {
-              zIndex: 400,
-            },
-            content: {
-              height: 'auto',
-              maxHeight: 'calc(100dvh - var(--header-height))',
-              overflowY: 'auto',
-            },
-            body: { padding: 0, overflowY: 'auto' },
-            header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          classNames={{
+            root: classes.root,
+            content: classes.content,
+            body: classes.body,
+            header: classes.header,
+            close: classes.close,
           }}
         >
           {dropdown}
@@ -378,11 +371,10 @@ export function ImageSelectFiltersProfileDropdown({
       radius={12}
       onClose={() => setOpened(false)}
       middlewares={{ flip: true, shift: true }}
-      // withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p={0} w="100%">
-        <ScrollArea.Autosize type="hover" maxHeight={'calc(90vh - var(--header-height) - 56px)'}>
+        <ScrollArea.Autosize type="hover" mah="calc(90vh - var(--header-height) - 56px)">
           {dropdown}
         </ScrollArea.Autosize>
       </Popover.Dropdown>

@@ -455,9 +455,9 @@ function ResourceSelectModalContent() {
         <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
           <Text>{title}</Text>
           <CustomSearchBox
-            // isMobile={isMobile} // TODO: Mantine7
-            autoFocus
+            isMobile={isMobile as boolean}
             className="order-last w-full grow sm:order-none sm:w-auto"
+            autoFocus
           />
           <CloseButton onClick={handleClose} />
         </div>

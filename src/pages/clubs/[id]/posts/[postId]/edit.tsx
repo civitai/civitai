@@ -1,4 +1,4 @@
-import { Anchor, Button, Container, Group, Paper, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Container, Group, Paper, Stack, Text, Title } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
@@ -9,9 +9,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { useClubContributorStatus } from '~/components/Club/club.utils';
 import { ClubPostUpsertForm } from '~/components/Club/ClubPost/ClubPostUpsertForm';
-import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { createServerSideProps } from '../../../../../server/utils/server-side-helpers';
+import classes from '~/components/Club/ClubPost/ClubFeed/ClubFeed.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -38,7 +38,6 @@ export default function ClubPostEdit() {
   const { isOwner, permissions } = useClubContributorStatus({
     clubId: clubPost?.clubId,
   });
-  const { classes } = useClubFeedStyles();
 
   const isModerator = currentUser?.isModerator ?? false;
 

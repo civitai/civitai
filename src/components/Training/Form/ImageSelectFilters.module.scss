@@ -26,3 +26,16 @@
     height: 24px;
   }
 }
+
+.indicatorRoot {
+  line-height: 1;
+}
+
+.indicatorIndicator {
+  line-height: 1.6;
+}
+
+.opened {
+  transform: rotate(180deg);
+  transition: transform 200ms ease;
+}

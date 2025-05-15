@@ -242,4 +242,4 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
 type Props = {
   setFilters: (filters: Partial<Filters>) => void;
   filters: Filters;
-} & Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'>;
+} & Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon' | 'style'>;

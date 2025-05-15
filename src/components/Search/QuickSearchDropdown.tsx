@@ -302,7 +302,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
                 entityId: item.id,
                 entityType: SearchIndexEntityTypes[searchIndexMap[indexName]],
               },
-              item
+              item as any
             );
 
             setSearch('');
