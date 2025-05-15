@@ -1,7 +1,6 @@
 import {
   Button,
   Chip,
-  ComboboxItem,
   Divider,
   Drawer,
   Group,
@@ -9,7 +8,6 @@ import {
   Popover,
   Stack,
   useComputedColorScheme,
-  useMantineTheme,
 } from '@mantine/core';
 import { DatePicker } from '@mantine/dates';
 import { IconFilter } from '@tabler/icons-react';
@@ -38,7 +36,7 @@ const ChangelogTagSelect = ({
       onChange={onChange}
       loading={isLoading}
       placeholder="Select tags..."
-      data={data as ComboboxItem[]}
+      data={data}
       searchable
       clearable
     />
@@ -46,7 +44,6 @@ const ChangelogTagSelect = ({
 };
 
 export function ChangelogFiltersDropdown() {
-  const theme = useMantineTheme();
   const mobile = useIsMobile();
   const [opened, setOpened] = useState(false);
   const colorScheme = useComputedColorScheme('dark');

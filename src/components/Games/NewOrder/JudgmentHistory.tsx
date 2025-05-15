@@ -38,11 +38,8 @@ export default function JudgmentHistoryModal() {
   return (
     <Modal
       {...dialog}
-      transitionProps={{
-        transition: 'scale',
-      }}
+      transitionProps={{ transition: 'scale', duration: 300 }}
       size="80%"
-      transitionDuration={300}
       withCloseButton={false}
       padding={0}
     >

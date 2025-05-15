@@ -434,7 +434,7 @@ const CreateChangelog = ({
               <InputMultiSelect
                 name="tags"
                 label="Tags"
-                data={allTagData as ComboboxItem[]}
+                data={allTagData}
                 loading={loadingTagData}
                 limit={50}
                 placeholder="Tags..."
