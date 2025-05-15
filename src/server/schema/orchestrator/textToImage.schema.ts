@@ -26,6 +26,7 @@ export const textToImageParamsSchema = z.object({
   quantity: z.coerce
     .number()
     .max(20)
+    .default(1)
     .transform((val) => (val <= 0 ? 1 : val)),
   nsfw: z.boolean().default(false),
   draft: z.boolean().default(false),

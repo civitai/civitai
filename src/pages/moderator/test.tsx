@@ -8,6 +8,15 @@ import { immer } from 'zustand/middleware/immer';
 import createSlots from '~/libs/slots/create-slots';
 import { getRandomInt } from '~/utils/number-helpers';
 
+import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
+import { Page } from '~/components/AppLayout/Page';
+import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/AspectRatioInput';
+import { IsClient } from '~/components/IsClient/IsClient';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
+import { SourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
+import { ImageCropperContent } from '~/components/Generation/Input/ImageCropModal';
+import { trpc } from '~/utils/trpc';
+
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
 const { Slots, Slot } = createSlots(['header', 'footer']);
@@ -97,6 +106,36 @@ function Test() {
   // }, []);
 
   const [data, setData] = useState<any>(null);
+  // trpc.orchestrator.getImageWhatIf.useQuery({
+  //   resources: [{ id: 1410435 }, { id: 1365772 }, { id: 1019579 }],
+  //   params: {
+  //     cfgScale: 3.5,
+  //     sampler: 'Euler',
+  //     clipSkip: 2,
+  //     steps: 36,
+  //     nsfw: false,
+  //     draft: false,
+  //     baseModel: 'Illustrious',
+  //     denoise: 0.65,
+  //     workflow: 'img2img-hires',
+  //     experimental: false,
+  //     priority: 'low',
+  //     sourceImage: {
+  //       url: 'https://orchestration.civitai.com/v2/consumer/blobs/P6T8Z0JDB03N41HGEYSE1XP8P0.jpeg',
+  //       width: 832,
+  //       height: 1216,
+  //     },
+  //     disablePoi: true,
+  //     prompt: '',
+  //     aspectRatio: '2',
+  //     fluxUltraAspectRatio: '4',
+  //     width: 832,
+  //     height: 1216,
+  //     process: 'img2img',
+  //     remixSimilarity: 1,
+  //   },
+  //   authed: true,
+  // });
 
   return (
     <div className="container flex h-full max-w-sm flex-col gap-3">
@@ -441,14 +480,6 @@ function ExampleSelect() {
     </Listbox>
   );
 }
-
-import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
-import { Page } from '~/components/AppLayout/Page';
-import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/AspectRatioInput';
-import { IsClient } from '~/components/IsClient/IsClient';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
-import { SourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
-import { ImageCropperContent } from '~/components/Generation/Input/ImageCropModal';
 
 function ExamplePopover() {
   return (
