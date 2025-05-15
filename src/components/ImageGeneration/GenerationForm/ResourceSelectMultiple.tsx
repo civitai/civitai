@@ -128,8 +128,6 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
       return aIndex - bIndex;
     });
 
-    console.log(sortedGroups);
-
     return (
       <Input.Wrapper {...inputWrapperProps} descriptionProps={{ mb: 8 }} ref={ref}>
         <Stack spacing="md" mb={inputWrapperProps.error ? 5 : undefined}>
