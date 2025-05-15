@@ -65,6 +65,11 @@ const theme = createTheme({
         itemLabel: { display: 'flex' },
       },
     },
+    SegmentedControl: {
+      defaultProps: {
+        transitionDuration: 0,
+      },
+    },
     // InputWrapper: {
     //   classNames: { label: 'w-full' },
     // },
@@ -105,14 +110,14 @@ const theme = createTheme({
 
 export function ThemeProvider({
   children,
-  colorScheme: cookeColorScheme,
+  colorScheme: cookieColorScheme,
 }: {
   children: React.ReactNode;
   colorScheme: MantineColorScheme;
 }) {
   return (
-    <ColorSchemeScript defaultColorScheme={cookeColorScheme}>
-      <MantineProvider theme={theme} defaultColorScheme={cookeColorScheme ?? 'dark'}>
+    <ColorSchemeScript defaultColorScheme={cookieColorScheme}>
+      <MantineProvider theme={theme} defaultColorScheme={cookieColorScheme ?? 'dark'}>
         <Notifications />
         {children}
       </MantineProvider>

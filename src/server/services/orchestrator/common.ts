@@ -20,7 +20,7 @@ import { env } from '~/env/server';
 import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
+import { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
 import {
@@ -504,7 +504,9 @@ function formatWorkflowStep(args: {
     case 'videoEnhancement':
       return formatVideoGenStep(args);
     default:
-      throw new Error('failed to extract generation resources: unsupported workflow type');
+      throw new Error(
+        `failed to extract generation resources: unsupported workflow type ${step.$type}`
+      );
   }
 }
 
@@ -540,8 +542,8 @@ function formatImageGenStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            width,
-            height,
+            width: image.width ?? width,
+            height: image.height ?? height,
             blockedReason: image.blockedReason,
           })) ?? [],
     }),
@@ -564,7 +566,7 @@ function formatImageGenStep({
 
 function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
   const { input, output, jobs } = step as VideoGenStep;
-  const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
+  const videoMetadata = step.metadata as { params?: VideoGenerationSchema2 };
   const { params } = videoMetadata;
 
   // handle legacy source image
@@ -588,11 +590,11 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   let aspectRatio = 1;
 
   if (params) {
-    if (params.type === 'img2vid') {
+    if (sourceImage) {
       width = sourceImage?.width;
       height = sourceImage?.height;
       aspectRatio = width && height ? width / height : 16 / 9;
-    } else if (params.type === 'txt2vid') {
+    } else {
       switch (params.engine) {
         case 'minimax':
           aspectRatio = 16 / 9;
@@ -603,17 +605,11 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           aspectRatio = width / height;
           break;
         default: {
-          if (params.aspectRatio) {
-            const [rw, rh] = params.aspectRatio.split(':').map(Number);
-            aspectRatio = rw / rh;
-          }
+          if (!params.aspectRatio) params.aspectRatio = '16:9';
+          const [rw, rh] = params.aspectRatio.split(':').map(Number);
+          aspectRatio = rw / rh;
           break;
         }
-        case 'vidu':
-          width = 1280;
-          height = 720;
-          aspectRatio = width / height;
-          break;
       }
     }
   }
@@ -637,8 +633,8 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url + '.mp4',
-            width: width ?? 1080,
-            height: height ?? 1080,
+            width: output?.video?.width ?? width ?? 1080,
+            height: output?.video?.height ?? height ?? 1080,
             queuePosition: job.queuePosition,
             aspectRatio,
             blockedReason: image.blockedReason,
@@ -656,9 +652,9 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     name: step.name,
     // workflow and quantity are only here because they are required for other components to function
     params: {
-      ...params,
+      ...params!,
       sourceImage: sourceImage,
-      workflow: videoMetadata.params?.workflow,
+      // workflow: videoMetadata.params?.workflow,
       quantity: 1,
     },
     images: videos,
@@ -748,8 +744,8 @@ function formatTextToImageStep({
             seed: input.seed ? input.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            width: input.width,
-            height: input.height,
+            width: image.width ?? input.width,
+            height: image.height ?? input.height,
             blockedReason: image.blockedReason,
           })) ?? [],
     }),
@@ -859,8 +855,8 @@ export function formatComfyStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            width,
-            height,
+            width: width,
+            height: height,
             blockedReason: image.blockedReason,
           })) ?? [],
     }),

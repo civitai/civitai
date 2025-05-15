@@ -50,7 +50,10 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import {
+  getVideoGenerationConfig,
+  videoGenerationConfig2,
+} from '~/server/orchestrator/generation/generation.config';
 import {
   Availability,
   CollectionContributorPermission,
@@ -874,10 +877,11 @@ export const addPostImage = async ({
   }
 
   let techniqueId: number | undefined;
-  if (meta && 'workflow' in meta) {
-    const workflow = generationFormWorkflowConfigurations.find((x) => x.key === meta.workflow);
-    if (workflow) {
-      techniqueId = (await getTechniqueByName(workflow.subType))?.id;
+  if (meta && 'engine' in meta) {
+    // older meta has type: string, but the updated meta has process: string
+    const process = (meta.process ?? meta.type) as string | undefined;
+    if (process) {
+      techniqueId = (await getTechniqueByName(process))?.id;
     }
   }
 

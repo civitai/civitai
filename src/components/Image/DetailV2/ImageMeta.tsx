@@ -4,11 +4,9 @@ import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { trpc } from '~/utils/trpc';
 import React from 'react';
 import { isDefined } from '~/utils/type-guards';
-import {
-  generationFormWorkflowConfigurations,
-  getBaseModelFromResources,
-} from '~/shared/constants/generation.constants';
+import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
 import { BaseModelSetType } from '~/server/common/constants';
+import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
 const simpleMetaProps = {
@@ -70,12 +68,10 @@ export function ImageMeta({ imageId }: { imageId: number }) {
         })
         .filter(isDefined);
     } else if (data.type === 'video') {
-      const workflow = generationFormWorkflowConfigurations.find(
-        (x) => x.key === (meta as any).workflow
-      );
-      if (!workflow) return [];
+      const config = getVideoGenerationConfig((meta as any).engine);
+      if (!config) return [];
       return (
-        workflow.metadataDisplayProps?.map((key) => ({
+        config.metadataDisplayProps?.map((key) => ({
           label: key,
           content: getSimpleMetaContent(key as SimpleMetaPropsKey),
         })) ?? []

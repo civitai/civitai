@@ -58,11 +58,7 @@ import {
   getIsSD3,
   getSourceImageFromUrl,
 } from '~/shared/constants/generation.constants';
-import {
-  generationStore,
-  useGenerationFormStore,
-  useVideoGenerationWorkflows,
-} from '~/store/generation.store';
+import { generationStore, useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
@@ -79,6 +75,7 @@ import { EmblaCarouselType } from 'embla-carousel';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import classes from './GeneratedImage.module.scss';
+import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -533,7 +530,8 @@ function GeneratedImageWorkflowMenuItems({
 }) {
   const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions = [] } = trpc.generation.getWorkflowDefinitions.useQuery();
-  const { data: availableEngineConfigurations } = useVideoGenerationWorkflows();
+
+  const { data: engines } = useGenerationEngines();
 
   const { copied, copy } = useClipboard();
 
@@ -547,8 +545,9 @@ function GeneratedImageWorkflowMenuItems({
         (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)
       )
     : [];
+
   const img2vidConfigs = !isVideo
-    ? availableEngineConfigurations.filter((x) => !x.disabled && x.subType === 'img2vid')
+    ? engines.filter((x) => !x.disabled && x.processes.includes('img2vid'))
     : [];
 
   const notSelectableMap: Partial<Record<WorkflowDefinitionKey, VoidFunction>> = {
@@ -720,12 +719,11 @@ function GeneratedImageWorkflowMenuItems({
       {!isBlocked && !!img2vidConfigs.length && (
         <>
           <Menu.Item
-            onClick={() =>
+            onClick={async () =>
               handleGenerate(
-                {},
+                { sourceImage: await getSourceImageFromUrl({ url: image.url }) },
                 {
                   type: 'video',
-                  sourceImage: image.url,
                   engine: useGenerationFormStore.getState().engine,
                 }
               )

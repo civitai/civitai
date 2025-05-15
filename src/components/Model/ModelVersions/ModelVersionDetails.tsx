@@ -44,6 +44,7 @@ import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
@@ -1136,7 +1137,7 @@ export function ModelVersionDetails({
                           : ''}
                       </Text>
                     </div>
-                    {isOwnerOrMod && (
+                    {isOwnerOrMod ? (
                       <Anchor
                         size="sm"
                         className={clsx(
@@ -1157,6 +1158,8 @@ export function ModelVersionDetails({
                       >
                         Edit
                       </Anchor>
+                    ) : (
+                      <CollectionFollowAction collectionId={collection.id} />
                     )}
                   </div>
                 </Accordion.Control>

@@ -1,11 +1,13 @@
 import { HunyuanVdeoGenInput } from '@civitai/client';
 import z from 'zod';
 import { AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
-import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
+  baseVideoGenerationSchema,
+  promptSchema,
   resourceSchema,
   seedSchema,
-  textEnhancementSchema,
+  sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 
@@ -14,57 +16,37 @@ export const hunyuanDuration = [3, 5] as const;
 
 const hunyuanAspectRatioMap = AspectRatioMap([...hunyuanAspectRatios], { multiplier: 16 });
 
-const baseHunyuanSchema = z.object({
-  engine: z.literal('hunyuan'),
-  workflow: z.string(),
+const schema = baseVideoGenerationSchema.extend({
+  engine: z.literal('hunyuan').catch('hunyuan'),
+  prompt: promptSchema,
+  // sourceImage: sourceImageSchema.nullish(),
   cfgScale: z.number().min(1).max(10).default(6).catch(6),
   frameRate: z.literal(24).default(24).catch(24),
   duration: numberEnum(hunyuanDuration).default(5).catch(5),
   seed: seedSchema,
-  // draft: z.boolean().optional(),
   steps: z.number().default(20),
   model: z.string().optional(),
+  aspectRatio: z.enum(hunyuanAspectRatios).default('1:1').catch('1:1'),
   resources: z.array(resourceSchema.passthrough()).default([]),
 });
 
-const hunyuanTxt2VidSchema = textEnhancementSchema.merge(baseHunyuanSchema).extend({
-  aspectRatio: z.enum(hunyuanAspectRatios).default('1:1').catch('1:1'),
+export const hunyuanGenerationConfig = VideoGenerationConfig2({
+  label: 'Hunyuan',
+  whatIfProps: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft', 'resources'],
+  schema,
+  metadataDisplayProps: ['process', 'cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
+  defaultValues: { aspectRatio: '1:1' },
+  processes: ['txt2vid'],
+  transformFn: (data) => ({ ...data, process: 'txt2vid' }),
+  inputFn: ({ aspectRatio, resources, ...args }): HunyuanVdeoGenInput => {
+    const { width, height } = hunyuanAspectRatioMap[aspectRatio].getSize2(480);
+    return {
+      ...args,
+      width,
+      height,
+      steps: 20,
+      model: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512',
+      loras: resources.map(({ air, strength }) => ({ air, strength })),
+    };
+  },
 });
-
-// const hunyuanImg2VidSchema = imageEnhancementSchema
-//   .merge(baseHunyuanSchema)
-//   .extend({ prompt: promptSchema });
-
-const hunyuanTxt2ImgConfig = new VideoGenerationConfig({
-  subType: 'txt2vid',
-  engine: 'hunyuan',
-  schema: hunyuanTxt2VidSchema,
-  metadataDisplayProps: ['cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
-});
-
-// const hunyuanImg2VidConfig = new VideoGenerationConfig({
-//   subType: 'img2vid',
-//   engine: 'hunyuan',
-//   schema: hunyuanImg2VidSchema,
-//   metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
-// });
-
-export const hunyuanVideoGenerationConfig = [hunyuanTxt2ImgConfig];
-
-export function HunyuanInput({
-  aspectRatio,
-  resources,
-  ...args
-}: z.infer<(typeof hunyuanVideoGenerationConfig)[number]['schema']>): HunyuanVdeoGenInput {
-  // const resolution = draft ? 420 : 640;
-  // const resolution = 420;
-  const { width, height } = hunyuanAspectRatioMap[aspectRatio].getSize2(480);
-  return {
-    ...args,
-    width,
-    height,
-    steps: 20,
-    model: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512',
-    loras: resources.map(({ air, strength }) => ({ air, strength })),
-  };
-}

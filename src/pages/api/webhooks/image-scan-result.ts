@@ -640,7 +640,7 @@ const tagPreprocessors: Partial<Record<TagSource, (tags: IncomingTag[]) => Incom
 
 const clavataTagConfidenceRequirements: Record<string, number> = {
   daipers: 70,
-  urine: 60,
+  urine: 60, // need to make it so that we can check wd14 tags for values that negate this tag - ie. cum
   unconscious: 60,
   'graphic language': 70,
   'light violence': 70,
