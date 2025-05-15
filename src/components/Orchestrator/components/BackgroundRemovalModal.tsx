@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 import { IconX } from '@tabler/icons-react';
+import { GenForm } from '~/components/Generation/Form/GenForm';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -53,7 +54,7 @@ export function BackgroundRemovalModal({
   return (
     <Modal {...dialog} title="Background Removal">
       <GenerationProvider>
-        <Form form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <GenForm form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
           <Alert>
             Background Removal works best with images that have a well-defined subject, preferably
             on a distinct background with sharp outlines. For the best results, use images where the
@@ -74,7 +75,7 @@ export function BackgroundRemovalModal({
           >
             Remove Background
           </GenerateButton>
-        </Form>
+        </GenForm>
       </GenerationProvider>
     </Modal>
   );

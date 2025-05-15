@@ -36,6 +36,7 @@ import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewar
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { GenForm } from '~/components/Generation/Form/GenForm';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageById } from '~/components/Image/ById/ImageById';
@@ -410,7 +411,7 @@ export function GenerationFormContent() {
   const disablePriority = runsOnFalAI || isOpenAI;
 
   return (
-    <Form
+    <GenForm
       form={form}
       onSubmit={handleSubmit}
       onError={handleError}
@@ -422,7 +423,7 @@ export function GenerationFormContent() {
       >
         {({ baseModel, fluxMode, draft, model, workflow, sourceImage }) => {
           // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
-          const isImg2Img = !workflow.startsWith('txt') || (isOpenAI && sourceImage);
+          const isImg2Img = workflow?.startsWith('img') || (isOpenAI && sourceImage);
           const isDraft = isFlux
             ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
             : isSD3
@@ -573,6 +574,7 @@ export function GenerationFormContent() {
                                 control: classes.accordionControl,
                                 content: classes.accordionContent,
                               }}
+                              transitionDuration={0}
                             >
                               <Accordion.Item value="resources" className="border-b-0">
                                 <Accordion.Control
@@ -1046,6 +1048,7 @@ export function GenerationFormContent() {
                       control: classes.accordionControl,
                       content: classes.accordionContent,
                     }}
+                    transitionDuration={0}
                   >
                     <Accordion.Item value="advanced">
                       <Accordion.Control>
@@ -1399,7 +1402,7 @@ export function GenerationFormContent() {
           );
         }}
       </Watch>
-    </Form>
+    </GenForm>
   );
 }
 

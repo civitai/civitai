@@ -123,6 +123,7 @@ function getImageGenMetadataParams(params: InputParams) {
         quantity: Math.min(params.quantity, 10),
         workflow: params.workflow,
         sourceImage: params.sourceImage,
+        process: !params.sourceImage ? 'txt2img' : 'img2img',
       });
     default:
       throw new Error('imageGen step type not implemented');

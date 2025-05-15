@@ -88,26 +88,6 @@ export function QueueSnackbar() {
               quantity={quantity}
             />
           ) : balance ? (
-            // <Tooltip
-            //   label={
-            //     <Text weight={600}>
-            //       Generation Buzz Credit{' '}
-            //       <Text color="blue.4" span>
-            //         <div className="flex flex-row flex-nowrap items-center justify-center gap-1">
-            //           <CurrencyIcon
-            //             currency="BUZZ"
-            //             size={16}
-            //             color="currentColor"
-            //             fill="currentColor"
-            //           />
-            //           {balanceLoading ? '...' : balance.toLocaleString()}
-            //         </div>
-            //       </Text>
-            //     </Text>
-            //   }
-            //   refProp="innerRef"
-            //   withinPortal
-            // >
             <Popover withinPortal withArrow>
               <Popover.Target>
                 <CurrencyBadge
@@ -122,28 +102,14 @@ export function QueueSnackbar() {
               </Popover.Target>
               <Popover.Dropdown>
                 <div className="flex flex-col items-center">
-                  <Text weight={600}>
-                    Generation Buzz Credit{' '}
-                    {/* <Text color="blue.4" span>
-                    <div className="flex flex-row flex-nowrap items-center justify-center gap-1">
-                      <CurrencyIcon
-                        currency="BUZZ"
-                        size={16}
-                        color="currentColor"
-                        fill="currentColor"
-                      />
-                      {balanceLoading ? '...' : balance.toLocaleString()}
-                    </div>
-                  </Text> */}
-                  </Text>
+                  <Text weight={600}>Generation Buzz Credit </Text>
                   <Text component={Link} variant="link" href="/articles/7012" target="_blank">
                     Learn more
                   </Text>
                 </div>
               </Popover.Dropdown>
             </Popover>
-          ) : // </Tooltip>
-          null}
+          ) : null}
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-1 py-2">
           <Text weight={500} className="flex items-center gap-1 text-sm">
@@ -195,21 +161,7 @@ export function QueueSnackbar() {
             })}
           </div>
         </div>
-        <div className="flex basis-20 items-center justify-end py-1">
-          {latestImage && latestImage.status === 'succeeded' && (
-            <Card
-              withBorder
-              radius="md"
-              p={0}
-              style={{
-                height: 42,
-              }}
-            >
-              {/* eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element */}
-              <img alt="" src={latestImage.url} className="max-h-full" />
-            </Card>
-          )}
-        </div>
+        <div className="flex basis-20 items-center justify-end py-1"></div>
       </Card>
       {requestsRemaining <= 0 && userTier === 'free' && (
         <Badge color="yellow" h={'auto'} w="100%" p={0} radius="xl" classNames={classes}>

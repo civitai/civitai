@@ -11,6 +11,7 @@ import { getVideoData } from '~/utils/media-preprocessors';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { GenForm } from '~/components/Generation/Form/GenForm';
 
 export function EnhanceVideoModal({
   sourceUrl,
@@ -76,7 +77,7 @@ export function EnhanceVideoModal({
   return (
     <Modal {...dialog} title="Upscale">
       <GenerationProvider>
-        <Form form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <GenForm form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
           <TwCard className="gap-1 border">
             <EdgeMedia2 src={sourceUrl} type="video" className="w-auto" />
             {video && (
@@ -104,7 +105,7 @@ export function EnhanceVideoModal({
           >
             Upscale
           </GenerateButton>
-        </Form>
+        </GenForm>
       </GenerationProvider>
     </Modal>
   );
