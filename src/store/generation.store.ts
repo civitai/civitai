@@ -37,7 +37,6 @@ type GenerationState = {
     args: GenerationData & {
       type: MediaType;
       workflow?: string;
-      sourceImage?: SourceImageProps;
       engine?: string;
     }
   ) => void;
@@ -115,13 +114,12 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: async ({ type, remixOf, workflow, sourceImage, engine, ...data }) => {
+      setData: async ({ type, remixOf, workflow, engine, ...data }) => {
         // TODO.Briant - cleanup at a later point in time
         useGenerationFormStore.setState({ type, workflow });
         // if (sourceImage) generationFormStore.setsourceImage(sourceImage);
         if (engine) useGenerationFormStore.setState({ engine });
         const { params } = await transformParams(data.params);
-        if (sourceImage) params.sourceImage = sourceImage;
         if (type === 'video') {
           params.process = params.sourceImage ? 'img2vid' : 'txt2vid';
         } else if (type === 'image') {

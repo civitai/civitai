@@ -94,6 +94,7 @@ export const constants = {
     'Other',
     // 'Wan Video 1.3B T2V',
     // 'Wan Video 14B T2V',
+    // 'Wan Video 14B I2V',
     // 'Wan Video 14B I2V 480p',
     // 'Wan Video 14B I2V 720p',
   ],
