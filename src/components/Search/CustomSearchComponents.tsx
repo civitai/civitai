@@ -19,7 +19,6 @@ import {
   ButtonProps,
   Chip,
   Code,
-  createStyles,
   Group,
   HoverCard,
   MultiSelect,
@@ -37,7 +36,6 @@ import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/App
 import { uniqBy } from 'lodash-es';
 import { DatePickerInput } from '@mantine/dates';
 import dayjs from 'dayjs';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
 import { Flags } from '~/shared/utils';

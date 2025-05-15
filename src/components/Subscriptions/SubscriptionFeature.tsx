@@ -1,4 +1,4 @@
-import { createStyles, Group, Paper, Stack, Text } from '@mantine/core';
+import { Group, Paper, Stack, Text } from '@mantine/core';
 import { capitalize } from 'lodash-es';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -10,27 +10,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
 
-const useStyles = createStyles((theme) => ({
-  card: {
-    backgroundColor: theme.fn.rgba(theme.colors.yellow[6], 0.2),
-    border: `1px solid ${theme.fn.rgba(theme.colors.yellow[6], 0.3)}`,
-    width: '100%',
-    maxHeight: '100%',
-    margin: 0,
-    padding: theme.spacing.md,
-    borderRadius: theme.radius.md,
-    display: 'flex',
-  },
-  title: {
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-    fontWeight: 600,
-    fontSize: 16,
-  },
-  subtitle: {
-    fontSize: 14,
-  },
-}));
-
 export const SubscriptionFeature = ({
   title,
   subtitle,
@@ -38,7 +17,6 @@ export const SubscriptionFeature = ({
   title: string | React.ReactNode;
   subtitle: string;
 }) => {
-  const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
   const { subscription } = useActiveSubscription();
@@ -50,12 +28,15 @@ export const SubscriptionFeature = ({
   const { image } = getPlanDetails(subscription.product, featureFlags);
 
   return (
-    <Paper className={classes.card} py="xs">
+    <Paper
+      className="m-0 flex max-h-full w-full rounded-md border-yellow-6/30 bg-yellow-6/20 p-4"
+      py="xs"
+    >
       <Group wrap="nowrap">
         {image && <EdgeMedia src={image} style={{ width: 50 }} />}
         <Stack gap={2}>
-          <Text className={classes.title}>{title}</Text>
-          <Text className={classes.subtitle} lh={1.2}>
+          <Text className="text-base font-semibold text-black dark:text-white">{title}</Text>
+          <Text className="text-sm" lh={1.2}>
             {subtitle}
           </Text>
         </Stack>

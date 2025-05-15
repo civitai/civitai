@@ -1,5 +1,6 @@
 import { Badge, BadgeProps } from '@mantine/core';
 import { useIsLive } from '~/hooks/useIsLive';
+import classes from './LiveNow.module.css';
 
 export function LiveNowIndicator(props: Omit<BadgeProps, 'children'>) {
   const isLive = useIsLive();
@@ -8,27 +9,19 @@ export function LiveNowIndicator(props: Omit<BadgeProps, 'children'>) {
   return (
     <Badge
       component="a"
-      style={{ cursor: 'pointer' }}
-      styles={{
-        root: {
-          '&:before': {
-            animation: `blink 2s linear infinite`,
-          },
-        },
-      }}
+      className={classes.liveNow}
       {...props}
       href="/twitch"
       target="_blank"
       variant="dot"
       color="red"
       size="sm"
-      onClick={(event) => {
+      onClick={(event: React.MouseEvent<HTMLAnchorElement>) => {
         event.stopPropagation();
       }}
     >
-      {`Live`}
+      Live
       <span className="hide-mobile"> On Twitch</span>
     </Badge>
   );
 }
- 

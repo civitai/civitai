@@ -10,7 +10,6 @@ import { SearchIndex } from '~/components/Search/parsers/base';
 import { Configure, InstantSearch, InstantSearchProps } from 'react-instantsearch';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { z } from 'zod';
@@ -22,6 +21,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
 import { UiState } from 'instantsearch.js';
 import classes from './SearchLayout.module.scss';
+import clsx from 'clsx';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -128,7 +128,7 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
   const { sidebarOpen, setSidebarOpen } = useSearchLayout();
 
   return (
-    <aside className={cx(classes.sidebar, { [classes.active]: sidebarOpen })}>
+    <aside className={clsx(classes.sidebar, { [classes.active]: sidebarOpen })}>
       <Group px="md" py="xs">
         <Tooltip label="Filters & sorting" position="bottom" withArrow>
           <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>

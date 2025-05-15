@@ -1,8 +1,8 @@
-import { AutocompleteProps, createStyles, Group, Select, Stack, Text } from '@mantine/core';
+import { AutocompleteProps, Group, Select, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconChevronDown } from '@tabler/icons-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Configure, InstantSearch, useSearchBox } from 'react-instantsearch';
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
@@ -27,12 +27,11 @@ import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
-import styles from './QuickSearchDropdown.module.scss';
+import classes from './QuickSearchDropdown.module.scss';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -140,8 +139,8 @@ export const QuickSearchDropdown = ({
   ...props
 }: QuickSearchDropdownProps) => {
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>(startingIndex ?? 'models');
-  const handleTargetChange = (value: SearchIndexKey) => {
-    setTargetIndex(value);
+  const handleTargetChange = (value: SearchIndexKey | null) => {
+    setTargetIndex(value ?? 'models');
   };
 
   const indexName = searchIndexMap[targetIndex];
@@ -211,9 +210,30 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   });
 
   const items = useMemo(() => {
-    const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: '' }));
+    const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: String(hit.id) }));
     return items;
   }, [filtered]);
+
+  const getItemFromValue = useCallback(
+    (value: string) => {
+      const item = items.find((item) => item.value === value);
+      if (!item) return null;
+
+      return item.hit;
+    },
+    [items]
+  );
+
+  const renderOption = useCallback<NonNullable<AutocompleteProps['renderOption']>>(
+    ({ option }) => {
+      const hit = getItemFromValue(option.value);
+      if (!hit) return null;
+
+      const RenderItem = IndexRenderItem[indexName] ?? ModelSearchItem;
+      return <RenderItem item={hit} />;
+    },
+    [getItemFromValue, indexName]
+  );
 
   useEffect(() => {
     // Only set the query when the debounced search changes
@@ -225,13 +245,14 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   }, [debouncedSearch, query]);
 
   return (
-    <Group className={styles.wrapper} gap={0} wrap="nowrap">
+    <Group className={classes.wrapper} gap={0} wrap="nowrap">
       {!!showIndexSelect && (
         <Select
+          className="shrink"
           classNames={{
-            root: styles.targetSelectorRoot,
-            input: styles.targetSelectorInput,
-            rightSection: styles.targetSelectorRightSection,
+            root: classes.targetSelectorRoot,
+            input: classes.targetSelectorInput,
+            section: classes.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
           defaultValue={availableIndexes[0]}
@@ -245,23 +266,23 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
             )
             .map((index) => ({ label: IndexToLabel[searchIndexMap[index]], value: index }))}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
-          sx={{ flexShrink: 1 }}
-          onChange={onIndexNameChange}
+          onChange={(value) => onIndexNameChange(value as TIndex)}
         />
       )}
       <ClearableAutoComplete
         key={indexName}
-        classNames={styles}
+        classNames={classes}
         placeholder={placeholder ?? 'Search Civitai'}
         type="search"
         maxDropdownHeight={300}
-        nothingFound={
-          !hits.length ? (
-            <Stack gap={0} align="center">
-              <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-            </Stack>
-          ) : undefined
-        }
+        // TODO: Mantine7
+        // nothingFound={
+        //   !hits.length ? (
+        //     <Stack gap={0} align="center">
+        //       <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+        //     </Stack>
+        //   ) : undefined
+        // }
         limit={
           results && results.nbHits > dropdownItemLimit
             ? dropdownItemLimit + 1 // Allow one more to show more results option
@@ -273,22 +294,23 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         onChange={setSearch}
         onClear={() => setSearch('')}
         // onBlur={() => (!isMobile ? onClear?.() : undefined)}
-        onItemSubmit={(item) => {
-          if (item.hit) {
+        onOptionSubmit={(value) => {
+          const item = getItemFromValue(value);
+          if (item) {
             onItemSelected(
               {
-                entityId: item.hit.id,
+                entityId: item.id,
                 entityType: SearchIndexEntityTypes[searchIndexMap[indexName]],
               },
-              item.hit
+              item
             );
 
             setSearch('');
           }
         }}
-        itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
+        renderOption={renderOption}
         // prevent default filtering behavior
-        filter={() => true}
+        filter={({ options }) => options}
         clearable={query.length > 0}
         {...autocompleteProps}
       />
@@ -296,7 +318,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   );
 }
 
-const IndexRenderItem: Record<SearchIndexKey, React.FC> = {
+const IndexRenderItem: Record<SearchIndexKey, React.ComponentType<any>> = {
   models: ModelSearchItem,
   articles: ArticlesSearchItem,
   users: UserSearchItem,

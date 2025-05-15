@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Center,
-  createStyles,
   Group,
   Image,
   Loader,
@@ -35,15 +34,6 @@ import { trpc } from '~/utils/trpc';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
 
-const useStyles = createStyles((theme) => ({
-  card: {
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.lg,
-  },
-}));
-
 export const DowngradeFeedbackModal = ({
   priceId,
   upcomingVaultSizeKb,
@@ -74,19 +64,19 @@ export const DowngradeFeedbackModal = ({
         <Stack>
           <Radio.Group
             value={downgradeReason}
-            orientation="vertical"
             label="Help us improve our services by leaving your feedback about the reason you want to downgrade."
             onChange={(value) => {
               setDowngradeReason(value);
             }}
             withAsterisk
-            gap="xs"
           >
-            {downgradeReasons.map((item) => (
-              <Paper key={item} withBorder radius="md" p="md">
-                <Radio value={item} label={item} />
-              </Paper>
-            ))}
+            <Stack gap="xs">
+              {downgradeReasons.map((item) => (
+                <Paper key={item} withBorder radius="md" p="md">
+                  <Radio value={item} label={item} />
+                </Paper>
+              ))}
+            </Stack>
           </Radio.Group>
           <AlertWithIcon color="red" icon={<IconAlertTriangle size={20} />} iconColor="red">
             <Stack>
@@ -169,19 +159,19 @@ export function CancelMembershipFeedbackModal() {
         <Stack>
           <Radio.Group
             value={cancelReason}
-            orientation="vertical"
             label="Help us improve our service by leaving your feedback about the reason you wish to cancel"
             onChange={(value) => {
               setCancelReason(value);
             }}
             withAsterisk
-            gap="xs"
           >
-            {cancelReasons.map((item) => (
-              <Paper key={item} withBorder radius="md" p="md">
-                <Radio value={item} label={item} />
-              </Paper>
-            ))}
+            <Stack gap="xs">
+              {cancelReasons.map((item) => (
+                <Paper key={item} withBorder radius="md" p="md">
+                  <Radio value={item} label={item} />
+                </Paper>
+              ))}
+            </Stack>
           </Radio.Group>
           <Group grow>
             <Button
@@ -430,7 +420,6 @@ export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; met
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { name, image, benefits } = meta;
-  const { classes } = useStyles();
 
   return (
     <Modal
@@ -448,7 +437,7 @@ export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; met
           </Center>
         )}
         {benefits && (
-          <Paper withBorder className={classes.card}>
+          <Paper className="h-full rounded-md bg-gray-0 p-5 dark:bg-dark-8" withBorder>
             <PlanBenefitList benefits={benefits} />
           </Paper>
         )}

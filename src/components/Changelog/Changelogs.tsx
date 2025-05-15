@@ -12,6 +12,7 @@ import {
   Paper,
   Stack,
   Text,
+  Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue, useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -19,6 +20,7 @@ import {
   IconAlertCircle,
   IconExternalLink,
   IconMinus,
+  IconPinFilled,
   IconPlus,
   IconPointFilled,
   IconSortAscending,
@@ -60,6 +62,7 @@ const changelogTypeMap: { [K in ChangelogType]: { color: MantineColor; text: str
   Policy: { color: 'teal', text: 'Policy' },
   Feature: { color: 'green', text: 'Feature' },
   Update: { color: 'violet', text: 'Update' },
+  Incident: { color: 'red', text: 'Incident' },
 };
 
 // nb: set your editor tailwind to `"classAttributes": [... ".*TWStyles"]` for this to populate
@@ -148,9 +151,18 @@ const ChangelogItem = ({
                 )}
               >
                 {lastSeen < item.effectiveAt.getTime() && (
-                  <Text className="mr-1 inline-block">
-                    <IconPointFilled color="green" size={18} />
-                  </Text>
+                  <div className="mr-1 inline-block">
+                    <Tooltip label="New" withArrow position="top" withinPortal>
+                      <IconPointFilled color="green" size={18} />
+                    </Tooltip>
+                  </div>
+                )}
+                {item.sticky && (
+                  <div className="mr-1 inline-block">
+                    <Tooltip label="Sticky" withArrow position="top" withinPortal>
+                      <IconPinFilled color="yellow" size={18} />
+                    </Tooltip>
+                  </div>
                 )}
                 {item.title}
               </span>
@@ -271,6 +283,7 @@ const defaultValues: SchemaType = {
   type: ChangelogType.Feature,
   tags: [],
   disabled: false,
+  sticky: false,
 };
 
 const CreateChangelog = ({
@@ -432,6 +445,7 @@ const CreateChangelog = ({
               <InputText name="link" label="Link" placeholder="Link to commit/article..." />
               <InputText name="cta" label="CTA" placeholder="Link for CTA..." />
               <InputCheckbox name="disabled" label="Disabled" />
+              <InputCheckbox name="sticky" label="Sticky" />
               <Group position="right">
                 <Button variant="default" onClick={handleClose}>
                   Cancel
@@ -507,7 +521,7 @@ export function Changelogs() {
     <Stack ref={ref}>
       <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Text size={26} weight="bold" className="w-full text-left sm:w-auto">
-          Changelog
+          Updates
         </Text>
 
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">

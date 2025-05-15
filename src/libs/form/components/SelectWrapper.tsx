@@ -1,8 +1,8 @@
-import { Group, Loader, Select, SelectItem, SelectProps } from '@mantine/core';
+import { Group, Loader, Select, ComboboxItem, SelectProps } from '@mantine/core';
 import { useMemo, useState, useEffect } from 'react';
 import { PresetOptions, Props as PresetOptionsProps } from './PresetOptions';
 
-type SelectItemProps<T extends string | number> = Omit<SelectItem, 'value'> & {
+type SelectItemProps<T extends string | number> = Omit<ComboboxItem, 'value'> & {
   value: T;
 };
 
@@ -39,12 +39,12 @@ export function SelectWrapper<T extends string | number>({
     if (value?.toString() !== selectedPreset) setSelectedPreset(value?.toString());
   }, [value]);
 
-  const parsedData = data.map((x): string | SelectItem => {
+  const parsedData = data.map((x): string | ComboboxItem => {
     if (typeof x === 'string') return x;
     return {
       ...x,
       value: String(x.value),
-    } as SelectItem;
+    } as ComboboxItem;
   });
 
   const parsedValue = useMemo(
@@ -57,7 +57,7 @@ export function SelectWrapper<T extends string | number>({
     [defaultValue]
   );
 
-  const handleChange = (value: string) => {
+  const handleChange = (value: string | null) => {
     const returnValue = initialType === 'number' && value != null ? Number(value) : value;
     setSelectedPreset(returnValue as string);
     onChange?.(returnValue as T);
@@ -67,7 +67,7 @@ export function SelectWrapper<T extends string | number>({
 
   return (
     <Select
-      data={parsedData as (string | SelectItem)[]}
+      data={parsedData as (string | ComboboxItem)[]}
       value={parsedValue}
       onChange={handleChange}
       defaultValue={parsedDefaultValue}
@@ -80,13 +80,13 @@ export function SelectWrapper<T extends string | number>({
             {label}
             <PresetOptions
               disabled={disabled}
-              color="blue"
               options={presets}
               value={selectedPreset}
               onChange={(value) => {
                 setSelectedPreset(value);
                 onChange?.(value as T);
               }}
+              chipPropsOverrides={{ color: 'blue' }}
             />
           </Group>
         ) : (

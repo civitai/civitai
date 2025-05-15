@@ -954,16 +954,13 @@ const reviewConditions: ReviewCondition[] = [
     reviewer: 'moderators',
   },
   {
-    condition: (tag, ctx) =>
-      tag.tag === 'bestiality' &&
-      ctx.tags.some((t) => t.tag === 'animal') &&
-      !ctx.tags.some((t) => t.tag === 'furry'),
+    condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),
     reviewer: 'moderators',
   },
-  {
-    condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),
-    reviewer: 'knights',
-  },
+  // {
+  //   condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),
+  //   reviewer: 'knights',
+  // },
   {
     condition: (tag) => env.MODERATION_KNIGHT_TAGS.includes(tag.tag),
     reviewer: 'knights',

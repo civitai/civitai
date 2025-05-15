@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { useState } from 'react';
 import { FilterButton, FilterButtonProps } from '~/components/Buttons/FilterButton';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import classes from './SelectMenu.module.scss';
 
 type SelectMenu<T extends string | number> = {
   label: React.ReactNode;
@@ -44,7 +45,7 @@ export function SelectMenu<T extends string | number>({
               <Text
                 transform="uppercase"
                 ta="center"
-                color={option.value === value ? theme.primaryColor : undefined}
+                c={option.value === value ? theme.primaryColor : undefined}
                 weight={option.value === value ? 700 : undefined}
               >
                 {option.label}
@@ -92,14 +93,14 @@ export function SelectMenuV2<T extends string | number>({
           position="bottom"
           opened={opened}
           onClose={() => setOpened(false)}
-          styles={{
-            root: { zIndex: 400 },
-            body: { padding: 16, paddingTop: 0, overflow: 'auto' },
-            drawer: { height: 'auto' },
-            header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          classNames={{
+            root: classes.root,
+            content: classes.content,
+            header: classes.header,
+            body: classes.body,
+            close: classes.close,
           }}
-          closeButtonLabel="Close sort menu"
+          closeButtonProps={{ 'aria-label': 'Close sort menu' }}
         >
           <div className="flex flex-col gap-2">
             {options.map((option) => {

@@ -7,7 +7,6 @@ import {
   Stack,
   Text,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import { Dropzone, DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
@@ -19,6 +18,8 @@ import { MIME_TYPES } from '~/server/common/mime-types';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { bytesToKB, formatBytes, formatSeconds } from '~/utils/number-helpers';
+import classes from './MultiFileInputUpload.module.scss';
+import clsx from 'clsx';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: BaseFileSchema[];
@@ -44,7 +45,6 @@ export function MultiFileInputUpload({
   onFilesValidate,
   ...props
 }: Props) {
-  const theme = useMantineTheme();
   const { uploadToS3, files: trackedFiles } = useS3Upload();
 
   const [files, filesHandlers] = useListState<BaseFileSchema>(value || []);
@@ -129,25 +129,8 @@ export function MultiFileInputUpload({
             ).map((error) => error.message);
             setErrors(errors);
           }}
-          styles={(theme) => ({
-            root:
-              !!props.error || hasErrors
-                ? {
-                    borderColor: theme.colors.red[6],
-                    marginBottom: theme.spacing.xs / 2,
-                  }
-                : undefined,
-          })}
-          sx={
-            !showDropzoneStatus
-              ? (theme) => ({
-                  '&[data-reject], &[data-reject]:hover, &[data-accept], &[data-accept]:hover': {
-                    background: theme.colors.dark[5],
-                    borderColor: theme.colors.dark[4],
-                  },
-                })
-              : undefined
-          }
+          className={clsx(dropzoneProps?.className, !showDropzoneStatus && classes.dropzone)}
+          classNames={{ root: props.error || hasErrors ? 'border-red-6 mb-[5px]' : undefined }}
         >
           <Group
             justify="center"
@@ -162,18 +145,10 @@ export function MultiFileInputUpload({
             {showDropzoneStatus ? (
               <>
                 <Dropzone.Accept>
-                  <IconUpload
-                    size={50}
-                    stroke={1.5}
-                    color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
-                  />
+                  <IconUpload size={50} stroke={1.5} className="text-blue-6 dark:text-blue-4" />
                 </Dropzone.Accept>
                 <Dropzone.Reject>
-                  <IconX
-                    size={50}
-                    stroke={1.5}
-                    color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
-                  />
+                  <IconX size={50} stroke={1.5} className="text-red-6 dark:text-red-4" />
                 </Dropzone.Reject>
                 <Dropzone.Idle>
                   <IconFileUpload size={50} stroke={1.5} />
@@ -246,15 +221,16 @@ function UploadItem({ progress, speed, timeRemaining, abort, name }: UploadItemP
         </Tooltip>
       </Group>
       <Stack gap={2}>
-        <Progress
-          sx={{ width: '100%' }}
-          size="xl"
-          value={progress}
-          label={`${Math.floor(progress)}%`}
-          color={progress < 100 ? 'blue' : 'green'}
-          striped
-          animate
-        />
+        <Progress.Root className="w-full" size="xl">
+          <Progress.Section
+            value={progress}
+            color={progress < 100 ? 'blue' : 'green'}
+            striped
+            animated
+          >
+            <Progress.Label>{Math.floor(progress)}</Progress.Label>
+          </Progress.Section>
+        </Progress.Root>
         <Group justify="space-between">
           <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
           <Text size="xs" color="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>

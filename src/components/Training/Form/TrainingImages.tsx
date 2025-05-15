@@ -27,7 +27,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { FileWithPath } from '@mantine/dropzone';
+import type { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
 import {
   hideNotification,
@@ -62,11 +62,11 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import type { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
+import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import {
   TrainingImagesSwitchLabel,
@@ -91,11 +91,11 @@ import {
   defaultTrainingStateVideo,
   getShortNameFromUrl,
   type ImageDataType,
-  LabelTypes,
+  type LabelTypes,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
-import { TrainingModelData } from '~/types/router';
+import type { TrainingModelData } from '~/types/router';
 import { createImageElement } from '~/utils/image-utils';
 import { getJSZip } from '~/utils/lazy';
 import { auditPrompt } from '~/utils/metadata/audit';
@@ -216,14 +216,13 @@ const LabelSelectModal = ({
       title={
         <Group gap="xs">
           <IconInfoCircle />
-          <Text size="lg">Found label files</Text>
+          <Text size="lg">Found labels</Text>
         </Group>
       }
     >
       <Stack>
         <Stack gap={0}>
-          <Text>You&apos;ve included some labeling (.txt) files.</Text>{' '}
-          <Text>Which type are they?</Text>
+          <Text>You&apos;ve included some labeling.</Text> <Text>Which type are they?</Text>
         </Stack>
         <Group gap="xs">
           <Text size="sm">Current type: </Text>
@@ -258,8 +257,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const thisModelVersion = model.modelVersions[0];
   const thisMediaType =
     (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)?.mediaType ?? 'image';
-  const thisDefaultTrainingState =
-    thisMediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+  const isVideo = thisMediaType === 'video';
+  const thisDefaultTrainingState = isVideo ? defaultTrainingStateVideo : defaultTrainingState;
 
   const {
     updateImage,
@@ -327,11 +326,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     autoClose: false,
   };
 
-  const mediaExts = thisMediaType === 'video' ? { ...imageExts, ...videoExts } : imageExts;
+  const mediaExts = isVideo ? { ...imageExts, ...videoExts } : imageExts;
   const allowedDropTypes = [
     ...IMAGE_MIME_TYPE,
     ...ZIP_MIME_TYPE,
-    ...(thisMediaType === 'video' ? VIDEO_MIME_TYPE : []),
+    ...(isVideo ? VIDEO_MIME_TYPE : []),
   ];
 
   const { uploading } = getUploadStatus((file) => file.meta?.versionId === thisModelVersion.id);
@@ -577,22 +576,22 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
   };
 
-  const handleImport = async (images: SelectedImage[], source: ImageSelectSource) => {
-    const importNotifId = `${thisModelVersion.id}-importing-images-${new Date().toISOString()}`;
+  const handleImport = async (assets: SelectedImage[], source: ImageSelectSource) => {
+    const importNotifId = `${thisModelVersion.id}-importing-asset-${new Date().toISOString()}`;
     showNotification({
       id: importNotifId,
       loading: true,
       autoClose: false,
       withCloseButton: false,
-      message: `Importing ${images.length} ${source === 'training' ? 'dataset' : 'image'}${
-        images.length !== 1 ? 's' : ''
+      message: `Importing ${assets.length} ${source === 'training' ? 'dataset' : 'asset'}${
+        assets.length !== 1 ? 's' : ''
       }...`,
     });
 
     let files;
     if (source === 'training') {
       files = await Promise.all(
-        images.map(async (i) => {
+        assets.map(async (i) => {
           try {
             const file = await parseExisting(Number(i.url));
             if (!file) return;
@@ -609,7 +608,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       );
     } else {
       files = await Promise.all(
-        images.map((i, idx) =>
+        assets.map((i, idx) =>
           limit(async () => {
             try {
               const result = await fetch(getEdgeUrl(i.url));
@@ -617,9 +616,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
               const blob = await result.blob();
               return {
-                file: new File([blob], `imported_${new Date().toISOString()}_${idx}.jpg`, {
-                  type: IMAGE_MIME_TYPE.includes(blob.type as never) ? blob.type : MIME_TYPES.jpeg,
-                }),
+                file: new File(
+                  [blob],
+                  `imported_${new Date().toISOString()}_${idx}.${
+                    i.type === 'video' ? 'mp4' : 'jpg'
+                  }`,
+                  {
+                    type: [...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE].includes(blob.type as never)
+                      ? blob.type
+                      : i.type === 'video'
+                      ? MIME_TYPES.mp4
+                      : MIME_TYPES.jpeg,
+                  }
+                ),
                 label: i.label,
                 url: i.url,
               };
@@ -1100,7 +1109,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
 
     if (imageList.length) {
-      if (thisMediaType === 'video' && imageList.some((i) => i.label.length === 0)) {
+      if (isVideo && imageList.some((i) => i.label.length === 0)) {
         showErrorNotification({
           error: new Error('All files must have a label for video training'),
           autoClose: false,
@@ -1256,10 +1265,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                           openImageSelectModal({
                             title: 'Select Media',
                             selectSource: 'generation',
-                            onSelect: async (images) => {
-                              await handleImport(images, 'generation');
+                            onSelect: async (media) => {
+                              await handleImport(media, 'generation');
                             },
                             importedUrls,
+                            videoAllowed: isVideo,
                           });
                         }}
                       >
@@ -1271,10 +1281,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                           openImageSelectModal({
                             title: 'Select Media',
                             selectSource: 'uploaded',
-                            onSelect: async (images) => {
-                              await handleImport(images, 'uploaded');
+                            onSelect: async (media) => {
+                              await handleImport(media, 'uploaded');
                             },
                             importedUrls,
+                            videoAllowed: isVideo,
                           });
                         }}
                       >
@@ -1290,6 +1301,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                               await handleImport(datasets, 'training');
                             },
                             importedUrls,
+                            videoAllowed: isVideo,
                           });
                         }}
                       >
@@ -1299,7 +1311,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
                     <Divider label="OR" labelPosition="center" />
 
-                    {thisMediaType === 'video' && (
+                    {isVideo && (
                       <DismissibleAlert
                         color="green"
                         // eslint-disable-next-line tailwindcss/migration-from-tailwind-2
@@ -1318,9 +1330,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     <ImageDropzone
                       onDrop={handleDrop}
                       label={`${
-                        thisMediaType === 'video'
-                          ? 'Drag images, zips, or videos'
-                          : 'Drag images or zips'
+                        isVideo ? 'Drag images, zips, or videos' : 'Drag images or zips'
                       } here (or click to select files)`}
                       description={
                         <Text mt="xs" fz="sm" c={theme.colors.red[5]}>

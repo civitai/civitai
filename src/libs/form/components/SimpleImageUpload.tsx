@@ -1,6 +1,5 @@
 import {
   ActionIcon,
-  Box,
   Group,
   Input,
   InputWrapperProps,
@@ -8,15 +7,16 @@ import {
   Paper,
   Text,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import { Dropzone, DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
-import { MediaType } from '~/shared/utils/prisma/enums';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
 
+import styles from './SimpleImageUpload.module.scss';
+
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -51,7 +51,6 @@ export function SimpleImageUpload({
   withNsfwLevel = true,
   ...props
 }: SimpleImageUploadProps) {
-  const theme = useMantineTheme();
   const { uploadToCF, files: imageFiles, resetFiles } = useCFImageUpload();
   const imageFile = imageFiles[0];
   // const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
@@ -124,50 +123,19 @@ export function SimpleImageUpload({
               variant={aspectRatio ? 'filled' : 'light'}
               color="red"
               onClick={handleRemove}
-              sx={(theme) => ({
-                position: 'absolute',
-                top: theme.spacing.xs * 0.4,
-                right: theme.spacing.xs * 0.4,
-                zIndex: 1,
-              })}
+              className="absolute right-1 top-1 z-[1]"
             >
               <IconTrash />
             </ActionIcon>
           </Tooltip>
 
-          <Box
-            sx={(theme) =>
+          <div
+            // TODO: Mantine7: Not sure if this will work :^)
+            style={{ '--aspect-ratio': aspectRatio } as React.CSSProperties}
+            className={
               aspectRatio
-                ? {
-                    position: 'relative',
-                    width: '100%',
-                    overflow: 'hidden',
-                    height: 0,
-                    paddingBottom: `${(aspectRatio * 100).toFixed(3)}%`,
-                    borderRadius: theme.radius.md,
-
-                    '& > img': {
-                      position: 'absolute',
-                      top: '50%',
-                      left: '50%',
-                      transform: 'translate(-50%, -50%)',
-                      height: 'auto',
-                      objectFit: 'cover',
-                      borderRadius: theme.radius.md,
-                    },
-                  }
-                : {
-                    height: 'calc(100vh / 3)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-
-                    '& > img': {
-                      height: '100%',
-                      objectFit: 'cover',
-                      borderRadius: theme.radius.md,
-                    },
-                  }
+                ? `${styles.imageContainer} ${styles.aspectRatio}`
+                : `${styles.imageContainer} ${styles.default}`
             }
           >
             {withNsfwLevel && !!value && typeof value !== 'string' && (
@@ -183,20 +151,14 @@ export function SimpleImageUpload({
               style={{ maxWidth: aspectRatio ? '100%' : undefined }}
               anim
             />
-          </Box>
+          </div>
         </div>
       ) : (
         <Dropzone
           mt={5}
-          styles={(theme) => ({
-            root:
-              !!props.error || !!error
-                ? {
-                    borderColor: theme.colors.red[6],
-                    marginBottom: theme.spacing.xs / 2,
-                  }
-                : undefined,
-          })}
+          classNames={{
+            root: props.error || error ? 'border-red-6 mb-[5px]' : undefined,
+          }}
           accept={IMAGE_MIME_TYPE}
           {...dropzoneProps}
           onDrop={handleDrop}
@@ -205,21 +167,13 @@ export function SimpleImageUpload({
         >
           <Dropzone.Accept>
             <Group justify="center" gap="xs">
-              <IconUpload
-                size={32}
-                stroke={1.5}
-                color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
-              />
-              <Text color="dimmed">Drop image here</Text>
+              <IconUpload size={32} stroke={1.5} className="text-blue-6 dark:text-blue-4" />
+              <Text c="dimmed">Drop image here</Text>
             </Group>
           </Dropzone.Accept>
           <Dropzone.Reject>
             <Group justify="center" gap="xs">
-              <IconX
-                size={32}
-                stroke={1.5}
-                color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
-              />
+              <IconX size={32} stroke={1.5} className="text-red-6 dark:text-red-4" />
               <Text>File not accepted</Text>
             </Group>
           </Dropzone.Reject>
