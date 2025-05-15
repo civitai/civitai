@@ -355,7 +355,7 @@ export function ImageSelectFiltersProfileDropdown({
             root: {
               zIndex: 400,
             },
-            drawer: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',

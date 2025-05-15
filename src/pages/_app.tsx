@@ -1,5 +1,4 @@
 // src/pages/_app.tsx
-import { ColorScheme } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, getCookies } from 'cookies-next';
@@ -86,7 +85,7 @@ type CustomAppProps = {
   Component: CustomNextPage;
 } & AppProps<{
   session: Session | null;
-  colorScheme: ColorScheme;
+  colorScheme: 'light' | 'dark' | 'auto';
   cookies: ParsedCookies;
   flags: FeatureAccess;
   seed: number;

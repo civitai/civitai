@@ -6,7 +6,6 @@ import {
   Box,
   Center,
   Container,
-  createStyles,
   Divider,
   Grid,
   Group,
@@ -14,6 +13,8 @@ import {
   Stack,
   Text,
   Title,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import { ArticleEngagementType, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
@@ -67,6 +68,7 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { isDefined } from '~/utils/type-guards';
+import classes from './[[...slug]].module.scss';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -92,7 +94,8 @@ export const getServerSideProps = createServerSideProps({
 const MAX_WIDTH = 1320;
 
 function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { classes, theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const currentUser = useCurrentUser();
   const mobile = useContainerSmallerThan('sm');
   const { setImages, onSetImage, images } = useImageViewerCtx();
@@ -152,7 +155,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       <InteractiveTipBuzzButton toUserId={article.user.id} entityType="Article" entityId={id}>
         <IconBadge
           radius="sm"
-          sx={{ cursor: 'pointer' }}
+          style={{ cursor: 'pointer' }}
           color="gray"
           size="lg"
           h={28}
@@ -179,7 +182,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     style={{ fill: isFavorite ? theme.colors.gray[2] : undefined }}
                   />
                 }
-                sx={{ cursor: 'pointer' }}
+                style={{ cursor: 'pointer' }}
                 onClick={() => toggle(ArticleEngagementType.Favorite)}
               >
                 <Text className={classes.badgeText}>
@@ -228,7 +231,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           <LoadingOverlay visible={isRefetching || upsertArticleMutation.isLoading} />
           <Stack gap={8} mb="xl">
             <Group justify="space-between" wrap="nowrap">
-              <Title weight="bold" className={classes.title} order={1}>
+              <Title fw="bold" className={classes.title} order={1}>
                 {article.title}
               </Title>
               <Group align="center" className={classes.titleWrapper} wrap="nowrap">
@@ -273,7 +276,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                         <Badge
                           component="a"
                           color="gray"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
+                          variant={colorScheme === 'dark' ? 'filled' : undefined}
                           sx={{ cursor: 'pointer' }}
                         >
                           {tag.name}
@@ -296,7 +299,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             )}
           </Stack>
           <Grid gutter="xl">
-            <Grid.Col xs={12} md={8}>
+            <Grid.Col span={{ base: 12, md: 8 }}>
               <Stack gap="xs">
                 {image && (
                   <AspectRatio
@@ -371,7 +374,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </Group>
               </Stack>
             </Grid.Col>
-            <Grid.Col xs={12} md={4}>
+            <Grid.Col span={{ base: 12, md: 4 }}>
               <Sidebar
                 creator={article.user}
                 attachments={article.attachments}
@@ -391,29 +394,3 @@ export default Page(ArticleDetailsPage, {
     return <ImageViewer>{children}</ImageViewer>;
   },
 });
-
-const useStyles = createStyles((theme) => ({
-  titleWrapper: {
-    gap: theme.spacing.xs,
-
-    [containerQuery.smallerThan('md')]: {
-      gap: theme.spacing.xs * 0.4,
-    },
-  },
-
-  title: {
-    wordBreak: 'break-word',
-    [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.xs * 2.4, // 24px
-      width: '100%',
-      paddingBottom: 0,
-    },
-  },
-
-  badgeText: {
-    fontSize: theme.fontSizes.md,
-    [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.sm,
-    },
-  },
-}));

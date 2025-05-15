@@ -7,7 +7,6 @@ import {
   Stack,
   Text,
   Title,
-  createStyles,
   BadgeProps,
   Tooltip,
   Accordion,
@@ -19,6 +18,8 @@ import {
   ScrollArea,
   Modal,
   NumberInput,
+  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -97,6 +98,7 @@ import { getQueryKey } from '@trpc/react-query';
 import { useDidUpdate } from '@mantine/hooks';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { Page } from '~/components/AppLayout/Page';
+import classes from './[[...slug]].module.scss';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -121,7 +123,6 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { classes, theme } = useStyles();
   const mobile = useContainerSmallerThan('sm');
   const queryUtils = trpc.useUtils();
   const { bounty, loading } = useQueryBounty({ id });
@@ -129,6 +130,8 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
   const { setImages, onSetImage } = useImageViewerCtx();
   const { toggle, engagements, toggling } = useBountyEngagement();
   const isDeletingImage = !!useIsMutating(getQueryKey(trpc.image.delete));
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   useDidUpdate(() => {
     if (bounty?.id && !isDeletingImage) queryUtils.bounty.getById.invalidate({ id: bounty.id });
@@ -172,7 +175,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
     radius: 'sm',
     size: 'lg',
     color: 'gray',
-    sx: { cursor: 'pointer' },
+    style: { cursor: 'pointer' },
   };
 
   const expired = bounty.expiresAt < new Date();
@@ -201,7 +204,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
           <Stack gap="xs" mb="xl">
             <Group justify="space-between" className={classes.titleWrapper} wrap="nowrap">
               <Group gap="xs">
-                <Title weight="bold" className={classes.title} lineClamp={2} order={1}>
+                <Title fw="bold" className={classes.title} lineClamp={2} order={1}>
                   {bounty.name}
                 </Title>
                 <Group gap={8}>
@@ -274,7 +277,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                   >
                     {abbreviateNumber(bounty.stats?.commentCountAllTime ?? 0)}
                   </IconBadge>
-                  <IconBadge {...defaultBadgeProps} icon={<IconSwords size={18} />} sx={undefined}>
+                  <IconBadge {...defaultBadgeProps} icon={<IconSwords size={18} />}>
                     {abbreviateNumber(bounty.stats?.entryCountAllTime ?? 0)}
                   </IconBadge>
                 </Group>
@@ -301,7 +304,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                           component="a"
                           size="sm"
                           color="gray"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
+                          variant={colorScheme === 'dark' ? 'filled' : undefined}
                           sx={{ cursor: 'pointer' }}
                         >
                           {tag.name}
@@ -349,7 +352,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
         <Container ref={discussionSectionRef} size="xl" mt={32}>
           <Stack gap="xl">
             <Group justify="space-between">
-              <Title id="comments" order={2} size={28} weight={600}>
+              <Title id="comments" order={2} size={28} fw={600}>
                 Discussion
               </Title>
             </Group>
@@ -362,7 +365,8 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
 }
 
 const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
-  const { theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
@@ -566,12 +570,11 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             h={36}
             py={2}
             px={4}
-            sx={(theme) => ({
-              background:
-                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+            style={{
+              background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
               flexGrow: 1,
               borderRadius: theme.radius.xs,
-            })}
+            }}
             wrap="nowrap"
           >
             <Tooltip label="Minimum amount to add">
@@ -584,7 +587,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               variant="filled"
               h="100%"
               disabled={isLoading}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 // Ignore track error
@@ -608,7 +611,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                     min={minUnitAmount}
                     step={5}
                     value={addToBountyAmount}
-                    onChange={(val) => setAddToBountyAmount(val ?? minUnitAmount)}
+                    onChange={(val) => setAddToBountyAmount(Number(val ?? minUnitAmount))}
                     mb="md"
                   />
                   <Text size="sm">
@@ -669,12 +672,10 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                       });
                     await handleEngagementClick('Track');
                   }}
-                  color={isTracked ? 'green' : theme.colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
+                  color={isTracked ? 'green' : colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
                   sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                 >
-                  <IconViewfinder
-                    color={theme.colorScheme === 'light' ? theme.black : 'currentColor'}
-                  />{' '}
+                  <IconViewfinder color={colorScheme === 'light' ? theme.black : 'currentColor'} />{' '}
                 </Button>
               </LoginRedirect>
             </div>
@@ -684,10 +685,10 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               <LoginRedirect reason="perform-action">
                 <Button
                   onClick={() => handleEngagementClick('Favorite')}
-                  color={isFavorite ? 'red' : theme.colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
+                  color={isFavorite ? 'red' : colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
                   sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                 >
-                  <IconHeart color={theme.colorScheme === 'light' ? theme.black : 'currentColor'} />
+                  <IconHeart color={colorScheme === 'light' ? theme.black : 'currentColor'} />
                 </Button>
               </LoginRedirect>
             </div>
@@ -697,7 +698,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               <ShareButton url={router.asPath} title={bounty.name}>
                 <Button
                   sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                  color={theme.colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
+                  color={colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
                 >
                   <IconShare3 />
                 </Button>
@@ -743,7 +744,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           content: { padding: 0 },
           item: {
             overflow: 'hidden',
-            borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+            borderColor: colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
             boxShadow: theme.shadows.sm,
           },
           control: {
@@ -761,7 +762,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               labelWidth="30%"
               withBorder
               paperProps={{
-                sx: {
+                style: {
                   borderLeft: 0,
                   borderRight: 0,
                   borderBottom: 0,
@@ -782,7 +783,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                 labelWidth="70%"
                 withBorder
                 paperProps={{
-                  sx: {
+                  style: {
                     borderLeft: 0,
                     borderRight: 0,
                     borderBottom: 0,
@@ -796,10 +797,10 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         {filesCount > 0 && (
           <Accordion.Item
             value="files"
-            sx={(theme) => ({
+            style={{
               marginTop: theme.spacing.md,
               marginBottom: theme.spacing.md,
-            })}
+            }}
           >
             <Accordion.Control>
               <Group justify="space-between">
@@ -810,7 +811,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               <ScrollArea.Autosize mah={300}>
                 <Stack gap={2}>
                   {filesCount > 0 ? (
-                    <SimpleGrid cols={1} gap={2}>
+                    <SimpleGrid cols={1} spacing={2}>
                       {files.map((file) => (
                         <AttachmentCard key={file.id} {...file} />
                       ))}
@@ -833,30 +834,11 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   );
 };
 
-const useStyles = createStyles((theme) => ({
-  titleWrapper: {
-    gap: theme.spacing.xs,
-
-    [containerQuery.smallerThan('md')]: {
-      gap: theme.spacing.xs * 0.4,
-      alignItems: 'flex-start',
-    },
-  },
-
-  title: {
-    wordBreak: 'break-word',
-    [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.xs * 2.4, // 24px
-      width: '100%',
-      paddingBottom: 0,
-    },
-  },
-}));
-
 const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
   const currentUser = useCurrentUser();
-  const { theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const {
     data: entries,
@@ -899,9 +881,9 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
     <Container
       fluid
       my="md"
-      sx={(theme) => ({
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-      })}
+      style={{
+        background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+      }}
     >
       <Container size="xl">
         <Stack gap="md" py={32}>
@@ -964,12 +946,12 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   return (
     <Wrapper>
       <SimpleGrid
-        gap="sm"
-        breakpoints={[
-          { minWidth: 'xs', cols: 1 },
-          { minWidth: 'sm', cols: 2 },
-          { minWidth: 'md', cols: 4 },
-        ]}
+        spacing="sm"
+        cols={{
+          base: 1,
+          sm: 2,
+          md: 4,
+        }}
         style={{ width: '100%' }}
       >
         {filteredEntries.map((entry) => (
@@ -1017,7 +999,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             onClick={() => fetchNextPage()}
             loading={isFetchingNextPage}
             color="gray"
-            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            variant={colorScheme === 'dark' ? 'filled' : 'light'}
           >
             {isFetchingNextPage ? 'Loading more...' : 'Load more'}
           </Button>

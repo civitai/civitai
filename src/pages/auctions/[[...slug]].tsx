@@ -217,7 +217,7 @@ export default function Auctions({
         deIndex={slug === MY_BIDS}
       />
       <Container size="xl" h="100%" data-tour="auction:start">
-        <ContainerGrid gutter="xl" my="sm" h="100%">
+        <ContainerGrid gutter="xl" className="my-8 h-full">
           {!isMobile && (
             <ContainerGrid.Col xs={12} md={4}>
               <Box
@@ -244,13 +244,13 @@ export default function Auctions({
         size="90%"
         position="bottom"
         styles={{
-          drawer: {
+          content: {
             maxHeight: 'calc(100dvh - var(--header-height))',
             overflowY: 'auto',
           },
           body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
           header: { padding: '6px 16px' },
-          closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
         }}
         title={
           <Text size="lg" weight={500}>

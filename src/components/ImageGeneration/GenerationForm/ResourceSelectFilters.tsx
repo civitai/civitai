@@ -189,7 +189,7 @@ export function ResourceSelectFiltersDropdown() {
           size="90%"
           position="bottom"
           styles={{
-            root: {
+            content: {
               zIndex: 400,
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',

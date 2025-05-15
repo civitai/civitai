@@ -168,14 +168,14 @@ export function ChangelogFiltersDropdown() {
           size="90%"
           position="bottom"
           styles={{
-            drawer: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}

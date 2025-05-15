@@ -217,7 +217,7 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
           size="90%"
           position="bottom"
           styles={{
-            root: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',

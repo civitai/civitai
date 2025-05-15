@@ -6,8 +6,8 @@ import {
   Drawer,
   ScrollArea,
   Group,
-   ButtonProps,
-   useComputedColorScheme,
+  ButtonProps,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconFilter, IconChevronDown } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -16,7 +16,6 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import classes from './AdaptiveFiltersDropdown.module.scss';
 import clsx from 'clsx';
 
- 
 export function AdaptiveFiltersDropdown({
   children,
   count,
@@ -69,7 +68,7 @@ export function AdaptiveFiltersDropdown({
           position="bottom"
           classNames={{ root: dropdownProps?.className }}
           styles={{
-            root: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',

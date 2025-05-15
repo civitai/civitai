@@ -116,7 +116,7 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
             },
           }}
           styles={{
-            root: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
