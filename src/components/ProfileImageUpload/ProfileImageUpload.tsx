@@ -103,7 +103,7 @@ export function ProfileImageUpload({
             onDrop={handleDrop}
             accept={IMAGE_MIME_TYPE}
             maxFiles={1}
-            sx={{
+            style={{
               flex: 1,
               display: 'flex',
               justifyContent: 'center',

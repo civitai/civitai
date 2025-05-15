@@ -1,4 +1,4 @@
-import { ActionIcon, Card, Center, createStyles, Indicator, Loader, Stack } from '@mantine/core';
+import { ActionIcon, Card, Center, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
@@ -20,22 +20,7 @@ import { generationPanel } from '~/store/generation.store';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-
-const useStyles = createStyles((theme) => ({
-  reactions: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    borderRadius: theme.radius.sm,
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
-        : theme.colors.gray[0],
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    padding: 4,
-  },
-}));
+import classes from './ModelCarousel.module.scss';
 
 export function ModelCarousel(props: Props) {
   return (
@@ -49,10 +34,7 @@ export function ModelCarousel(props: Props) {
 
 function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
   const features = useFeatureFlags();
-  const { classes } = useStyles();
-
   const { running, helpers } = useTourContext();
-
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
@@ -100,11 +82,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                     {(safe) => (
                       <>
                         <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                        <Stack
-                          gap="xs"
-                          align="flex-end"
-                          className="absolute right-2 top-2 z-10"
-                        >
+                        <Stack gap="xs" align="flex-end" className="absolute right-2 top-2 z-10">
                           <ImageContextMenu image={image} />
                           {features.imageGeneration &&
                             (image.hasPositivePrompt ?? image.hasMeta) && (

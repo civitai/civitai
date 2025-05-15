@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Center,
-  createStyles,
   Group,
   Loader,
   MantineTheme,
@@ -16,6 +15,8 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -126,18 +127,8 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles(() => ({
-  ctaContainer: {
-    width: '100%',
-    flexWrap: 'wrap',
-    ['> *']: { flexGrow: 1 },
-
-    [containerQuery.largerThan('sm')]: {
-      ['> *']: { flexGrow: 0 },
-    },
-  },
-}));
+import classes from './ModelVersionDetails.module.scss';
+import clsx from 'clsx';
 
 export function ModelVersionDetails({
   model,
@@ -146,8 +137,9 @@ export function ModelVersionDetails({
   onBrowseClick,
   onFavoriteClick,
 }: Props) {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
-  const { classes, cx } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -587,7 +579,7 @@ export function ModelVersionDetails({
         {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)}){' '}
         {file.visibility !== 'Public' && (
           <Tooltip label="Only visible to you" position="top" withArrow>
-            <ThemeIcon color="blue" size="xs" sx={{ alignSelf: 'center' }} ml="xs">
+            <ThemeIcon color="blue" size="xs" style={{ alignSelf: 'center' }} ml="xs">
               <IconLock />
             </ThemeIcon>
           </Tooltip>
@@ -606,9 +598,9 @@ export function ModelVersionDetails({
       key={file.id}
       radius={0}
       py="xs"
-      sx={(theme) => ({
-        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-      })}
+      style={{
+        backgroundColor: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+      }}
     >
       <Stack gap={4}>
         <Group justify="space-between" wrap="nowrap">
@@ -747,7 +739,7 @@ export function ModelVersionDetails({
           ) : (
             <Stack gap={4}>
               <Group gap="xs" className={classes.ctaContainer}>
-                <Group gap="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} wrap="nowrap">
+                <Group gap="xs" className="flex-1 *:grow" wrap="nowrap">
                   {couldGenerate && (
                     <GenerateButton
                       model={model}
@@ -757,7 +749,7 @@ export function ModelVersionDetails({
                       canGenerate={canGenerate}
                       data-tour="model:create"
                       data-activity="create:model"
-                      sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                      style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                       disabled={isLoadingAccess || !!model.mode}
                       generationPrice={
                         !hasGeneratePermissions &&
@@ -786,7 +778,7 @@ export function ModelVersionDetails({
                             onClick={onClick}
                             leftIcon={icon}
                             disabled={!primaryFile}
-                            sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                            style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                             fullWidth
                           >
                             {label}
@@ -879,7 +871,7 @@ export function ModelVersionDetails({
                     </DownloadButton>
                   )}
                 </Group>
-                <Group gap="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} wrap="nowrap">
+                <Group gap="xs" className="flex-1 *:grow" wrap="nowrap">
                   <Tooltip label="Share" position="top" withArrow>
                     <div>
                       <ShareButton
@@ -1108,8 +1100,7 @@ export function ModelVersionDetails({
               content: { padding: 0 },
               item: {
                 overflow: 'hidden',
-                borderColor:
-                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+                borderColor: colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
                 boxShadow: theme.shadows.sm,
               },
               control: {
@@ -1130,7 +1121,11 @@ export function ModelVersionDetails({
                         passHref
                         legacyBehavior
                       >
-                        <Anchor variant="text" onClick={(e) => e.stopPropagation()} inherit>
+                        <Anchor
+                          variant="text"
+                          onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                          inherit
+                        >
                           {collection.name}
                         </Anchor>
                       </Link>
@@ -1144,10 +1139,10 @@ export function ModelVersionDetails({
                     {isOwnerOrMod && (
                       <Anchor
                         size="sm"
-                        className={cx(
-                          settingShowcase && 'text-dark-2 cursor-not-allowed pointer-events-none'
+                        className={clsx(
+                          settingShowcase && 'pointer-events-none cursor-not-allowed text-dark-2'
                         )}
-                        onClick={(e) => {
+                        onClick={(e: React.MouseEvent) => {
                           e.stopPropagation();
                           e.preventDefault();
                           if (model.user.username)
@@ -1177,14 +1172,14 @@ export function ModelVersionDetails({
                   {showEditButton && (
                     <Menu withinPortal>
                       <Menu.Target>
-                        <Anchor size="sm" onClick={(e) => e.stopPropagation()}>
+                        <Anchor size="sm" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                           Edit
                         </Anchor>
                       </Menu.Target>
                       <Menu.Dropdown>
                         <Menu.Item
                           component={Link}
-                          onClick={(e) => e.stopPropagation()}
+                          onClick={(e: React.MouseEvent) => e.stopPropagation()}
                           href={`/models/${version.modelId}/edit`}
                           className={!features.canWrite ? 'pointer-events-none' : undefined}
                         >
@@ -1192,7 +1187,7 @@ export function ModelVersionDetails({
                         </Menu.Item>
                         <Menu.Item
                           component={Link}
-                          onClick={(e) => e.stopPropagation()}
+                          onClick={(e: React.MouseEvent) => e.stopPropagation()}
                           href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                           className={!features.canWrite ? 'pointer-events-none' : undefined}
                         >
@@ -1209,7 +1204,7 @@ export function ModelVersionDetails({
                   labelWidth="30%"
                   withBorder
                   paperProps={{
-                    sx: {
+                    style: {
                       borderLeft: 0,
                       borderRight: 0,
                       borderBottom: 0,
@@ -1222,11 +1217,11 @@ export function ModelVersionDetails({
             {isDownloadable && (
               <Accordion.Item
                 value="version-files"
-                sx={(theme) => ({
+                style={{
                   marginTop: theme.spacing.md,
                   marginBottom: !model.locked ? theme.spacing.md : undefined,
                   borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
-                })}
+                }}
               >
                 <Accordion.Control disabled={archived}>
                   <Group justify="space-between">
@@ -1269,18 +1264,16 @@ export function ModelVersionDetails({
                         href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
                         radius={0}
                         py="xs"
-                        sx={(theme) => ({
+                        style={{
                           cursor: 'pointer',
                           backgroundColor:
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[6]
-                              : theme.colors.gray[0],
-                        })}
+                            colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                        }}
                         data-activity="follow-recommendation:details"
                       >
                         <Stack gap={4}>
                           <Group justify="space-between" gap={8} wrap="nowrap">
-                            <Text size="xs" weight={500} lineClamp={2}>
+                            <Text size="xs" fw={500} lineClamp={2}>
                               {resource.model.name}
                             </Text>
                             <Badge size="xs">{getDisplayName(resource.model.type)}</Badge>
@@ -1490,7 +1483,7 @@ type Props = {
 function VersionDescriptionModal({ description }: { description: string }) {
   const dialog = useDialogContext();
   return (
-    <Modal {...dialog} title="About this version" overflow="inside" size="lg" centered>
+    <Modal {...dialog} title="About this version" size="lg" centered>
       <RenderHtml html={description} />
     </Modal>
   );

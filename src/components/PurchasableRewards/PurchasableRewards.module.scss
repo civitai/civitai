@@ -1,0 +1,16 @@
+.rewardCard {
+  background-color: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-0));
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-sm);
+  height: 100%;
+  width: 100%;
+}
+
+.renderHtmlYoutube {
+  font-size: var(--mantine-font-size-sm);
+
+  [data-youtube-video] iframe {
+    width: 100% !important;
+    min-height: 225px;
+  }
+}

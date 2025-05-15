@@ -64,7 +64,7 @@ export function ToggleSearchableMenuItem({ entityType, entityId }: Props) {
           <IconSearch size={14} stroke={1.5} />
         )
       }
-      onClick={(e) => {
+      onClick={(e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         onUpdateAvailability({

@@ -1,4 +1,4 @@
-import { Accordion, Button, Text, Anchor, Badge, createStyles } from '@mantine/core';
+import { Accordion, Button, Text, Anchor, Badge } from '@mantine/core';
 import {
   ResourceSelectMultiple,
   ResourceSelectMultipleProps,
@@ -10,6 +10,7 @@ import { IconPlus } from '@tabler/icons-react';
 import { withController } from '~/libs/form/hoc/withController';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useState } from 'react';
+import classes from './ResourceSelect.module.scss';
 
 export function ResourceSelectMultipleStandalone(props: ResourceSelectMultipleProps) {
   const status = useGenerationStatus();
@@ -17,7 +18,6 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
   const currentUser = useCurrentUser();
   const resourceIds = !!props.value?.length ? props.value.map((x) => x.id) : [];
   const atLimit = resourceIds.length >= status.limits.resources;
-  const { classes } = useStyles();
   const [opened, setOpened] = useState(false);
 
   return (
@@ -46,7 +46,7 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
                 component="span"
                 size="compact-md"
                 variant="light"
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   setOpened(true);
@@ -66,7 +66,11 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
             {atLimit && (!currentUser || currentUser.tier === 'free') && (
               <Text size="xs">
                 <Link legacyBehavior href="/pricing" passHref>
-                  <Anchor color="yellow" rel="nofollow" onClick={(e) => e.stopPropagation()}>
+                  <Anchor
+                    color="yellow"
+                    rel="nofollow"
+                    onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                  >
                     Become a member
                   </Anchor>
                 </Link>{' '}
@@ -100,40 +104,3 @@ export const InputResourceSelectMultipleStandalone = withController(
     value: field.value,
   })
 );
-
-const useStyles = createStyles((theme) => ({
-  accordionItem: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff',
-
-    '&:first-of-type': {
-      borderTopLeftRadius: theme.radius.sm,
-      borderTopRightRadius: theme.radius.sm,
-    },
-
-    '&:last-of-type': {
-      borderBottomLeftRadius: theme.radius.sm,
-      borderBottomRightRadius: theme.radius.sm,
-    },
-
-    '&[data-active]': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : `#fff`,
-    },
-  },
-  accordionControl: {
-    padding: '8px 8px 8px 12px',
-
-    '&:hover': {
-      background: 'transparent',
-    },
-
-    '&[data-active]': {
-      borderRadius: '0 !important',
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-      }`,
-    },
-  },
-  accordionContent: {
-    padding: '8px 12px 12px 12px',
-  },
-}));

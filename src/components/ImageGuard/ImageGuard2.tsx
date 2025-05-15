@@ -1,4 +1,13 @@
-import { Alert, Badge, BadgeProps, Button, Text } from '@mantine/core';
+import {
+  Alert,
+  Badge,
+  BadgeProps,
+  Button,
+  rgba,
+  Text,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Router from 'next/router';
@@ -159,6 +168,9 @@ function ImageGuardContentInner({
   children: React.ReactNode;
   inView?: boolean;
 }) {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
+
   return (
     <>
       {(inView === undefined || inView) && !show && explain && (
@@ -180,16 +192,16 @@ function ImageGuardContentInner({
                 className="pointer-events-auto"
                 onClick={toggle}
                 radius="xl"
-                sx={(theme) => ({
-                  color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
-                  backgroundColor: theme.fn.rgba(
-                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                style={(theme) => ({
+                  color: colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
+                  backgroundColor: rgba(
+                    colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
                     0.6
                   ),
                   boxShadow: theme.shadows.sm,
                   '&:hover': {
-                    backgroundColor: theme.fn.rgba(
-                      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                    backgroundColor: rgba(
+                      colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
                       0.7
                     ),
                   },
@@ -279,7 +291,7 @@ function BlurToggle({
         className={badgeClass}
         onClick={
           isOwnerOrModerator
-            ? (e) => {
+            ? (e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });

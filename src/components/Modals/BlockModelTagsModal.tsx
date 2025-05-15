@@ -49,27 +49,23 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
             <Text size="sm" color="dimmed">
               Select the tags you want to add to your blocking list
             </Text>
-            <Chip.Group
-              gap={4}
-              justify="center"
-              value={selectedTags}
-              onChange={setSelectedTags}
-              multiple
-            >
-              {modelTags.map((tag) => {
-                const selected = selectedTags.includes(String(tag.id));
+            <Chip.Group value={selectedTags} onChange={setSelectedTags} multiple>
+              <Group gap={4} justify="center">
+                {modelTags.map((tag) => {
+                  const selected = selectedTags.includes(String(tag.id));
 
-                return (
-                  <Chip
-                    key={tag.id}
-                    color={selected ? 'red' : undefined}
-                    radius="xs"
-                    value={String(tag.id)}
-                  >
-                    <span>{tag.name}</span>
-                  </Chip>
-                );
-              })}
+                  return (
+                    <Chip
+                      key={tag.id}
+                      color={selected ? 'red' : undefined}
+                      radius="xs"
+                      value={String(tag.id)}
+                    >
+                      <span>{tag.name}</span>
+                    </Chip>
+                  );
+                })}
+              </Group>
             </Chip.Group>
             <Group justify="space-between">
               <Button variant="default" onClick={context.close}>

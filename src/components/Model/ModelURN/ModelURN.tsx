@@ -1,10 +1,11 @@
 import { ActionIcon, Code, Group, Popover, Stack, Text, Tooltip } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { IconCheck, IconCopy, IconInfoSquareRounded } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { BaseModel } from '~/server/common/constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/utils/string-helpers';
+import classes from './ModelURN.module.scss';
 
 export const ModelURN = ({ baseModel, type, modelId, modelVersionId, withCopy = true }: Props) => {
   const { copied, copy } = useClipboard();
@@ -16,48 +17,41 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId, withCopy = 
 
   return (
     <Group gap={4}>
-      <Group
-        gap={0}
-        sx={{
-          code: {
-            borderRadius: 0,
-            lineHeight: 1.2,
-            paddingLeft: 4,
-            paddingRight: 4,
-            cursor: withCopy ? 'pointer' : undefined,
-          },
-        }}
-      >
-        <Code>civitai:</Code>
+      <Group gap={0}>
+        <Code className={classes.code}>civitai:</Code>
 
         {withCopy ? (
           <CopyTooltip copied={copied} label="Model ID">
-            <Code color="blue" onClick={() => copy(modelId)}>
+            <Code className={classes.code} color="blue" onClick={() => copy(modelId)}>
               {modelId}
             </Code>
           </CopyTooltip>
         ) : (
           <Tooltip label="Model ID">
-            <Code color="blue">{modelId}</Code>
+            <Code className={classes.code} color="blue">
+              {modelId}
+            </Code>
           </Tooltip>
         )}
-        <Code>@</Code>
+        <Code className={classes.code}>@</Code>
         {withCopy ? (
           <CopyTooltip copied={copied} label="Version ID">
-            <Code color="blue" onClick={() => copy(modelVersionId)}>
+            <Code className={classes.code} color="blue" onClick={() => copy(modelVersionId)}>
               {modelVersionId}
             </Code>
           </CopyTooltip>
         ) : (
           <Tooltip label="Version ID">
-            <Code color="blue">{modelVersionId}</Code>
+            <Code className={classes.code} color="blue">
+              {modelVersionId}
+            </Code>
           </Tooltip>
         )}
       </Group>
       {withCopy && (
         <ActionIcon
           size="xs"
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
             copy(urn);
           }}
@@ -108,7 +102,10 @@ export function URNExplanation({ size }: { size?: number }) {
           <Stack gap={4}>
             {urnParts.map(({ name, description }) => (
               <Text size="xs" key={name}>
-                <Code color="blue">{name}</Code> {description}
+                <Code className={classes.code} color="blue">
+                  {name}
+                </Code>{' '}
+                {description}
               </Text>
             ))}
           </Stack>

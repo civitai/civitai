@@ -14,6 +14,7 @@ import {
   CloseButton,
   Alert,
   Anchor,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -64,6 +65,7 @@ export default function PaddleTransactionModal({
 }: Props) {
   const dialog = useDialogContext();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const {
     transactionId,
     error: transactionError,
@@ -275,13 +277,13 @@ export default function PaddleTransactionModal({
             className="border-yellow-6 bg-gray-2 dark:bg-dark-9"
           >
             <Group gap="sm" align="center">
-              <Group gap={8} justify="space-between" sx={{ flexGrow: 1 }}>
-                <Text size={20} weight={510} color="yellow.6">
+              <Group gap={8} justify="space-between" style={{ flexGrow: 1 }}>
+                <Text fz={20} weight={510} color="yellow.6">
                   {numberWithCommas(unitAmount * 10)} Buzz
                 </Text>
                 <Text
-                  color={theme.colorScheme === 'dark' ? 'gray.0' : 'dark'}
-                  size={20}
+                  color={colorScheme === 'dark' ? 'gray.0' : 'dark'}
+                  fz={20}
                   weight="bold"
                   sx={{ fontVariantNumeric: 'tabular-nums' }}
                 >

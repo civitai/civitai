@@ -1,4 +1,13 @@
-import { ActionIcon, Box, Button, createStyles, Group, ScrollArea, ThemeIcon } from '@mantine/core';
+import {
+  ActionIcon,
+  Box,
+  Button,
+  Group,
+  ScrollArea,
+  ThemeIcon,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -13,53 +22,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelById } from '~/types/router';
 import { ModelVersionMenu } from '../ModelVersions/ModelVersionMenu';
-
-const useStyles = createStyles((theme) => ({
-  scrollContainer: { position: 'relative' },
-
-  arrowButton: {
-    '&:active': {
-      transform: 'none',
-    },
-  },
-
-  hidden: {
-    display: 'none !important',
-  },
-
-  leftArrow: {
-    position: 'absolute',
-    left: 0,
-    top: '50%',
-    transform: 'translateY(-50%)',
-    paddingRight: theme.spacing.xl,
-    zIndex: 12,
-    backgroundImage: theme.fn.gradient({
-      from: theme.colorScheme === 'dark' ? theme.colors.dark[7] : 'white',
-      to: 'transparent',
-      deg: 90,
-    }),
-    display: 'block',
-  },
-  rightArrow: {
-    position: 'absolute',
-    right: 0,
-    top: '50%',
-    transform: 'translateY(-50%)',
-    paddingLeft: theme.spacing.xl,
-    zIndex: 12,
-    backgroundImage: theme.fn.gradient({
-      from: theme.colorScheme === 'dark' ? theme.colors.dark[7] : 'white',
-      to: 'transparent',
-      deg: 270,
-    }),
-    display: 'block',
-  },
-  viewport: {
-    overflowX: 'scroll',
-    overflowY: 'hidden',
-  },
-}));
+import classes from './ModelVersionList.module.scss';
+import clsx from 'clsx';
 
 type State = {
   scrollPosition: { x: number; y: number };
@@ -75,10 +39,11 @@ export function ModelVersionList({
   onVersionClick,
   showToggleCoverage = false,
 }: Props) {
-  const { classes, cx, theme } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<State>({
@@ -121,7 +86,7 @@ export function ModelVersionList({
       }
       type="never"
     >
-      <Box className={cx(classes.leftArrow, state.atStart && classes.hidden)}>
+      <Box className={clsx(classes.leftArrow, state.atStart && classes.hidden)}>
         <ActionIcon
           className={classes.arrowButton}
           variant="transparent"
@@ -171,7 +136,7 @@ export function ModelVersionList({
               miw={40}
               ta="center"
               className="relative"
-              variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
               onClick={() => {
                 if (showExtraIcons && !currentUser?.isModerator) {
@@ -200,7 +165,7 @@ export function ModelVersionList({
                     variant="light"
                     radius="xl"
                     size="sm"
-                    sx={{ backgroundColor: 'transparent' }}
+                    style={{ backgroundColor: 'transparent' }}
                   >
                     {hasProblem ? <IconAlertTriangle size={14} /> : <IconClock size={14} />}
                   </ThemeIcon>
@@ -224,7 +189,7 @@ export function ModelVersionList({
                     variant="light"
                     radius="xl"
                     size="sm"
-                    sx={{ backgroundColor: 'transparent' }}
+                    style={{ backgroundColor: 'transparent' }}
                   >
                     <IconBrush size={16} stroke={2.5} />
                   </ThemeIcon>
@@ -258,7 +223,7 @@ export function ModelVersionList({
               {/* <Menu withinPortal>
                 <Menu.Target>
                   <Button
-                    variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
                     px={4}
                     color={active ? 'blue' : 'gray'}
                     onClick={(e) => {
@@ -365,7 +330,7 @@ export function ModelVersionList({
         })}
       </Group>
       <Box
-        className={cx(
+        className={clsx(
           classes.rightArrow,
           (state.atEnd || !state.largerThanViewport) && classes.hidden
         )}

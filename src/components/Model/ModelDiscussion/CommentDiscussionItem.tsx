@@ -95,11 +95,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
       </Group>
 
       <ContentClamp maxHeight={100}>
-        <RenderHtml
-          html={comment.content}
-          sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-          withMentions
-        />
+        <RenderHtml html={comment.content} className="text-sm" withMentions />
       </ContentClamp>
 
       <Group mt="sm" align="flex-start" justify="space-between" wrap="nowrap">

@@ -1,4 +1,4 @@
-import { Group, Progress, Skeleton, Stack, Text, createStyles } from '@mantine/core';
+import { Group, Progress, Skeleton, Stack, Text } from '@mantine/core';
 import { Fragment, createContext, useContext } from 'react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -13,6 +13,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { ResourceReviewRatingTotals } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import classes from './ResourceReviewSummary.module.scss';
 
 type ContextState = {
   count: number;
@@ -99,7 +100,6 @@ ResourceReviewSummary.Header = function Header({
 
 const ratings = ['5', '4', '3', '2', '1'] as (keyof ResourceReviewRatingTotals)[];
 ResourceReviewSummary.Totals = function Totals() {
-  const { classes } = useStyles();
   const { totals, count, loading } = useSummaryContext();
 
   return loading ? (
@@ -157,20 +157,3 @@ ResourceReviewSummary.Simple = function Simple({
     </Stack>
   );
 };
-
-const useStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'max-content 1fr max-content',
-    alignItems: 'center',
-    columnGap: theme.spacing.md,
-    rowGap: 4,
-  },
-
-  badgeText: {
-    fontSize: theme.fontSizes.md,
-    [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.sm,
-    },
-  },
-}));

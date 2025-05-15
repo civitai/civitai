@@ -41,6 +41,7 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
       ref={ref}
       className={isNullState ? undefined : classes.profileSection}
       style={{
+        // @ts-ignore
         '--count': articles.length,
         '--row-count': 1,
       }}

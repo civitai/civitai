@@ -7,9 +7,10 @@ import {
   Chip,
   ChipProps,
   Button,
-  createStyles,
   Drawer,
   ButtonProps,
+  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { BuzzWithdrawalRequestStatus, PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
@@ -19,6 +20,8 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
+import classes from './PurchasableRewardsFiltersDropdown.module.scss';
+import clsx from 'clsx';
 
 type Filters = Omit<GetPaginatedPurchasableRewardsModeratorSchema, 'limit'>;
 
@@ -27,8 +30,9 @@ export function PurchasableRewardsFiltersModeratorDropdown({
   setFilters,
   ...buttonProps
 }: Props) {
-  const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const [opened, setOpened] = useState(false);
   const filterLength =
@@ -57,8 +61,6 @@ export function PurchasableRewardsFiltersModeratorDropdown({
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
@@ -66,9 +68,9 @@ export function PurchasableRewardsFiltersModeratorDropdown({
         className={classes.actionButton}
         color="gray"
         radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
         {...buttonProps}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        rightIcon={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
@@ -83,63 +85,66 @@ export function PurchasableRewardsFiltersModeratorDropdown({
   const dropdown = (
     <Stack gap="lg">
       <Stack gap="md">
-        <Divider label="Mode" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Mode" className="text-sm font-bold" />
         <Chip.Group
-          gap={8}
           value={filters.mode ?? PurchasableRewardModeratorViewMode.Available}
-          onChange={(mode: PurchasableRewardModeratorViewMode) => {
+          onChange={(mode) => {
             setFilters({
-              mode,
+              mode: mode as PurchasableRewardModeratorViewMode,
             });
           }}
         >
-          {Object.values(PurchasableRewardModeratorViewMode).map((type, index) => (
-            <Chip key={index} value={type} {...chipProps}>
-              <span>{getDisplayName(type)}</span>
-            </Chip>
-          ))}
+          <Group gap={8}>
+            {Object.values(PurchasableRewardModeratorViewMode).map((type, index) => (
+              <Chip key={index} value={type} {...chipProps}>
+                <span>{getDisplayName(type)}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
-        <Divider label="Archived" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Archived" className="text-sm font-bold" />
         <Chip.Group
-          gap={8}
           value={
             filters.archived === true ? 'true' : filters.archived === false ? 'false' : undefined
           }
-          onChange={(v: string) => {
+          onChange={(v) => {
             setFilters({
               archived: v === 'true' ? true : v === 'false' ? false : undefined,
             });
           }}
         >
-          <Chip value="true" {...chipProps}>
-            <span>Yes</span>
-          </Chip>
-          <Chip value="false" {...chipProps}>
-            <span>No</span>
-          </Chip>
+          <Group gap={8}>
+            <Chip value="true" {...chipProps}>
+              <span>Yes</span>
+            </Chip>
+            <Chip value="false" {...chipProps}>
+              <span>No</span>
+            </Chip>
+          </Group>
         </Chip.Group>
-        <Divider label="Usage" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Usage" className="text-sm font-bold" />
         <Chip.Group
-          gap={8}
           value={filters.usage ?? []}
-          onChange={(usage: PurchasableRewardUsage[]) => {
+          onChange={(usage) => {
             setFilters({
-              usage,
+              usage: usage as PurchasableRewardUsage[],
             });
           }}
           multiple
         >
-          {Object.values(PurchasableRewardUsage).map((type, index) => (
-            <Chip key={index} value={type} {...chipProps}>
-              <span>{getDisplayName(type)}</span>
-            </Chip>
-          ))}
+          <Group gap={8}>
+            {Object.values(PurchasableRewardUsage).map((type, index) => (
+              <Chip key={index} value={type} {...chipProps}>
+                <span>{getDisplayName(type)}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -159,14 +164,14 @@ export function PurchasableRewardsFiltersModeratorDropdown({
           size="90%"
           position="bottom"
           styles={{
-            drawer: {
+            root: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -195,34 +200,3 @@ type Props = {
   setFilters: (filters: Partial<Filters>) => void;
   filters: Filters;
 } & Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'>;
-
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));

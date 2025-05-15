@@ -13,7 +13,7 @@ import {
   ScrollArea,
   Stack,
   Text,
-  createStyles,
+  useMantineTheme,
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -33,45 +33,7 @@ import { GenerationPromptModal } from '~/components/Model/Generation/GenerationP
 import { usePicFinder } from '~/libs/picfinder';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles((theme, _params, getRef) => ({
-  label: {
-    padding: `0 ${theme.spacing.xs}px`,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-        color: theme.white,
-      },
-
-      [`& .${getRef('iconWrapper')}`]: {
-        display: 'none',
-      },
-    },
-  },
-
-  iconWrapper: {
-    ref: getRef('iconWrapper'),
-  },
-
-  root: { display: 'flex' },
-
-  nextButton: {
-    backgroundColor: theme.colors.gray[0],
-    color: theme.colors.dark[9],
-    opacity: 0.65,
-    transition: 'opacity 300ms ease',
-
-    '&:hover': {
-      opacity: 1,
-      backgroundColor: theme.colors.gray[0],
-    },
-
-    '&[data-loading="true"]': {
-      backgroundColor: theme.colors.dark[6],
-    },
-  },
-}));
+import classes from './ModelGenerationCard.module.scss';
 
 type Props = {
   columnWidth: number;
@@ -89,7 +51,7 @@ export function ModelGenerationCard({
   modelId,
   withEditingActions,
 }: Props) {
-  const { classes, theme } = useStyles();
+  const theme = useMantineTheme();
   const queryUtils = trpc.useContext();
 
   const { data = [] } = trpc.modelVersion.getExplorationPromptsById.useQuery({ id: versionId });
@@ -260,8 +222,7 @@ export function ModelGenerationCard({
                       width={imageContainerWidth}
                       alt={`AI generated image with prompt: ${prompt}`}
                       styles={{
-                        image: { objectPosition: 'top' },
-                        root: { scrollSnapAlign: 'start' },
+                        root: { scrollSnapAlign: 'start', objectPosition: 'top' },
                       }}
                     />
                   ))}
@@ -301,7 +262,7 @@ export function ModelGenerationCard({
                     color="gray"
                     p={4}
                     loading={loading && currentIndex >= images.length}
-                    sx={{ position: 'absolute', top: '50%', right: 10 }}
+                    style={{ position: 'absolute', top: '50%', right: 10 }}
                     onClick={() => {
                       viewportRef.current?.scrollBy({
                         left: imageContainerWidth,
@@ -344,7 +305,6 @@ export function ModelGenerationCard({
               )}
               <ScrollArea styles={{ viewport: { overflowY: 'hidden' } }} offsetScrollbars>
                 <Chip.Group
-                  gap={4}
                   value={prompt}
                   onChange={(prompt) => {
                     setPrompt(prompt);
@@ -356,55 +316,56 @@ export function ModelGenerationCard({
                     }
                   }}
                   multiple={false}
-                  wrap="nowrap"
                 >
-                  {data.map((prompt) => (
-                    <Chip
-                      key={prompt.name}
-                      classNames={classes}
-                      value={prompt.prompt}
-                      size="xs"
-                      radius="sm"
-                    >
-                      <Group gap={4} justify="space-between" wrap="nowrap">
-                        <Text inherit inline>
-                          {prompt.name}
-                        </Text>
-                        {withEditingActions && (
-                          <Menu position="top-end" withinPortal>
-                            <Menu.Target>
-                              <ActionIcon size="xs" variant="transparent">
-                                <IconDotsVertical />
-                              </ActionIcon>
-                            </Menu.Target>
-                            <Menu.Dropdown>
-                              <Menu.Item
-                                color="red"
-                                icon={<IconTrash size={14} stroke={1.5} />}
-                                onClick={() => handleDeletePrompt(prompt.name)}
-                              >
-                                Delete
-                              </Menu.Item>
-                              <Menu.Item
-                                icon={<IconEdit size={14} stroke={1.5} />}
-                                onClick={() => {
-                                  const selected = data.find((p) => p.prompt === prompt.prompt);
-                                  if (selected)
-                                    setState((current) => ({
-                                      ...current,
-                                      modalOpened: true,
-                                      editingPrompt: selected,
-                                    }));
-                                }}
-                              >
-                                Edit
-                              </Menu.Item>
-                            </Menu.Dropdown>
-                          </Menu>
-                        )}
-                      </Group>
-                    </Chip>
-                  ))}
+                  <Group gap={4} wrap="nowrap">
+                    {data.map((prompt) => (
+                      <Chip
+                        key={prompt.name}
+                        classNames={classes}
+                        value={prompt.prompt}
+                        size="xs"
+                        radius="sm"
+                      >
+                        <Group gap={4} justify="space-between" wrap="nowrap">
+                          <Text inherit inline>
+                            {prompt.name}
+                          </Text>
+                          {withEditingActions && (
+                            <Menu position="top-end" withinPortal>
+                              <Menu.Target>
+                                <ActionIcon size="xs" variant="transparent">
+                                  <IconDotsVertical />
+                                </ActionIcon>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                <Menu.Item
+                                  color="red"
+                                  icon={<IconTrash size={14} stroke={1.5} />}
+                                  onClick={() => handleDeletePrompt(prompt.name)}
+                                >
+                                  Delete
+                                </Menu.Item>
+                                <Menu.Item
+                                  icon={<IconEdit size={14} stroke={1.5} />}
+                                  onClick={() => {
+                                    const selected = data.find((p) => p.prompt === prompt.prompt);
+                                    if (selected)
+                                      setState((current) => ({
+                                        ...current,
+                                        modalOpened: true,
+                                        editingPrompt: selected,
+                                      }));
+                                  }}
+                                >
+                                  Edit
+                                </Menu.Item>
+                              </Menu.Dropdown>
+                            </Menu>
+                          )}
+                        </Group>
+                      </Chip>
+                    ))}
+                  </Group>
                 </Chip.Group>
               </ScrollArea>
             </Group>

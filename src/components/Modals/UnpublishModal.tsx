@@ -66,7 +66,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: n
         <Radio.Group
           orientation="vertical"
           value={reason}
-          onChange={(value: UnpublishReason) => setReason(value)}
+          onChange={(value) => setReason(value as UnpublishReason)}
         >
           {reasonOptions.map((reason) => (
             <Radio key={reason.value} value={reason.value} label={reason.label} />

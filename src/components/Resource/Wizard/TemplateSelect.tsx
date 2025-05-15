@@ -7,25 +7,13 @@ import {
   Text,
   TextInput,
   UnstyledButton,
-  createStyles,
 } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
 
-const useStyles = createStyles((theme) => ({
-  option: {
-    ...theme.fn.focusStyles(),
-
-    '&:hover': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-    },
-  },
-}));
-
 export function TemplateSelect({ userId, onSelect }: Props) {
-  const { classes } = useStyles();
   const [query, setQuery] = useDebouncedState('', 300);
 
   const {
@@ -44,7 +32,7 @@ export function TemplateSelect({ userId, onSelect }: Props) {
           placeholder="Search models"
           defaultValue={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
-          icon={<IconSearch size={18} />}
+          leftSection={<IconSearch size={18} />}
           rightSection={isLoading || isRefetching ? <Loader size="xs" /> : undefined}
         />
       </Stack>
@@ -55,7 +43,7 @@ export function TemplateSelect({ userId, onSelect }: Props) {
             {models.map((model) => (
               <Link key={model.id} href={`?templateId=${model.id}`} shallow>
                 <UnstyledButton
-                  className={classes.option}
+                  className="hover:bg-gray-100 dark:hover:bg-gray-700"
                   py="xs"
                   px="sm"
                   onClick={() => onSelect(model.id)}

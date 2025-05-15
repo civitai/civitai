@@ -1,4 +1,4 @@
-import { Box, Stack, StepProps, Stepper, Text, Title, createStyles } from '@mantine/core';
+import { Box, Stack, StepperStepProps, Stepper, Text, Title } from '@mantine/core';
 import { useRef, useState } from 'react';
 import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
 import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
@@ -14,7 +14,7 @@ import { ColorDomain } from '~/server/common/constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import classes from './OnboardingWizard.module.scss';
 
-type StepPropsCustom = Omit<StepProps, 'step'> & {
+type StepPropsCustom = Omit<StepperStepProps, 'step'> & {
   step: number;
   Component: React.FC;
 };
@@ -78,7 +78,7 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
               <LogoBadge />
             </Box>
             <Stack gap={0} mt={-5}>
-              <Title sx={{ lineHeight: 1 }}>Welcome!</Title>
+              <Title style={{ lineHeight: 1 }}>Welcome!</Title>
               <Text>{`Let's setup your account`}</Text>
             </Stack>
           </div>

@@ -1,5 +1,4 @@
 import {
-  createStyles,
   TypographyStylesProvider,
   TypographyStylesProviderProps,
   useComputedColorScheme,
@@ -136,7 +135,7 @@ export function RenderHtml({
             const needsSwap = hexColor
               ? needsColorSwap({
                   hexColor,
-                  colorScheme: colorScheme === 'auto' ? 'dark' : colorScheme,
+                  colorScheme,
                   threshold: 0.2,
                 })
               : false;

@@ -35,10 +35,10 @@ export const ProfileSectionPreview = ({
         '--count': columnCount * rowCount,
         '--row-count': rowCount,
         '--width-grid': '280px',
+        overflow: 'hidden',
       }}
       gap="md"
       w="100%"
-      style={{ overflow: 'hidden' }}
     >
       <Skeleton width="33%" height={22} />
       <div className={classes.grid}>

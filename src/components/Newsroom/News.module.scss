@@ -1,0 +1,64 @@
+.root {
+  background-color: light-dark(var(--mantine-color-dark-8), var(--mantine-white));
+  padding-top: calc(var(--mantine-spacing-xl) * 2);
+  padding-bottom: calc(var(--mantine-spacing-xl) * 2);
+}
+
+.articles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--mantine-spacing-xl);
+}
+
+.card {
+  display: block;
+  overflow: hidden;
+  transition: border-color 0.2s;
+
+  &:hover {
+    // background-color: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-1));
+    border-color: var(--mantine-color-blue-7);
+  }
+
+  &:hover .action {
+    background-color: alpha(var(--mantine-color-blue-7), light-dark(0.1, 0.05));
+  }
+}
+
+.imageContainer {
+  width: 100%;
+  height: 200px;
+  overflow: hidden;
+
+  @container (min-width: 800px) {
+    width: 200px;
+    height: auto;
+  }
+}
+
+.title {
+  font-size: var(--mantine-font-size-lg);
+
+  @container (min-width: 48rem) {
+    font-size: var(--mantine-font-size-xl);
+  }
+}
+
+.publishDate {
+  font-size: var(--mantine-font-size-sm);
+  color: light-dark(var(--mantine-color-dark-2), var(--mantine-color-gray-6));
+}
+
+.summary {
+  font-size: var(--mantine-font-size-md);
+  margin-top: var(--mantine-spacing-xs);
+  margin-bottom: var(--mantine-spacing-md);
+
+  @container (min-width: 48rem) {
+    font-size: var(--mantine-font-size-lg);
+  }
+}
+
+.action {
+  // Styles for the action button, background set on card hover
+}

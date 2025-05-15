@@ -39,7 +39,7 @@ export function Queue() {
           <IconInbox size={64} stroke={1} />
           {filters.marker && (
             <Stack gap={0}>
-              <Text size={32} align="center">
+              <Text fz={32} align="center">
                 No results found
               </Text>
               <Text align="center">{'Try adjusting your filters'}</Text>

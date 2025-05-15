@@ -2,7 +2,6 @@ import { forwardRef, CSSProperties, useState } from 'react';
 import {
   Alert,
   Center,
-  createStyles,
   Group,
   Overlay,
   Paper,
@@ -90,7 +89,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
             <Alert
               variant="filled"
               color="red"
-              sx={{
+              style={{
                 position: 'absolute',
                 bottom: 0,
                 left: 0,
@@ -108,7 +107,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
                         <IconInfoCircle />
                       </ActionIcon>
                     </Popover.Target>
-                    <Popover.Dropdown sx={{ maxWidth: 400 }} pb={14}>
+                    <Popover.Dropdown style={{ maxWidth: 400 }} pb={14}>
                       <Stack gap={0}>
                         <Text size="xs" weight={500}>
                           Blocked for

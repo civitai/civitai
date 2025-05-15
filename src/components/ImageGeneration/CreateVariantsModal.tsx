@@ -46,7 +46,7 @@ export function CreateVariantsModal({ onClose, ...props }: Props) {
               max={100}
               defaultValue={state.similarity}
               onChangeEnd={(value) => setState((current) => ({ ...current, similarity: value }))}
-              sx={{ flex: 1 }}
+              style={{ flex: 1 }}
             />
             <Paper p="xs" withBorder>
               <Text size="sm">{state.similarity}%</Text>
@@ -60,7 +60,7 @@ export function CreateVariantsModal({ onClose, ...props }: Props) {
               max={100}
               defaultValue={state.quantity}
               onChangeEnd={(value) => setState((current) => ({ ...current, quantity: value }))}
-              sx={{ flex: 1 }}
+              style={{ flex: 1 }}
             />
             <Paper p="xs" withBorder>
               <Text size="sm">{state.quantity}</Text>

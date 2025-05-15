@@ -149,9 +149,9 @@ export function FlaggedModelsList() {
       enableGlobalFilter={false}
       enableColumnFilters={false}
       mantineTableProps={{
-        sx: { tableLayout: 'fixed' },
+        style: { tableLayout: 'fixed' },
       }}
-      mantineTableContainerProps={{ sx: { maxHeight: 450 } }}
+      mantineTableContainerProps={{ style: { maxHeight: 450 } }}
       initialState={{
         density: 'xs',
         // Hiding these columns because they're irrelevant

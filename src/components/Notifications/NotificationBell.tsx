@@ -39,15 +39,12 @@ export function NotificationBell() {
           dot={false}
           withBorder
           inline
+          className="text-sm font-bold"
           styles={{
             indicator: {
               height: '20px !important',
               cursor: 'pointer',
               '> span': { marginBottom: '2px' },
-            },
-            common: {
-              fontWeight: 500,
-              fontSize: 12,
             },
           }}
         >

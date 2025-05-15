@@ -29,7 +29,7 @@ export function InsertYoutubeVideoControl(props: Props) {
   const handleSubmit = (values: z.infer<typeof schema>) => {
     const { url } = values;
 
-    editor.commands.setYoutubeVideo({ src: url });
+    editor?.commands.setYoutubeVideo({ src: url });
     closeAllModals();
     form.reset();
   };

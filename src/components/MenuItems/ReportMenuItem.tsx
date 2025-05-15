@@ -12,7 +12,7 @@ export function ReportMenuItem({
     <LoginRedirect reason={loginReason}>
       <Menu.Item
         icon={<IconFlag size={14} stroke={1.5} />}
-        onClick={(e) => {
+        onClick={(e: React.MouseEvent) => {
           e.preventDefault();
           e.stopPropagation();
           onReport();

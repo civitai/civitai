@@ -106,10 +106,10 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
             </Group>
           </Group>
           <NotificationTabs
-            onTabChange={(value: NotificationCategory | null) => setSelectedTab(value)}
+            onTabChange={(value) => setSelectedTab(value as NotificationCategory | null)}
           />
           <TextInput
-            icon={<IconSearch size={16} />}
+            leftSection={<IconSearch size={16} />}
             placeholder="Filter by message..."
             value={searchText}
             maxLength={150}

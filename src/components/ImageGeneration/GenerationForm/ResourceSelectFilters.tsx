@@ -3,7 +3,6 @@ import {
   Button,
   Chip,
   ChipProps,
-  createStyles,
   Divider,
   Drawer,
   Group,
@@ -11,6 +10,8 @@ import {
   Popover,
   ScrollArea,
   Stack,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
@@ -32,38 +33,8 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import { sortByModelTypes } from '~/utils/array-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
-
-export const useFilterStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        // color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));
+import classes from './ResourceSelectFilters.module.scss';
+import clsx from 'clsx';
 
 const baseModelLimit = 4;
 
@@ -73,7 +44,8 @@ export function ResourceSelectFiltersDropdown() {
     filters: selectFilters,
     setFilters: setSelectFilters,
   } = useResourceSelectContext();
-  const { classes, theme, cx } = useFilterStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const isClient = useIsClient();
 
@@ -126,8 +98,6 @@ export function ResourceSelectFiltersDropdown() {
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
@@ -135,8 +105,8 @@ export function ResourceSelectFiltersDropdown() {
         // className={classes.actionButton}
         color="gray"
         radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
+        rightIcon={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
         size="compact-md"
@@ -152,53 +122,54 @@ export function ResourceSelectFiltersDropdown() {
   const dropdown = (
     <Stack gap="lg" p="md">
       <Stack gap="md">
-        <Divider label="Resource types" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Resource types" className="text-sm font-bold" />
         <Chip.Group
-          gap={8}
           value={selectFilters.types}
-          onChange={(rts: ModelType[]) => setSelectFilters((f) => ({ ...f, types: rts }))}
+          onChange={(rts) => setSelectFilters((f) => ({ ...f, types: rts as ModelType[] }))}
           multiple
-          my={4}
         >
-          {resourceTypesList.map((rt, index) => (
-            <Chip key={index} value={rt.modelType} {...chipProps}>
-              <span>{getDisplayName(rt.modelType)}</span>
-            </Chip>
-          ))}
+          <Group gap={8} my={4}>
+            {resourceTypesList.map((rt, index) => (
+              <Chip key={index} value={rt.modelType} {...chipProps}>
+                <span>{getDisplayName(rt.modelType)}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
-        <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Base model" className="text-sm font-bold" />
         <Chip.Group
-          gap={8}
           value={selectFilters.baseModels}
-          onChange={(bms: BaseModel[]) => setSelectFilters((f) => ({ ...f, baseModels: bms }))}
+          onChange={(bms) => setSelectFilters((f) => ({ ...f, baseModels: bms as BaseModel[] }))}
           multiple
-          my={4}
         >
-          {displayedBaseModels.map((baseModel, index) => (
-            <Chip key={index} value={baseModel} {...chipProps}>
-              <span>{baseModel}</span>
-            </Chip>
-          ))}
-          {baseModelsList.length > baseModelLimit && (
-            <ActionIcon
-              variant="transparent"
-              size="sm"
-              onClick={() => setTruncateBaseModels((prev) => !prev)}
-            >
-              {truncateBaseModels ? (
-                <IconChevronDown strokeWidth={3} />
-              ) : (
-                <IconChevronUp strokeWidth={3} />
-              )}
-            </ActionIcon>
-          )}
+          {' '}
+          <Group gap={8} my={4}>
+            {displayedBaseModels.map((baseModel, index) => (
+              <Chip key={index} value={baseModel} {...chipProps}>
+                <span>{baseModel}</span>
+              </Chip>
+            ))}
+            {baseModelsList.length > baseModelLimit && (
+              <ActionIcon
+                variant="transparent"
+                size="sm"
+                onClick={() => setTruncateBaseModels((prev) => !prev)}
+              >
+                {truncateBaseModels ? (
+                  <IconChevronDown strokeWidth={3} />
+                ) : (
+                  <IconChevronUp strokeWidth={3} />
+                )}
+              </ActionIcon>
+            )}
+          </Group>
         </Chip.Group>
       </Stack>
 
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -220,15 +191,13 @@ export function ResourceSelectFiltersDropdown() {
           styles={{
             root: {
               zIndex: 400,
-            },
-            drawer: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}

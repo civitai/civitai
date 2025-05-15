@@ -155,7 +155,7 @@ export default function ReportModal({
       showNotification({
         id: SEND_REPORT_ID,
         loading: true,
-        disallowClose: true,
+        withCloseButton: false,
         autoClose: false,
         message: 'Sending report...',
       });
@@ -275,26 +275,26 @@ export default function ReportModal({
         ) : (
           !reason && (
             <Radio.Group
-              orientation="vertical"
               value={reason}
               onChange={(reason) => setReason(reason as ReportReason)}
               // label="Report reason"
-              pb="xs"
             >
-              {reports
-                .filter(({ availableFor }) => availableFor.includes(entityType))
-                .filter((item) => {
-                  if (entityType === ReportEntity.Model) {
-                    if (item.reason === ReportReason.Claim) return data?.userId !== -1;
-                    if (item.reason === ReportReason.Ownership) {
-                      return !data?.reportStats?.ownershipPending;
+              <Stack pb="xs">
+                {reports
+                  .filter(({ availableFor }) => availableFor.includes(entityType))
+                  .filter((item) => {
+                    if (entityType === ReportEntity.Model) {
+                      if (item.reason === ReportReason.Claim) return data?.userId !== -1;
+                      if (item.reason === ReportReason.Ownership) {
+                        return !data?.reportStats?.ownershipPending;
+                      }
                     }
-                  }
-                  return true;
-                }) // TEMP FIX
-                .map(({ reason, label }, index) => (
-                  <Radio key={index} value={reason} label={label} />
-                ))}
+                    return true;
+                  }) // TEMP FIX
+                  .map(({ reason, label }, index) => (
+                    <Radio key={index} value={reason} label={label} />
+                  ))}
+              </Stack>
             </Radio.Group>
           )
         )}

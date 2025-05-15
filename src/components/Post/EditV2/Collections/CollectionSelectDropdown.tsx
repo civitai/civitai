@@ -135,7 +135,7 @@ export const CollectionSelectDropdown = () => {
             label={isContestCollectionsOnly ? 'Contest Selection' : 'Select collection'}
             data={selectOpts}
             value={collectionId ? collectionId.toString() : null}
-            onChange={(value: string) =>
+            onChange={(value) =>
               value ? updateCollection(parseInt(value, 10), null) : updateCollection(null, null)
             }
             disabled={!!post?.publishedAt}
@@ -158,7 +158,7 @@ export const CollectionSelectDropdown = () => {
                 label: tag.name.toUpperCase(),
               }))}
               value={collectionTagId ? collectionTagId.toString() : null}
-              onChange={(value: string) =>
+              onChange={(value) =>
                 value
                   ? updateCollection(collectionId as number, parseInt(value, 10))
                   : updateCollection(collectionId as number, null)
@@ -205,8 +205,8 @@ export const CollectionSelectDropdown = () => {
                 label: tag.name.toUpperCase(),
               }))}
               value={collectionTagId ? collectionTagId.toString() : null}
-              onChange={(value: string) => {
-                handlePublishedPostCollectionTagUpdate(parseInt(value, 10));
+              onChange={(value) => {
+                handlePublishedPostCollectionTagUpdate(value ? parseInt(value, 10) : 0);
               }}
               disabled={updatingCollectionTagId}
               placeholder="Select category"

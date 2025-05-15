@@ -1,4 +1,4 @@
-import { Badge,  Tabs, TabsProps, Text } from '@mantine/core';
+import { Badge, Tabs, TabsProps, Text } from '@mantine/core';
 import {
   getCategoryDisplayName,
   useNotificationSettings,
@@ -14,7 +14,7 @@ const categoryTabs: string[] = Object.values(NotificationCategory);
 const tabs = ['all', 'announcements', ...categoryTabs];
 
 export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: Props) {
-   const count = useQueryNotificationsCount();
+  const count = useQueryNotificationsCount();
   const { isLoading, hasCategory } = useNotificationSettings(enabled);
   const currentUser = useCurrentUser();
   const isCreator = Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram);
@@ -37,19 +37,14 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
   return (
     <TwScrollX>
       <Tabs
-        classNames={{
-          tab: {
-            padding: '8px 12px',
-          }
-        }}
         variant="pills"
         radius="xl"
         color="gray"
         defaultValue="all"
-        onTabChange={handleTabChange}
+        onChange={handleTabChange}
         {...tabsProps}
       >
-        <Tabs.List sx={{ flexWrap: 'nowrap' }}>
+        <Tabs.List style={{ flexWrap: 'nowrap' }}>
           {allTabs.map((tab) => {
             const countValue = count[tab.toLowerCase() as keyof typeof count];
 
@@ -57,6 +52,9 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
               <Tabs.Tab
                 key={tab}
                 value={tab}
+                style={{
+                  padding: '8px 12px',
+                }}
                 rightSection={
                   !!countValue ? (
                     <Badge color="red" variant="filled" size="xs" radius="xl" px={4}>
@@ -79,4 +77,5 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
 
 type Props = Omit<TabsProps, 'children'> & {
   enabled?: boolean;
+  onTabChange: TabsProps['onChange'];
 };

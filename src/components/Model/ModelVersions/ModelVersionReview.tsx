@@ -11,7 +11,7 @@ export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbs
   const { label, color } = getRatingLabel({ positiveRating, totalCount });
 
   return (
-    <Group position="left" align="flex-start" gap={4}>
+    <Group justify="left" align="flex-start" gap={4}>
       <Tooltip
         label={`${Math.round(positiveRating * 100)}% of reviews are positive`}
         openDelay={500}

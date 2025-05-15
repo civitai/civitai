@@ -47,7 +47,9 @@ export default function MigrateModelToCollection({ modelId }: { modelId: number 
       closeOnClickOutside={!migrateMutation.isLoading}
       closeOnEscape={!migrateMutation.isLoading}
       withCloseButton={!migrateMutation.isLoading}
-      closeButtonLabel="Close migrate to collection modal"
+      closeButtonProps={{
+        children: 'Close migrate to collection modal',
+      }}
       withinPortal
     >
       {migrateMutation.isLoading ? (

@@ -1,14 +1,4 @@
-import {
-  ActionIcon,
-  Button,
-  Card,
-  Divider,
-  Group,
-  Rating,
-  Stack,
-  Text,
-  createStyles,
-} from '@mantine/core';
+import { ActionIcon, Button, Card, Divider, Group, Rating, Stack, Text } from '@mantine/core';
 import { IconChevronDown, IconPhotoPlus, IconSend } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
@@ -26,6 +16,8 @@ import {
   ResourceReviewModel,
   ResourceReviewSimpleModel,
 } from '~/server/selectors/resourceReview.selector';
+import classes from './ResourceReview.module.scss';
+import clsx from 'clsx';
 
 const schema = z.object({
   details: z.string().optional(),
@@ -126,7 +118,7 @@ export function EditUserResourceReview({
             <Stack>
               {!editDetail ? (
                 <Text variant="link" onClick={toggleEditDetail} size="sm">
-                  <Group gap={4} sx={{ cursor: 'pointer' }}>
+                  <Group gap={4} style={{ cursor: 'pointer' }}>
                     <IconChevronDown size={16} />{' '}
                     <span>{!resourceReview.details ? 'Add' : 'Edit'} Review Comments</span>
                   </Group>
@@ -179,13 +171,6 @@ type Props = {
   showNoAccessAlert?: boolean;
 };
 
-const useStyles = createStyles(() => ({
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-}));
-
 type UserResourceReviewCompositeProps = {
   userReview: ResourceReviewSimpleModel | null | undefined;
   modelId: number;
@@ -220,7 +205,6 @@ export function EditUserResourceReviewV2({
   opened: initialOpened = false,
   autoFocus = true,
 }: PropsV2) {
-  const { classes, cx } = useStyles();
   const [opened, setOpened] = useState(initialOpened);
 
   const { loading: loadingUserReview } = useQueryUserResourceReview({ modelVersionId });
@@ -272,7 +256,7 @@ export function EditUserResourceReviewV2({
       <Group gap={8} justify="space-between">
         <Text variant="link" size="sm" style={{ cursor: 'pointer' }} onClick={handleToggleOpen}>
           <Group gap={4}>
-            <IconChevronDown className={cx({ [classes.opened]: opened })} size={20} />
+            <IconChevronDown className={clsx({ [classes.opened]: opened })} size={20} />
             <span>{hasComment ? 'Edit' : 'Add'} Review Comments</span>
           </Group>
         </Text>

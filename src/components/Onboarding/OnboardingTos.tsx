@@ -39,11 +39,12 @@ export function OnboardingTos() {
         style={{ height: 400 }}
         type="auto"
         p="md"
-        sx={(theme) => ({
+        style={{
+          height: 400,
           border: `1px solid ${
-            theme.colorScheme === 'light' ? theme.colors.gray[9] : theme.colors.gray[7]
+            colorScheme === 'light' ? theme.colors.gray[9] : theme.colors.gray[7]
           }`,
-        })}
+        }}
       >
         {termsLoading ? (
           <Center h={366}>

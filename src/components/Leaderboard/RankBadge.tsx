@@ -32,7 +32,7 @@ export const RankBadge = ({
 
   return (
     <Tooltip label={`${rank.leaderboardTitle} Rank`} position="top" color="dark" withArrow>
-      <Group gap={0} wrap="nowrap" sx={{ position: 'relative' }}>
+      <Group gap={0} wrap="nowrap" style={{ position: 'relative' }}>
         {rank.leaderboardCosmetic ? (
           <Box pos="relative" sx={{ zIndex: 2 }}>
             <EdgeMedia
@@ -49,7 +49,7 @@ export const RankBadge = ({
           variant={withTitle ? 'transparent' : badgeColor === 'gray' ? 'filled' : undefined}
           href={`/leaderboard/${rank.leaderboardId}?position=${rank.leaderboardRank}`}
           icon={!hasLeaderboardCosmetic ? <IconCrown size={iconSize} /> : undefined}
-          sx={
+          style={
             hasLeaderboardCosmetic
               ? {
                   paddingLeft: 16,

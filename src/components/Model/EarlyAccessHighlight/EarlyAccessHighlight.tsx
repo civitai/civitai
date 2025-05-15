@@ -11,8 +11,9 @@ import {
   Group,
   Text,
   Button,
+  alpha,
+  useMantineTheme,
 } from '@mantine/core';
-import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { IconArrowRight } from '@tabler/icons-react';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -24,6 +25,7 @@ const ITEMS_PER_ROW = 7;
 export const EarlyAccessHighlight = () => {
   const features = useFeatureFlags();
   const modelFilters = useModelFilters();
+  const theme = useMantineTheme();
 
   const { setFilters } = useFiltersContext((state) => ({
     setFilters: state.setModelFilters,
@@ -39,7 +41,6 @@ export const EarlyAccessHighlight = () => {
       enabled: !modelFilters.earlyAccess,
     }
   );
- 
 
   const onViewAll = () => {
     setFilters({ earlyAccess: true });
@@ -51,10 +52,13 @@ export const EarlyAccessHighlight = () => {
 
   if (isLoading || isRefetching) {
     return (
-      <Box style={{
-        '--count': models?.length ?? 15,
-        '--rows': 1,
-      }} className={classes.grid}>
+      <Box
+        style={{
+          '--count': models?.length ?? 15,
+          '--rows': 1,
+        }}
+        className={classes.grid}
+      >
         {Array.from({ length: ITEMS_PER_ROW }).map((_, index) => (
           <AspectRatio ratio={7 / 9} key={index}>
             <Skeleton width="100%" />
@@ -70,10 +74,13 @@ export const EarlyAccessHighlight = () => {
   }
 
   return (
-    <Stack mb="md" style={{
-      '--count': models?.length ?? 15,
-      '--rows': 1,
-    }}>
+    <Stack
+      mb="md"
+      style={{
+        '--count': models?.length ?? 15,
+        '--rows': 1,
+      }}
+    >
       <Badge>Check out some early access models matching your query</Badge>
       <ShowcaseGrid itemCount={models.length + (hasNextPage ? 1 : 0)} rows={1} carousel={true}>
         {models.map((model) => (
@@ -83,7 +90,7 @@ export const EarlyAccessHighlight = () => {
           <Button
             variant="outline"
             style={{
-              background: theme.fn.rgba(theme.colors.blue[8], 0.2),
+              background: alpha(theme.colors.blue[8], 0.2),
               borderRadius: theme.radius.md,
             }}
             onClick={onViewAll}

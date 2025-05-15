@@ -107,7 +107,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       <Container my="md" w="100%">
         <Stack>
           <Group justify="space-between" wrap="nowrap" align="center">
-            <Title order={3} sx={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Title order={3} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ whiteSpace: 'nowrap' }}>Review:</span>{' '}
               <Text
                 component={Link}
@@ -150,7 +150,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                 ) : null
               }
               size="lg"
-              gap="xs"
+              spacing="xs"
               withUsername
               linkToProfile
             />

@@ -1,0 +1,82 @@
+.message {
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    border-radius: 0;
+    width: auto;
+    margin-left: -16px;
+    margin-right: -16px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+}
+
+.coverImageNSFWActions {
+  height: 100%;
+  width: 100%;
+}
+
+.coverImageWrapper {
+  overflow: hidden;
+  border-radius: var(--mantine-radius-md);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    width: auto;
+    margin-left: -16px;
+    margin-right: -16px;
+    max-height: auto;
+    border-radius: 0;
+    display: block;
+  }
+}
+
+.coverImage {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  height: 0;
+  /* The padding-bottom for aspect ratio should be set inline via style prop:
+     style={{ paddingBottom: `${constants.profile.coverImageAspectRatio * 100}%` }}
+  */
+
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    width: auto;
+    border-radius: 0;
+    /* The padding-bottom for mobile aspect ratio should be set inline via style prop:
+       style={{ paddingBottom: `${constants.profile.mobileCoverImageAspectRatio * 100}%` }}
+    */
+
+    div {
+      border-radius: 0;
+    }
+  }
+
+  >div {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+}
+
+.profileSection {
+  width: auto;
+  margin-left: -16px;
+  margin-right: -16px;
+  padding: 16px;
+  position: relative;
+  background: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-0));
+}
+
+.profileSectionWithCoverImage {
+  padding: 0 16px;
+
+  >div {
+    position: relative;
+    height: auto;
+    top: -36px;
+    margin-bottom: -18px;
+  }
+}

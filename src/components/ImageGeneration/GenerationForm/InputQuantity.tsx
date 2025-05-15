@@ -14,8 +14,9 @@ type Props = Omit<NumberInputProps, 'limit' | 'max' | 'min' | 'step'> & {
 
 function QuantityInput({ value, onChange, min, max, step, ...inputWrapperProps }: Props) {
   useDidUpdate(() => {
-    if (!!value && (value > max || value % step !== 0)) {
-      onValueChanged(value);
+    const v = Number(value);
+    if (!!value && (v > max || v % step !== 0)) {
+      onValueChanged(v);
     }
   }, [value, step]);
 
@@ -30,11 +31,12 @@ function QuantityInput({ value, onChange, min, max, step, ...inputWrapperProps }
   return (
     <NumberInput
       value={value}
-      onChange={onValueChanged}
+      onChange={(v) => onValueChanged(v ? Number(v) : undefined)}
       {...inputWrapperProps}
       min={min}
       max={max}
       step={step}
+      allowDecimal={false}
     />
   );
 }

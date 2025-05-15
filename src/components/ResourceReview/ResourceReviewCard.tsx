@@ -48,8 +48,8 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
           </Group>
         )}
         {data.details && (
-          <ScrollArea.Autosize maxHeight={200}>
-            <RenderHtml html={data.details} sx={(theme) => ({ fontSize: theme.fontSizes.sm })} />
+          <ScrollArea.Autosize mah={200}>
+            <RenderHtml html={data.details} className="text-sm" />
           </ScrollArea.Autosize>
         )}
       </Stack>

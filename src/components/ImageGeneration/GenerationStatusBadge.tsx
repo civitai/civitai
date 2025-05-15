@@ -51,25 +51,29 @@ export function GenerationStatusBadge({
             {status !== 'succeeded' ? `${complete}/${quantity}` : complete}
           </Text>
           {progress && status === 'processing' && (
-            <Progress
-              value={(complete / quantity) * 100}
-              animate
-              sections={[
-                { value: (complete / quantity) * 100, color: 'green' },
-                { value: (processing / quantity) * 100, color: 'yellow' },
-              ]}
+            <Progress.Root
               w={40}
               h={10}
               className="ml-1"
+              transitionDuration={200}
               styles={{
                 root: {
                   opacity: 0.5,
                 },
-                bar: {
-                  transition: 'width 200ms, left 200ms',
-                },
               }}
-            />
+            >
+              {[
+                { value: (complete / quantity) * 100, color: 'green' },
+                { value: (processing / quantity) * 100, color: 'yellow' },
+              ].map((section, index) => (
+                <Progress.Section
+                  key={index}
+                  animated
+                  value={section.value}
+                  color={section.color}
+                />
+              ))}
+            </Progress.Root>
           )}
         </div>
       </Badge>

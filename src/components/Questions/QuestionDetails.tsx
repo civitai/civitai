@@ -49,7 +49,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
           <Title order={1}>{question.title}</Title>
           {/* TODO - add additional actions and remove condition here */}
           {(isOwner || isModerator) && (
-            <Menu position="bottom-end" transition="pop-top-right">
+            <Menu position="bottom-end" transitionProps={{ transition: 'pop-top-right' }}>
               <Menu.Target>
                 <ActionIcon variant="outline">
                   <IconDotsVertical size={16} />
@@ -110,7 +110,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
           />
           <ReactionBadge
             color={showComments ? 'blue' : undefined}
-            leftIcon={<IconMessageCircle size={18} />}
+            leftSection={<IconMessageCircle size={18} />}
             onClick={() => setShowComments((v) => !v)}
             tooltip="Comments"
           >

@@ -141,8 +141,9 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
                   limit={50}
                   placeholder="e.g.: portrait, sharp focus, etc."
                   description="Please add your tags"
-                  creatable
-                  getCreateLabel={(query) => `+ Create ${query}`}
+                  // TODO: Mantine7 - Don't have creatable.
+                  // creatable
+                  // getCreateLabel={(query) => `+ Create ${query}`}
                   clearable
                   searchable
                 />

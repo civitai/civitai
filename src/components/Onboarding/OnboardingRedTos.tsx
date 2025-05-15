@@ -7,6 +7,8 @@ import {
   Stack,
   Title,
   TypographyStylesProvider,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -22,6 +24,8 @@ import { trpc } from '~/utils/trpc';
 export function OnboardingRedTos() {
   const { next } = useOnboardingContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const handleStepComplete = () => {
     mutate({ step: OnboardingSteps.RedTOS }, { onSuccess: () => next() });
@@ -36,14 +40,14 @@ export function OnboardingRedTos() {
         description="Please take a moment to review and accept our terms of service."
       />
       <ScrollArea
-        style={{ height: 400 }}
         type="auto"
         p="md"
-        sx={(theme) => ({
+        style={{
+          height: 400,
           border: `1px solid ${
-            theme.colorScheme === 'light' ? theme.colors.gray[9] : theme.colors.gray[7]
+            colorScheme === 'light' ? theme.colors.gray[9] : theme.colors.gray[7]
           }`,
-        })}
+        }}
       >
         {termsLoading ? (
           <Center h={366}>

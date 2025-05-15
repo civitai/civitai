@@ -23,7 +23,7 @@ type Props = ButtonProps &
     label: React.ReactNode;
     onPerformTransaction?: () => void;
     purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
-    size?: MantineSize;
+    size?: ButtonProps['size'];
     performTransactionOnPurchase?: boolean;
     showPurchaseModal?: boolean;
     error?: string;

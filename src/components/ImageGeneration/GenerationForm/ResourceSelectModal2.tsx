@@ -455,7 +455,7 @@ function ResourceSelectModalContent() {
         <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
           <Text>{title}</Text>
           <CustomSearchBox
-            isMobile={isMobile} // TODO: Mantine7
+            // isMobile={isMobile} // TODO: Mantine7
             autoFocus
             className="order-last w-full grow sm:order-none sm:w-auto"
           />
@@ -798,7 +798,7 @@ const TopRightIcons = ({
                 variant="transparent"
                 className="mix-blend-difference"
                 p={0}
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                 }}
@@ -1210,7 +1210,7 @@ function ResourceSelectCard({
             />
             <Button
               loading={loading}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 handleSelect();

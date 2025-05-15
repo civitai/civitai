@@ -149,7 +149,7 @@ export function PostImageDropzone({
           className="rounded-lg"
         />
       </div>
-      {!!files.length && showProgress && <Progress value={progress} animate size="lg" />}
+      {!!files.length && showProgress && <Progress value={progress} animated size="lg" />}
       {!files.length && (
         <Text size="xs" align="center">
           By uploading images to our site you agree to our{' '}

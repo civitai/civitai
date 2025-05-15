@@ -1,0 +1,15 @@
+.sidebar {
+  width: 320px;
+  height: 100%;
+  background: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-0));
+
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    display: none;
+  }
+}
+
+.root {
+  display: flex;
+  flex: 1;
+  height: 100%;
+}

@@ -59,7 +59,7 @@ export function NotificationList({
   }
 
   return (
-    <SimpleGrid cols={1} gap={0}>
+    <SimpleGrid cols={1} spacing={0}>
       {fullItems.map((notification) => {
         const notificationDetails = notification.details;
         const details = notification.fullDetails;
@@ -156,4 +156,3 @@ type Props = {
   truncate?: boolean;
   searchText: string;
 };
- 

@@ -24,6 +24,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { getStepMeta } from './GenerationForm/generation.utils';
+import classes from './GeneratedImageActions.module.scss';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -232,13 +233,7 @@ export function GeneratedImageActions({
               onClick={postSelectedImages}
               loading={isMutating}
               disabled={!hasSelected}
-              sx={(theme) => ({
-                '&[data-disabled]': {
-                  background: theme.colors.blue[theme.fn.primaryShade()],
-                  color: 'white',
-                  opacity: 0.5,
-                },
-              })}
+              className={classes.buttonPost}
             >
               Post
             </Button>

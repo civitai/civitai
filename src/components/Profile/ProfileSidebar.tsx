@@ -12,6 +12,7 @@ import {
   useMantineTheme,
   Badge,
   UnstyledButton,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import {
@@ -92,6 +93,7 @@ const mapSize: Record<
 export function ProfileSidebar({ username, className }: { username: string; className?: string }) {
   const router = useRouter();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const { data: user } = trpc.userProfile.get.useQuery({
@@ -138,9 +140,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const followUserBtn = !isCurrentUser && (
     <FollowUserButton
       userId={user.id}
-      leftIcon={isMobile ? undefined : <IconRss size={16} />}
+      leftSection={isMobile ? undefined : <IconRss size={16} />}
       size={sizeOpts.button}
-      sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+      style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
       variant={isMobile ? 'filled' : undefined}
     />
   );
@@ -152,7 +154,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       variant={isMobile ? 'filled' : 'light'}
       color="yellow.7"
       label={label}
-      sx={{ fontSize: '14px', fontWeight: 590 }}
+      style={{ fontSize: '14px', fontWeight: 590 }}
     />
   );
 
@@ -162,7 +164,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       label={label}
       size={sizeOpts.button}
       color="success.9"
-      sx={{ fontSize: '14px', fontWeight: 590, lineHeight: 1.5 }}
+      style={{ fontSize: '14px', fontWeight: 590, lineHeight: 1.5 }}
     />
   );
 
@@ -172,7 +174,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         size={30}
         radius="xl"
         color="gray"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
         ml="auto"
       >
         <IconShare3 size={16} />

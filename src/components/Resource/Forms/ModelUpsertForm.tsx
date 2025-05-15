@@ -6,6 +6,7 @@ import {
   Chip,
   ChipProps,
   Divider,
+  getPrimaryShade,
   Group,
   Input,
   Modal,
@@ -14,6 +15,8 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -122,6 +125,8 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const defaultCategory = result.success ? result.data.category ?? 0 : 0;
   const defaultValues: ModelUpsertSchema = {
@@ -304,12 +309,12 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                         value: type,
                       }))}
                       color="blue"
-                      styles={(theme) => ({
+                      styles={{
                         root: {
                           border: `1px solid ${
                             errors.checkpointType
-                              ? theme.colors.red[theme.fn.primaryShade()]
-                              : theme.colorScheme === 'dark'
+                              ? theme.colors.red[getPrimaryShade(theme, colorScheme)]
+                              : colorScheme === 'dark'
                               ? theme.colors.dark[4]
                               : theme.colors.gray[4]
                           }`,
@@ -319,7 +324,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                         label: {
                           padding: '2px 10px',
                         },
-                      })}
+                      }}
                       fullWidth
                     />
                   </Input.Wrapper>
@@ -337,7 +342,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               )}
               withAsterisk
               placeholder="Select a Category"
-              nothingFound="Nothing found"
+              nothingFoundMessage="Nothing found"
               data={categories}
               loading={loadingCategories}
               searchable
@@ -437,13 +442,12 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                       </Text>
                     </Stack>
                     <Checkbox.Group
-                      gap="xs"
                       value={allowCommercialUse}
                       defaultValue={defaultValues.allowCommercialUse}
-                      onChange={(v: CommercialUse[]) => {
+                      onChange={(v) => {
                         if (v.includes(CommercialUse.Sell)) {
                           const deduped = new Set([
-                            ...v,
+                            ...(v as CommercialUse[]),
                             CommercialUse.RentCivit,
                             CommercialUse.Rent,
                           ]);
@@ -451,29 +455,36 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                             shouldDirty: true,
                           });
                         } else if (v.includes(CommercialUse.Rent)) {
-                          const deduped = new Set([...v, CommercialUse.RentCivit]);
+                          const deduped = new Set([
+                            ...(v as CommercialUse[]),
+                            CommercialUse.RentCivit,
+                          ]);
                           form.setValue('allowCommercialUse', Array.from(deduped), {
                             shouldDirty: true,
                           });
                         } else {
-                          form.setValue('allowCommercialUse', v, { shouldDirty: true });
+                          form.setValue('allowCommercialUse', v as CommercialUse[], {
+                            shouldDirty: true,
+                          });
                         }
                       }}
                     >
-                      {commercialUseOptions.map(({ value, label }) => (
-                        <Checkbox
-                          key={value}
-                          value={value}
-                          label={label}
-                          disabled={
-                            (value === CommercialUse.RentCivit &&
-                              (allowCommercialUse?.includes(CommercialUse.Sell) ||
-                                allowCommercialUse?.includes(CommercialUse.Rent))) ||
-                            (value === CommercialUse.Rent &&
-                              allowCommercialUse?.includes(CommercialUse.Sell))
-                          }
-                        />
-                      ))}
+                      <Group gap="xs">
+                        {commercialUseOptions.map(({ value, label }) => (
+                          <Checkbox
+                            key={value}
+                            value={value}
+                            label={label}
+                            disabled={
+                              (value === CommercialUse.RentCivit &&
+                                (allowCommercialUse?.includes(CommercialUse.Sell) ||
+                                  allowCommercialUse?.includes(CommercialUse.Rent))) ||
+                              (value === CommercialUse.Rent &&
+                                allowCommercialUse?.includes(CommercialUse.Sell))
+                            }
+                          />
+                        ))}
+                      </Group>
                     </Checkbox.Group>
                   </Stack>
                 </ContainerGrid.Col>
@@ -585,16 +596,14 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
 
             {isTrained && isDraft && features.privateModels && (
               <InputChipGroup
-                grow
-                gap="sm"
                 name="availability"
-                onChangeCapture={async (event) => {
+                onChange={async (v) => {
                   // @ts-ignore eslint-disable-next-line
-                  const value = event.target.value as Availability;
+                  const value = v as Availability;
                   if (value === Availability.Private) {
                     // Open automatic configurator modal:
-                    event.preventDefault();
-                    event.stopPropagation();
+                    // event.preventDefault();
+                    // event.stopPropagation();
 
                     const { attestation } = form.getValues();
 
@@ -633,29 +642,31 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   }
                 }}
               >
-                {Object.keys(availabilityDetails).map((type) => {
-                  const details = availabilityDetails[type as keyof typeof availabilityDetails];
-                  const Wrap = ({ children }: { children: React.ReactNode }) =>
-                    type === 'Private' ? (
-                      <SubscriptionRequiredBlock feature="private-models">
-                        {children}
-                      </SubscriptionRequiredBlock>
-                    ) : (
-                      <>{children}</>
-                    );
+                <Group grow gap="sm">
+                  {Object.keys(availabilityDetails).map((type) => {
+                    const details = availabilityDetails[type as keyof typeof availabilityDetails];
+                    const Wrap = ({ children }: { children: React.ReactNode }) =>
+                      type === 'Private' ? (
+                        <SubscriptionRequiredBlock feature="private-models">
+                          {children}
+                        </SubscriptionRequiredBlock>
+                      ) : (
+                        <>{children}</>
+                      );
 
-                  return (
-                    <Wrap key={type}>
-                      <Chip value={type} {...chipProps}>
-                        <Stack gap={4} align="center" w="100%" px="sm">
-                          {details.icon}
-                          <Text weight="bold">{details.label}</Text>
-                          <Text className="text-wrap text-center">{details.description}</Text>
-                        </Stack>
-                      </Chip>
-                    </Wrap>
-                  );
-                })}
+                    return (
+                      <Wrap key={type}>
+                        <Chip value={type} {...chipProps}>
+                          <Stack gap={4} align="center" w="100%" px="sm">
+                            {details.icon}
+                            <Text weight="bold">{details.label}</Text>
+                            <Text className="text-wrap text-center">{details.description}</Text>
+                          </Stack>
+                        </Chip>
+                      </Wrap>
+                    );
+                  })}
+                </Group>
               </InputChipGroup>
             )}
           </Stack>

@@ -48,7 +48,7 @@ export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
                   minDate={minDate}
                   maxDate={maxDate}
                 />
-                <InputTime name="time" label="Publish Time" format="12" withAsterisk />
+                <InputTime name="time" label="Publish Time" withAsterisk />
               </Group>
               <Text size="xs" color="dimmed">
                 The date and time are in your local timezone.

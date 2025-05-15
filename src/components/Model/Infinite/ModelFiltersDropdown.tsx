@@ -10,6 +10,7 @@ import {
   PopoverProps,
   ScrollArea,
   Stack,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
@@ -69,6 +70,7 @@ export function DumbModelFiltersDropdown({
 }) {
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const flags = useFeatureFlags();
   const mobile = useIsMobile();
   const {
@@ -145,8 +147,6 @@ export function DumbModelFiltersDropdown({
       label={filterLength ? filterLength : undefined}
       size={14}
       zIndex={10}
-      showZero={false}
-      dot={false}
       inline
     >
       <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
@@ -158,7 +158,7 @@ export function DumbModelFiltersDropdown({
   const dropdown = (
     <Stack gap={8} p="md">
       <Stack gap={0}>
-        <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
+        <Divider label="Time period" className="text-sm font-bold" mb={4} />
         {!localMode ? (
           <PeriodFilter
             type="models"
@@ -178,44 +178,40 @@ export function DumbModelFiltersDropdown({
       <Stack gap={0}>
         {currentUser?.isModerator && (
           <>
-            <Divider
-              label="Model Availability"
-              labelProps={{ weight: 'bold', size: 'sm' }}
-              mb={4}
-            />
+            <Divider label="Model Availability" className="text-sm font-bold" mb={4} />
 
             <Chip.Group
-              gap={8}
               value={mergedFilters.availability}
-              mb={8}
-              onChange={(availability: Availability) =>
+              onChange={(availability) =>
                 handleChange({
-                  availability,
+                  availability: availability as Availability,
                 })
               }
             >
-              {Object.values(Availability).map((availability) => (
-                <FilterChip key={availability} value={availability}>
-                  <span>{availability}</span>
-                </FilterChip>
-              ))}
+              <Group gap={8} mb={4}>
+                {Object.values(Availability).map((availability) => (
+                  <FilterChip key={availability} value={availability}>
+                    <span>{availability}</span>
+                  </FilterChip>
+                ))}
+              </Group>
             </Chip.Group>
           </>
         )}
-        <Divider label="Model status" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
+        <Divider label="Model status" className="text-sm font-bold" mb={4} />
         {currentUser?.isModerator && (
           <Chip.Group
-            gap={8}
             value={mergedFilters.status ?? []}
-            mb={8}
-            onChange={(status: ModelStatus[]) => handleChange({ status })}
+            onChange={(status) => handleChange({ status: status as ModelStatus[] })}
             multiple
           >
-            {availableStatus.map((status) => (
-              <FilterChip key={status} value={status}>
-                <span>{status}</span>
-              </FilterChip>
-            ))}
+            <Group gap={8} mb={4}>
+              {availableStatus.map((status) => (
+                <FilterChip key={status} value={status}>
+                  <span>{status}</span>
+                </FilterChip>
+              ))}
+            </Group>
           </Chip.Group>
         )}
 
@@ -249,77 +245,81 @@ export function DumbModelFiltersDropdown({
         </Group>
       </Stack>
       <Stack gap={0}>
-        <Divider label="Model types" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Model types" className="text-sm font-bold" />
         <Chip.Group
-          gap={8}
           value={mergedFilters.types ?? []}
-          onChange={(types: ModelType[]) => handleChange({ types })}
+          onChange={(types) => handleChange({ types: types as ModelType[] })}
           multiple
-          my={4}
         >
-          {Object.values(ModelType).map((type, index) => (
-            <FilterChip key={index} value={type}>
-              <span>{getDisplayName(type)}</span>
-            </FilterChip>
-          ))}
+          <Group gap={8} mb={4}>
+            {Object.values(ModelType).map((type, index) => (
+              <FilterChip key={index} value={type}>
+                <span>{getDisplayName(type)}</span>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
       {showCheckpointType ? (
         <>
           <Stack gap={0}>
-            <Divider label="Checkpoint type" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Divider label="Checkpoint type" className="text-sm font-bold" />
             <Chip.Group
-              my={4}
-              gap={8}
               value={mergedFilters.checkpointType ?? 'all'}
-              onChange={(value: CheckpointType | 'all') =>
-                handleChange({ checkpointType: value !== 'all' ? value : undefined })
+              onChange={(value) =>
+                handleChange({
+                  checkpointType: value !== 'all' ? (value as CheckpointType) : undefined,
+                })
               }
             >
-              {ckptTypeOptions.map((option, index) => (
-                <FilterChip key={index} value={option.value}>
-                  <span>{option.label}</span>
-                </FilterChip>
-              ))}
+              <Group gap={8} mb={4}>
+                {ckptTypeOptions.map((option, index) => (
+                  <FilterChip key={index} value={option.value}>
+                    <span>{option.label}</span>
+                  </FilterChip>
+                ))}
+              </Group>
             </Chip.Group>
           </Stack>
           <Stack gap={0}>
-            <Divider label="File format" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Divider label="File format" className="text-sm font-bold" />
             <Chip.Group
-              gap={8}
               value={mergedFilters.fileFormats ?? []}
-              onChange={(fileFormats: typeof availableFileFormats) => handleChange({ fileFormats })}
+              onChange={(fileFormats) =>
+                handleChange({ fileFormats: fileFormats as typeof availableFileFormats })
+              }
               multiple
-              my={4}
             >
-              {availableFileFormats.map((format, index) => (
-                <FilterChip key={index} value={format}>
-                  <span>{format}</span>
-                </FilterChip>
-              ))}
+              <Group gap={8} mb={4}>
+                {availableFileFormats.map((format, index) => (
+                  <FilterChip key={index} value={format}>
+                    <span>{format}</span>
+                  </FilterChip>
+                ))}
+              </Group>
             </Chip.Group>
           </Stack>
         </>
       ) : null}
       <Stack gap={0}>
-        <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Base model" className="text-sm font-bold" />
         <Chip.Group
-          gap={8}
           value={(mergedFilters.baseModels as string[]) ?? []}
-          onChange={(baseModels: BaseModel[]) => handleChange({ baseModels })}
+          onChange={(baseModels) => handleChange({ baseModels: baseModels as BaseModel[] })}
           multiple
-          my={4}
         >
-          {activeBaseModels.map((baseModel, index) => (
-            <FilterChip key={index} value={baseModel}>
-              <span>{getDisplayName(baseModel, { splitNumbers: false })}</span>
-            </FilterChip>
-          ))}
+          <Group gap={8} mb={4}>
+            {activeBaseModels.map((baseModel, index) => (
+              <FilterChip key={index} value={baseModel}>
+                <span>{getDisplayName(baseModel, { splitNumbers: false })}</span>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
 
       <Stack gap={0}>
-        <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
+        <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <Group gap={8}>
           {currentUser && isFeed && (
             <>
@@ -336,7 +336,7 @@ export function DumbModelFiltersDropdown({
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -356,13 +356,13 @@ export function DumbModelFiltersDropdown({
           size="90%"
           position="bottom"
           styles={{
-            drawer: {
+            root: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
             },
             body: { padding: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}

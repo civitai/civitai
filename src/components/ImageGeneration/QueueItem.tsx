@@ -3,7 +3,6 @@ import {
   Alert,
   Badge,
   Card,
-  createStyles,
   Group,
   Loader,
   RingProgress,
@@ -58,6 +57,8 @@ import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import classes from './QueueItem.module.scss';
+import clsx from 'clsx';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -78,7 +79,6 @@ export function QueueItem({
   id: string;
   filter: { marker?: string } | undefined;
 }) {
-  const { classes, cx } = useStyle();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const [ref, inView] = useInViewDynamic({ id });
@@ -286,7 +286,7 @@ export function QueueItem({
             {failureReason && <Alert color="red">{failureReason}</Alert>}
 
             <div
-              className={cx(classes.grid, {
+              className={clsx(classes.grid, {
                 [classes.asSidebar]: !features.largerGenerationImages,
               })}
             >
@@ -354,48 +354,18 @@ export function QueueItem({
       )}
 
       {inView && (
-        <Card.Section
-          withBorder
-          sx={(theme) => ({
-            marginLeft: -theme.spacing.xs,
-            marginRight: -theme.spacing.xs,
-          })}
-        >
+        <Card.Section withBorder className="-mx-8">
           <GenerationDetails
             label="Additional Details"
             params={details}
             labelWidth={150}
-            paperProps={{ radius: 0, sx: { borderWidth: '1px 0 0 0' } }}
+            paperProps={{ radius: 0, style: { borderWidth: '1px 0 0 0' } }}
           />
         </Card.Section>
       )}
     </Card>
   );
 }
-
-const useStyle = createStyles((theme) => ({
-  stopped: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[1],
-  },
-  grid: {
-    display: 'grid',
-    gap: theme.spacing.xs,
-    gridTemplateColumns: 'repeat(1, 1fr)', // default for larger screens, max 6 columns
-
-    [`@container (min-width: 530px)`]: {
-      gridTemplateColumns: 'repeat(3, 1fr)', // 3 columns for screens smaller than md
-    },
-    [`@container (min-width: 900px)`]: {
-      gridTemplateColumns: 'repeat(4, 1fr)', // 5 columns for screens smaller than xl
-    },
-    [`@container (min-width: 1200px)`]: {
-      gridTemplateColumns: 'repeat(auto-fill, minmax(256px, 1fr))',
-    },
-  },
-  asSidebar: {
-    gridTemplateColumns: 'repeat(2, 1fr)',
-  },
-}));
 
 const ResourceBadge = (props: GenerationResource) => {
   const { unstableResources } = useUnstableResources();

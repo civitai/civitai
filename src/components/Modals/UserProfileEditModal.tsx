@@ -403,7 +403,7 @@ const { openModal, Modal } = createContextModal({
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
           <Group justify="space-between">
-            <Text size={24} weight={590}>
+            <Text fz={24} weight={590}>
               Customize Profile
             </Text>
 
@@ -455,12 +455,14 @@ const { openModal, Modal } = createContextModal({
                 <>
                   <InputProfileImageUpload name="profilePicture" label="Edit avatar" />
                   <Divider label="Showcase Stats" />
-                  <InputChipGroup gap={8} name="creatorCardStatsPreferences" multiple>
-                    {Object.values(creatorCardStats).map((type, index) => (
-                      <Chip key={index} value={type} {...chipProps}>
-                        <span>{getDisplayName(type)}</span>
-                      </Chip>
-                    ))}
+                  <InputChipGroup name="creatorCardStatsPreferences" multiple>
+                    <Group gap={8}>
+                      {Object.values(creatorCardStats).map((type, index) => (
+                        <Chip key={index} value={type} {...chipProps}>
+                          <span>{getDisplayName(type)}</span>
+                        </Chip>
+                      ))}
+                    </Group>
                   </InputChipGroup>
                   {(creatorCardStatsPreferences?.length ?? 0) > creatorCardMaxStats && (
                     <Text color="red" size="xs">
@@ -517,7 +519,7 @@ const { openModal, Modal } = createContextModal({
                         </Box>
                       </Popover.Target>
                       <Popover.Dropdown>
-                        <Text weight={500} size="sm">
+                        <Text fw={500} size="sm">
                           Nameplates
                         </Text>
                         <Text size="sm">
@@ -529,7 +531,7 @@ const { openModal, Modal } = createContextModal({
                     </Popover>
                   </Group>
                 }
-                nothingFound="Your earned nameplate styles will appear here"
+                nothingFoundMessage="Your earned nameplate styles will appear here"
                 data={
                   nameplates.map((cosmetic) => ({
                     label: cosmetic.name,

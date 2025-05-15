@@ -30,7 +30,7 @@ export function InsertInstagramEmbedControl(props: Props) {
   const handleSubmit = (values: z.infer<typeof schema>) => {
     const { url } = values;
 
-    editor.commands.setInstagramEmbed({ src: url });
+    editor?.commands.setInstagramEmbed({ src: url });
     closeAllModals();
     form.reset();
   };

@@ -30,7 +30,7 @@ export function InsertStrawPollControl(props: Props) {
   const handleSubmit = (values: z.infer<typeof schema>) => {
     const { url } = values;
 
-    editor.commands.setStrawPollEmbed({ src: url });
+    editor?.commands.setStrawPollEmbed({ src: url });
     closeAllModals();
     form.reset();
   };

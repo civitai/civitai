@@ -65,7 +65,7 @@ export function CustomMarkdown({
           },
           table: ({ node, children, ref, ...props }) => {
             return (
-              <Table {...props} striped withBorder withColumnBorders>
+              <Table {...props} striped withTableBorder withColumnBorders>
                 {children}
               </Table>
             );

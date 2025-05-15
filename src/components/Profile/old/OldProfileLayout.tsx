@@ -1,4 +1,4 @@
-import { ActionIcon, Menu, useMantineTheme } from '@mantine/core';
+import { ActionIcon, Menu, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification, updateNotification } from '@mantine/notifications';
@@ -133,6 +133,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   });
 
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const handleToggleMute = () => {
     if (user) toggleMuteMutation.mutate({ id: user.id });
@@ -224,7 +225,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           size={30}
           radius="xl"
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           ml="auto"
         >
           <IconDotsVertical size={16} />

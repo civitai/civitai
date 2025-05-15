@@ -42,6 +42,7 @@ import { getRandomId, validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
+import classes from './RichTextEditorComponent.module.scss';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -65,32 +66,6 @@ const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
     minHeight: 90,
   },
 };
-
-const useStyles = createStyles((theme) => ({
-  mention: {
-    color: theme.colors.blue[4],
-  },
-  instagramEmbed: {
-    aspectRatio: '9/16',
-    maxHeight: 1060,
-    maxWidth: '50%',
-    overflow: 'hidden',
-
-    [containerQuery.smallerThan('sm')]: {
-      maxWidth: '100%',
-    },
-  },
-  strawPollEmbed: {
-    aspectRatio: '4/3',
-    maxHeight: 480,
-    // Ignoring because we want to use !important, if not then it complaints about it
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    pointerEvents: 'auto !important' as any,
-  },
-  bubbleTooltip: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-  },
-}));
 
 function openLinkWhitelistRequestModal() {
   return openModal({
@@ -167,7 +142,6 @@ export function RichTextEditor({
   inputClasses,
   ...props
 }: Props) {
-  const { classes } = useStyles();
   const addHeading = includeControls.includes('heading');
   const addFormatting = includeControls.includes('formatting');
   const addColors = addFormatting && includeControls.includes('colors');
@@ -251,7 +225,7 @@ export function RichTextEditor({
               showNotification({
                 id: UPLOAD_NOTIFICATION_ID,
                 loading: true,
-                disallowClose: true,
+                withCloseButton: false,
                 autoClose: false,
                 message: 'Uploading images...',
               });
@@ -362,35 +336,7 @@ export function RichTextEditor({
       error={error}
       className={inputClasses}
     >
-      <RTE
-        {...props}
-        editor={editor}
-        id={id}
-        sx={(theme) => ({
-          marginTop: description ? 5 : undefined,
-          marginBottom: error ? 5 : undefined,
-          borderColor: error ? theme.colors.red[8] : undefined,
-
-          // Fixes gapcursor color for dark mode
-          '& .ProseMirror-gapcursor:after': {
-            borderTop: `1px solid ${theme.colorScheme === 'dark' ? 'white' : 'black'}`,
-          },
-
-          '& .ProseMirror': {
-            ...mapEditorSize[editorSize],
-            // minHeight: mapEditorSizeHeight[editorSize],
-
-            '& p.is-editor-empty:first-of-type::before': {
-              color: error ? theme.colors.red[8] : undefined,
-              fontSize: 14,
-            },
-          },
-
-          '& iframe': {
-            pointerEvents: 'none',
-          },
-        })}
-      >
+      <RTE {...props} editor={editor} id={id} className={classes.ritchTextEditor}>
         {!hideToolbar && (
           <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
             {addHeading && (

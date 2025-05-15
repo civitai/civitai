@@ -92,7 +92,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               // TODO.briant: this fixes the issue with rendering the SegmentedControl
               key={tabEntries.map(([, item]) => item.label).join('-')}
               className="shrink-0"
-              sx={{ overflow: 'visible' }}
+              style={{ overflow: 'visible' }}
               data-tour="gen:results"
               data={tabEntries.map(([key, { Icon, label }]) => ({
                 label: (
@@ -104,7 +104,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
                 ),
                 value: key,
               }))}
-              onChange={(key: GenerationPanelView) => setView(key)}
+              onChange={(key) => setView(key as GenerationPanelView)}
               value={view}
             />
           )}

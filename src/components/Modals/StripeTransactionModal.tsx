@@ -8,6 +8,7 @@ import {
   Loader,
   useMantineTheme,
   Title,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -281,6 +282,7 @@ const { openModal, Modal } = createContextModal<Props>({
     },
   }) => {
     const theme = useMantineTheme();
+    const colorScheme = useComputedColorScheme('dark');
     const stripePromise = useStripePromise();
 
     const {
@@ -327,7 +329,7 @@ const { openModal, Modal } = createContextModal<Props>({
 
     const options: StripeElementsOptions = {
       clientSecret,
-      appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
+      appearance: { theme: colorScheme === 'dark' ? 'night' : 'stripe' },
       locale: 'en',
     };
 

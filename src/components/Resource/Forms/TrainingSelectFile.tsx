@@ -1,7 +1,6 @@
 import {
   Button,
   Center,
-  createStyles,
   Flex,
   Group,
   Image,
@@ -38,25 +37,8 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB, formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles((theme) => ({
-  epochRow: {
-    [containerQuery.smallerThan('sm')]: {
-      flexDirection: 'column',
-      gap: theme.spacing.md,
-    },
-    flexWrap: 'nowrap',
-  },
-  selectedRow: {
-    border: `2px solid ${theme.fn.rgba(theme.colors.green[5], 0.7)}`,
-  },
-  paperRow: {
-    cursor: 'pointer',
-    '&:hover': {
-      backgroundColor: theme.fn.rgba(theme.colors.blue[2], 0.1),
-    },
-  },
-}));
+import classes from './TrainingSelectFile.module.scss';
+import clsx from 'clsx';
 
 const TRANSMITTER_KEY = 'trainer';
 
@@ -84,7 +66,6 @@ const EpochRow = ({
   isVideo: boolean;
 }) => {
   const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
   // const features = useFeatureFlags();
 
   return (
@@ -93,7 +74,7 @@ const EpochRow = ({
       radius="sm"
       p="xs"
       withBorder
-      className={cx(
+      className={clsx(
         classes.paperRow,
         selectedFile === epoch.modelUrl ? classes.selectedRow : undefined
       )}
@@ -106,7 +87,7 @@ const EpochRow = ({
           </Text>
           <Group gap={8} wrap="nowrap">
             <DownloadButton
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
               component="a"
               canDownload
               href={epoch.modelUrl}

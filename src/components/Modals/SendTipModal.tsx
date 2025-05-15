@@ -8,6 +8,8 @@ import {
   Stack,
   Text,
   Modal,
+  rgba,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
 import React, { useState } from 'react';
@@ -63,6 +65,7 @@ export default function SendTipModal({
 }) {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
+  const colorScheme = useComputedColorScheme('dark');
 
   const queryUtils = trpc.useUtils();
 
@@ -143,10 +146,9 @@ export default function SendTipModal({
               h="auto"
               py={4}
               px={12}
-              sx={(theme) => ({
-                backgroundColor:
-                  theme.colorScheme === 'dark' ? theme.fn.rgba('#000', 0.31) : theme.colors.gray[0],
-              })}
+              style={{
+                backgroundColor: colorScheme === 'dark' ? rgba('#000', 0.31) : '#fff',
+              }}
             >
               <Group gap={4} wrap="nowrap">
                 <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
@@ -162,20 +164,22 @@ export default function SendTipModal({
         <Text>How much Buzz do you want to tip?</Text>
         <Form form={form} onSubmit={handleSubmit} style={{ position: 'static' }}>
           <Stack gap="md">
-            <InputChipGroup className={classes.chipGroup} name="amount" gap={8}>
-              {presets.map((preset) => (
-                <Chip
-                  classNames={classes}
-                  variant="filled"
-                  key={preset.label}
-                  value={preset.amount}
-                >
-                  <Group gap={4}>
-                    {preset.amount === amount && <IconBolt size={16} fill="currentColor" />}
-                    {preset.amount}
-                  </Group>
-                </Chip>
-              ))}
+            <InputChipGroup name="amount">
+              <Group gap={8} className={classes.chipGroup}>
+                {presets.map((preset) => (
+                  <Chip
+                    classNames={classes}
+                    variant="filled"
+                    key={preset.label}
+                    value={preset.amount}
+                  >
+                    <Group gap={4}>
+                      {preset.amount === amount && <IconBolt size={16} fill="currentColor" />}
+                      {preset.amount}
+                    </Group>
+                  </Chip>
+                ))}
+              </Group>
               <Chip classNames={classes} variant="filled" value="-1">
                 <Group gap={4}>
                   {amount === '-1' && <IconBolt size={16} fill="currentColor" />}
@@ -193,12 +197,8 @@ export default function SendTipModal({
                 max={constants.buzz.maxTipAmount}
                 disabled={sending}
                 leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-                formatter={(value) =>
-                  value && !Number.isNaN(parseFloat(value))
-                    ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                    : ''
-                }
+                allowDecimal={false}
+                allowNegative={false}
                 hideControls
               />
             )}

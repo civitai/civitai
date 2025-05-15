@@ -1,4 +1,13 @@
-import { Box, Group, GroupProps, List, Popover, Text, Tooltip } from '@mantine/core';
+import {
+  Box,
+  Group,
+  GroupProps,
+  List,
+  Popover,
+  Text,
+  Tooltip,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   IconBrushOff,
   IconCheck,
@@ -18,12 +27,13 @@ import { CommercialUse } from '~/shared/utils/prisma/enums';
 export const PermissionIndicator = ({
   permissions,
   size = 20,
-  spacing = 2,
+  gap = 2,
   showNone = false,
   ...props
 }: Props) => {
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
+  const theme = useMantineTheme();
 
   const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense, sfwOnly } =
     permissions;
@@ -63,10 +73,10 @@ export const PermissionIndicator = ({
   return (
     <Popover withArrow withinPortal>
       <Popover.Target>
-        <Group gap={spacing} sx={{ cursor: 'pointer' }} wrap="nowrap" {...props}>
+        <Group gap={gap} style={{ cursor: 'pointer' }} wrap="nowrap" {...props}>
           {icons.map(({ label, icon }, i) => (
             <Tooltip key={i} label={label} withArrow withinPortal position="top">
-              <Box sx={(theme) => ({ color: theme.colors.gray[5] })}>{icon}</Box>
+              <Box style={{ color: theme.colors.gray[5] }}>{icon}</Box>
             </Tooltip>
           ))}
           {showNone && icons.length === 0 && (
@@ -87,9 +97,6 @@ export const PermissionIndicator = ({
           {Object.entries(explanation).map(([permission, allowed], i) => (
             <List.Item
               key={i}
-              styles={(theme) => ({
-                itemIcon: { color: theme.colors.red[4] },
-              })}
               icon={
                 allowed ? (
                   <IconCheck style={{ color: 'green' }} size={12} stroke={4} />

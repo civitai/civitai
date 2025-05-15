@@ -233,7 +233,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               : 'At least one image is required in order to publish this post to the community'
           }
           multiline
-          width={260}
+          w="260px"
           withArrow
         >
           {collectionId ? (

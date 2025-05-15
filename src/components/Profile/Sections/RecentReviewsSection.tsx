@@ -6,7 +6,6 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  createStyles,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
@@ -84,7 +83,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                               withUsername
                               size="lg"
                               avatarSize={40}
-                              gap="md"
+                              spacing="md"
                               linkToProfile
                               subText={
                                 <Text color="dimmed" size="sm">

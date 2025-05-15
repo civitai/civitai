@@ -1,4 +1,4 @@
-import { createStyles, ContainerProps, Box, BoxProps } from '@mantine/core';
+import { ContainerProps, Box, BoxProps } from '@mantine/core';
 import React, { CSSProperties } from 'react';
 import {
   MasonryContextState,

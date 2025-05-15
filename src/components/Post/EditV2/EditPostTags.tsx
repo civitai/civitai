@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Alert,
   Box,
-  createStyles,
   Divider,
   Group,
   Loader,
@@ -10,6 +9,7 @@ import {
   Stack,
   Text,
   TextInput,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { getHotkeyHandler, useClickOutside, useDebouncedValue, usePrevious } from '@mantine/hooks';
@@ -20,6 +20,8 @@ import { POST_TAG_LIMIT } from '~/server/common/constants';
 import { PostDetailEditable } from '~/server/services/post.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from './EditPostTags.module.scss';
+import clsx from 'clsx';
 
 type TagProps = {
   id?: number;
@@ -69,6 +71,7 @@ export function EditPostTags({
 function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
   const { postId, tags, setTags } = useEditPostTagsContext();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const previousTags = usePrevious(tags);
   const { mutate, isLoading } = trpc.post.removeTag.useMutation({
@@ -92,10 +95,10 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
     <Alert
       radius="xl"
       color="gray"
-      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+      variant={colorScheme === 'dark' ? 'filled' : 'light'}
       py={4}
       pr={tag.id ? 'xs' : undefined}
-      sx={{ minHeight: 32, display: 'flex', alignItems: 'center' }}
+      style={{ minHeight: 32, display: 'flex', alignItems: 'center' }}
     >
       <Group gap="xs">
         <Text>{tag.name}</Text>
@@ -116,9 +119,9 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
 }
 
 function TagPicker() {
+  const colorScheme = useComputedColorScheme('dark');
   const { postId, tags, setTags, autosuggest } = useEditPostTagsContext();
 
-  const { classes, cx, theme } = useDropdownContentStyles();
   const [active, setActive] = useState<number>();
   const [editing, setEditing] = useState(false);
   const [query, setQuery] = useState<string>('');
@@ -231,9 +234,9 @@ function TagPicker() {
         radius="xl"
         py={4}
         color="gray"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
         onClick={() => setEditing(true)}
-        sx={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+        style={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
       >
         {!editing ? (
           <Group gap={4} data-tour="post:tag">
@@ -275,7 +278,7 @@ function TagPicker() {
         )}
       </Alert>
     ),
-    [editing, handleClose, handleDown, handleEnter, handleUp, query, theme.colorScheme]
+    [editing, handleClose, handleDown, handleEnter, handleUp, query, colorScheme]
   );
 
   if (!autosuggest) return target;
@@ -296,7 +299,7 @@ function TagPicker() {
                 <Group
                   justify="space-between"
                   key={index}
-                  className={cx({ [classes.active]: index === active })}
+                  className={clsx({ [classes.active]: index === active })}
                   onMouseOver={() => setActive(index)}
                   onMouseLeave={() => setActive(undefined)}
                   onClick={() => handleClick(index)}
@@ -318,15 +321,3 @@ function TagPicker() {
     </Popover>
   );
 }
-
-const useDropdownContentStyles = createStyles((theme) => ({
-  active: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-    cursor: 'pointer',
-  },
-  categoryIcon: {
-    strokeWidth: 0,
-    fill: theme.colors.blue[6],
-    marginTop: 1,
-  },
-}));

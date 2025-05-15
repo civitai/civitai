@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Center,
-  createStyles,
   Divider,
   Group,
   Input,
@@ -17,6 +16,8 @@ import {
   Stack,
   Text,
   Notification,
+  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -116,6 +117,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import classes from './GenerationForm2.module.scss';
 
 let total = 0;
 const tips = {
@@ -125,7 +127,8 @@ const tips = {
 
 // #region [form component]
 export function GenerationFormContent() {
-  const { classes, cx, theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const featureFlags = useFeatureFlags();
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
@@ -528,7 +531,7 @@ export function GenerationFormContent() {
 
                     return (
                       <Card
-                        className={cx(
+                        className={clsx(
                           { [classes.formError]: form.formState.errors.resources },
                           'overflow-visible'
                         )}
@@ -560,9 +563,9 @@ export function GenerationFormContent() {
                         />
                         {!disableAdditionalResources && (
                           <Card.Section
-                            className={cx(
+                            className={clsx(
                               { [classes.formError]: form.formState.errors.resources },
-                              'border-b-0 mt-3'
+                              'mt-3 border-b-0'
                             )}
                             withBorder
                           >
@@ -576,7 +579,7 @@ export function GenerationFormContent() {
                             >
                               <Accordion.Item value="resources" className="border-b-0">
                                 <Accordion.Control
-                                  className={cx({
+                                  className={clsx({
                                     [classes.formError]: form.formState.errors.resources,
                                   })}
                                 >
@@ -595,7 +598,7 @@ export function GenerationFormContent() {
                                         component="span"
                                         size="compact-md"
                                         variant="light"
-                                        onClick={(e) => {
+                                        onClick={(e: React.MouseEvent) => {
                                           e.preventDefault();
                                           e.stopPropagation();
                                           setOpened(true);
@@ -618,7 +621,7 @@ export function GenerationFormContent() {
                                           <Anchor
                                             color="yellow"
                                             rel="nofollow"
-                                            onClick={(e) => e.stopPropagation()}
+                                            onClick={(e: React.MouseEvent) => e.stopPropagation()}
                                           >
                                             Become a member
                                           </Anchor>
@@ -753,7 +756,7 @@ export function GenerationFormContent() {
                               <Alert
                                 style={{
                                   background:
-                                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
+                                    colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
                                   borderTopLeftRadius: 0,
                                   borderBottomLeftRadius: 0,
                                 }}
@@ -868,21 +871,15 @@ export function GenerationFormContent() {
                         return (
                           <Paper
                             px="sm"
-                            sx={(theme) => ({
-                              borderBottomLeftRadius: showFillForm ? 0 : undefined,
-                              borderBottomRightRadius: showFillForm ? 0 : undefined,
-                              borderColor: errors.prompt
-                                ? theme.colors.red[theme.fn.primaryShade()]
-                                : undefined,
-                              marginBottom: errors.prompt ? 5 : undefined,
-                              background:
-                                theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
-
-                              // Apply focus styles if textarea is focused
-                              '&:has(textarea:focus)': {
-                                ...theme.focusRingStyles.inputStyles(theme),
-                              },
+                            className={clsx(classes.promptPaper, {
+                              [classes.noFillForm]: !showFillForm,
+                              [classes.fillForm]: showFillForm,
+                              [classes.hasError]: errors.prompt,
                             })}
+                            //   '&:has(textarea:focus)': {
+                            // TODO: Mantine7 - Figure out how this'd play out now.
+                            //     ...theme.focusRingStyles.inputStyles(theme),
+                            //   },
                             withBorder
                           >
                             <InputPrompt
@@ -901,10 +898,9 @@ export function GenerationFormContent() {
                                   outline: 'none',
                                   fontFamily: theme.fontFamily,
                                   fontSize: theme.fontSizes.sm,
-                                  lineHeight: theme.lineHeight,
+                                  lineHeight: theme.lineHeights.sm,
                                   overflow: 'hidden',
-                                  color:
-                                    theme.colorScheme === 'dark' ? theme.colors.dark[0] : undefined,
+                                  color: colorScheme === 'dark' ? theme.colors.dark[0] : undefined,
                                 },
                                 // Prevents input from displaying form error
                                 error: { display: 'none' },
@@ -1058,7 +1054,7 @@ export function GenerationFormContent() {
                           {!isDraft && (
                             <div className="relative flex flex-col gap-3">
                               {/* <LoadingOverlay
-                            color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+                            color={colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
                             opacity={0.8}
                             m={-8}
                             radius="md"
@@ -1490,73 +1486,6 @@ function SubmitButton(props: { isLoading?: boolean }) {
 
 // #endregion
 
-// #region [styles]
-const useStyles = createStyles((theme) => ({
-  generateButtonQuantityInput: {
-    marginTop: -16,
-    input: {
-      background: 'transparent',
-      border: 'none',
-      borderTopRightRadius: 0,
-      borderBottomRightRadius: 0,
-      borderTopLeftRadius: 0,
-      textAlign: 'center',
-      paddingRight: 25 + 12,
-      paddingTop: 22,
-      paddingBottom: 6,
-      lineHeight: 1,
-      fontWeight: 500,
-      height: 'auto',
-    },
-  },
-
-  promptInputLabel: {
-    display: 'inline-flex',
-    gap: 4,
-    marginBottom: 5,
-    alignItems: 'center',
-  },
-  accordionItem: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff',
-
-    '&:first-of-type': {
-      borderTopLeftRadius: theme.radius.sm,
-      borderTopRightRadius: theme.radius.sm,
-    },
-
-    '&:last-of-type': {
-      borderBottomLeftRadius: theme.radius.sm,
-      borderBottomRightRadius: theme.radius.sm,
-    },
-
-    '&[data-active]': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : `#fff`,
-    },
-  },
-  accordionControl: {
-    padding: '8px 8px 8px 12px',
-
-    '&:hover': {
-      background: 'transparent',
-    },
-
-    '&[data-active]': {
-      borderRadius: '0 !important',
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-      }`,
-    },
-  },
-  accordionContent: {
-    padding: '8px 12px 12px 12px',
-  },
-  formError: {
-    borderColor: theme.colors.red[theme.fn.primaryShade()],
-    color: theme.colors.red[theme.fn.primaryShade()],
-  },
-}));
-// #endregion
-
 // #region [misc]
 const sharedSliderProps: SliderProps = {
   size: 'sm',
@@ -1580,7 +1509,7 @@ const getAspectRatioControls = (
         </Center>
         <Stack gap={0}>
           <Text size="xs">{label}</Text>
-          <Text size={10} color="dimmed">{`${width}x${height}`}</Text>
+          <Text fz={10} color="dimmed">{`${width}x${height}`}</Text>
         </Stack>
       </Stack>
     ),

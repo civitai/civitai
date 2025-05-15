@@ -16,6 +16,7 @@ import { Button, Loader, Stack, Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import clsx from 'clsx';
 
 const MAX_MODELS_DISPLAY = 32; // 2 rows of 7
 
@@ -53,6 +54,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
       ref={ref}
       className={isNullState ? undefined : classes.profileSection}
       style={{
+        // @ts-ignore
         '--count': models.length,
         '--row-count': 2,
         '--width-grid': '280px',
@@ -87,7 +89,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
             <ShowcaseGrid
               itemCount={models.length}
               rows={2}
-              className={cx({
+              className={clsx({
                 [classes.nullState]: !models.length,
                 [classes.loading]: isRefetching,
               })}

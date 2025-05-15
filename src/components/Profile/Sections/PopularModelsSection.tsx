@@ -40,6 +40,7 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
       ref={ref}
       className={isNullState ? undefined : classes.profileSection}
       style={{
+        // @ts-ignore
         '--count': models.length,
         '--row-count': 2,
         '--width-grid': '280px',

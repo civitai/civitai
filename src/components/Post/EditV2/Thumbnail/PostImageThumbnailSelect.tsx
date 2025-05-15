@@ -84,11 +84,11 @@ export function PostImageThumbnailSelect({
     <Modal title="Select Thumbnail" size="xl" {...dialog}>
       <div className="flex flex-col gap-8">
         <SimpleGrid
-          gap="md"
-          breakpoints={[
-            { minWidth: 'xs', cols: 1 },
-            { minWidth: 'sm', cols: 2 },
-          ]}
+          cols={{
+            xs: 1,
+            sm: 2,
+          }}
+          spacing="md"
         >
           <SimpleImageUpload
             dropzoneProps={{

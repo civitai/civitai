@@ -13,6 +13,7 @@ import {
   Center,
   Tooltip,
   useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import {
   Availability,
@@ -88,7 +89,7 @@ export function PostDetail(props: Props) {
 }
 
 export function PostDetailContent({ postId }: Props) {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const scrollRef = useScrollAreaRef();
   const currentUser = useCurrentUser();
   const searchParams = useSearchParams();
@@ -225,7 +226,7 @@ export function PostDetailContent({ postId }: Props) {
                     <Button
                       radius="xl"
                       color="gray"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      variant={colorScheme === 'dark' ? 'filled' : 'light'}
                       leftIcon={<IconBookmark size={14} />}
                       onClick={() =>
                         openContext('addToCollection', {
@@ -245,7 +246,7 @@ export function PostDetailContent({ postId }: Props) {
                       <Button
                         radius="xl"
                         color="gray"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        variant={colorScheme === 'dark' ? 'filled' : 'light'}
                         leftIcon={<IconShare3 size={14} />}
                         size="compact-md"
                       >
@@ -258,7 +259,7 @@ export function PostDetailContent({ postId }: Props) {
                       isModelVersionPost={post.modelVersionId}
                     >
                       <ActionIcon
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        variant={colorScheme === 'dark' ? 'filled' : 'light'}
                         size={30}
                         radius="xl"
                         className="@max-md:ml-auto"
@@ -400,7 +401,7 @@ export function PostDetailContent({ postId }: Props) {
                           size="xl"
                           p="md"
                           style={{ cursor: 'pointer' }}
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          variant={colorScheme === 'dark' ? 'filled' : 'light'}
                         >
                           <Text size="xs" transform="capitalize" weight={500}>
                             {item.name}

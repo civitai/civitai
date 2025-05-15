@@ -10,6 +10,8 @@ import {
   Stack,
   Switch,
   Text,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
@@ -17,6 +19,7 @@ import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
+import { useCompensationPool } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -133,6 +136,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
+  const colorScheme = useComputedColorScheme('dark');
+  const theme = useMantineTheme();
 
   const acceptsTrainedWords = [
     'Checkpoint',
@@ -506,17 +511,15 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       }))}
                       color="blue"
                       size="xs"
-                      styles={(theme) => ({
+                      styles={{
                         root: {
                           border: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[4]
+                            colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
                           }`,
                           background: 'none',
-                          marginTop: theme.spacing.xs * 0.5, // 5px
+                          marginTop: 'calc(var(--mantine-spacing-xs) * 0.5)', // 5px
                         },
-                      })}
+                      }}
                       fullWidth
                       disabled={isEarlyAccessOver}
                     />
@@ -568,7 +571,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                                   : MAX_DONATION_GOAL
                               }
                               step={100}
-                              icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                              leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                               withAsterisk
                               disabled={isEarlyAccessOver}
                             />
@@ -614,7 +617,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                               min={50}
                               max={earlyAccessConfig?.downloadPrice}
                               step={100}
-                              icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                              leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                               disabled={isEarlyAccessOver}
                               withAsterisk
                             />
@@ -677,7 +680,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                                   min={MIN_DONATION_GOAL}
                                   max={MAX_DONATION_GOAL}
                                   step={100}
-                                  icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                                   disabled={
                                     !!version?.earlyAccessConfig?.donationGoalId ||
                                     isEarlyAccessOver
@@ -755,8 +758,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     isTextualInversion ? ' (max 1 word)' : ''
                   }`}
                   data={trainedWords}
-                  getCreateLabel={(query) => `+ Create ${query}`}
-                  maxSelectedValues={isTextualInversion ? 1 : undefined}
+                  // TODO: Mantine7 - Figure this one out. We need this.
+                  // getCreateLabel={(query) => `+ Create ${query}`}
+                  max={isTextualInversion ? 1 : undefined}
                   creatable
                   clearable
                   searchable
@@ -783,7 +787,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 placeholder="Training Epochs"
                 min={0}
                 max={100000}
-                sx={{ flexGrow: 1 }}
+                style={{ flexGrow: 1 }}
               />
               <InputNumber
                 name="steps"
@@ -791,13 +795,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 placeholder="Training Steps"
                 min={0}
                 step={500}
-                sx={{ flexGrow: 1 }}
+                style={{ flexGrow: 1 }}
               />
             </Group>
           </Stack>
           <Stack gap={4}>
             <Divider label="Recommended Settings" />
-            <Group gap="xs" sx={{ '&>*': { flexGrow: 1 } }}>
+            <Group gap="xs" className="*:grow">
               <InputNumber
                 name="clipSkip"
                 label="Clip Skip"
@@ -812,7 +816,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     label="Min Strength"
                     min={-100}
                     max={100}
-                    precision={1}
+                    decimalScale={1}
                     step={0.1}
                   />
                   <InputNumber
@@ -820,7 +824,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     label="Max Strength"
                     min={-100}
                     max={100}
-                    precision={1}
+                    decimalScale={1}
                     step={0.1}
                   />
                   <InputNumber
@@ -828,7 +832,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     label="Strength"
                     min={minStrength ?? -1}
                     max={maxStrength ?? 2}
-                    precision={1}
+                    decimalScale={1}
                     step={0.1}
                   />
                 </Group>

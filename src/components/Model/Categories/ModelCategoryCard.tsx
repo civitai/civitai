@@ -11,7 +11,6 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  createStyles,
 } from '@mantine/core';
 import { CollectionType, ModelStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -56,6 +55,8 @@ import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import classes from './ModelCategoryCard.module.scss';
+import clsx from 'clsx';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -66,7 +67,6 @@ export function ModelCategoryCard({
   data: AssociatedResourceModelCardData;
   height: number;
 }) {
-  const { classes, cx } = useStyles();
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
@@ -96,24 +96,24 @@ export function ModelCategoryCard({
   const { setMenuItems } = useModelCardContextMenu();
 
   const modelText = (
-    <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
+    <Text fz={14} fw={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
       {name}
     </Text>
   );
 
   const modelBadges = (
     <>
-      <Badge className={cx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
+      <Badge className={clsx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
         {getDisplayName(data.type)}
       </Badge>
       {data.status !== ModelStatus.Published && (
-        <Badge className={cx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">
+        <Badge className={clsx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">
           {data.status}
         </Badge>
       )}
       {data.status === ModelStatus.Published && inEarlyAccess && (
         <Badge
-          className={cx(classes.floatingBadge, classes.earlyAccessBadge)}
+          className={clsx(classes.floatingBadge, classes.earlyAccessBadge)}
           radius="sm"
           size="sm"
         >
@@ -125,7 +125,7 @@ export function ModelCategoryCard({
 
   const modelDownloads = (
     <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
-      <Text size={12}>{abbreviateNumber(rank.downloadCount)}</Text>
+      <Text fz={12}>{abbreviateNumber(rank.downloadCount)}</Text>
     </IconBadge>
   );
 
@@ -278,7 +278,7 @@ export function ModelCategoryCard({
         label={isUpdated ? 'Updated' : 'New'}
         color="red"
         styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
-        sx={{ opacity: isHidden ? 0.1 : undefined }}
+        style={{ opacity: isHidden ? 0.1 : undefined }}
       >
         <Link
           href={`/models/${id}/${slugit(name)}`}
@@ -329,7 +329,7 @@ export function ModelCategoryCard({
                     <ImageGuard2.BlurToggle />
                     {modelBadges}
                   </Group>
-                  <AspectRatio ratio={1} sx={{ width: '100%', overflow: 'hidden' }}>
+                  <AspectRatio ratio={1} style={{ width: '100%', overflow: 'hidden' }}>
                     <div className={classes.blur}>
                       <MediaHash {...image} />
                     </div>
@@ -354,7 +354,7 @@ export function ModelCategoryCard({
             <Group
               mx="xs"
               justify="space-between"
-              sx={{
+              style={{
                 zIndex: 10,
               }}
             >
@@ -366,7 +366,9 @@ export function ModelCategoryCard({
                   hashes={data.hashes}
                   tooltipProps={{
                     position: 'right',
-                    transition: 'slide-right',
+                    transitionProps: {
+                      transition: 'slide-right',
+                    },
                     variant: 'smallRounded',
                   }}
                 >
@@ -408,7 +410,7 @@ export function ModelCategoryCard({
               {data.user.image && (
                 <CivitaiTooltip
                   position="left"
-                  transition="slide-left"
+                  transitionProps={{ transition: 'slide-left' }}
                   variant="smallRounded"
                   label={
                     <Text size="xs" weight={500}>
@@ -436,7 +438,7 @@ export function ModelCategoryCard({
             </Group>
 
             <Stack className={classes.content} gap={6} p="xs">
-              <Group position="left" gap={4}>
+              <Group justify="start" gap={4}>
                 {modelText}
               </Group>
               <Group justify="space-between" gap={4}>
@@ -453,117 +455,3 @@ export function ModelCategoryCard({
     </MasonryCard>
   );
 }
-
-const useStyles = createStyles((theme) => {
-  return {
-    card: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-    },
-
-    blur: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-    },
-    image: {
-      width: '100%',
-      objectPosition: 'top',
-    },
-    link: {
-      display: 'block',
-    },
-
-    content: {
-      background: theme.fn.gradient({
-        from: 'rgba(37,38,43,0.8)',
-        to: 'rgba(37,38,43,0)',
-        deg: 0,
-      }),
-      // backdropFilter: 'blur(13px) saturate(160%)',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    },
-
-    info: {
-      position: 'absolute',
-      bottom: 0,
-      right: 0,
-      left: 0,
-      zIndex: 10,
-    },
-
-    cardBadges: {
-      position: 'absolute',
-      top: theme.spacing.xs,
-      left: theme.spacing.xs,
-      zIndex: 10,
-    },
-
-    typeBadge: {
-      background: 'rgb(30 133 230 / 40%)',
-    },
-
-    floatingBadge: {
-      color: 'white',
-      // backdropFilter: 'blur(7px)',
-      boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-    },
-
-    statusBadge: {
-      background: theme.fn.rgba(theme.colors.yellow[theme.fn.primaryShade()], 0.4),
-    },
-
-    earlyAccessBadge: {
-      background: theme.fn.rgba(theme.colors.green[theme.fn.primaryShade()], 0.4),
-    },
-
-    floatingAvatar: {
-      position: 'absolute',
-      bottom: theme.spacing.xs,
-      right: theme.spacing.xs,
-      zIndex: 10,
-    },
-
-    statBadge: {
-      background: 'rgba(212,212,212,0.2)',
-      color: 'white',
-    },
-
-    userAvatar: {
-      opacity: 0.8,
-      boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
-      transition: 'opacity .25s ease',
-      position: 'relative',
-
-      '&::before': {
-        content: '""',
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        borderRadius: theme.radius.xl,
-        boxShadow: 'inset 0 0 0px 1px rgba(255,255,255,0.8)',
-      },
-
-      '&:hover': {
-        opacity: 1,
-      },
-    },
-
-    hoverable: {
-      opacity: 0.8,
-      boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
-      transition: 'opacity .25s ease',
-      position: 'relative',
-      '&:hover': {
-        opacity: 1,
-      },
-    },
-  };
-});

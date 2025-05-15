@@ -1,14 +1,4 @@
-import {
-  ActionIcon,
-  Badge,
-  Button,
-  Center,
-  Group,
-  Loader,
-  Paper,
-  Stack,
-  createStyles,
-} from '@mantine/core';
+import { ActionIcon, Badge, Button, Center, Group, Loader, Paper, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { Fragment, useRef, useState } from 'react';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
@@ -30,6 +20,8 @@ import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { PostContestCollectionItem } from '~/types/router';
+import classes from './PostImages.module.scss';
+import clsx from 'clsx';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
@@ -48,7 +40,6 @@ export function PostImages({
   isOwner?: boolean;
   isModerator?: boolean;
 }) {
-  const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
   const videoRef = useRef<EdgeVideoRef | null>(null);
   const features = useFeatureFlags();
@@ -109,7 +100,7 @@ export function PostImages({
                       )}
                     </Group>
                     <div
-                      className={cx('absolute right-2 top-2 z-10 flex flex-col gap-2', {
+                      className={clsx('absolute right-2 top-2 z-10 flex flex-col gap-2', {
                         'right-10 top-2.5': !!vimeoVideoId,
                       })}
                     >
@@ -172,7 +163,7 @@ export function PostImages({
                       )}
                     </RoutedDialogLink>
                     <Reactions
-                      className={cx(classes.reactions, {
+                      className={clsx(classes.reactions, {
                         [classes.reactionsWithControls]:
                           !vimeoVideoId && shouldDisplayHtmlControls(image),
                         [classes.vimeoReactions]: !!vimeoVideoId,
@@ -220,34 +211,3 @@ export function PostImages({
     </Stack>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  reactions: {
-    position: 'absolute',
-    padding: 4,
-    bottom: theme.spacing.sm,
-    left: theme.spacing.sm,
-    borderRadius: theme.radius.md,
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
-        : theme.colors.gray[0],
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-  },
-  reactionsWithControls: {
-    bottom: 'initial',
-    top: '32px',
-    left: '8px',
-  },
-
-  vimeoReactions: {
-    bottom: '48px',
-    left: '8px',
-  },
-
-  vimeoContextMenu: {
-    right: '40px',
-    top: '10px',
-  },
-}));

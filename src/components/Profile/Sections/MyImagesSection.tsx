@@ -17,6 +17,7 @@ import {
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { ImageSort } from '~/server/common/enums';
 import classes from '~/components/Profile/ProfileSection.module.scss';
+import clsx from 'clsx';
 
 const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7
 
@@ -59,6 +60,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
       ref={ref}
       className={isNullState ? undefined : classes.profileSection}
       style={{
+        // @ts-ignore
         '--count': images.length,
         '--row-count': 2,
         '--width-grid': '280px',
@@ -93,7 +95,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
             <ShowcaseGrid
               itemCount={images.length}
               rows={2}
-              className={cx({
+              className={clsx({
                 [classes.nullState]: !images.length,
                 [classes.loading]: isRefetching,
               })}

@@ -1,0 +1,34 @@
+.accordionItem {
+  background-color: light-dark(var(--mantine-color-dark-6), #fff);
+
+  &:first-of-type {
+    border-top-left-radius: var(--mantine-radius-sm);
+    border-top-right-radius: var(--mantine-radius-sm);
+  }
+
+  &:last-of-type {
+    border-bottom-left-radius: var(--mantine-radius-sm);
+    border-bottom-right-radius: var(--mantine-radius-sm);
+  }
+
+  &[data-active] {
+    background-color: light-dark(var(--mantine-color-dark-6), #fff);
+  }
+}
+
+.accordionControl {
+  padding: 8px 8px 8px 12px;
+
+  &:hover {
+    background: transparent;
+  }
+
+  &[data-active] {
+    border-radius: 0 !important;
+    border-bottom: 1px solid light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-2));
+  }
+}
+
+.accordionContent {
+  padding: 8px 12px 12px 12px;
+}

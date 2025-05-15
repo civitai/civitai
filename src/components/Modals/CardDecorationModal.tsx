@@ -130,7 +130,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
               </Stack>
             )}
           </Grid.Col>
-          <Grid.Col xs={12} sm={6} className={classes.preview}>
+          <Grid.Col span={{ base: 12, sm: 6 }} className={classes.preview}>
             <Stack align="center" gap="xl">
               {selectedItem &&
                 selectedItem.entityImage &&
@@ -211,6 +211,7 @@ export const PreviewCard = ({
     <MasonryCard height={cardHeight} frameDecoration={decoration}>
       <EdgeMedia2
         style={{
+          // @ts-ignore
           '--aspect-ratio': originalAspectRatio,
         }}
         src={image.url}

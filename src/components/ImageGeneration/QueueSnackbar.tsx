@@ -1,4 +1,13 @@
-import { Badge, Text, Button, createStyles, Progress, Card, Popover } from '@mantine/core';
+import {
+  Badge,
+  Text,
+  Button,
+  Progress,
+  Card,
+  Popover,
+  useMantineTheme,
+  defaultVariantColorsResolver,
+} from '@mantine/core';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { IconHandStop } from '@tabler/icons-react';
@@ -11,10 +20,12 @@ import React from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import classes from './QueueSnackbar.module.scss';
+import clsx from 'clsx';
 
 export function QueueSnackbar() {
   const router = useRouter();
-  const { classes, cx, theme } = useStyles();
+  const theme = useMantineTheme();
   const {
     queued,
     queueStatus,
@@ -77,7 +88,7 @@ export function QueueSnackbar() {
       <Card
         radius="md"
         p={0}
-        className={cx(classes.card, 'flex justify-center px-1 gap-2 items-stretch ')}
+        className={clsx(classes.card, 'flex items-stretch justify-center gap-2 px-1 ')}
       >
         <div className="flex basis-20 items-center py-2 pl-1">
           {queueStatus ? (
@@ -164,33 +175,38 @@ export function QueueSnackbar() {
           <div className="flex w-full justify-center gap-2">
             {slots.map((slot, i) => {
               const item = queued[i];
-              const colors = theme.fn.variant({
+              const colors = defaultVariantColorsResolver({
                 color: item ? generationStatusColors[item.status] : 'gray',
                 variant: 'light',
+                theme,
               });
               const quantity = item ? item.quantity : 0;
               const complete = quantity ? item.complete / quantity : 0;
               const processing = quantity ? item.processing / quantity : 0;
               return (
-                <Progress
+                <Progress.Root
                   key={i}
                   color={item ? generationStatusColors[item.status] : 'gray'}
                   radius="xl"
-                  sections={[
-                    { value: complete * 100, color: 'green' },
-                    { value: processing * 100, color: 'yellow' },
-                  ]}
                   h={6}
                   w="100%"
                   maw={32}
                   style={{ backgroundColor: item ? colors.background : undefined }}
                   className="flex-1"
-                  styles={{
-                    bar: {
-                      transition: 'width 200ms, left 200ms',
-                    },
-                  }}
-                />
+                  transitionDuration={200}
+                >
+                  {[
+                    { value: complete * 100, color: 'green' },
+                    { value: processing * 100, color: 'yellow' },
+                  ].map((section, index) => (
+                    <Progress.Section
+                      key={index}
+                      animated
+                      value={section.value}
+                      color={section.color}
+                    />
+                  ))}
+                </Progress.Root>
               );
             })}
           </div>
@@ -229,16 +245,3 @@ export function QueueSnackbar() {
     </div>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    boxShadow: `inset 0 2px ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-    }`,
-
-    // '&:hover': {
-    //   backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[0],
-    // },
-  },
-  inner: { width: '100%' },
-}));

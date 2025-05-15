@@ -1,4 +1,15 @@
-import { Card, Group, Input, InputWrapperProps, Paper, Stack, Switch, Text } from '@mantine/core';
+import {
+  Card,
+  Group,
+  Input,
+  InputWrapperProps,
+  Paper,
+  Stack,
+  Switch,
+  Text,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import React, { useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
 import { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
@@ -30,6 +41,8 @@ export const ProfileSectionsSettingsInput = ({
   onChange,
   ...props
 }: ProfileSectionsSettingsInputProps) => {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const [sections, setSections] = useState<ProfileSectionSchema[]>(
     getAllAvailableProfileSections(value || [])
   );
@@ -85,10 +98,10 @@ export const ProfileSectionsSettingsInput = ({
               {sections.map((s) => (
                 <SortableItem key={s.key} id={s.key}>
                   <Paper
-                    sx={(theme) => ({
+                    style={{
                       backgroundColor:
-                        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-                    })}
+                        colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+                    }}
                     withBorder
                     key={s.key}
                     p="xs"

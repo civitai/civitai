@@ -1,0 +1,14 @@
+.ctaContainer {
+  width: 100%;
+  flex-wrap: wrap;
+
+  >* {
+    flex-grow: 1;
+  }
+
+  @container (min-width: var(--mantine-breakpoint-sm)) {
+    >* {
+      flex-grow: 0;
+    }
+  }
+}

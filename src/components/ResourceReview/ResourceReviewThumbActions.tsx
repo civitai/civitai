@@ -1,4 +1,4 @@
-import { Button, createStyles, Group, MantineSize, Text } from '@mantine/core';
+import { Button, Group, MantineSize, Text } from '@mantine/core';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import {
   useCreateResourceReview,
@@ -13,26 +13,7 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import { ResourceReviewSimpleModel } from '~/server/selectors/resourceReview.selector';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-
-const useThumbActionStyles = createStyles(() => ({
-  button: {
-    overflow: 'hidden',
-    '.mantine-Button-leftIcon': {
-      position: 'absolute',
-      left: 12,
-      top: '50%',
-      transform: 'translateY(-50%)',
-    },
-    '&:last-of-type .mantine-Button-leftIcon': {
-      right: 12,
-      left: 'auto',
-      marginRight: 0,
-    },
-    '&[data-loading]::before': {
-      borderRadius: 0,
-    },
-  },
-}));
+import classes from './ResourceReviewThumbActions.module.scss';
 
 export function ResourceReviewThumbActions({
   modelId,
@@ -47,7 +28,6 @@ export function ResourceReviewThumbActions({
   withCount?: boolean;
   size?: MantineSize;
 }) {
-  const { classes } = useThumbActionStyles();
   const { totals, loading: loadingTotals } = useQueryResourceReviewTotals(
     {
       modelId,
@@ -161,7 +141,7 @@ export function ResourceReviewThumbBadge({
       color={hasReview ? 'success.5' : 'gray'}
       size="lg"
       icon={<ThumbsUpIcon size={16} filled />}
-      sx={{ cursor: 'pointer' }}
+      style={{ cursor: 'pointer' }}
       onClick={onClick}
     >
       <Text>{abbreviateNumber(totals?.up ?? 0)}</Text>

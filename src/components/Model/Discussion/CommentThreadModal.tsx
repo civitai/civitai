@@ -103,7 +103,7 @@ export default function CommentThreadModal({
                 ) : null
               }
               size="lg"
-              gap="xs"
+              spacing="xs"
               withUsername
               linkToProfile
             />

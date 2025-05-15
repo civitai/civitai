@@ -1,4 +1,4 @@
-import { Modal, Stack, Group, Button, createStyles, Text } from '@mantine/core';
+import { Modal, Stack, Group, Button, Text } from '@mantine/core';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -16,7 +16,6 @@ const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
   { ssr: false }
 );
- 
 
 export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; code?: string }) {
   const dialog = useDialogContext();

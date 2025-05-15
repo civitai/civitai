@@ -35,6 +35,7 @@ export function ShowcaseGrid({
     return (
       <div
         style={{
+          // @ts-ignore
           '--item-count': itemCount,
           '--rows': rows,
           '--min-width': `${minWidth}px`,

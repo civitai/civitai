@@ -138,7 +138,7 @@ export function OnboardingBuzz() {
           }
         />
         <Stack gap="xl">
-          <Group align="start" sx={{ ['&>*']: { flexGrow: 1 } }}>
+          <Group align="start" className="*:grow">
             <SpendingBuzz asList />
             <EarningBuzz asList />
           </Group>

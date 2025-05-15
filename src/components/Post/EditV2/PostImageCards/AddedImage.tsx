@@ -864,7 +864,7 @@ function EditDetail() {
                     hideClick={true}
                     variant="transparent"
                     size="sm"
-                    justify="flex-end"
+                    className="justify-end"
                     iconProps={{ size: 20 }}
                   >
                     Traditional or generative AI programs, platforms or websites used to create this
@@ -972,7 +972,7 @@ function EditDetail() {
                       hideClick={true}
                       variant="transparent"
                       size="sm"
-                      justify="flex-end"
+                      className="justify-end"
                       iconProps={{ size: 20 }}
                     >
                       The thumbnail is the image that represents your post. It is the first thing

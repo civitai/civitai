@@ -1,4 +1,14 @@
-import { ActionIcon, Badge, Group, Loader, LoadingOverlay, ScrollArea, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Group,
+  Loader,
+  LoadingOverlay,
+  ScrollArea,
+  Text,
+  alpha,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   IconBookmark,
   IconDownload,
@@ -68,6 +78,7 @@ type Props = { modelId: number; loading?: boolean };
 function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemProps) {
   const router = useRouter();
   const [image] = images;
+  const theme = useMantineTheme();
 
   const activeItem = router.query.id === id.toString();
 
@@ -91,13 +102,13 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
                     <ActionIcon
                       color="red"
                       radius="xl"
-                      sx={(theme) => ({
-                        backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.6),
+                      style={{
+                        backgroundColor: alpha(theme.colors.red[9], 0.6),
                         color: 'white',
                         backdropFilter: 'blur(7px)',
                         boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
                         zIndex: 10,
-                      })}
+                      }}
                       onClick={toggle}
                     >
                       {safe ? (
@@ -140,7 +151,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
         {rank && (
           <Group align="center" justify="space-between" gap={4}>
             <ModelTypeBadge
-              classNames={{ inner: 'flex gap-2 flex-nowrap' }}
+              classNames={{ root: 'flex gap-2 flex-nowrap' }}
               type={type}
               baseModel={version.baseModel}
             />
@@ -148,7 +159,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
               variant="light"
               color="gray"
               radius="xl"
-              classNames={{ inner: 'flex gap-2 flex-nowrap' }}
+              classNames={{ root: 'flex gap-2 flex-nowrap' }}
             >
               <Group gap={2}>
                 <IconDownload size={14} strokeWidth={2.5} />

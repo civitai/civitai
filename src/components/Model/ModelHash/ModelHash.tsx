@@ -30,7 +30,7 @@ export const ModelHash = ({
   };
 
   return (
-    <Group gap={0} wrap="nowrap" sx={{ userSelect: 'none' }}>
+    <Group gap={0} wrap="nowrap" style={{ userSelect: 'none' }}>
       <Badge
         variant="outline"
         color={color}
@@ -61,7 +61,7 @@ export const ModelHash = ({
                 borderTopRightRadius: hasMore ? 0 : undefined,
                 borderBottomRightRadius: hasMore ? 0 : undefined,
               }}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.stopPropagation();
                 copy();
               }}
@@ -83,7 +83,7 @@ export const ModelHash = ({
             borderLeft: 0,
             cursor: 'pointer',
           }}
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
             handleNext();
           }}

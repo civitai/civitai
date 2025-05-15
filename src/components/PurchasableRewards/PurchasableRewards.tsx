@@ -12,7 +12,6 @@ import {
   Title,
   Text,
   Paper,
-  createStyles,
   UnstyledButton,
   Modal,
   CloseButton,
@@ -49,22 +48,14 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import classes from './PurchasableRewards.module.scss';
+import clsx from 'clsx';
 
 const chipProps: Partial<ChipProps> = {
   size: 'sm',
   radius: 'xl',
   variant: 'filled',
 };
-
-export const useStyles = createStyles((theme) => ({
-  rewardCard: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-    padding: `${theme.spacing.sm}px ${theme.spacing.sm}px`,
-    height: '100%',
-    width: '100%',
-  },
-}));
 
 const RewardDetailsModal = ({
   purchasableReward,
@@ -77,7 +68,6 @@ const RewardDetailsModal = ({
   const isPurchased = purchasedRewards.find(
     (pr) => pr.purchasableReward?.id === purchasableReward.id
   );
-  const { classes } = useStyles();
   const { purchasePurchasableReward, purchasingPurchasableReward } = useMutatePurchasableReward();
   const isAvailable = isPurchasableRewardActive(purchasableReward);
   const terms = purchasableReward.termsOfUse == '<p>N/A</p>' ? null : purchasableReward.termsOfUse;
@@ -187,7 +177,7 @@ const RewardDetailsModal = ({
           variant="pills"
           radius="xl"
           value={selectedTab}
-          onTabChange={setSelectedTab}
+          onChange={setSelectedTab}
           color="gray"
           styles={{
             tab: {
@@ -205,24 +195,15 @@ const RewardDetailsModal = ({
           <Tabs.Panel value="about" pt="sm">
             <RenderHtml
               html={purchasableReward.about}
-              sx={(theme) => ({
-                fontSize: theme.fontSizes.sm,
-                '[data-youtube-video] iframe': { width: '100% !important', minHeight: 225 },
-              })}
+              className={clsx(classes.renderHtmlYoutube, 'text-sm')}
             />
           </Tabs.Panel>
           <Tabs.Panel value="redeemDetails" pt="sm">
-            <RenderHtml
-              html={purchasableReward.redeemDetails}
-              sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-            />
+            <RenderHtml html={purchasableReward.redeemDetails} className="text-sm" />
           </Tabs.Panel>
           {terms && (
             <Tabs.Panel value="termsOfUse" pt="sm">
-              <RenderHtml
-                html={purchasableReward.termsOfUse}
-                sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-              />
+              <RenderHtml html={purchasableReward.termsOfUse} className="text-sm" />
             </Tabs.Panel>
           )}
           {isPurchased && (
@@ -248,7 +229,6 @@ const PurchasableRewardListItem = ({
 }: {
   purchasableReward: PurchasableRewardGetPaged;
 }) => {
-  const { classes } = useStyles();
   const { purchasedRewards } = useUserPurchasedRewards();
   const isPurchased = purchasedRewards.some(
     (pr) => pr.purchasableReward?.id === purchasableReward.id
@@ -332,7 +312,6 @@ const PurchasableRewardCard = ({
 }: {
   purchasableReward: PurchasableRewardGetPaged;
 }) => {
-  const { classes } = useStyles();
   const { purchasedRewards } = useUserPurchasedRewards();
   const isPurchased = purchasedRewards.some(
     (pr) => pr.purchasableReward?.id === purchasableReward.id
@@ -341,7 +320,13 @@ const PurchasableRewardCard = ({
   const image = purchasableReward.coverImage;
 
   return (
-    <Grid.Col xs={12} sm={6} md={3}>
+    <Grid.Col
+      span={{
+        base: 12,
+        sm: 6,
+        md: 3,
+      }}
+    >
       <UnstyledButton
         className={classes.rewardCard}
         onClick={() => {
@@ -446,20 +431,21 @@ export function PurchasableRewards() {
         <Text>{`Spend some Buzz to get special deals and coupons`}</Text>
       </Stack>
       <Chip.Group
-        gap={8}
         value={filters.mode}
-        onChange={(mode: PurchasableRewardViewMode) => {
+        onChange={(mode) => {
           setFilters((f) => ({
             ...f,
-            mode,
+            mode: mode as PurchasableRewardViewMode,
           }));
         }}
       >
-        {Object.values(PurchasableRewardViewMode).map((type, index) => (
-          <Chip key={index} value={type} {...chipProps}>
-            <span>{getDisplayName(type)}</span>
-          </Chip>
-        ))}
+        <Group gap={8}>
+          {Object.values(PurchasableRewardViewMode).map((type, index) => (
+            <Chip key={index} value={type} {...chipProps}>
+              <span>{getDisplayName(type)}</span>
+            </Chip>
+          ))}
+        </Group>
       </Chip.Group>
       {isLoading ? (
         <Center p="xl">
@@ -482,7 +468,7 @@ export function PurchasableRewards() {
           )}
 
           {filters.mode === PurchasableRewardViewMode.Purchased && (
-            <Stack sx={{ maxWidth: 800 }}>
+            <Stack style={{ maxWidth: 800 }}>
               {purchasableRewards.map((purchasableReward) => {
                 return (
                   <PurchasableRewardListItem
@@ -498,7 +484,7 @@ export function PurchasableRewards() {
             <Group justify="space-between">
               <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
               <Pagination
-                page={filters.page}
+                value={filters.page}
                 onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                 total={pagination.totalPages}
               />

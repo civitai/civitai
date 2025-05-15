@@ -12,6 +12,7 @@ import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import classes from '~/components/Profile/ProfileSection.module.scss';
+import clsx from 'clsx';
 
 export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   const [ref, inView] = useInViewDynamic({ id: 'profile-showcase-section' });
@@ -54,6 +55,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
       ref={ref}
       className={isNullState ? undefined : classes.profileSection}
       style={{
+        // @ts-ignore
         '--count': showcaseItems.length,
         '--row-count': 2,
         '--width-grid': '280px',
@@ -67,7 +69,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
             <ShowcaseGrid
               itemCount={showcaseItems.length}
               rows={2}
-              className={cx({
+              className={clsx({
                 [classes.nullState]: !coverImages.length,
                 [classes.loading]: isRefetching,
               })}

@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Center,
   Checkbox,
-  createStyles,
   Menu,
   Modal,
   Text,
@@ -10,6 +9,8 @@ import {
   MenuItemProps,
   ThemeIcon,
   Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
@@ -77,6 +78,7 @@ import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { EmblaCarouselType } from 'embla-carousel';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
+import classes from './GeneratedImage.module.scss';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -93,7 +95,6 @@ export function GeneratedImage({
   request: NormalizedGeneratedImageResponse;
   step: NormalizedGeneratedImageStep;
 }) {
-  const { classes } = useStyles();
   const [ref, inView] = useInViewDynamic({ id: image.id });
   const [loaded, setLoaded] = useState(false);
   const selected = orchestratorImageSelect.useIsSelected({
@@ -338,8 +339,10 @@ export function GeneratedImage({
                 trigger="hover"
                 openDelay={100}
                 closeDelay={100}
-                transition="fade"
-                transitionDuration={150}
+                transitionProps={{
+                  transition: 'fade',
+                  duration: 150,
+                }}
                 withinPortal
                 position="top"
               >
@@ -402,60 +405,6 @@ export function GeneratedImage({
   );
 }
 
-const useStyles = createStyles((theme, _params, getRef) => {
-  const thumbActionRef = getRef('thumbAction');
-  const favoriteButtonRef = getRef('favoriteButton');
-
-  const buttonBackground = {
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    background: theme.fn.rgba(
-      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-      0.6
-    ),
-  };
-
-  return {
-    checkbox: {
-      '& input:checked': {
-        borderColor: theme.white,
-      },
-    },
-    imageWrapper: {
-      [`&:hover .${thumbActionRef}`]: buttonBackground,
-      [`&:hover .${thumbActionRef}`]: {
-        opacity: 1,
-      },
-    },
-    actionsWrapper: {
-      ref: thumbActionRef,
-      borderRadius: theme.radius.sm,
-      transition: 'opacity .3s',
-      ...buttonBackground,
-      opacity: 0,
-
-      [`@container (max-width: 420px)`]: {
-        width: 68,
-        opacity: 1,
-      },
-    },
-    favoriteButton: {
-      ref: favoriteButtonRef,
-      background: 'rgba(240, 62, 62, 0.5)',
-    },
-
-    improveMenu: {
-      borderRadius: theme.radius.sm,
-      background: theme.fn.rgba(
-        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        0.8
-      ),
-      border: 'none',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-      padding: 4,
-    },
-  };
-});
-
 function BlockedBlock({ title, message }: { title: string; message: string }) {
   return (
     <Center px="md">
@@ -480,6 +429,8 @@ export function GeneratedImageLightbox({
 }) {
   const dialog = useDialogContext();
   const { steps } = useGetTextToImageRequestsImages();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
   // useAnimationOffsetEffect(embla, TRANSITION_DURATION);
@@ -501,7 +452,13 @@ export function GeneratedImageLightbox({
   });
 
   return (
-    <Modal {...dialog} closeButtonLabel="Close lightbox" fullScreen>
+    <Modal
+      {...dialog}
+      closeButtonProps={{
+        children: 'Close lightbox',
+      }}
+      fullScreen
+    >
       <IntersectionObserverProvider id="generated-image-lightbox">
         <Embla
           align="center"
@@ -550,10 +507,9 @@ export function GeneratedImageLightbox({
           labelWidth={150}
           paperProps={{ radius: 0 }}
           controlProps={{
-            sx: (theme) => ({
-              backgroundColor:
-                theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-            }),
+            style: {
+              backgroundColor: colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+            },
           }}
           upsideDown
         />

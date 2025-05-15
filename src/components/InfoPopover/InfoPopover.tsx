@@ -65,4 +65,5 @@ type Props = PopoverProps & {
   type?: 'hover' | 'click';
   hideClick?: boolean; // TODO consider this behavior if type === hover
   customIcon?: Icon;
+  className?: string;
 };

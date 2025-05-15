@@ -12,6 +12,7 @@ import {
   Text,
   Tooltip,
   TooltipProps,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconCalendar, IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import React from 'react';
@@ -60,6 +61,7 @@ export function PurchasableRewardUpsertForm({
   purchasableReward?: PurchasableRewardGetById;
   onSave?: (purchasableReward: { id: number }) => void;
 }) {
+  const theme = useMantineTheme();
   const form = useForm({
     schema: formSchema,
     defaultValues: {
@@ -92,7 +94,7 @@ export function PurchasableRewardUpsertForm({
     <Form form={form} onSubmit={handleSubmit}>
       <Stack gap={32}>
         <Grid gutter="xl">
-          <Grid.Col xs={12} md={8}>
+          <Grid.Col span={{ base: 12, md: 8 }}>
             <Stack gap={32}>
               <Stack gap="xl">
                 <Group grow wrap="nowrap">
@@ -114,12 +116,12 @@ export function PurchasableRewardUpsertForm({
                               purchasableReward?.coverImage?.id ? null : undefined
                             )
                           }
-                          sx={(theme) => ({
+                          style={{
                             position: 'absolute',
-                            top: theme.spacing.xs * 0.4,
-                            right: theme.spacing.xs * 0.4,
+                            top: `calc(var(--mantine-spacing-xs) * 0.4)`,
+                            right: `calc(var(--mantine-spacing-xs) * 0.4)`,
                             zIndex: 1,
-                          })}
+                          }}
                         >
                           <IconTrash />
                         </ActionIcon>
@@ -173,7 +175,7 @@ export function PurchasableRewardUpsertForm({
                   label="Buzz Price"
                   placeholder="How much will this reward cost in Buzz?"
                   step={100}
-                  icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                   format={undefined}
                   withAsterisk
                 />
@@ -213,14 +215,14 @@ export function PurchasableRewardUpsertForm({
                     name="availableFrom"
                     label="Available From (optional)"
                     placeholder="Reward will appear from this date onwards"
-                    icon={<IconCalendar size={16} />}
+                    leftSection={<IconCalendar size={16} />}
                     clearable
                   />
                   <InputDatePicker
                     name="availableTo"
                     label="Available To (optional)"
                     placeholder="Reward will be available until this date"
-                    icon={<IconCalendarDue size={16} />}
+                    leftSection={<IconCalendarDue size={16} />}
                     clearable
                   />
                 </Group>
@@ -236,7 +238,7 @@ export function PurchasableRewardUpsertForm({
               </Stack>
             </Stack>
           </Grid.Col>
-          <Grid.Col xs={12} md={4}>
+          <Grid.Col span={{ base: 12, md: 4 }}>
             <Stack>
               <Divider label="Properties" />
               <InputSwitch

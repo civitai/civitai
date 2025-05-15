@@ -163,22 +163,26 @@ export function TagsInput({
                     },
                   ],
                 ])}
-                nothingFound={
-                  isFetching ? (
-                    'Searching...'
-                  ) : isNewTag ? (
-                    <UnstyledButton
-                      className={styles.createOption}
-                      onClick={() => handleAddTag({ value: search })}
-                    >
-                      {`+ Create tag "${search}"`}
-                    </UnstyledButton>
-                  ) : (
-                    'Nothing found'
-                  )
-                }
+                // TODO: Mantine7
+                // nothingFoundMessage={
+                //   isFetching ? (
+                //     'Searching...'
+                //   ) : isNewTag ? (
+                //     <UnstyledButton
+                //       className={styles.createOption}
+                //       onClick={() => handleAddTag({ value: search })}
+                //     >
+                //       {`+ Create tag "${search}"`}
+                //     </UnstyledButton>
+                //   ) : (
+                //     'Nothing found'
+                //   )
+                // }
                 placeholder="Type to search..."
-                onItemSubmit={handleAddTag}
+                onOptionSubmit={(value) => {
+                  const existing = filteredItems.find((tag) => tag.name === value);
+                  handleAddTag({ id: existing?.id, value: existing?.name ?? search });
+                }}
                 onBlur={handleClose}
                 autoFocus
               />

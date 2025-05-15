@@ -1,4 +1,4 @@
-import { Alert, createStyles, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Alert, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconBellFilled } from '@tabler/icons-react';
 
 import { trpc } from '~/utils/trpc';
@@ -12,95 +12,19 @@ import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-
-const useStyles = createStyles((theme) => ({
-  message: {
-    [containerQuery.smallerThan('sm')]: {
-      borderRadius: 0,
-      width: 'auto',
-      marginLeft: '-16px',
-      marginRight: '-16px',
-      paddingTop: 2,
-      paddingBottom: 2,
-    },
-  },
-  coverImageNSFWActions: {
-    height: '100%',
-    width: '100%',
-  },
-  coverImageWrapper: {
-    overflow: 'hidden',
-    borderRadius: theme.radius.md,
-    position: 'relative',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-
-    [containerQuery.smallerThan('sm')]: {
-      width: 'auto',
-      marginLeft: '-16px',
-      marginRight: '-16px',
-      maxHeight: 'auto',
-      borderRadius: 0,
-      display: 'block',
-    },
-  },
-  coverImage: {
-    position: 'relative',
-    width: '100%',
-    overflow: 'hidden',
-    height: 0,
-    paddingBottom: `${(constants.profile.coverImageAspectRatio * 100).toFixed(3)}%`,
-
-    [containerQuery.smallerThan('sm')]: {
-      width: 'auto',
-      borderRadius: 0,
-      paddingBottom: `${(constants.profile.mobileCoverImageAspectRatio * 100).toFixed(3)}%`,
-
-      div: {
-        borderRadius: 0,
-      },
-    },
-
-    '& > div': {
-      position: 'absolute',
-      top: '50%',
-      left: '50%',
-      transform: 'translate(-50%, -50%)',
-    },
-  },
-  profileSection: {
-    width: 'auto',
-    marginLeft: '-16px',
-    marginRight: '-16px',
-    padding: '16px',
-    position: 'relative',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-  },
-  profileSectionWithCoverImage: {
-    padding: '0 16px',
-
-    '& > div': {
-      position: 'relative',
-      height: 'auto',
-      top: '-36px', // Half the avatar size.
-      marginBottom: '-18px', // half of top.
-    },
-  },
-}));
+import classes from './ProfileHeader.module.scss';
+import clsx from 'clsx';
 
 export function ProfileHeader({ username }: { username: string }) {
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
   const isMobile = useContainerSmallerThan('sm');
-  const { classes, cx } = useStyles();
 
   const cover = user?.profile?.coverImage;
   const images = useMemo(
@@ -203,7 +127,7 @@ export function ProfileHeader({ username }: { username: string }) {
         <div className="flex flex-col">
           {renderCoverImage()}
           <div
-            className={cx(classes.profileSection, {
+            className={clsx(classes.profileSection, {
               [classes.profileSectionWithCoverImage]: !!image,
             })}
           >
