@@ -385,8 +385,9 @@ export const moderateImages = async ({
       await dbWrite.$executeRawUnsafe(
         `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
       );
-      await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
     }
+
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   }
   return null;
 };
@@ -4982,6 +4983,26 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return true;
+};
+
+export const updateImagesFlag = async ({
+  ids,
+  flag,
+  value,
+}: Pick<ToggleImageFlagInput, 'flag'> & { ids: number[]; value: boolean }) => {
+  if (ids.length === 0) return false;
+
+  await dbWrite.image.updateMany({
+    where: { id: { in: ids } },
+    data: { [flag]: value },
+  });
+
+  // Ensure we update the search index:
+  await imagesMetricsSearchIndex.queueUpdate(
+    ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   return true;
 };
