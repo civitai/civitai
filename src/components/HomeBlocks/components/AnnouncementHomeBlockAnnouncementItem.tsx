@@ -1,87 +1,17 @@
 import React from 'react';
-import {
-  ActionIcon,
-  Button,
-  Card,
-  createStyles,
-  Group,
-  Stack,
-  Text,
-  Title,
-  Box,
-} from '@mantine/core';
+import { ActionIcon, Button, Card, Group, Stack, Text, Title, Box } from '@mantine/core';
 import { AnnouncementDTO } from '~/server/services/announcement.service';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
 import { IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-
-const useStyles = createStyles((theme, { color }: { color: string }, getRef) => ({
-  card: {
-    display: 'flex',
-    minHeight: '100%',
-    borderColor: theme.colors[color][4],
-  },
-  emojiCard: {
-    borderColor: theme.colors[color][4],
-    background: theme.fn.rgba(theme.colors[color][9], 0.2),
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 62,
-    height: 62,
-  },
-  imageCard: {
-    [containerQuery.smallerThan('md')]: {
-      padding: 0,
-      display: 'block',
-      [`& .${getRef('stack')}`]: {
-        padding: theme.spacing.lg,
-      },
-    },
-  },
-  imageContainer: {
-    width: 200,
-    margin: -theme.spacing.lg,
-    marginRight: theme.spacing.lg,
-    borderRight: `1px solid ${theme.colors[color][4]}`,
-
-    [containerQuery.smallerThan('xl')]: {
-      width: 120,
-    },
-    [containerQuery.smallerThan('md')]: {
-      height: 120,
-      width: '100%',
-      margin: 0,
-      borderBottom: `1px solid ${theme.colors[color][4]}`,
-      borderRight: 'none',
-    },
-
-    img: {
-      objectFit: 'cover',
-      width: '100%',
-      height: '100%',
-    },
-  },
-  stack: {
-    ref: getRef('stack'),
-    flex: '1',
-  },
-  action: {
-    [containerQuery.smallerThan('sm')]: {
-      display: 'flex',
-      flexGrow: 1,
-      justifyContent: 'center',
-    },
-  },
-}));
+import classes from './AnnouncementHomeBlock.module.scss';
+import clsx from 'clsx';
 
 const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDismiss }: Props) => {
-  const { classes, cx } = useStyles({ color: announcement.color });
   const announcementMetadata = announcement.metadata;
+  const color = announcement.color || 'blue';
   const { actions, image } = announcementMetadata || {};
 
   const dismissible = announcementMetadata?.dismissible ?? true;
@@ -92,7 +22,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
       p="lg"
       withBorder
       shadow="sm"
-      className={cx(classes.card, { [classes.imageCard]: image })}
+      className={clsx(classes.card, classes[`card-${color}`], { [classes.imageCard]: image })}
     >
       {dismissible && (
         <ActionIcon
@@ -100,25 +30,30 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
           radius="xl"
           color="red"
           onClick={() => onAnnouncementDismiss(announcement.id)}
-          sx={(theme) => ({
+          style={{
             position: 'absolute',
-            top: theme.spacing.xs,
-            right: theme.spacing.xs,
-          })}
+            top: 'var(--mantine-spacing-xs)',
+            right: 'var(--mantine-spacing-xs)',
+          }}
         >
           <IconX size={20} />
         </ActionIcon>
       )}
       {image && (
-        <Box className={classes.imageContainer}>
+        <Box className={clsx(classes.imageContainer, classes[`imageContainer-${color}`])}>
           <EdgeMedia src={image} width={512} alt="Announcement banner image" />
         </Box>
       )}
       <Stack className={classes.stack}>
         <Group gap="md" wrap="nowrap">
           {announcement.emoji && !image && (
-            <Card className={classes.emojiCard} radius="lg" p="sm" withBorder>
-              <Text size={28} p={0}>
+            <Card
+              className={clsx(classes.emojiCard, classes[`emojiCard-${color}`])}
+              radius="lg"
+              p="sm"
+              withBorder
+            >
+              <Text fz={28} p={0}>
                 {announcement.emoji}
               </Text>
             </Card>
@@ -132,7 +67,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
           </CustomMarkdown>
         </Text>
 
-        <ContainerGrid mt="auto">
+        <ContainerGrid className="mt-auto">
           {actions &&
             actions.map((action, index) => {
               if (action.type === 'button') {
@@ -142,7 +77,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
                       <Button
                         component="a"
                         className={classes.action}
-                        variant={action.variant ? (action.variant as ButtonVariant) : undefined}
+                        variant={action.variant ?? undefined}
                         color={action.color ?? announcement.color}
                       >
                         {action.linkText}

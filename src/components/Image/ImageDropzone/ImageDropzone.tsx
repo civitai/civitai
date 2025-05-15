@@ -1,4 +1,4 @@
-import { Input, Text, useMantineTheme } from '@mantine/core';
+import { Input, Text, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { DragEvent, useState } from 'react';
@@ -25,6 +25,7 @@ export function ImageDropzone({
   ...props
 }: Props) {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const [error, setError] = useState('');
 
   const canAddFiles = max - count > 0;
@@ -85,14 +86,14 @@ export function ImageDropzone({
             <IconUpload
               size={50}
               stroke={1.5}
-              color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Accept>
           <Dropzone.Reject>
             <IconX
               size={50}
               stroke={1.5}
-              color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Reject>
           <Dropzone.Idle>

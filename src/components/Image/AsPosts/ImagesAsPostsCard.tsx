@@ -1,7 +1,6 @@
 import {
   ActionIcon,
   Badge,
-  createStyles,
   Group,
   HoverCard,
   Menu,
@@ -11,6 +10,7 @@ import {
   ThemeIcon,
   ThemeIconProps,
   Tooltip,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconAutomaticGearbox,
@@ -53,6 +53,8 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 // import { TwCarousel } from '~/components/TwCarousel/TwCarousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import classes from './ImagesAsPostsCard.module.scss';
+import clsx from 'clsx';
 
 export function ImagesAsPostsCard({
   data,
@@ -63,7 +65,7 @@ export function ImagesAsPostsCard({
   width: number;
   height: number;
 }) {
-  const { classes, cx, theme } = useStyles();
+  const theme = useMantineTheme();
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
 
@@ -265,12 +267,16 @@ export function ImagesAsPostsCard({
         )}
         <TwCard
           style={!cosmeticData ? { height } : undefined}
-          className={cx({ ['border']: !pinned })}
+          className={clsx({ ['border']: !pinned })}
           ref={ref}
         >
-          <MediaHash {...image} className={cx('opacity-70', cosmetic && 'rounded-b-lg')} />
+          <MediaHash {...image} className={clsx('opacity-70', cosmetic && 'rounded-b-lg')} />
           {data.user.id !== -1 && (
-            <Paper p="xs" radius={0} className={cx('h-[58px] z-[2]', cosmetic && 'rounded-t-lg ')}>
+            <Paper
+              p="xs"
+              radius={0}
+              className={clsx('z-[2] h-[58px]', cosmetic && 'rounded-t-lg ')}
+            >
               {inView && (
                 <Group gap={8} align="flex-start" justify="space-between" wrap="nowrap">
                   <UserAvatar
@@ -304,7 +310,7 @@ export function ImagesAsPostsCard({
                     }
                     subTextForce
                     size="md"
-                    gap="xs"
+                    spacing="xs"
                     badge={
                       isOP ? (
                         <Badge size="xs" color="violet" radius="xl">
@@ -578,33 +584,3 @@ function PinnedIndicator({
     </HoverCard>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  title: {
-    lineHeight: 1.1,
-    fontSize: 14,
-    color: 'white',
-    fontWeight: 500,
-  },
-  link: {
-    width: '100%',
-    height: '100%',
-    display: 'flex',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  reactions: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    borderRadius: theme.radius.sm,
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
-        : theme.colors.gray[0],
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    padding: 4,
-    zIndex: 1,
-  },
-}));

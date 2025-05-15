@@ -27,6 +27,7 @@ import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
+import clsx from 'clsx';
 
 type Props = { homeBlockId: number; metadata: Pick<HomeBlockMetaSchema, 'title' | 'description'> };
 
@@ -66,7 +67,6 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
     const itemsToShow = ITEMS_PER_ROW * ROWS;
     return filtered.slice(0, itemsToShow);
   }, [filtered]);
- 
 
   const title = metadata.title ?? 'Featured Models';
   const useGrid = metadata.description && !currentUser;
@@ -201,7 +201,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
 
   return (
     <>
-      <Box mb="md" className={cx({ [classes.meta]: useGrid })}>
+      <Box mb="md" className={clsx({ [classes.meta]: useGrid })}>
         {MetaDataTop}
       </Box>
       {isLoading || loadingPreferences ? (

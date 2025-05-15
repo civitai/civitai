@@ -1,4 +1,4 @@
-import { Box, createStyles, Group, Stack, Text } from '@mantine/core';
+import { Box, Group, Stack, Text, useMantineTheme } from '@mantine/core';
 import { IconCrown, IconTrophy } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
@@ -9,12 +9,6 @@ import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { LeaderboardWithResults } from '~/server/services/leaderboard.service';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
-const useStyles = createStyles(() => ({
-  wrapper: {
-    minHeight: 42,
-  },
-}));
-
 export const LeaderHomeBlockCreatorItem = ({
   data: { position, user, score },
   leaderboard,
@@ -22,8 +16,7 @@ export const LeaderHomeBlockCreatorItem = ({
   leaderboard: LeaderboardWithResults;
   data: LeaderboardGetModel;
 }) => {
-  const { classes, theme } = useStyles();
-
+  const theme = useMantineTheme();
   const link = `/user/${user.username}`;
   const cosmetic = leaderboard.cosmetics.find(
     (cosmetic) => cosmetic.leaderboardPosition && cosmetic.leaderboardPosition >= position
@@ -37,7 +30,7 @@ export const LeaderHomeBlockCreatorItem = ({
   ][position - 1];
 
   return (
-    <div className={classes.wrapper}>
+    <div style={{ minHeight: 42 }}>
       <Link legacyBehavior href={link} passHref>
         <Box sx={{ cursor: 'pointer' }}>
           <ContainerGrid align="center">

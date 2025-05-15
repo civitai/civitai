@@ -30,7 +30,12 @@ export function ImageAnalysis({
                   Age
                 </Text>
                 <Code
-                  sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
+                  style={{
+                    flex: '1',
+                    textAlign: 'right',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                  }}
                   color={face.age < 18 ? 'red' : undefined}
                 >
                   {face.age.toFixed(2)}
@@ -41,7 +46,12 @@ export function ImageAnalysis({
                   Gender
                 </Text>
                 <Code
-                  sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
+                  style={{
+                    flex: '1',
+                    textAlign: 'right',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                  }}
                   color={face.genderConfidence > 0.8 ? 'teal' : undefined}
                 >
                   {face.gender}
@@ -58,7 +68,7 @@ export function ImageAnalysis({
             NSFW
           </Text>
           <Code
-            sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
+            style={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
             color={nsfwScore > 60 ? 'red' : undefined}
           >
             {nsfwScore.toFixed(2)}
@@ -72,7 +82,7 @@ export function ImageAnalysis({
                 {capitalize(label)}
               </Text>
               <Code
-                sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
+                style={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
               >
                 {(value * 100).toFixed(2)}
               </Code>

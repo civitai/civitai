@@ -1,6 +1,6 @@
 import React from 'react';
 import { SegmentedControl, SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import classes from './FeedContentToggle.module.css';
 
 const statuses: SegmentedControlItem[] = [
   { label: 'Published', value: 'published' },
@@ -12,15 +12,9 @@ export function FeedContentToggle(props: Props) {
     <SegmentedControl
       {...props}
       data={statuses}
-      sx={(theme) => ({
-        [containerQuery.smallerThan('sm')]: {
-          width: '100%',
-        },
-      })}
+      className={classes.feedContentToggle}
     />
   );
 }
 
-type Props = Omit<SegmentedControlProps, 'data' | 'onChange'> & {
-  onChange: (value: 'published' | 'draft') => void;
-};
+type Props = Omit<SegmentedControlProps, 'data'>

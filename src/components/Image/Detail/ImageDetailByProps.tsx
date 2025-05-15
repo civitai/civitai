@@ -4,7 +4,6 @@ import {
   Card,
   Center,
   CloseButton,
-  createStyles,
   Divider,
   Group,
   Loader,
@@ -14,6 +13,8 @@ import {
   Stack,
   Text,
   UnstyledButton,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -52,6 +53,8 @@ import { getQueryKey } from '@trpc/react-query';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Notifications } from '@mantine/notifications';
+import classes from './ImageDetailByProps.module.scss';
+import clsx from 'clsx';
 
 export function ImageDetailByProps({
   imageId,
@@ -86,7 +89,8 @@ export function ImageDetailByProps({
   } | null = data?.stats ?? null;
 
   const user = data?.user;
-  const { classes, cx, theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const nsfw = image ? !getIsSafeBrowsingLevel(image.nsfwLevel) : false;
 
@@ -98,7 +102,7 @@ export function ImageDetailByProps({
         deIndex={nsfw || (image ? !!image.needsReview : false)}
       />
       {image && <TrackView entityId={image.id} entityType="Image" type="ImageView" />}
-      <MantineProvider theme={{ colorScheme: 'dark' }}>
+      <MantineProvider>
         <Notifications />
         <Paper className={classes.root}>
           <CloseButton
@@ -119,7 +123,7 @@ export function ImageDetailByProps({
             connectType={connectType}
             onClose={onClose}
           />
-          <Card className={cx(classes.sidebar)}>
+          <Card className={clsx(classes.sidebar)}>
             {!image ? (
               <Center>
                 <Loader variant="bars" />
@@ -179,7 +183,7 @@ export function ImageDetailByProps({
                           href={`/posts/${image.postId}`}
                           radius="xl"
                           color="gray"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          variant={colorScheme === 'dark' ? 'filled' : 'light'}
                           size="compact-md"
                         >
                           <Group gap={4}>
@@ -191,7 +195,7 @@ export function ImageDetailByProps({
                       <Button
                         radius="xl"
                         color="gray"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        variant={colorScheme === 'dark' ? 'filled' : 'light'}
                         onClick={() =>
                           openContext('addToCollection', {
                             imageId: image.id,
@@ -211,7 +215,7 @@ export function ImageDetailByProps({
                 <Card.Section
                   component={ScrollArea}
                   style={{ flex: 1, position: 'relative' }}
-                  classNames={{ viewport: classes.scrollViewport }}
+                  className={classes.scrollViewport}
                 >
                   <Stack gap="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
                     {image.needsReview && (
@@ -282,61 +286,6 @@ export function ImageDetailByProps({
   );
 }
 
-const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = theme.fn.smallerThan('md');
-  const isDesktop = theme.fn.largerThan('md');
-  return {
-    root: {
-      width: '100vw',
-      height: '100vh',
-      display: 'flex',
-      position: 'relative',
-      overflow: 'hidden',
-    },
-    carousel: {
-      flex: 1,
-      alignItems: 'stretch',
-    },
-    active: { ref: getRef('active') },
-    sidebar: {
-      width: 457,
-      borderRadius: 0,
-      borderLeft: `1px solid ${theme.colors.dark[4]}`,
-      display: 'flex',
-      flexDirection: 'column',
-
-      [isMobile]: {
-        position: 'absolute',
-        top: '100%',
-        left: 0,
-        width: '100%',
-        height: '100%',
-        transition: '.3s ease transform',
-        // transform: 'translateY(100%)',
-        zIndex: 20,
-
-        [`&.${getRef('active')}`]: {
-          transform: 'translateY(-100%)',
-        },
-      },
-    },
-    mobileOnly: { [isDesktop]: { display: 'none' } },
-    desktopOnly: { [isMobile]: { display: 'none' } },
-    info: {
-      position: 'absolute',
-      bottom: theme.spacing.md,
-      right: theme.spacing.md,
-    },
-    // Overwrite scrollArea generated styles
-    scrollViewport: {
-      '& > div': {
-        minHeight: '100%',
-        display: 'flex !important',
-      },
-    },
-  };
-});
-
 type GalleryCarouselProps = {
   isLoading: boolean;
   image: ImageProps | null;
@@ -358,8 +307,6 @@ export function ImageDetailCarousel({
   connectType = 'post',
   onClose,
 }: GalleryCarouselProps & Partial<ImageGuardConnect>) {
-  const { classes, cx } = useCarrouselStyles();
-
   const { setRef, height, width } = useAspectRatioFit({
     height: image?.height ?? 1200,
     width: image?.width ?? 1200,
@@ -384,12 +331,12 @@ export function ImageDetailCarousel({
   const canNavigate = nextImageId || prevImageId;
 
   return (
-    <div ref={setRef} className={cx(classes.root, className)}>
+    <div ref={setRef} className={clsx(classes.root, className)}>
       {canNavigate && (
         <>
           {!!prevImageId && (
             <UnstyledButton
-              className={cx(classes.control, classes.prev)}
+              className={clsx(classes.control, classes.prev)}
               onClick={() => onSetImage(prevImageId)}
             >
               <IconChevronLeft />
@@ -397,7 +344,7 @@ export function ImageDetailCarousel({
           )}
           {!!nextImageId && (
             <UnstyledButton
-              className={cx(classes.control, classes.next)}
+              className={clsx(classes.control, classes.next)}
               onClick={() => onSetImage(nextImageId)}
             >
               <IconChevronRight />
@@ -470,86 +417,3 @@ export function ImageDetailCarousel({
     </div>
   );
 }
-
-const useCarrouselStyles = createStyles((theme, _props, getRef) => {
-  return {
-    root: {
-      position: 'relative',
-    },
-    loader: {
-      position: 'absolute',
-      top: '50%',
-      left: '50%',
-      transform: 'translate(-50%,-50%)',
-      zIndex: 1,
-    },
-    imageLoading: {
-      pointerEvents: 'none',
-      opacity: 0.5,
-    },
-    center: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-
-    prev: { ref: getRef('prev') },
-    next: { ref: getRef('next') },
-    control: {
-      position: 'absolute',
-      // top: 0,
-      // bottom: 0,
-      top: '50%',
-      transform: 'translateY(-50%)',
-      zIndex: 10,
-
-      svg: {
-        height: 50,
-        width: 50,
-      },
-
-      [`&.${getRef('prev')}`]: {
-        left: 0,
-      },
-      [`&.${getRef('next')}`]: {
-        right: 0,
-      },
-
-      '&:hover': {
-        color: theme.colors.blue[3],
-      },
-    },
-    indicators: {
-      position: 'absolute',
-      bottom: theme.spacing.md,
-      top: undefined,
-      left: 0,
-      right: 0,
-      display: 'flex',
-      flexDirection: 'row',
-      justifyContent: 'center',
-      gap: 8,
-      pointerEvents: 'none',
-    },
-
-    indicator: {
-      pointerEvents: 'all',
-      width: 25,
-      height: 5,
-      borderRadius: 10000,
-      backgroundColor: theme.white,
-      boxShadow: theme.shadows.sm,
-      opacity: 0.6,
-      transition: `opacity 150ms ${theme.transitionTimingFunction}`,
-
-      '&[data-active]': {
-        opacity: 1,
-      },
-    },
-  };
-});

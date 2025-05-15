@@ -1,4 +1,4 @@
-import { Anchor, Button, Card, Grid, Group, Stack, Text, createStyles } from '@mantine/core';
+import { Anchor, Button, Card, Grid, Group, Stack, Text } from '@mantine/core';
 import {
   IconBolt,
   IconBulb,
@@ -11,22 +11,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { showErrorNotification } from '~/utils/notifications';
 import { LoginRedirect } from '../LoginRedirect/LoginRedirect';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    padding: '64px 80px !important',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    [theme.fn.smallerThan('sm')]: {
-      padding: '32px 16px !important',
-    },
-  },
-  title: {
-    fontSize: 40,
-    [theme.fn.smallerThan('sm')]: {
-      fontSize: 28,
-    },
-  },
-}));
+ 
 
 export function WelcomeCard({
   event,
@@ -37,7 +22,6 @@ export function WelcomeCard({
   about: string;
   learnMore?: string;
 }) {
-  const { classes } = useStyles();
   const mobile = useIsMobile();
 
   const { activateCosmetic, equipping } = useMutateEvent();
@@ -51,25 +35,25 @@ export function WelcomeCard({
   };
 
   return (
-    <Card className={classes.card} radius="lg">
+    <Card className="px-32 py-16 md: px-64 md: py-80 dark:bg-dark-6 bg-gray-0" radius="lg">
       <Grid gutter={mobile ? 32 : 64}>
         <Grid.Col span={12}>
-          <Text className={classes.title} weight="bold" lh={1.2}>
+          <Text className="font-size-28 md: font-size-40" weight="bold" lh={1.2}>
             &apos;Tis the season! Spread cheer across the platform by joining the Get Lit & Give
             Back challenge.
           </Text>
         </Grid.Col>
-        <Grid.Col xs={12} sm="auto">
+        <Grid.Col  span={{ base: 12, sm: 'auto'}}>
           <Stack gap={32}>
             <Group gap="lg" wrap="nowrap">
               <IconMoodPlus size={48} stroke={1.5} style={{ minWidth: 48 }} />
-              <Text size={20} weight={600}>
+              <Text fz={20} weight={600}>
                 Join the event to get your holiday garland and lights.
               </Text>
             </Group>
             <Group gap="lg" wrap="nowrap">
               <IconBulb size={48} stroke={1.5} style={{ minWidth: 48 }} />
-              <Text size={20} weight={600}>
+              <Text fz={20} weight={600}>
                 Earn a lightbulb for each{' '}
                 <Text component={Link} href="/challenges" td="underline">
                   holiday challenge
@@ -79,20 +63,20 @@ export function WelcomeCard({
             </Group>
             <Group gap="lg" wrap="nowrap">
               <IconBolt size={48} stroke={1.5} style={{ minWidth: 48 }} />
-              <Text size={20} weight={600}>
+              <Text fz={20} weight={600}>
                 Make those lights shine by boosting your team&apos;s Spirit Bank with Buzz.
               </Text>
             </Group>
             <Group gap="lg" wrap="nowrap">
               <IconHeartHandshake size={48} stroke={1.5} style={{ minWidth: 48 }} />
-              <Text size={20} weight={600}>
+              <Text fz={20} weight={600}>
                 All Buzz purchased and put into the Spirit Bank will be donated to All Hands and
                 Hearts.
               </Text>
             </Group>
           </Stack>
         </Grid.Col>
-        <Grid.Col xs={12} sm="auto">
+        <Grid.Col span={{ base: 12, sm: 'auto'}} >
           <Text lh={1.8}>{about}</Text>
           {learnMore && (
             <Anchor component={NextLink} href={learnMore}>

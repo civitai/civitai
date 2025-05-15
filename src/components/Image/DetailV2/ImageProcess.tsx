@@ -40,7 +40,7 @@ export function ImageProcess({ imageId }: { imageId: number }) {
                   size="lg"
                   className={`rounded-full border border-blue-8/30 ${notes ? 'pr-2' : ''}`}
                   color={color}
-                  classNames={{ inner: 'flex gap-1 h-full' }}
+                  classNames={{ root: 'flex gap-1 h-full' }}
                 >
                   <Link
                     href={`/tools/${slugit(name)}?tools=${id}`}

@@ -3,7 +3,6 @@ import {
   Group,
   Stack,
   Title,
-  createStyles,
   Text,
   ThemeIcon,
   Box,
@@ -39,6 +38,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import clsx from 'clsx';
 
 const icons = {
   model: IconCategory,
@@ -215,7 +215,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
 
   return (
     <>
-      <Box mb="md" className={cx({ [classes.meta]: useGrid })}>
+      <Box mb="md" className={clsx({ [classes.meta]: useGrid })}>
         {MetaDataTop}
       </Box>
       {isLoading || loadingPreferences ? (

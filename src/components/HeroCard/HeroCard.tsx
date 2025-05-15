@@ -1,35 +1,10 @@
-import { Card, CardProps, Group, Image, Stack, Text, createStyles } from '@mantine/core';
+import { Card, CardProps, Group, Image, Stack, Text } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    [theme.fn.largerThan('sm')]: {
-      maxHeight: 376,
-      display: 'flex',
-      gap: 40,
-    },
-  },
-  section: {
-    [theme.fn.largerThan('sm')]: {
-      marginRight: 0,
-      marginBottom: -40,
-    },
-  },
-  title: {
-    fontSize: 40,
-    [theme.fn.smallerThan('sm')]: {
-      fontSize: 28,
-      marginTop: theme.spacing.xl,
-    },
-  },
-  root: { height: '100%' },
-  figure: { height: '100%' },
-  imageWrapper: { height: '100%' },
-}));
+import classes from './HeroCard.module.scss';
+import clsx from 'clsx';
 
 export function HeroCard({
   imageUrl,
@@ -39,10 +14,8 @@ export function HeroCard({
   className,
   ...cardProps
 }: Props) {
-  const { classes, cx } = useStyles();
-
   return (
-    <Card radius="lg" p={40} className={cx(classes.card, className)} {...cardProps}>
+    <Card radius="lg" p={40} className={clsx(classes.card, className)} {...cardProps}>
       <Card.Section className={classes.section}>
         <Image
           src={imageUrl}

@@ -8,6 +8,8 @@ import {
   Badge,
   Title,
   Button,
+  getPrimaryShade,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCallback } from 'react';
@@ -63,7 +65,7 @@ export function CsamImageSelection({
         style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}
       >
         <div className="pb-3">
-          <Title align="center" mb="md">
+          <Title className="text-center" mb="md">
             CSAM Image Selection
           </Title>
           <IsClient>
@@ -120,6 +122,7 @@ function SelectedCount() {
 function CsamImageCard({ data: image, height }: { data: ModerationImageModel; height: number }) {
   const { ref, inView } = useInView();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const userId = image.userId;
   const imageId = image.id;
   const checked = useCsamImageSelectStore((state) => state.selected[userId]?.[imageId] ?? false);
@@ -132,7 +135,7 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
       ref={ref}
       style={{
         outline: checked
-          ? `3px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`
+          ? `3px solid ${theme.colors[theme.primaryColor][getPrimaryShade(theme, colorScheme)]}`
           : undefined,
       }}
     >
@@ -152,7 +155,7 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
             checked={checked}
             onChange={toggleSelected}
             size="lg"
-            sx={{
+            style={{
               position: 'absolute',
               top: 5,
               right: 5,

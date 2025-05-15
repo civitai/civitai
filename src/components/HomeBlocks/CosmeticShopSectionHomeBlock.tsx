@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import { useMemo } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
@@ -42,6 +43,7 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
   return (
     <div
       style={{
+        // @ts-ignore
         '--count': items.length ?? 0,
         '--rows': 2,
       }}
@@ -54,7 +56,7 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
         }}
         htmlMode
       />
-      <div className={cx(classes.grid, classes.gridRow, `mt-2 py-2`)}>
+      <div className={clsx(classes.grid, classes.gridRow, `mt-2 py-2`)}>
         {items.map((item) => {
           const { shopItem } = item;
           return (

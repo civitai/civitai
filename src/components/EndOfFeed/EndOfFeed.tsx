@@ -16,7 +16,7 @@ export function EndOfFeed({ text }: { text?: ReactNode }) {
           </Group>
         }
         labelPosition="center"
-        labelProps={{ size: 'sm' }}
+        className="text-sm"
       />
       <Center>
         <Stack gap={0} align="center">

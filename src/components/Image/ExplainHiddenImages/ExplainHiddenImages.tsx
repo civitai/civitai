@@ -1,4 +1,4 @@
-import { Badge, Button, Group, Stack, Text, createStyles } from '@mantine/core';
+import { Badge, Button, Group, Stack, Text } from '@mantine/core';
 import React, { useMemo } from 'react';
 import {
   useBrowsingLevelDebounced,
@@ -22,7 +22,6 @@ export function ExplainHiddenImages({
   hiddenByTags,
   hasHidden,
 }: ReturnType<typeof useExplainHiddenImages>) {
-  const { classes } = useStyles();
   const { data } = useQueryHiddenPreferences();
   const currentUser = useCurrentUser();
   const browsingLevel = useBrowsingLevelDebounced();
@@ -57,7 +56,13 @@ export function ExplainHiddenImages({
                 key={browsingLevel}
                 rightSection={count}
                 variant="outline"
-                classNames={classes}
+                styles={{
+                  section: {
+                    marginLeft: 10,
+                    paddingLeft: 10,
+                    borderLeft: '1px solid',
+                  },
+                }}
               >
                 {browsingLevelLabels[browsingLevel as BrowsingLevel]}
               </Badge>
@@ -75,7 +80,18 @@ export function ExplainHiddenImages({
           </Text>
           <Group gap="xs" justify="center">
             {hiddenByTags.map(({ tagId, count }) => (
-              <Badge key={tagId} rightSection={count} variant="outline" classNames={classes}>
+              <Badge
+                key={tagId}
+                rightSection={count}
+                variant="outline"
+                styles={{
+                  section: {
+                    marginLeft: 10,
+                    paddingLeft: 10,
+                    borderLeft: '1px solid',
+                  },
+                }}
+              >
                 {data?.hiddenTags.find((x) => x.id === Number(tagId))?.name}
               </Badge>
             ))}
@@ -86,14 +102,6 @@ export function ExplainHiddenImages({
     </Stack>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  rightSection: {
-    marginLeft: 10,
-    paddingLeft: 10,
-    borderLeft: '1px solid',
-  },
-}));
 
 export function useExplainHiddenImages<
   T extends { id: number; nsfwLevel: number; tagIds?: number[]; poi?: boolean }

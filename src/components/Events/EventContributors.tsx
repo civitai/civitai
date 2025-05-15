@@ -2,7 +2,6 @@ import {
   Button,
   Card,
   Center,
-  createStyles,
   Grid,
   Group,
   Loader,
@@ -39,11 +38,11 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
 
   return (
     <Grid gutter={48}>
-      <Grid.Col xs={12} sm="auto">
-        <Card p={32} radius="lg" h="100%" className={classes.card}>
+      <Grid.Col span={{ base: 12, sm: 'auto' }}>
+        <Card radius="lg" h="100%" className="bg-gray-0 p-32 dark:bg-dark-6">
           <Stack gap="xl">
             <Stack gap={0}>
-              <Text size={32} weight="bold">
+              <Text fz={32} weight="bold">
                 Top Donors All Time
               </Text>
               {!ended && (
@@ -99,11 +98,11 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
         </Card>
       </Grid.Col>
       {!ended && (
-        <Grid.Col xs={12} sm="auto">
-          <Card p={32} radius="lg" h="100%" className={classes.card}>
+        <Grid.Col span={{ base: 12, sm: 'auto' }}>
+          <Card p={32} radius="lg" h="100%" className="bg-gray-0 dark:bg-dark-6">
             <Stack gap="xl">
               <Stack gap={0}>
-                <Text size={32} weight="bold">
+                <Text fz={32} weight="bold">
                   Top Donors Today
                 </Text>
                 {!ended && (
@@ -158,11 +157,11 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
         </Grid.Col>
       )}
       <Grid.Col span={12}>
-        <Card p={32} radius="lg" className={classes.card}>
+        <Card p={32} radius="lg" className="bg-gray-0 dark:bg-dark-6">
           <Grid gutter="xl">
             <Grid.Col span={12}>
               <Stack gap={0}>
-                <Text size={32} weight="bold">
+                <Text fz={32} weight="bold">
                   Top Donors by Team
                 </Text>
                 <Text size="xs" color="dimmed">
@@ -179,9 +178,9 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
               </Grid.Col>
             ) : (
               topTeamContributors.map(([team, contributors]) => (
-                <Grid.Col key={team} xs={12} sm="auto">
-                  <Stack gap="xl" h="100%">
-                    <Text size={24} weight="bold">
+                <Grid.Col key={team} span={{ base: 12, sm: 'auto' }}>
+                  <Stack gap="xl" className="h-full">
+                    <Text fz={24} weight="bold">
                       {team} Team
                     </Text>
 
@@ -222,9 +221,3 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
     </Grid>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-  },
-}));

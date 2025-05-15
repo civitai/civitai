@@ -51,6 +51,8 @@ export function CreatorCard({
     { id: user.id },
     { enabled: user.id !== constants.system.user.id }
   );
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const creator = data || {
     ...user,

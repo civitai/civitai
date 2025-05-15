@@ -160,7 +160,7 @@ export function ImageMeta({
               </Group>
               <Code
                 block
-                sx={{
+                style={{
                   wordBreak: 'break-word',
                   whiteSpace: 'pre-wrap',
                   maxHeight: 150,
@@ -179,7 +179,12 @@ export function ImageMeta({
                   {label}
                 </Text>
                 <Code
-                  sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'pre-wrap' }}
+                  style={{
+                    flex: '1',
+                    textAlign: 'right',
+                    overflow: 'hidden',
+                    whiteSpace: 'pre-wrap',
+                  }}
                 >
                   {value}
                 </Code>
@@ -194,7 +199,7 @@ export function ImageMeta({
                     {label}
                   </Text>
                   <Code
-                    sx={{
+                    style={{
                       flex: '1',
                       textAlign: 'right',
                       overflow: 'hidden',
@@ -237,11 +242,11 @@ export function ImageMeta({
           {!!metas.external.source && (
             <Group gap="xs">
               {Object.entries(metas.external.source).map(([label, value]) => (
-                <Group key={label} gap="xs" sx={{ flexGrow: 1 }}>
+                <Group key={label} gap="xs" style={{ flexGrow: 1 }}>
                   <Text size="sm" mr="xs" weight={500}>
                     {titleCase(label === 'name' ? 'Source' : label)}
                   </Text>
-                  <Code sx={{ flex: '1', overflowWrap: 'anywhere', textAlign: 'right' }}>
+                  <Code style={{ flex: '1', overflowWrap: 'anywhere', textAlign: 'right' }}>
                     {value}
                   </Code>
                 </Group>
@@ -253,7 +258,7 @@ export function ImageMeta({
               <Text size="sm" mr="xs" weight={500}>
                 Source URL
               </Text>
-              <Code sx={{ flex: '1', textAlign: 'right', overflowWrap: 'anywhere' }}>
+              <Code style={{ flex: '1', textAlign: 'right', overflowWrap: 'anywhere' }}>
                 {metas.external.referenceUrl}
               </Code>
             </Group>
@@ -263,7 +268,7 @@ export function ImageMeta({
               <Text size="sm" mr="xs" weight={500}>
                 Create URL
               </Text>
-              <Code sx={{ flex: '1', textAlign: 'right', overflowWrap: 'anywhere' }}>
+              <Code style={{ flex: '1', textAlign: 'right', overflowWrap: 'anywhere' }}>
                 {metas.external.createUrl}
               </Code>
             </Group>
@@ -280,7 +285,7 @@ export function ImageMeta({
                       {titleCase(k)}
                     </Text>
                     <Code
-                      sx={{
+                      style={{
                         flex: '1',
                         textAlign: 'right',
                         overflow: 'hidden',
@@ -310,7 +315,7 @@ function ComfyNodes({ meta }: { meta: ImageMetaProps }) {
     <Group
       onClick={() => copy(JSON.stringify(workflow))}
       gap={4}
-      sx={{ justifyContent: 'flex-end', cursor: 'pointer' }}
+      style={{ justifyContent: 'flex-end', cursor: 'pointer' }}
       data-activity="copy:workflow"
     >
       {workflow?.nodes?.length ?? 0} Nodes

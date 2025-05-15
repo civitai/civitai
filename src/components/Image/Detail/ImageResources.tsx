@@ -9,7 +9,7 @@ import {
   Skeleton,
   Stack,
   Text,
-  createStyles,
+  useMantineTheme,
 } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -24,18 +24,12 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles(() => ({
-  statBadge: {
-    background: 'rgba(212,212,212,0.2)',
-    color: 'white',
-  },
-}));
+import classes from './ImageResources.module.scss';
 
 const LIMIT = 3;
 export function ImageResources({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
-  const { classes, theme } = useStyles();
+  const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
 
   const [selectedResource, setSelectedResource] = useState<number | null>(null);
@@ -180,7 +174,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                           <ActionIcon
                             size="xs"
                             color="red"
-                            onClick={(e) => {
+                            onClick={(e: React.MouseEvent) => {
                               e.stopPropagation();
                               e.preventDefault();
                               e.nativeEvent.stopImmediatePropagation();
@@ -227,7 +221,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                             className={classes.statBadge}
                             icon={<IconDownload size={14} />}
                           >
-                            <Text size={12}>
+                            <Text fz={12}>
                               {abbreviateNumber(resource.modelDownloadCount ?? 0)}
                             </Text>
                           </IconBadge>

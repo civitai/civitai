@@ -5,7 +5,6 @@ import {
   FileInputProps,
   Group,
   Text,
-  createStyles,
   Box,
 } from '@mantine/core';
 import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons-react';
@@ -20,6 +19,8 @@ import { isEqual } from 'lodash-es';
 import { bytesToKB } from '~/utils/number-helpers';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
 import { ModelFileType } from '~/server/common/constants';
+import classes from './FileInputUpload.module.scss';
+import clsx from 'clsx';
 
 export function FileInputUpload({
   uploadType = 'Model',
@@ -45,8 +46,7 @@ export function FileInputUpload({
   };
 
   const [fileTypeError, setFileTypeError] = useState('');
-  const { classes, cx } = useStyles();
-
+ 
   useDidUpdate(() => {
     const shouldUpdate = !isEqual(value, state);
     if (shouldUpdate) setState(value);
@@ -103,15 +103,15 @@ export function FileInputUpload({
   );
 
   return (
-    <Stack className={cx(stackUploadProgress && classes.stackedProgress, grow && classes.grow)}>
+    <Stack className={clsx(stackUploadProgress && classes.stackedProgress, grow && classes.grow)}>
       <Group gap="xs" align="flex-end" wrap="nowrap">
         <FileInput
           {...props}
           error={error ?? fileTypeError}
-          icon={<IconUpload size={16} />}
+          leftSection={<IconUpload size={16} />}
           onChange={handleOnChange}
           value={file ?? localFile}
-          className={cx(grow && classes.grow)}
+          className={clsx(grow && classes.grow)}
           rightSection={
             file && (
               <>
@@ -135,21 +135,26 @@ export function FileInputUpload({
           {status === 'uploading' &&
             (stackUploadProgress ? (
               <Box className={classes.stackedProgressProgress}>
-                <Progress
-                  sx={{ width: '100%' }}
+                <Progress.Root
                   size="xl"
                   radius="xs"
-                  value={progress}
-                  label={`${Math.floor(progress)}%`}
-                  color={progress < 100 ? 'blue' : 'green'}
                   styles={{
-                    root: { height: '100%', borderTopRightRadius: 0, borderBottomRightRadius: 0 },
-                    bar: { alignItems: 'flex-start', paddingTop: 6, textShadow: '0 0 2px #000' },
+                    root: { height: '100%', borderTopRightRadius: 0, borderBottomRightRadius: 0, width: '100%' },
+                    section: { alignItems: 'flex-start', paddingTop: 6, textShadow: '0 0 2px #000' },
                   }}
                   className={classes.stackedProgressBar}
-                  striped
-                  animate
-                />
+                  
+                >
+                  <Progress.Section 
+                  value={progress}
+                   color={progress < 100 ? 'blue' : 'green'}
+                   striped
+                  animated>
+                    <Progress.Label>
+                    {Math.floor(progress)}%
+                    </Progress.Label>
+                  </Progress.Section>
+                  </Progress.Root>
                 <Group justify="space-between" className={classes.stackedProgressStatus}>
                   <Text className={classes.stackedProgressStatusText}>{`${formatBytes(
                     speed
@@ -161,15 +166,19 @@ export function FileInputUpload({
               </Box>
             ) : (
               <Stack gap={2}>
-                <Progress
-                  sx={{ width: '100%' }}
+                <Progress.Root
+                  style={{ width: '100%' }}
                   size="xl"
-                  value={progress}
-                  label={`${Math.floor(progress)}%`}
-                  color={progress < 100 ? 'blue' : 'green'}
+                >
+                  <Progress.Section value={progress}
+                   color={progress < 100 ? 'blue' : 'green'}
                   striped
-                  animate
-                />
+                  animated>
+                    <Progress.Label>
+                      {Math.floor(progress)}%
+                    </Progress.Label>
+                  </Progress.Section>
+                  </Progress.Root>
                 <Group justify="space-between">
                   <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
                   <Text size="xs" color="dimmed">{`${formatSeconds(
@@ -199,42 +208,4 @@ type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
   stackUploadProgress?: boolean;
   extra?: React.ReactNode;
 };
-
-const useStyles = createStyles(() => ({
-  stackedProgress: {
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  stackedProgressProgress: {
-    position: 'absolute',
-    top: 1,
-    left: 1,
-    bottom: 1,
-    width: 'calc(100% - 32px)',
-    zIndex: 2,
-    opacity: 1,
-  },
-  stackedProgressBar: {
-    position: 'absolute',
-    top: '0',
-    width: '100%',
-  },
-  stackedProgressStatus: {
-    position: 'absolute',
-    bottom: '0',
-    width: '100%',
-    marginBottom: 0,
-    paddingLeft: 12,
-    paddingRight: 12,
-    zIndex: 3,
-  },
-  stackedProgressStatusText: {
-    fontSize: 10,
-    color: '#fff',
-    textShadow: '0 0 2px #000',
-    fontWeight: 500,
-  },
-  grow: {
-    flexGrow: 1,
-  },
-}));
+ 

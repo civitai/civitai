@@ -13,6 +13,7 @@ import {
   ScrollArea,
   Text,
   useMantineTheme,
+  rgba,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -86,7 +87,7 @@ const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
   color: 'gray',
   className: 'h-9 min-w-9 rounded-full normal-case',
-  classNames: { inner: 'flex gap-1 items-center' },
+  classNames: { root: 'flex gap-1 items-center' },
 };
 
 const sharedButtonProps: Partial<Omit<ButtonProps, 'children'>> = {
@@ -332,8 +333,8 @@ export function ImageDetail2() {
                                   style: {
                                     color: 'white',
                                     background: hasReacted
-                                      ? theme.fn.rgba(theme.colors.blue[4], 0.4)
-                                      : theme.fn.rgba(theme.colors.gray[8], 0.4),
+                                      ? rgba(theme.colors.blue[4], 0.4)
+                                      : rgba(theme.colors.gray[8], 0.4),
                                     // backdropFilter: 'blur(7px)',
                                   },
                                 }),

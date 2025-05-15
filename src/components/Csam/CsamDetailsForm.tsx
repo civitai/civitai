@@ -86,7 +86,7 @@ export function CsamDetailsForm({
   return (
     <ScrollArea>
       <Container>
-        <Title align="center" mb="md">
+        <Title className="text-center" mb="md">
           CSAM Details Form
         </Title>
         <Card>
@@ -117,12 +117,12 @@ export function CsamDetailsForm({
               <InputCheckboxGroup
                 name="contents"
                 label="The images/videos in this report may involve:"
-                orientation="vertical"
-                gap="xs"
               >
-                {Object.entries(csamContentsDictionary).map(([key, value]) => (
-                  <Checkbox key={key} value={key} label={value} />
-                ))}
+                <Stack gap="xs">
+                  {Object.entries(csamContentsDictionary).map(([key, value]) => (
+                    <Checkbox key={key} value={key} label={value} />
+                  ))}
+                </Stack>
               </InputCheckboxGroup>
               {type === 'Image' && (
                 <Input.Wrapper label="Select the resources that you'd like to have referenced in this report">

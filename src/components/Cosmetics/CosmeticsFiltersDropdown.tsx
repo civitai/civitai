@@ -7,9 +7,10 @@ import {
   Chip,
   ChipProps,
   Button,
-  createStyles,
   Drawer,
   ButtonProps,
+  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -19,11 +20,14 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
 import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import classes from './CosmeticsFiltersDropdown.module.scss';
+import clsx from 'clsx';
 
 type Filters = Omit<GetPaginatedCosmeticsInput, 'limit'>;
 
 export function CosmeticsFiltersDropdown({ filters, setFilters, ...buttonProps }: Props) {
-  const { classes, theme, cx } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);
@@ -51,8 +55,6 @@ export function CosmeticsFiltersDropdown({ filters, setFilters, ...buttonProps }
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
@@ -60,9 +62,9 @@ export function CosmeticsFiltersDropdown({ filters, setFilters, ...buttonProps }
         className={classes.actionButton}
         color="gray"
         radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
         {...buttonProps}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        rightIcon={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
@@ -77,28 +79,29 @@ export function CosmeticsFiltersDropdown({ filters, setFilters, ...buttonProps }
   const dropdown = (
     <Stack gap="lg">
       <Stack gap="md">
-        <Divider label="Cosmetic Types" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Cosmetic Types" className="text-sm font-bold" />
         <Chip.Group
-          gap={8}
           value={filters.types ?? []}
-          onChange={(types: CosmeticType[]) => {
+          onChange={(types) => {
             setFilters({
-              types,
+              types: types as CosmeticType[],
             });
           }}
           multiple
         >
-          {Object.values(CosmeticType).map((type, index) => (
-            <Chip key={index} value={type} {...chipProps}>
-              <span>{getDisplayName(type)}</span>
-            </Chip>
-          ))}
+          <Group gap={8}>
+            {Object.values(CosmeticType).map((type, index) => (
+              <Chip key={index} value={type} {...chipProps}>
+                <span>{getDisplayName(type)}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -118,14 +121,14 @@ export function CosmeticsFiltersDropdown({ filters, setFilters, ...buttonProps }
           size="90%"
           position="bottom"
           styles={{
-            drawer: {
+            root: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -154,34 +157,3 @@ type Props = {
   setFilters: (filters: Partial<Filters>) => void;
   filters: Filters;
 } & Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'>;
-
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));

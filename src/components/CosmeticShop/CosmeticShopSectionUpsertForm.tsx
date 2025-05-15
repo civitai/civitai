@@ -115,7 +115,7 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
           {onCancel && (
             <Button
               loading={upsertingShopSection}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onCancel?.();

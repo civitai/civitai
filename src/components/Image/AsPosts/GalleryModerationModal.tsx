@@ -11,7 +11,6 @@ import {
   Portal,
   Stack,
   Text,
-  createStyles,
 } from '@mantine/core';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { IconAlertTriangle, IconCheck, IconSearch, IconX } from '@tabler/icons-react';
@@ -29,6 +28,8 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createDebouncer } from '~/utils/debouncer';
 import { TagSort } from '~/server/common/enums';
 import { openConfirmModal } from '@mantine/modals';
+import classes from './GalleryModerationModal.module.scss';
+import clsx from 'clsx';
 
 export function GalleryModerationModal({ modelId }: { modelId: number }) {
   const dialog = useDialogContext();
@@ -198,8 +199,6 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
             handleToggleBlocked({ id, username: value });
             searchInputRef.current?.focus();
           }}
-          withinPortal
-          variant="unstyled"
         />
       </Card.Section>
       <Card.Section inheritPadding pt="md" pb="xs">
@@ -250,7 +249,6 @@ function BrowsingLevelsStacked({
   level?: number;
   modelId: number;
 }) {
-  const { classes, cx } = useStyles();
   const { toggle } = useGallerySettings({ modelId: modelId });
   const [browsingLevel, setBrowsingLevel] = useState(level);
   const toggleBrowsingLevel = (level: number) => {
@@ -277,7 +275,7 @@ function BrowsingLevelsStacked({
               key={level}
               p="md"
               onClick={() => toggleBrowsingLevel(level)}
-              className={cx({ [classes.active]: isSelected })}
+              className={clsx({ [classes.active]: isSelected })}
               wrap="nowrap"
             >
               <Group wrap="nowrap">
@@ -298,22 +296,3 @@ function BrowsingLevelsStacked({
     </div>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  root: {
-    ['& > div']: {
-      ['&:hover']: {
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-        cursor: 'pointer',
-      },
-      ['&:not(:last-child)']: {
-        borderBottom: `1px ${
-          theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-        } solid`,
-      },
-    },
-  },
-  active: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-  },
-}));

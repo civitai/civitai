@@ -1,0 +1,69 @@
+.card {
+  border-radius: var(--mantine-radius-md);
+  overflow: hidden;
+  background: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-0));
+
+  iframe {
+    border: none !important;
+  }
+
+  @container (min-width: var(--mantine-breakpoint-sm)) {
+
+    &.yt-long,
+    &.twitch {
+      grid-column: span 2;
+    }
+  }
+}
+
+// Dynamically set height for each type
+.card-ig-reel,
+.card-ig-post {
+  height: 505px;
+}
+
+.card-yt-short {
+  height: 569px;
+}
+
+.card-yt-long,
+.card-twitch {
+  height: 369px;
+}
+
+.videoPlayholderRoot {
+  height: 100%;
+  position: relative;
+  cursor: pointer;
+
+  .playButton {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 80px;
+    height: 80px;
+    color: var(--mantine-white);
+    background-color: rgba(0, 0, 0, 0.9);
+    padding: 20px;
+    border-radius: 50%;
+    box-shadow: 0 5px 3px 2px rgba(0, 0, 0, 1), inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+    transition: background-color 200ms ease;
+  }
+
+  &:hover {
+    .playButton {
+      background-color: rgba(0, 0, 0, 1);
+    }
+  }
+
+  img {
+    object-fit: contain;
+    height: 100%;
+    object-position: 50% 50%;
+  }
+}
+
+.playButton {
+  // Just for ref.
+}

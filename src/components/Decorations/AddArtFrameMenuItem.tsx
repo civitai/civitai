@@ -27,7 +27,7 @@ export function AddArtFrameMenuItem(props: CardDecorationModalProps) {
   return (
     <Menu.Item
       icon={<IconDeviceTabletStar size={16} stroke={1.5} />}
-      onClick={(e) => {
+      onClick={(e: React.MouseEvent<HtmlButtonEvent>) => {
         e.preventDefault();
         e.stopPropagation();
 

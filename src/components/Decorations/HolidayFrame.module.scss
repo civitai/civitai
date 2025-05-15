@@ -1,0 +1,82 @@
+:root {
+  --light-size: 24px;
+  /* Default size */
+}
+
+.root {
+  position: relative;
+}
+
+.wrapper {
+  position: absolute;
+  bottom: -10px;
+  width: 100%;
+  z-index: 10;
+  max-width: 360px;
+}
+
+.decoration {
+  position: relative;
+}
+
+.lights {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  flex-wrap: wrap;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 44px;
+  transform: translateY(-50%);
+  padding: 0 10px;
+}
+
+.light {
+  width: var(--light-size);
+  height: var(--light-size);
+  margin-left: calc(var(--light-size) * -0.75);
+  transform: translateY(50%) rotate(6deg);
+  transform-origin: top center;
+
+  &:first-of-type {
+    margin-left: 0;
+  }
+
+  &:nth-of-type(4n-2) {
+    transform: rotate(186deg) translateY(-60%);
+  }
+
+  &:nth-of-type(4n-1) {
+    transform: translateY(40%) rotate(-6deg);
+  }
+
+  &:nth-of-type(4n) {
+    transform: rotate(174deg) translateY(-55%);
+  }
+}
+
+.upgradedLight {
+  width: calc(var(--light-size) * 1.2);
+  height: calc(var(--light-size) * 1.2);
+  margin-left: calc(var(--light-size) * -1.02);
+  transform-origin: top center;
+  transform: translateY(45%) rotate(6deg);
+
+  &:first-of-type {
+    margin-left: 0;
+  }
+
+  &:nth-of-type(4n-2) {
+    transform: rotate(186deg) translateY(-70%);
+  }
+
+  &:nth-of-type(4n-1) {
+    transform: translateY(50%) rotate(-6deg);
+  }
+
+  &:nth-of-type(4n) {
+    transform: rotate(174deg) translateY(-75%);
+  }
+}

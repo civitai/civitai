@@ -14,8 +14,6 @@ export function FiltersDropdown({
         <Indicator
           offset={4}
           label={count ? count : undefined}
-          showZero={false}
-          dot={false}
           size={16}
           inline
           zIndex={10}

@@ -28,8 +28,8 @@ export function FileInfo({ file }: Props) {
           size="xs"
           radius="xl"
           color="gray"
-          sx={{ cursor: 'pointer' }}
-          onClick={(e) => e.stopPropagation()}
+          style={{ cursor: 'pointer' }}
+          onClick={(e: React.MouseEvent) => e.stopPropagation()}
         >
           <IconInfoCircle />
         </ThemeIcon>

@@ -2,14 +2,13 @@ import {
   Box,
   Button,
   Center,
-  createStyles,
   Group,
   Input,
   InputWrapperProps,
   Loader,
   Paper,
   Select,
-  SelectItemProps,
+  ComboboxItem,
   Stack,
   Text,
   Grid,
@@ -50,7 +49,10 @@ type SectionItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
   onChange?: (value: ShopItemSchema[]) => void;
 };
 
-type CosmeticShopItemSelectItemProps = { title: string; description?: string } & SelectItemProps;
+type CosmeticShopItemSelectItemProps = {
+  title: string;
+  description?: string | null;
+} & ComboboxItem;
 
 const CosmeticShopItemSelectItem = forwardRef<HTMLDivElement, CosmeticShopItemSelectItemProps>(
   ({ title, description, ...others }: CosmeticShopItemSelectItemProps, ref) => (
@@ -95,16 +97,23 @@ const CosmeticShopItemSearch = ({
     <Select
       label="Search products by title"
       description="Select items to add to this section"
-      onChange={(cosmeticId: string) => {
-        const item = cosmeticShopItems.find((c) => c.id === Number(cosmeticId));
+      onChange={(cosmeticId) => {
+        const item = cosmeticShopItems.find((c) => c.id === Number(cosmeticId ?? 0));
         if (item) {
           onItemSelected(item);
         }
       }}
       onSearchChange={(query) => setFilters({ ...filters, name: query })}
       searchValue={filters.name}
-      nothingFound="No options"
-      itemComponent={CosmeticShopItemSelectItem}
+      nothingFoundMessage="No options"
+      renderOption={(item) => {
+        const data = cosmeticShopItems.find((c) => c.id === Number(item.option.value));
+        if (!data) {
+          return null;
+        }
+
+        return <CosmeticShopItemSelectItem {...item.option} {...data} />;
+      }}
       data={data}
       searchable
       withAsterisk
@@ -180,7 +189,7 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
                   {shopItems.map((item) => {
                     return (
                       <SortableItem key={item.id} id={item.id}>
-                        <Grid.Col span={12} md={3}>
+                        <Grid.Col span={{ base: 12, md: 3 }}>
                           <Paper withBorder pos="relative" p="sm" radius="lg" h="100%">
                             <Stack gap={0} h="100%">
                               <Text weight="bold" size="md">

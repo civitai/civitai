@@ -1,20 +1,11 @@
-import { Alert, Center, Loader, SimpleGrid, Text, createStyles } from '@mantine/core';
+import { Alert, Center, Loader, SimpleGrid, Text } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { SectionCard } from '~/components/Events/SectionCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { useQueryEvent } from './events.utils';
 
-const useStyles = createStyles((theme) => ({
-  badge: {
-    width: 96,
-    height: 96,
-    margin: `0 auto ${theme.spacing.md}px`,
-  },
-}));
-
 export function EventRewards({ event }: { event: string }) {
-  const { classes } = useStyles();
   const currentUser = useCurrentUser();
 
   const { eventData, rewards, loadingRewards } = useQueryEvent({ event });
@@ -53,16 +44,22 @@ export function EventRewards({ event }: { event: string }) {
         </Alert>
       ) : (
         <SimpleGrid
-          gap={40}
-          cols={2}
-          breakpoints={[
-            { minWidth: 'sm', cols: 3 },
-            { minWidth: 'md', cols: 5 },
-          ]}
+          spacing="xl"
+          cols={{
+            base: 2,
+            sm: 3,
+            md: 5,
+          }}
         >
           {shownRewards.map((reward) => (
             <div key={reward.id}>
-              <div className={classes.badge}>
+              <div
+                style={{
+                  width: 96,
+                  height: 96,
+                  margin: `0 auto var(--mantine-spacing-md)`,
+                }}
+              >
                 <EdgeMedia
                   src={(reward.data as { url: string })?.url}
                   alt={`Event reward: ${reward.name}`}

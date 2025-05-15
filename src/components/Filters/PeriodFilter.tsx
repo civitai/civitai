@@ -1,4 +1,4 @@
-import { Chip } from '@mantine/core';
+import { Chip, Group } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useCallback } from 'react';
 import { FilterChip } from '~/components/Filters/FilterChip';
@@ -57,12 +57,14 @@ function DumbPeriodFilter({
         </SelectMenu>
       )}
       {variant === 'chips' && (
-        <Chip.Group gap={8} value={value} onChange={onChange}>
-          {options.map((x, index) => (
-            <FilterChip key={index} value={x.value}>
-              <span>{x.label}</span>
-            </FilterChip>
-          ))}
+        <Chip.Group value={value} onChange={(v) => onChange(v as MetricTimeframe)}>
+          <Group gap={8}>
+            {options.map((x, index) => (
+              <FilterChip key={index} value={x.value}>
+                <span>{x.label}</span>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
       )}
     </IsClient>

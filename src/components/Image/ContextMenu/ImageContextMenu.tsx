@@ -335,7 +335,7 @@ function NeedsReviewBadge({
         <Menu.Target>
           <Box
             style={{ cursor: 'pointer' }}
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.preventDefault();
               e.stopPropagation();
             }}
@@ -386,7 +386,7 @@ function NeedsReviewBadge({
         <Menu.Target>
           <Box
             style={{ cursor: 'pointer' }}
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.preventDefault();
               e.stopPropagation();
             }}

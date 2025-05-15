@@ -149,7 +149,11 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                   </RoutedDialogLink>
                   <div className="absolute left-2 top-2">
                     <div className="flex flex-nowrap items-center gap-1">
-                      <ImageGuard2.BlurToggle radius="xl" h={26} sx={{ pointerEvents: 'auto' }} />
+                      <ImageGuard2.BlurToggle
+                        radius="xl"
+                        h={26}
+                        style={{ pointerEvents: 'auto' }}
+                      />
                       {safe &&
                         image.type === MediaType.video &&
                         image.metadata &&
@@ -207,7 +211,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     </div>
                   ) : !isBlocked ? (
                     isPending ? (
-                      <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
+                      <Box className={classes.footer} p="xs" style={{ width: '100%' }}>
                         <Stack gap={4}>
                           <Group gap={8} wrap="nowrap">
                             <Loader size={20} />

@@ -160,7 +160,8 @@ export function CustomAspectRatio({
             max={maxResolution}
             step={64}
             value={size?.width}
-            onChange={(width) => setSize((size) => ({ ...size, width }))}
+            allowDecimal={false}
+            onChange={(width) => setSize((size) => ({ ...size, width: Number(width) }))}
           />
           <NumberInput
             label="height"
@@ -168,7 +169,8 @@ export function CustomAspectRatio({
             max={maxResolution}
             step={64}
             value={size?.height}
-            onChange={(height) => setSize((size) => ({ ...size, height }))}
+            allowDecimal={false}
+            onChange={(height) => setSize((size) => ({ ...size, height: Number(height) }))}
           />
         </div>
         <div className="grid grid-cols-[min-content,min-content,auto] gap-2">

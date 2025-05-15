@@ -4,14 +4,13 @@ import { Button, Group, Text, Title, TypographyStylesProvider } from '@mantine/c
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconArrowRight } from '@tabler/icons-react';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import homeBlockClasses from '~/components/HomeBlocks/HomeBlock.module.scss';
+import clsx from 'clsx';
 
 const HomeBlockHeaderMeta = ({ metadata, htmlMode }: Props) => {
-  const { classes: homeBlockClasses } = useHomeBlockStyles();
-
   return (
     <>
       {metadata?.title && (
@@ -19,12 +18,7 @@ const HomeBlockHeaderMeta = ({ metadata, htmlMode }: Props) => {
           justify="space-between"
           align="center"
           pb="md"
-          sx={(theme) => ({
-            [containerQuery.smallerThan('sm')]: {
-              paddingRight: theme.spacing.md,
-            },
-          })}
-          className={homeBlockClasses.header}
+          className={clsx(homeBlockClasses.header, 'pr-sm md:pr-0')}
           wrap="nowrap"
         >
           <Title className={homeBlockClasses.title}>{metadata?.title}</Title>

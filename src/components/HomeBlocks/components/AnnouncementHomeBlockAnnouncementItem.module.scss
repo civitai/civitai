@@ -1,0 +1,95 @@
+// Define Open Color palette used by Mantine
+$open-colors: (
+  'blue',
+  'cyan',
+  'green',
+  'lime',
+  'yellow',
+  'orange',
+  'red',
+  'pink',
+  'grape',
+  'violet',
+  'indigo',
+  'gray',
+  'dark'
+);
+
+// Generate color-specific classes
+@each $color-name in $open-colors {
+  .card-#{$color-name} {
+    border-color: var(--mantine-color-#{$color-name}-4);
+  }
+
+  .emojiCard-#{$color-name} {
+    border-color: var(--mantine-color-#{$color-name}-4);
+    background: rgba(var(--mantine-color-#{$color-name}-9-rgb), 0.2);
+  }
+
+  .imageContainer-#{$color-name} {
+    border-right: 1px solid var(--mantine-color-#{$color-name}-4);
+
+    @container (max-width: var(--mantine-breakpoint-md)) {
+      border-bottom: 1px solid var(--mantine-color-#{$color-name}-4);
+      border-right: none;
+    }
+  }
+}
+
+.card {
+  display: flex;
+  min-height: 100%;
+}
+
+.emojiCard {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 62px;
+  height: 62px;
+}
+
+.imageCard {
+  @container (max-width: var(--mantine-breakpoint-md)) {
+    padding: 0;
+    display: block;
+
+    .stack {
+      padding: var(--mantine-spacing-lg);
+    }
+  }
+}
+
+.imageContainer {
+  width: 200px;
+  margin: calc(var(--mantine-spacing-lg) * -1);
+  margin-right: var(--mantine-spacing-lg);
+
+  @container (max-width: var(--mantine-breakpoint-xl)) {
+    width: 120px;
+  }
+
+  @container (max-width: var(--mantine-breakpoint-md)) {
+    height: 120px;
+    width: 100%;
+    margin: 0;
+
+    img {
+      object-fit: cover;
+      width: 100%;
+      height: 100%;
+    }
+  }
+}
+
+.stack {
+  flex: 1;
+}
+
+.action {
+  @container (max-width: var(--mantine-breakpoint-sm)) {
+    display: flex;
+    flex-grow: 1;
+    justify-content: center;
+  }
+}
