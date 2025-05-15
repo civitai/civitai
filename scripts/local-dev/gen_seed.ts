@@ -35,7 +35,7 @@ import {
   TrainingStatus,
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
-import { checkLocalDb, insertRows } from './utils';
+import { checkLocalDb, generateRandomName, insertRows } from './utils';
 // import { fetchBlob } from '~/utils/file-utils';
 
 // Usage: npx tsx ./scripts/local-dev/gen_seed.ts --rows=1000
@@ -521,7 +521,7 @@ const genModels = (num: number, userIds: number[]) => {
     const isEa = fbool(0.05);
 
     const row = [
-      `${capitalize(faker.word.adjective())}${capitalize(faker.word.noun())}`, // name
+      generateRandomName(faker.number.int({ min: 1, max: 6 })), // name
       rand([null, `<p>${faker.lorem.paragraph({ min: 1, max: 8 })}</p>`]), // description
       isCheckpoint
         ? 'Checkpoint'
@@ -604,7 +604,10 @@ const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[])
     const isPublished = fbool(0.4);
 
     const row = [
-      `V${faker.number.int(6)}`, //name
+      randw([
+        { value: `V${faker.number.int(6)}`, weight: 5 },
+        { value: generateRandomName(faker.number.int({ min: 1, max: 6 })), weight: 1 },
+      ]), //name
       rand([null, `<p>${faker.lorem.sentence()}</p>`]), // description
       isTrain ? faker.number.int({ min: 10, max: 10_000 }) : null, // steps
       isTrain ? faker.number.int({ min: 1, max: 200 }) : null, // epochs

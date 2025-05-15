@@ -87,6 +87,15 @@ export function hasSafeBrowsingLevel(level: number) {
   return Flags.intersects(level, sfwBrowsingLevelsFlag);
 }
 
+const explicitBrowsingLevelFlags = flagifyBrowsingLevel([
+  NsfwLevel.X,
+  NsfwLevel.XXX,
+  NsfwLevel.Blocked,
+]);
+export function getHasExplicitBrowsingLevel(level: number) {
+  return level !== 0 && Flags.intersects(level, explicitBrowsingLevelFlags);
+}
+
 export const browsingLevelOr = (array: (number | undefined)[]) => {
   for (const item of array) {
     if (!!item) return item;
