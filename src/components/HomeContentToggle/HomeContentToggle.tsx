@@ -1,9 +1,5 @@
-<<<<<<< HEAD
-import { Button, Group, Menu, Text } from '@mantine/core';
-=======
-import { Badge, Button, createStyles, Group, Menu, Text } from '@mantine/core';
+import { Badge, Button, Group, Menu, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
->>>>>>> main
 import {
   IconCalendar,
   IconCaretDown,
