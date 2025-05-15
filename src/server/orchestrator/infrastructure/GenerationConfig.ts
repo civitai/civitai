@@ -1,5 +1,6 @@
 import { VideoGenInput } from '@civitai/client';
 import { RefinementCtx, z } from 'zod';
+import { maxRandomSeed } from '~/server/common/constants';
 
 type VideoGenProcesses = 'txt2vid' | 'img2vid';
 export function VideoGenerationConfig2<
@@ -26,21 +27,22 @@ export function VideoGenerationConfig2<
   whatIfFn?: (arg: SchemaOutput) => SchemaOutput;
   superRefine?: (arg: RefinementOutput, ctx: RefinementCtx) => void;
   transformFn: (args: SchemaOutput) => RefinementOutput;
-  inputFn: (args: RefinementOutput) => TOutput;
+  inputFn: (args: RefinementOutput & { seed: number }) => TOutput;
 }) {
   const validationSchema = superRefine ? schema.superRefine(superRefine as any) : schema;
+  const _defaultValues = { ...defaultValues, seed: null };
 
   function validate(data: any) {
-    const values = { ...defaultValues, ...data };
+    const values = { ..._defaultValues, ...data };
     return validationSchema.parse(values);
   }
 
   function getDefaultValues() {
-    return schema.parse({ ...defaultValues });
+    return schema.parse({ ..._defaultValues });
   }
 
   function getWhatIfValues(data: any) {
-    const whatIfDefaults = { ...defaultValues, ...data };
+    const whatIfDefaults = { ..._defaultValues, ...data };
     const parsed = schema.parse(whatIfDefaults) as SchemaOutput;
     return whatIfFn(parsed);
   }
@@ -48,7 +50,10 @@ export function VideoGenerationConfig2<
   function inputFn(data: SchemaOutput): TOutput {
     const softValidated = schema.parse(data) as SchemaOutput;
     const transformed = transformFn?.(softValidated) ?? softValidated;
-    return args.inputFn(transformed as any);
+    const result = args.inputFn(transformed as any);
+    const seed =
+      !('seed' in result) || !result.seed ? Math.floor(Math.random() * maxRandomSeed) : result.seed;
+    return { ...result, seed };
   }
 
   return {

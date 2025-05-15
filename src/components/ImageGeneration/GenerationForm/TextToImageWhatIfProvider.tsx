@@ -37,12 +37,14 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const currentUser = useCurrentUser();
   const watched = useWatch({ control: form.control });
   const [enabled, setEnabled] = useState(false);
-  const defaultModel =
-    generationConfig[getBaseModelSetType(watched.baseModel) as keyof typeof generationConfig]
-      ?.checkpoint ?? watched.model;
 
   const query = useMemo(() => {
-    const { model, resources = [], vae, ...params } = watched;
+    const params = { ...form.getValues(), ...watched };
+    const defaultModel =
+      generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
+        ?.checkpoint ?? params.model;
+
+    const { model, resources = [], vae } = params;
     if (params.aspectRatio) {
       const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
       if (size) {
@@ -52,11 +54,11 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     }
 
     let modelId = model?.id ?? defaultModel.id;
-    const isFlux = getIsFlux(watched.baseModel);
-    if (isFlux && watched.fluxMode) {
-      const { version } = parseAIR(watched.fluxMode);
+    const isFlux = getIsFlux(params.baseModel);
+    if (isFlux && params.fluxMode) {
+      const { version } = parseAIR(params.fluxMode);
       modelId = version;
-      if (watched.fluxMode !== fluxStandardAir) params.priority = 'low';
+      if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
     if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
@@ -74,7 +76,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
         ...whatIfQueryOverrides,
       } as TextToImageInput,
     };
-  }, [watched, defaultModel.id]);
+  }, [watched]);
 
   useEffect(() => {
     // enable after timeout to prevent multiple requests as form data is set

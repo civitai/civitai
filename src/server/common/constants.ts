@@ -1023,7 +1023,7 @@ export const generation = {
     cfgScale: 3.5,
     steps: 25,
     sampler: 'DPM++ 2M Karras',
-    seed: undefined,
+    seed: null,
     clipSkip: 2,
     quantity: 2,
     aspectRatio: '0',
