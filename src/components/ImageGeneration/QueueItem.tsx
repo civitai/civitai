@@ -149,7 +149,7 @@ export function QueueItem({
   const handleGenerate = () => {
     generationStore.setData({
       resources: (step.resources as any) ?? [],
-      params: { ...(step.params as any), seed: undefined },
+      params: { ...(step.params as any), seed: null },
       remixOfId: step.metadata?.remixOfId,
       type: images[0].type, // TODO - type based off type of media
       workflow: step.params.workflow,

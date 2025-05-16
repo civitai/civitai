@@ -10,8 +10,8 @@ import { GenerationResource } from '~/server/services/generation/generation.serv
 
 export type ResourceSelectMultipleProps = {
   limit?: number;
-  value?: GenerationResource[];
-  onChange?: (value?: GenerationResource[]) => void;
+  value?: GenerationResource[] | null;
+  onChange?: (value: GenerationResource[] | null) => void;
   buttonLabel: React.ReactNode;
   modalTitle?: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
@@ -51,13 +51,14 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     // _types used to set up groups
     const _types = types ?? [...new Set(value?.map((x) => x.model.type))];
-    const _values = types
-      ? [...value].filter(
-          (x) =>
-            types.includes(x.model.type) &&
-            (!!baseModels?.length ? baseModels.includes(x.baseModel) : true)
-        )
-      : value;
+    const _values =
+      (types
+        ? value?.filter(
+            (x) =>
+              types.includes(x.model.type) &&
+              (!!baseModels?.length ? baseModels.includes(x.baseModel) : true)
+          )
+        : value) ?? [];
     const groups = _types
       .map((type) => ({
         type,
@@ -99,7 +100,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     // removes resources that have unsupported types
     useEffect(() => {
-      if (_values.length !== value.length) onChange?.(_values.length ? _values : undefined);
+      if (_values.length !== value?.length) onChange?.(_values.length ? _values : null);
     }, [value]); //eslint-disable-line
 
     const handleOpenModal = () => {
