@@ -7,7 +7,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { Session, SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
-import { checkUpToDate } from '~/server/db/db-helpers';
+import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { Partner } from '~/shared/utils/prisma/models';
@@ -136,10 +136,10 @@ export function MixedAuthEndpoint(
     if (shouldStop) return;
 
     if (!!req.query?.etag && req.query.etag !== '') {
-      const isUpToDate = await checkUpToDate(
+      const isNotUpToDate = await checkNotUpToDate(
         isArray(req.query.etag) ? req.query.etag[0] : req.query.etag
       );
-      if (!isUpToDate) {
+      if (isNotUpToDate) {
         res.setHeader('Expires', dayjs().add(1, 'minute').toISOString());
       }
     }

@@ -157,7 +157,7 @@ export async function getCurrentLSN() {
       {
         lsn: string;
       }[]
-    >`SELECT pg_current_wal_lsn() AS lsn`;
+    >`SELECT pg_current_wal_lsn()::text AS lsn`;
     return currentRes[0]?.lsn ?? '';
   } catch (e) {
     // TODO what to return here
@@ -165,14 +165,14 @@ export async function getCurrentLSN() {
   }
 }
 
-export async function checkUpToDate(lsn: string) {
+export async function checkNotUpToDate(lsn: string) {
   try {
     const roRes = await dbWrite.$queryRaw<
-      { application_name: string; state: string; replay_lsn: string }[]
-    >`SELECT * FROM get_replication_status() where application_name like 'ro-c16-%'`;
+      { replay_lsn: string }[]
+    >`SELECT replay_lsn::text FROM get_replication_status() where application_name like 'ro-c16-%'`;
     return roRes.some((row) => !lsnGTE(row.replay_lsn, lsn));
   } catch (e) {
-    return false;
+    return true;
   }
 }
 
