@@ -1060,6 +1060,8 @@ export const generation = {
     priority: 'low',
     sourceImage: null,
     openAIQuality: 'medium',
+    vae: null,
+    resources: null,
   },
   maxValues: {
     seed: 4294967295,

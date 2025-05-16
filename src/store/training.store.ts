@@ -472,7 +472,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         setModelState(state, modelId, mediaType);
 
         const lastNum = Math.max(1, ...state[modelId]!.runs.map((r) => r.id));
-        const newData = data ?? mediaType === 'video' ? defaultRunVideo : defaultRun;
+        const newData = data ?? (mediaType === 'video' ? defaultRunVideo : defaultRun);
         const newRun = {
           ...newData,
           id: lastNum + 1,

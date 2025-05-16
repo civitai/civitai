@@ -51,8 +51,8 @@ const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
     model: generationResourceSchema,
-    resources: generationResourceSchema.array().min(0).default([]),
-    vae: generationResourceSchema.optional(),
+    resources: generationResourceSchema.array().min(0).nullable().default(null),
+    vae: generationResourceSchema.nullable().default(null),
     prompt: z.string().default(''),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),

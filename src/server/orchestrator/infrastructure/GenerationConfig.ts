@@ -32,6 +32,11 @@ export function VideoGenerationConfig2<
   const validationSchema = superRefine ? schema.superRefine(superRefine as any) : schema;
   const _defaultValues = { ...defaultValues, seed: null };
 
+  function softValidate(data: any) {
+    const values = { ..._defaultValues, ...data };
+    return schema.parse(values);
+  }
+
   function validate(data: any) {
     const values = { ..._defaultValues, ...data };
     return validationSchema.parse(values);
@@ -62,6 +67,7 @@ export function VideoGenerationConfig2<
     validationSchema,
     getDefaultValues,
     validate,
+    softValidate,
     getWhatIfValues,
     inputFn,
     transformFn,

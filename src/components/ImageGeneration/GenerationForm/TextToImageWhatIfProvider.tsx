@@ -19,6 +19,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { removeEmpty } from '~/utils/object-helpers';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
@@ -39,12 +40,12 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const [enabled, setEnabled] = useState(false);
 
   const query = useMemo(() => {
-    const params = { ...form.getValues(), ...watched };
+    const values = { ...form.getValues(), ...watched };
+    const { model, resources, vae, ...params } = values;
     const defaultModel =
       generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
-        ?.checkpoint ?? params.model;
+        ?.checkpoint ?? model;
 
-    const { model, resources = [], vae } = params;
     if (params.aspectRatio) {
       const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
       if (size) {
@@ -65,16 +66,18 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
     else params.engine = undefined;
 
-    const additionalResources = resources
-      .filter((x) => isDefined(x.id))
-      .map((x) => ({ id: x.id as number, epochNumber: x.epochDetails?.epochNumber }));
+    const additionalResources =
+      resources?.map((x) => {
+        if (!x.epochDetails?.epochNumber) return { id: x.id as number };
+        return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber };
+      }) ?? [];
 
     return {
       resources: [{ id: modelId }, ...additionalResources],
-      params: {
+      params: removeEmpty({
         ...params,
         ...whatIfQueryOverrides,
-      } as TextToImageInput,
+      } as TextToImageInput),
     };
   }, [watched]);
 

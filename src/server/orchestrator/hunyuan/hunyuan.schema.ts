@@ -27,7 +27,7 @@ const schema = baseVideoGenerationSchema.extend({
   steps: z.number().default(20),
   model: z.string().optional(),
   aspectRatio: z.enum(hunyuanAspectRatios).default('1:1').catch('1:1'),
-  resources: z.array(resourceSchema.passthrough()).default([]),
+  resources: z.array(resourceSchema.passthrough()).nullable().default(null),
 });
 
 export const hunyuanGenerationConfig = VideoGenerationConfig2({
@@ -46,7 +46,7 @@ export const hunyuanGenerationConfig = VideoGenerationConfig2({
       height,
       steps: 20,
       model: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512',
-      loras: resources.map(({ air, strength }) => ({ air, strength })),
+      loras: resources?.map(({ air, strength }) => ({ air, strength })),
     };
   },
 });

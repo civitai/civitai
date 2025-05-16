@@ -47,7 +47,7 @@ const schema = baseVideoGenerationSchema.extend({
   frameRate: z.literal(16).optional().catch(16),
   duration: numberEnum(wanDuration).optional().catch(5),
   seed: seedSchema,
-  resources: z.array(resourceSchema.passthrough()).default([]),
+  resources: z.array(resourceSchema.passthrough()).nullable().default(null),
   model: z.string().optional(),
 });
 
@@ -105,7 +105,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       height,
       sourceImage: sourceImage?.url,
       steps: 20,
-      loras: resources.map(({ air, strength }) => ({ air, strength })),
+      loras: resources?.map(({ air, strength }) => ({ air, strength })),
       // model: !sourceImage ? 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796' : undefined,
     };
   },
