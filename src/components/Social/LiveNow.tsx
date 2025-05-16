@@ -1,6 +1,6 @@
 import { Badge, BadgeProps } from '@mantine/core';
 import { useIsLive } from '~/hooks/useIsLive';
-import classes from './LiveNow.module.css';
+import classes from './LiveNow.module.scss';
 
 export function LiveNowIndicator(props: Omit<BadgeProps, 'children'>) {
   const isLive = useIsLive();

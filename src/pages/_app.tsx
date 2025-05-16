@@ -1,4 +1,5 @@
 // src/pages/_app.tsx
+
 import { Notifications } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, getCookies } from 'cookies-next';
@@ -68,8 +69,13 @@ import { parseCookies, ParsedCookies } from '~/shared/utils';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
-import '~/styles/globals.css';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+
+import '~/styles/globals.css';
+import '@mantine/core/styles.css';
+import '@mantine/dates/styles.css'; 
+import '@mantine/dropzone/styles.css';
+
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);

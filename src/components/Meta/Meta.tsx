@@ -63,7 +63,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
           key="product-schema"
-        ></script>
+        />
       )}
     </Head>
   );

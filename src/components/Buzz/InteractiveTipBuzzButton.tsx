@@ -396,7 +396,7 @@ export function InteractiveTipBuzzButton({
                 onFocus={stopCountdown}
                 className={classes.tipAmount}
                 dangerouslySetInnerHTML={{ __html: buzzCounter.toString() }}
-              ></div>
+              />
             </Group>
           </Stack>
           {status !== 'pending' && (

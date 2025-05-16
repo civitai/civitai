@@ -21,7 +21,8 @@
 
   // Focus ring for textarea
   &:has(textarea:focus) {
-    @include mantine-focus-ring;
+    // TODO: Mantine7
+    // @include mantine-focus-ring;
   }
 }
 

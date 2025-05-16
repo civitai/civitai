@@ -1,5 +1,4 @@
-import '@mantine/core/styles.css';
-import '@mantine/dates/styles.css';
+
 
 import { MantineColorScheme, ColorSchemeScript, createTheme, MantineProvider } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
@@ -116,11 +115,12 @@ export function ThemeProvider({
   colorScheme: MantineColorScheme;
 }) {
   return (
-    <ColorSchemeScript defaultColorScheme={cookieColorScheme}>
+    <>
+      <ColorSchemeScript defaultColorScheme={cookieColorScheme} />
       <MantineProvider theme={theme} defaultColorScheme={cookieColorScheme ?? 'dark'}>
         <Notifications />
         {children}
-      </MantineProvider>
-    </ColorSchemeScript>
+      </MantineProvider> 
+    </>
   );
 }

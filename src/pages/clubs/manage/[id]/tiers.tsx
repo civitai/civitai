@@ -36,7 +36,7 @@ import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
-import classes from '~/components/Club/ClubPost/ClubFeed/ClubFeed.module.css';
+import classes from '~/components/Club/ClubPost/ClubFeed/ClubFeed.module.scss';
 
 const querySchema = z.object({ id: z.coerce.number() });
 

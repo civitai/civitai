@@ -55,11 +55,11 @@
 }
 
 .statusBadge {
-  background: alpha(var(--mantine-color-yellow-6), 0.4);
+  background: --alpha(var(--mantine-color-yellow-6), 0.4);
 }
 
 .earlyAccessBadge {
-  background: alpha(var(--mantine-color-green-6), 0.4);
+  background: --alpha(var(--mantine-color-green-6), 0.4);
 }
 
 .floatingAvatar {

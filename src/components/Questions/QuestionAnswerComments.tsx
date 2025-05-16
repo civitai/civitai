@@ -6,7 +6,7 @@ import {
   RootThreadProvider,
 } from '~/components/CommentsV2';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
-import classes from './QuestionAnswerComments.module.css';
+import classes from './QuestionAnswerComments.module.scss';
 
 type Props = CommentConnectorInput & {
   initialCount?: number;

@@ -60,7 +60,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import classes from './ExistingChat.module.css';
+import classes from './ExistingChat.module.scss';
 import clsx from 'clsx';
 
 type TypingStatus = {

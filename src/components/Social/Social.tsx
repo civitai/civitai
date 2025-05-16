@@ -8,7 +8,7 @@ import {
   IconMail,
 } from '@tabler/icons-react';
 import { BuiltInProviderType } from 'next-auth/providers';
-import classes from './Social.module.css';
+import classes from './Social.module.scss';
 import clsx from 'clsx';
 
 type SocialProps = Partial<

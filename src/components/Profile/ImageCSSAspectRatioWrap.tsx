@@ -1,5 +1,5 @@
 import { CSSProperties } from 'react';
-import classes from './ImageCSSAspectRatioWrap.module.css';
+import classes from './ImageCSSAspectRatioWrap.module.scss';
 import clsx from 'clsx';
 
 export const ImageCSSAspectRatioWrap = ({

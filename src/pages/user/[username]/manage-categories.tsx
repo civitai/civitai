@@ -34,7 +34,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { postgresSlugify, slugit, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '~/components/Meta/Meta';
-import styles from '/manage-categories.module.css';
+import styles from '/manage-categories.module.scss';
 import clsx from 'clsx';
 
 export const getServerSideProps = createServerSideProps({

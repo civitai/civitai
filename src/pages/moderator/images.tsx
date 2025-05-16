@@ -446,7 +446,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   <></>
                 ) : (
                   <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-                    <Text size="sm" lh={1.2} dangerouslySetInnerHTML={{ __html: html }} />
+                    <div className="text-sm lh-1.2" dangerouslySetInnerHTML={{ __html: html }} />
                   </Card.Section>
                 )
               }

@@ -1,7 +1,7 @@
 import { Stack, Text, Loader, Center, Divider } from '@mantine/core';
 import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
-import classes from '~/components/CommentsV2/Comment/Comment.module.css';
+import classes from '~/components/CommentsV2/Comment/Comment.module.scss';
 
 type ImageDetailCommentsProps = {
   imageId: number;

@@ -3,7 +3,7 @@ import React, { forwardRef } from 'react';
 
 import { useContainerGridContext } from './ContainerGrid.context';
 // import useStyles from './ContainerCol.styles';
-import { Box, ColSpan, DefaultProps, useComponentDefaultProps } from '@mantine/core';
+import { Box, ColSpan, DefaultProps, useProps } from '@mantine/core';
 import classes from './ContainerCol.module.scss';
 
 export interface ColProps extends DefaultProps, React.ComponentPropsWithoutRef<'div'> {
@@ -96,7 +96,7 @@ export const ContainerCol = forwardRef<HTMLDivElement, ColProps>((props: ColProp
     id,
     unstyled,
     ...others
-  } = useComponentDefaultProps('GridCol', defaultProps, props);
+  } = useProps('GridCol', defaultProps, props);
 
   const ctx = useContainerGridContext();
 

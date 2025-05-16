@@ -1,5 +1,6 @@
 .highlightedComment {
-  background: alpha(var(--mantine-color-blue-5), 0.2);
+  // background: var(--mantine-color-blue-5);
+  background: --alpha(var(--mantine-color-blue-5), 0.2);
   margin: calc(-1 * var(--mantine-spacing-xs));
   padding: var(--mantine-spacing-xs);
 }

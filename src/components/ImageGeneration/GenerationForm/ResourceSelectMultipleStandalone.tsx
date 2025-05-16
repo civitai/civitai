@@ -10,7 +10,7 @@ import { IconPlus } from '@tabler/icons-react';
 import { withController } from '~/libs/form/hoc/withController';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useState } from 'react';
-import classes from './ResourceSelect.module.scss';
+import classes from './ResourceSelectMultipleStandalone.module.scss';
 
 export function ResourceSelectMultipleStandalone(props: ResourceSelectMultipleProps) {
   const status = useGenerationStatus();

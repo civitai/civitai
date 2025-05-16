@@ -17,7 +17,7 @@
   border: 0;
   border-radius: 4px;
   background-color: light-dark(
-    alpha(var(--mantine-color-gray-2), 0.9),
-    alpha(var(--mantine-color-dark-5), 0.9)
+    --alpha(var(--mantine-color-gray-2), 0.9),
+    --alpha(var(--mantine-color-dark-5), 0.9)
   );
 }

@@ -13,7 +13,7 @@ import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { useMutateClub } from './club.utils';
 import { showSuccessNotification } from '../../utils/notifications';
 import { openConfirmModal } from '@mantine/modals';
-import classes from '~/components/Club/ClubPost/ClubFeed.module.css';
+import classes from '~/components/Club/ClubPost/ClubFeed.module.scss';
 
 export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const [isEditing, setIsEditing] = useState<boolean>(false);

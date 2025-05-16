@@ -1,6 +1,6 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
 import { CommentsProvider, Comment, useCommentsContext } from '~/components/CommentsV2';
-import classes from '~/components/CommentsV2/Comment/Comment.module.css';
+import classes from '~/components/CommentsV2/Comment/Comment.module.scss';
 
 export function CommentReplies({ commentId, userId }: { commentId: number; userId?: number }) {
   const { level, badges } = useCommentsContext();

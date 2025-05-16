@@ -21,7 +21,7 @@ import { calculateClubTierNextBillingDate } from '~/utils/clubs';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import classes from '~/components/Club/ClubPost/ClubFeed.module.css';
+import classes from '~/components/Club/ClubPost/ClubFeed.module.scss';
 
 export const ClubMembershipStatus = ({ clubId }: { clubId: number }) => {
   const { data: membership } = trpc.clubMembership.getClubMembershipOnClub.useQuery({

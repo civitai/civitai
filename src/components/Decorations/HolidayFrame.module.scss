@@ -1,7 +1,4 @@
-:root {
-  --light-size: 24px;
-  /* Default size */
-}
+$lightSize: 24px !default;
 
 .root {
   position: relative;
@@ -34,9 +31,9 @@
 }
 
 .light {
-  width: var(--light-size);
-  height: var(--light-size);
-  margin-left: calc(var(--light-size) * -0.75);
+  width: var(--light-size, $lightSize);
+  height: var(--light-size, $lightSize);
+  margin-left: calc(var(--light-size, $lightSize) * -0.75);
   transform: translateY(50%) rotate(6deg);
   transform-origin: top center;
 
@@ -58,9 +55,9 @@
 }
 
 .upgradedLight {
-  width: calc(var(--light-size) * 1.2);
-  height: calc(var(--light-size) * 1.2);
-  margin-left: calc(var(--light-size) * -1.02);
+  width: calc(var(--light-size, $lightSize) * 1.2);
+  height: calc(var(--light-size, $lightSize) * 1.2);
+  margin-left: calc(var(--light-size, $lightSize) * -1.02);
   transform-origin: top center;
   transform: translateY(45%) rotate(6deg);
 

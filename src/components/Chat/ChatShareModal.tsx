@@ -32,7 +32,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import classes from '~/components/Chat/ChatList.module.css';
+import classes from '~/components/Chat/ChatList.module.scss';
 import clsx from 'clsx';
 
 const { openModal: openChatShareModal, Modal } = createContextModal<{ message: string }>({

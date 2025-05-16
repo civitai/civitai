@@ -1,7 +1,7 @@
 import { Box, BoxProps } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconChristmasTree } from '@tabler/icons-react';
-import classes from './EventButton.module.css';
+import classes from './EventButton.module.scss';
 import clsx from 'clsx';
 
 export const EventButton = ({ className, ...props }: Props) => {

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { forwardRef } from 'react';
-import { DefaultProps, MantineSpacing, useComponentDefaultProps } from '@mantine/styles';
+import { DefaultProps, MantineSpacing, useProps } from '@mantine/core';
 
 import { ContainerCol } from './ContainerCol';
 import { ContainerGridProvider } from './ContainerGrid.context';
@@ -80,11 +80,11 @@ export const ContainerGrid: GridComponent = forwardRef<HTMLDivElement, Container
       unstyled,
       containerName,
       ...others
-    } = useComponentDefaultProps('Grid', defaultProps, props);
-    const { classes, cx } = useStyles(
-      { gutter, justify, align, gutterXs, gutterSm, gutterMd, gutterLg, gutterXl, containerName },
-      { unstyled, name: 'ContainerGrid' }
-    );
+    } = useProps('Grid', defaultProps, props);
+    // const { classes, cx } = useStyles(
+    //   { gutter, justify, align, gutterXs, gutterSm, gutterMd, gutterLg, gutterXl, containerName },
+    //   { unstyled, name: 'ContainerGrid' }
+    // );
 
     const style = {
       '--grid-gutter': gutter ? `${gutter}px` : undefined,

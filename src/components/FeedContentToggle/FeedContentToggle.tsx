@@ -1,6 +1,6 @@
 import React from 'react';
 import { SegmentedControl, SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
-import classes from './FeedContentToggle.module.css';
+import classes from './FeedContentToggle.module.scss';
 
 const statuses: SegmentedControlItem[] = [
   { label: 'Published', value: 'published' },
