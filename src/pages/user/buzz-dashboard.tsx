@@ -111,7 +111,7 @@ export default function UserBuzzDashboard() {
 
           <EarningBuzz withCTA />
 
-          <Paper withBorder className={classes.tileCard} h="100%">
+          <Paper className={classes.tileCard} h="100%">
             <Stack p="md">
               {showMismatchAlert && (
                 <Alert color="red" title="Looks like we have an issue!">

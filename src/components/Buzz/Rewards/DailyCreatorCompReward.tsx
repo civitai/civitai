@@ -198,7 +198,7 @@ export function DailyCreatorCompReward() {
     <>
       <Grid gutter="xs">
         <Grid.Col span={{ base: 12, md: 8 }}>
-          <Paper withBorder className={classes.tileCard} h="100%">
+          <Paper className={classes.tileCard} h="100%">
             <Stack p="md" h="100%">
               <Stack gap={0}>
                 <Group gap={8} justify="space-between">
@@ -249,7 +249,7 @@ export function DailyCreatorCompReward() {
           </Paper>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 4 }}>
-          <Paper className={classes.tileCard} h="100%" withBorder>
+          <Paper className={classes.tileCard} h="100%">
             <Stack gap={8} py="md">
               <Title order={3} px="md">
                 Top Earning Resources

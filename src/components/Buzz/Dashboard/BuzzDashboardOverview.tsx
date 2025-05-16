@@ -142,7 +142,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
         }}
       >
         <Stack h="100%">
-          <Paper withBorder p="lg" radius="md" className={classes.tileCard} h="100%">
+          <Paper p="lg" radius="md" className={classes.tileCard} h="100%">
             <Stack gap="xl" h="100%">
               <Stack gap={0} mb="auto">
                 <Title order={3}>Current Buzz</Title>
@@ -272,14 +272,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
           md: 5,
         }}
       >
-        <Paper
-          withBorder
-          p="lg"
-          radius="md"
-          h="100%"
-          className={classes.tileCard}
-          style={{ flex: 1 }}
-        >
+        <Paper p="lg" radius="md" h="100%" className={classes.tileCard} style={{ flex: 1 }}>
           <Stack gap="xs">
             <Title order={3}>Recent Transactions</Title>
             <SegmentedControl

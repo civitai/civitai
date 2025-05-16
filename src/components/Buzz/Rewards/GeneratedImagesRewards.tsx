@@ -133,7 +133,7 @@ export const GeneratedImagesReward = () => {
   }
 
   return (
-    <Paper withBorder className={classes.tileCard} h="100%">
+    <Paper className={classes.tileCard} h="100%">
       <Stack p="md">
         <Title order={3}>Images generated with your models</Title>
         <Stack gap={0}>

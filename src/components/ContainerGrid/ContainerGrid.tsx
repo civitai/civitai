@@ -99,6 +99,24 @@ export const ContainerGrid: GridComponent = forwardRef<HTMLDivElement, Container
       ...(others.style ?? {}),
     } as React.CSSProperties;
 
+    console.log({
+      gutter,
+      gutterXs,
+      gutterSm,
+      gutterMd,
+      gutterLg,
+      gutterXl,
+      children,
+      grow,
+      justify,
+      align,
+      columns,
+      className,
+      id,
+      unstyled,
+      containerName,
+    });
+
     return (
       <ContainerGridProvider
         value={{
