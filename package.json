@@ -284,6 +284,7 @@
     "lint-staged": "^15.2.7",
     "pg-format": "^1.0.4",
     "postcss": "^8.4.38",
+    "postcss-preset-mantine": "^1.17.0",
     "prettier": "^2.8.8",
     "prisma": "^6.3.0",
     "prisma-generator-typescript-interfaces": "^1.6.1",

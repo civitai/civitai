@@ -95,7 +95,9 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const defaultPriceId = isActivePlan
     ? subscription?.price.id ?? product.defaultPriceId
     : product.defaultPriceId;
-  const [priceId, setPriceId] = useState<string | null>(defaultPriceId);
+  const [priceId, setPriceId] = useState<string | null>(
+    product.prices.find((p) => p.id === defaultPriceId)?.id ?? product.prices[0].id
+  );
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
   const btnProps = isActivePlan
     ? subscribeBtnProps.active
@@ -124,7 +126,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
             </Title>
             {image && (
               <Center>
-                <Box w={128}>
+                <Box w={128} h={128}>
                   <EdgeMedia src={image} className={classes.image} />
                 </Box>
               </Center>

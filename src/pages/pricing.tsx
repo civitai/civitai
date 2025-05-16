@@ -1,12 +1,15 @@
 import {
   Alert,
   Anchor,
+  Badge,
+  Box,
   Button,
   Card,
   Center,
   Container,
   Group,
   Loader,
+  SegmentedControl,
   Stack,
   Text,
   ThemeIcon,
@@ -16,6 +19,7 @@ import {
 import { IconExclamationMark, IconInfoCircle, IconInfoTriangleFilled } from '@tabler/icons-react';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
+import { useState, useEffect } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -52,23 +56,27 @@ export default function Pricing() {
   const redirectReason = joinRedirectReasons[reason];
   const paymentProvider = usePaymentProvider();
 
-  const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({});
+  const [interval, setInterval] = useState<'month' | 'year'>('month');
   const { subscription, subscriptionLoading, subscriptionPaymentProvider, isFreeTier } =
     useActiveSubscription({
       checkWhenInBadState: true,
     });
+  const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
+    interval,
+  });
 
   const refreshingSubscription = usePaddleSubscriptionRefresh();
 
   const isLoading = productsLoading || subscriptionLoading || refreshingSubscription;
 
   const currentMembershipUnavailable =
-    !!subscription &&
-    !productsLoading &&
-    !isFreeTier &&
-    !(products ?? []).find((p) => p.id === subscription.product.id) &&
-    // Ensures we have products from the current provider.
-    (products ?? []).some((p) => p.provider === subscription.product.provider);
+    (subscription && !subscription?.product?.active) ||
+    (!!subscription &&
+      !productsLoading &&
+      !isFreeTier &&
+      !(products ?? []).find((p) => p.id === subscription.product.id) &&
+      // Ensures we have products from the current provider.
+      !(products ?? []).some((p) => p.provider === subscription.product.provider));
 
   const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
   const metadata = (subscription?.product?.metadata ?? {
@@ -79,6 +87,10 @@ export default function Pricing() {
     subscription && subscriptionPaymentProvider !== paymentProvider;
 
   const isHolidays = isHolidaysTime();
+
+  useEffect(() => {
+    setInterval(subscription?.price?.interval ?? 'month');
+  }, [subscription?.price?.interval]);
 
   return (
     <>
@@ -227,6 +239,29 @@ export default function Pricing() {
               </Alert>
             )}
           </Group>
+
+          <Center>
+            <SegmentedControl
+              radius="md"
+              value={interval}
+              onChange={(value) => setInterval(value as 'month' | 'year')}
+              size="md"
+              data={[
+                { value: 'month', label: 'Monthly Plans' },
+                {
+                  value: 'year',
+                  label: (
+                    <Center>
+                      <Box mr={6}>Yearly Plans</Box>
+                      <Badge p={5} color="green" variant="filled" radius="xl">
+                        Save 15%!
+                      </Badge>
+                    </Center>
+                  ),
+                },
+              ]}
+            />
+          </Center>
 
           {isLoading ? (
             <Center p="xl">
