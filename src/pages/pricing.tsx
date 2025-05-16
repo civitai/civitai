@@ -136,6 +136,7 @@ export default function Pricing() {
               </div>
             </Alert>
           )}
+
           <Title align="center" className={classes.title}>
             Memberships
           </Title>
@@ -239,7 +240,6 @@ export default function Pricing() {
               </Alert>
             )}
           </Group>
-
           <Center>
             <SegmentedControl
               radius="md"
@@ -252,7 +252,7 @@ export default function Pricing() {
                   value: 'year',
                   label: (
                     <Center>
-                      <Box mr={6}>Yearly Plans</Box>
+                      <Box mr={6}>Annual Plans</Box>
                       <Badge p={5} color="green" variant="filled" radius="xl">
                         Save 15%!
                       </Badge>
@@ -263,6 +263,26 @@ export default function Pricing() {
             />
           </Center>
 
+          {subscription?.price?.interval === 'year' && interval === 'month' && (
+            <AlertWithIcon
+              color="yellow"
+              iconColor="yellow"
+              icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+              iconSize={28}
+              py={11}
+              maw="calc(50% - 8px)"
+              mx="auto"
+            >
+              <Group spacing="xs" noWrap align="flex-start">
+                <Text size="md">
+                  You&rsquo;re currently on an annual plan. You can upgrade to a different annual
+                  plan or cancel your current one at any time. However, switching to a monthly plan
+                  requires canceling your membership first and waiting for it to expire before
+                  signing up again.
+                </Text>
+              </Group>
+            </AlertWithIcon>
+          )}
           {isLoading ? (
             <Center p="xl">
               <Loader />
