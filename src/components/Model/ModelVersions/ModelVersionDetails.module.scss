@@ -12,3 +12,10 @@
     }
   }
 }
+
+.mainSection {
+  @container (min-width: theme('screens.xs')) {
+    padding: 0 var(--mantine-spacing-sm);
+    margin: var(--mantine-spacing-sm) 0;
+  }
+}

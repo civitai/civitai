@@ -51,6 +51,7 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
+      disabled={!filterLength}
       processing
       inline
     >

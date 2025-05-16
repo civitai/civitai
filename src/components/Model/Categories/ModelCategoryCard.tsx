@@ -272,13 +272,13 @@ export function ModelCategoryCard({
     <MasonryCard shadow="sm" {...props} className={classes.card}>
       <Indicator
         disabled={!isNew && !isUpdated}
-        withBorder
         size={24}
         radius="sm"
         label={isUpdated ? 'Updated' : 'New'}
         color="red"
         styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
         style={{ opacity: isHidden ? 0.1 : undefined }}
+        withBorder
       >
         <Link
           href={`/models/${id}/${slugit(name)}`}

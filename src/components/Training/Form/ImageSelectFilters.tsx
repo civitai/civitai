@@ -80,6 +80,7 @@ export function ImageSelectFiltersTrainingDropdown({
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
+      disabled={!filterLength}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
@@ -282,6 +283,7 @@ export function ImageSelectFiltersProfileDropdown({
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
+      disabled={!filterLength}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >

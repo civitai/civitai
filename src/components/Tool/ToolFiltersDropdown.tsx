@@ -58,6 +58,7 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
+      disabled={!filterLength}
       classNames={{ root: 'leading-none', indicator: 'leading-relaxed	' }}
       inline
     >

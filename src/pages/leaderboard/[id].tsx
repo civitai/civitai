@@ -35,7 +35,7 @@ import { numericString, stringDate } from '~/utils/zod-helpers';
 import { env } from '~/env/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { constants } from '~/server/common/constants';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import classes from './[id].module.scss';
 import clsx from 'clsx';
@@ -178,14 +178,14 @@ export default function Leaderboard() {
         ]}
       />
       <Container size="lg">
-        <ContainerGrid gutter="xl">
-          <ContainerGrid.Col xs={12} sm={4} className={classes.sidebar}>
+        <ContainerGrid2 gutter="xl">
+          <ContainerGrid2.Col span={{ base: 12, sm: 4 }} className={classes.sidebar}>
             <Box maw={300} w="100%">
               {navLinks()}
             </Box>
-          </ContainerGrid.Col>
+          </ContainerGrid2.Col>
 
-          <ContainerGrid.Col xs={12} sm={8} display="flex" style={{ justifyContent: 'center' }}>
+          <ContainerGrid2.Col span={{ base: 12, sm: 8 }} display="flex" style={{ justifyContent: 'center' }}>
             <Stack gap={0} maw={600} w="100%">
               <Group gap={8} wrap="nowrap">
                 <Title className={classes.title}>{selectedLeaderboard?.title}</Title>
@@ -267,8 +267,8 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
                 <CreatorList data={leaderboardResults} />
               ) : null}
             </Stack>
-          </ContainerGrid.Col>
-        </ContainerGrid>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
       </Container>
       <Drawer
         opened={drawerOpen}

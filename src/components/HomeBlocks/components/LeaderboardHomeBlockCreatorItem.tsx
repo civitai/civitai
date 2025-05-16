@@ -7,7 +7,7 @@ import { LeaderboardGetModel } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { LeaderboardWithResults } from '~/server/services/leaderboard.service';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 export const LeaderHomeBlockCreatorItem = ({
   data: { position, user, score },
@@ -33,8 +33,8 @@ export const LeaderHomeBlockCreatorItem = ({
     <div style={{ minHeight: 42 }}>
       <Link legacyBehavior href={link} passHref>
         <Box style={{ cursor: 'pointer' }}>
-          <ContainerGrid align="center">
-            <ContainerGrid.Col span={8}>
+          <ContainerGrid2 align="center">
+            <ContainerGrid2.Col span={8}>
               <Group gap="xs" wrap="nowrap">
                 <UserAvatar
                   avatarProps={{
@@ -60,8 +60,8 @@ export const LeaderHomeBlockCreatorItem = ({
                   </Group>
                 </Stack>
               </Group>
-            </ContainerGrid.Col>
-            <ContainerGrid.Col span={3}>
+            </ContainerGrid2.Col>
+            <ContainerGrid2.Col span={3}>
               <Stack align="flex-end">
                 {cosmetic && cosmeticData ? (
                   <RankBadge
@@ -77,8 +77,8 @@ export const LeaderHomeBlockCreatorItem = ({
                   <IconCrown size={24} color={iconColor} style={{ fill: iconColor }} />
                 ) : null}
               </Stack>
-            </ContainerGrid.Col>
-          </ContainerGrid>
+            </ContainerGrid2.Col>
+          </ContainerGrid2>
         </Box>
       </Link>
     </div>

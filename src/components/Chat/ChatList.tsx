@@ -367,8 +367,8 @@ export function ChatList() {
                       position="top-start"
                       disabled={!unreadCount || unreadCount === 0}
                       label={unreadCount}
-                      inline
                       size={16}
+                      inline
                     >
                       <Box>
                         {otherMembers.length > 1 ? (

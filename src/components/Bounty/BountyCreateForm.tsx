@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Button,
   Divider,
+  Grid,
   Group,
   Input,
   Paper,
@@ -28,7 +29,7 @@ import { z } from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -226,8 +227,8 @@ export function BountyCreateForm() {
           <BackButton url="/bounties" />
           <Title className={classes.title}>Create a new bounty</Title>
         </Group>
-        <ContainerGrid gutter="xl">
-          <ContainerGrid.Col xs={12} md={8}>
+        <ContainerGrid2 gutter="xl">
+          <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
             <Stack gap={32}>
               <Stack gap="xl">
                 <InputText
@@ -499,8 +500,8 @@ export function BountyCreateForm() {
                 )}
               </Stack>
             </Stack>
-          </ContainerGrid.Col>
-          <ContainerGrid.Col xs={12} md={4}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
             <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
@@ -578,8 +579,8 @@ export function BountyCreateForm() {
                 </>
               )}
             </Stack>
-          </ContainerGrid.Col>
-        </ContainerGrid>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
         <Group justify="flex-end">
           <NavigateBack url="/bounties">
             {({ onClick }) => (

@@ -15,7 +15,7 @@ import React from 'react';
 import { MouseEvent } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { generationPanel } from '~/store/generation.store';
 import dynamic from 'next/dynamic';
@@ -103,13 +103,13 @@ export const EarningBuzz = ({ asList, withCTA }: Props) => {
       {asList ? (
         <FeatureList data={earnings} />
       ) : (
-        <ContainerGrid gutter={20}>
+        <ContainerGrid2 gutter={20}>
           {earnings.map((item) => (
-            <ContainerGrid.Col key={item.key} xs={12} sm={4} md={3}>
+            <ContainerGrid2.Col key={item.key} span={{ base: 12, sm: 4, md: 3 }}>
               <FeatureCard {...item} withCTA={withCTA ?? item.withCTA} />
-            </ContainerGrid.Col>
+            </ContainerGrid2.Col>
           ))}
-        </ContainerGrid>
+        </ContainerGrid2>
       )}
     </Stack>
   );
@@ -214,13 +214,13 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
       {asList ? (
         <FeatureList data={spendings} />
       ) : (
-        <ContainerGrid gutter={20}>
+        <ContainerGrid2 gutter={20}>
           {spendings.map((item) => (
-            <ContainerGrid.Col key={item.key} xs={12} sm={4} md={3}>
+            <ContainerGrid2.Col key={item.key} span={{ base: 12, sm: 4, md: 3 }}>
               <FeatureCard {...item} withCTA={withCTA ?? item.withCTA} />
-            </ContainerGrid.Col>
+            </ContainerGrid2.Col>
           ))}
-        </ContainerGrid>
+        </ContainerGrid2>
       )}
     </Stack>
   );

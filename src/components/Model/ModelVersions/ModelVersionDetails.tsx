@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Center,
+  Grid,
   Group,
   Loader,
   MantineTheme,
@@ -45,7 +46,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import {
@@ -667,9 +668,10 @@ export function ModelVersionDetails({
       model.allowDifferentLicense);
 
   return (
-    <ContainerGrid gutter="xl" gutterSm="sm" gutterMd="xl">
+    <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid.Col xs={12} sm={5} md={4} orderSm={2} ref={adContainerRef}>
+      {/* TODO: Mantine7: check ref type issues */}
+      <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
         <Stack>
           {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
@@ -1436,19 +1438,12 @@ export function ModelVersionDetails({
           {model.poi && <PoiAlert />}
           {!model.nsfw && !model.poi && <AdUnitSide_2 />}
         </Stack>
-      </ContainerGrid.Col>
+      </ContainerGrid2.Col>
 
-      <ContainerGrid.Col
-        xs={12}
-        sm={7}
-        md={8}
-        orderSm={1}
-        style={(theme: MantineTheme) => ({
-          [containerQuery.largerThan('xs')]: {
-            padding: `0 ${theme.spacing.sm}px`,
-            margin: `${theme.spacing.sm}px 0`,
-          },
-        })}
+      <ContainerGrid2.Col
+        span={{ base: 12, sm: 7, md: 8 }}
+        order={{ sm: 1 }}
+        className={classes.mainSection}
       >
         <Stack>
           {model.mode !== ModelModifier.TakenDown && !mobile && (
@@ -1465,13 +1460,13 @@ export function ModelVersionDetails({
             </ContentClamp>
           ) : null}
         </Stack>
-      </ContainerGrid.Col>
+      </ContainerGrid2.Col>
       <ScheduleModal
         opened={scheduleModalOpened}
         onClose={() => setScheduleModalOpened((current) => !current)}
         onSubmit={(date: Date) => handlePublishClick(date)}
       />
-    </ContainerGrid>
+    </ContainerGrid2>
   );
 }
 

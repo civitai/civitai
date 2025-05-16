@@ -21,7 +21,7 @@ import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BackButton } from '~/components/BackButton/BackButton';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -193,14 +193,14 @@ export default function ModelReviews() {
         ]}
       />
       <Container size="xl">
-        <ContainerGrid gutter={48}>
-          <ContainerGrid.Col sm={12} md={7} offsetMd={2} orderMd={1}>
+        <ContainerGrid2 gutter={48}>
+          <ContainerGrid2.Col span={{ base: 12, md: 7 }} offset={{ md: 2 }} order={{ md: 1 }}>
             <Group gap={8} justify="space-between">
               {Model}
               {Versions}
             </Group>
-          </ContainerGrid.Col>
-          <ContainerGrid.Col sm={12} md={3} orderMd={3}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, md: 3 }} order={{ md: 3 }}>
             {isMuted ? (
               <Alert color="yellow" icon={<IconLock />}>
                 You cannot add reviews because you have been muted
@@ -221,8 +221,8 @@ export default function ModelReviews() {
             ) : (
               UserReview
             )}
-          </ContainerGrid.Col>
-          <ContainerGrid.Col sm={12} md={7} offsetMd={2} orderMd={2}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, md: 7 }} offset={{ md: 2 }} order={{ md: 2 }}>
             {loadingResourceReviews ? (
               <Center p="xl">
                 <Loader />
@@ -244,8 +244,8 @@ export default function ModelReviews() {
                 )}
               </Stack>
             )}
-          </ContainerGrid.Col>
-        </ContainerGrid>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
       </Container>
     </>
   );

@@ -45,7 +45,7 @@ export function UserBuzz({
     <Text c={config.color(theme)} transform="uppercase" {...textProps}>
       <Group gap={4} wrap="nowrap">
         <Icon size={iconSize} color="currentColor" fill="currentColor" />
-        <Text size={textSize} weight={600} lh={0} style={{ fontVariantNumeric: 'tabular-nums' }}>
+        <Text size={textSize} weight={600} lh={0} style={{ fontVariantNumeric: 'tabular-nums' }} span>
           {balance === null ? (
             <Loader size="sm" variant="dots" color={config.color(theme)} />
           ) : withAbbreviation ? (

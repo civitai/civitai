@@ -4,6 +4,7 @@ import {
   Anchor,
   Button,
   Divider,
+  Grid,
   Group,
   Input,
   List,
@@ -30,7 +31,7 @@ import { z } from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -328,8 +329,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
             started or somebody submitted an entry to it.
           </AlertWithIcon>
         )}
-        <ContainerGrid gutter="xl">
-          <ContainerGrid.Col xs={12} md={8}>
+        <ContainerGrid2 gutter="xl">
+          <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
             <Stack gap={32}>
               <Stack gap="xl">
                 {!alreadyStarted && (
@@ -737,8 +738,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 )}
               </Stack>
             </Stack>
-          </ContainerGrid.Col>
-          <ContainerGrid.Col xs={12} md={4}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
             <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
@@ -852,8 +853,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 </List.Item>
               </List>
             </Stack>
-          </ContainerGrid.Col>
-        </ContainerGrid>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
         <Group justify="flex-end">
           <NavigateBack url="/bounties">
             {({ onClick }) => (

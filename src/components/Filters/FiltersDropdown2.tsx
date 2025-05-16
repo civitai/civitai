@@ -26,8 +26,9 @@ export function FiltersDropdown2({
         offset={4}
         label={indicatorCount ? indicatorCount : undefined}
         size={16}
-        inline
         zIndex={10}
+        disabled={!indicatorCount}
+        inline
       >
         <PopoverButton
           {...props}

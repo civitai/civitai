@@ -12,7 +12,7 @@ import {
 import { IconCategory, IconPhoto, IconStar } from '@tabler/icons-react';
 import React from 'react';
 
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -59,8 +59,8 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
           <ProfileSectionPreview />
         ) : (
           <ProfileSection title="Recent Reviews" icon={<IconStar />}>
-            <ContainerGrid className={sectionClasses.ContainerGrid}>
-              <ContainerGrid.Col sm={12} md={8}>
+            <ContainerGrid2 className={sectionClasses.ContainerGrid}>
+              <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
                 <Stack>
                   {resourceReviews.map((review) => {
                     const reviewer = review.user;
@@ -143,8 +143,8 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                     );
                   })}
                 </Stack>
-              </ContainerGrid.Col>
-            </ContainerGrid>
+              </ContainerGrid2.Col>
+            </ContainerGrid2>
           </ProfileSection>
         ))}
     </div>

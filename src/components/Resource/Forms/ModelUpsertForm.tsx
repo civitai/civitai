@@ -23,7 +23,7 @@ import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -282,8 +282,8 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <ContainerGrid gutter="xl">
-        <ContainerGrid.Col span={12}>
+      <ContainerGrid2 gutter="xl">
+        <ContainerGrid2.Col span={12}>
           <Stack>
             <InputText name="name" label="Name" placeholder="Name" withAsterisk />
             <Stack gap={5}>
@@ -392,12 +392,12 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               />
             )}
           </Stack>
-        </ContainerGrid.Col>
-        <ContainerGrid.Col span={12}>
+        </ContainerGrid2.Col>
+        <ContainerGrid2.Col span={12}>
           <Stack>
             <Paper radius="md" p="xl" withBorder>
-              <ContainerGrid gutter="xs">
-                <ContainerGrid.Col xs={12} sm={6}>
+              <ContainerGrid2 gutter="xs">
+                <ContainerGrid2.Col span={{ base: 12, sm: 6 }}>
                   <Stack gap="xs">
                     <Text size="md" weight={500} style={{ lineHeight: 1.2 }} mb="xs">
                       {`When using this model, I give permission for users to:`}
@@ -422,8 +422,8 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                       .
                     </Text>
                   </Stack>
-                </ContainerGrid.Col>
-                <ContainerGrid.Col xs={12} sm={6}>
+                </ContainerGrid2.Col>
+                <ContainerGrid2.Col span={{ base: 12, sm: 6 }}>
                   <Stack gap="xs">
                     <Stack gap={4}>
                       <Group gap={4} wrap="nowrap">
@@ -487,8 +487,8 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                       </Group>
                     </Checkbox.Group>
                   </Stack>
-                </ContainerGrid.Col>
-              </ContainerGrid>
+                </ContainerGrid2.Col>
+              </ContainerGrid2>
             </Paper>
             <Paper radius="md" p="xl" withBorder>
               <Stack gap="xs">
@@ -670,8 +670,8 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               </InputChipGroup>
             )}
           </Stack>
-        </ContainerGrid.Col>
-      </ContainerGrid>
+        </ContainerGrid2.Col>
+      </ContainerGrid2>
       {typeof children === 'function'
         ? children({ loading: upsertModelMutation.isLoading })
         : children}

@@ -14,7 +14,7 @@ import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { z } from 'zod';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -143,14 +143,14 @@ export default function PurchaseBuzz() {
           <Title order={2}>Buy Buzz now</Title>
         </Group>
       </Alert>
-      <ContainerGrid gutter={48}>
-        <ContainerGrid.Col xs={12} md={4}>
+      <ContainerGrid2 gutter={48}>
+        <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
           <Stack>
             <Title order={2}>Buzz Benefits</Title>
             <BuzzFeatures />
           </Stack>
-        </ContainerGrid.Col>
-        <ContainerGrid.Col xs={12} md={8}>
+        </ContainerGrid2.Col>
+        <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
           <BuzzPurchase
             onPurchaseSuccess={handlePurchaseSuccess}
             minBuzzAmount={minBuzzAmount}
@@ -169,8 +169,8 @@ export default function PurchaseBuzz() {
                 : undefined
             }
           />
-        </ContainerGrid.Col>
-      </ContainerGrid>
+        </ContainerGrid2.Col>
+      </ContainerGrid2>
     </Container>
   );
 }

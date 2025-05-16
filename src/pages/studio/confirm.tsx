@@ -13,7 +13,7 @@ import {
 import { IconArrowRight, IconCircleCheck } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PlanCard } from '~/components/Subscriptions/PlanCard';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
@@ -110,13 +110,13 @@ export default function Confirm() {
       {subscriptionsLoading ? (
         <Loader />
       ) : (
-        <ContainerGrid justify="center">
+        <ContainerGrid2 justify="center">
           {products?.map((product) => (
-            <ContainerGrid.Col key={product.id} md={4} sm={6} xs={12}>
+            <ContainerGrid2.Col key={product.id} span={{ base: 12, sm: 6, md: 4 }}>
               <PlanCard product={product} subscription={subscription} />
-            </ContainerGrid.Col>
+            </ContainerGrid2.Col>
           ))}
-        </ContainerGrid>
+        </ContainerGrid2>
       )}
     </Stack>
   );

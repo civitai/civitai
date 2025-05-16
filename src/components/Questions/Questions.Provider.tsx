@@ -84,8 +84,9 @@ function QuestionsFilter() {
           offset={4}
           label={filterLength ? filterLength : undefined}
           size={16}
-          inline
           zIndex={10}
+          disabled={!filterLength}
+          inline
         >
           <ActionIcon color="dark" variant="transparent">
             <IconFilter size={24} />

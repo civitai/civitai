@@ -89,7 +89,7 @@ import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { env } from '~/env/client';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -316,11 +316,11 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
               )}
             </Group>
           </Stack>
-          <ContainerGrid gutterMd={32} gutterLg={64}>
-            <ContainerGrid.Col xs={12} md={4} orderMd={2}>
+          <ContainerGrid2 gutter={{ md: 32, lg: 64 }}>
+            <ContainerGrid2.Col span={{ base: 12, md: 4 }} order={{ md: 2 }}>
               <BountySidebar bounty={bounty} />
-            </ContainerGrid.Col>
-            <ContainerGrid.Col xs={12} md={8} orderMd={1}>
+            </ContainerGrid2.Col>
+            <ContainerGrid2.Col span={{ base: 12, md: 8 }} order={{ md: 1 }}>
               <Stack gap="xs">
                 <ImageCarousel
                   images={bounty.images}
@@ -345,8 +345,8 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                   </Stack>
                 </article>
               </Stack>
-            </ContainerGrid.Col>
-          </ContainerGrid>
+            </ContainerGrid2.Col>
+          </ContainerGrid2>
         </Container>
         <BountyEntries bounty={bounty} />
         <Container ref={discussionSectionRef} size="xl" mt={32}>

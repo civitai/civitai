@@ -65,6 +65,7 @@ export function DumbMarkerFiltersDropdown({
           label={filterLength ? filterLength : undefined}
           size={14}
           zIndex={10}
+          disabled={!filterLength}
           inline
         >
           <Popover.Target>

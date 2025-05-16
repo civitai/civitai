@@ -147,6 +147,7 @@ export function DumbModelFiltersDropdown({
       label={filterLength ? filterLength : undefined}
       size={14}
       zIndex={10}
+      disabled={!filterLength}
       inline
     >
       <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>

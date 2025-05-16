@@ -7,7 +7,7 @@ import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
 import { ReviewSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden }: Props) {
@@ -33,8 +33,8 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
   const hasHiddenComments = hiddenCommentsCount > 0;
 
   return (
-    <ContainerGrid gutter="xl">
-      <ContainerGrid.Col span={12} style={{ position: 'relative' }}>
+    <ContainerGrid2 gutter="xl">
+      <ContainerGrid2.Col span={12} style={{ position: 'relative' }}>
         <LoadingOverlay visible={isLoading} zIndex={10} />
         {hasItems ? (
           <Stack gap={8}>
@@ -81,8 +81,8 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
             </Stack>
           </Paper>
         )}
-      </ContainerGrid.Col>
-    </ContainerGrid>
+      </ContainerGrid2.Col>
+    </ContainerGrid2>
   );
 }
 

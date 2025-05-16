@@ -24,7 +24,7 @@ import { useMemo } from 'react';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 const schema = upsertQuestionSchema.extend({ tags: z.string().array().nullish() });
 
@@ -117,8 +117,8 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
         <Title order={3}>{question ? 'Editing question' : 'Ask a question'}</Title>
       </Group>
       <Form form={form} onSubmit={handleSubmit}>
-        <ContainerGrid gutter="xl">
-          <ContainerGrid.Col lg={8}>
+        <ContainerGrid2 gutter="xl">
+          <ContainerGrid2.Col span={{ base: 12, lg: 8 }}>
             <Paper radius="md" p="xl" withBorder>
               <Stack>
                 <InputText name="title" label="Title" withAsterisk />
@@ -130,8 +130,8 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
                 />
               </Stack>
             </Paper>
-          </ContainerGrid.Col>
-          <ContainerGrid.Col lg={4}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, lg: 4 }}>
             <Paper radius="md" p="xl" withBorder>
               <Stack>
                 <InputMultiSelect
@@ -161,8 +161,8 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
                 </Group>
               </Stack>
             </Paper>
-          </ContainerGrid.Col>
-        </ContainerGrid>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
       </Form>
     </Container>
   );

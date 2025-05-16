@@ -34,6 +34,7 @@ export function AdaptiveFiltersDropdown({
       label={isClient && count ? count : undefined}
       size={16}
       zIndex={10}
+      disabled={!count}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >

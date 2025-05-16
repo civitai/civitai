@@ -15,8 +15,9 @@ export function FiltersDropdown({
           offset={4}
           label={count ? count : undefined}
           size={16}
-          inline
           zIndex={10}
+          disabled={!count}
+          inline
         >
           <ActionIcon color="dark" variant="transparent" style={{ width: 40 }}>
             <IconFilter size={20} stroke={2.5} />

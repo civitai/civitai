@@ -40,7 +40,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureIntroduction';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -192,8 +192,8 @@ export function ArticleUpsertForm({ article }: Props) {
           "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this article."
         }
       />
-      <ContainerGrid gutter="xl">
-        <ContainerGrid.Col xs={12} md={8}>
+      <ContainerGrid2 gutter="xl">
+        <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
           <Stack gap="xl">
             <Group gap={8} wrap="nowrap">
               <BackButton url="/articles" />
@@ -226,8 +226,8 @@ export function ArticleUpsertForm({ article }: Props) {
               stickyToolbar
             />
           </Stack>
-        </ContainerGrid.Col>
-        <ContainerGrid.Col xs={12} md={4}>
+        </ContainerGrid2.Col>
+        <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
           <Stack
             style={{
               position: 'sticky',
@@ -372,8 +372,8 @@ export function ArticleUpsertForm({ article }: Props) {
               className={utilClasses.showMobile}
             />
           </Stack>
-        </ContainerGrid.Col>
-      </ContainerGrid>
+        </ContainerGrid2.Col>
+      </ContainerGrid2>
     </Form>
   );
 }

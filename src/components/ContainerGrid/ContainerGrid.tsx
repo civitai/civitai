@@ -1,12 +1,13 @@
 // @ts-nocheck
 import React, { forwardRef } from 'react';
-import { DefaultProps, MantineSpacing, useProps } from '@mantine/core';
+import { DefaultProps, Grid, GridProps, MantineSpacing, useProps } from '@mantine/core';
 
 import { ContainerCol } from './ContainerCol';
 import { ContainerGridProvider } from './ContainerGrid.context';
 import { Box } from '@mantine/core';
 import classes from './ContainerGrid.module.scss';
 import clsx from 'clsx';
+import { breakpoints } from '~/utils/tailwind';
 
 export interface ContainerGridProps extends DefaultProps, React.ComponentPropsWithRef<'div'> {
   /** <Col /> components only */
@@ -99,24 +100,6 @@ export const ContainerGrid: GridComponent = forwardRef<HTMLDivElement, Container
       ...(others.style ?? {}),
     } as React.CSSProperties;
 
-    console.log({
-      gutter,
-      gutterXs,
-      gutterSm,
-      gutterMd,
-      gutterLg,
-      gutterXl,
-      children,
-      grow,
-      justify,
-      align,
-      columns,
-      className,
-      id,
-      unstyled,
-      containerName,
-    });
-
     return (
       <ContainerGridProvider
         value={{
@@ -141,3 +124,17 @@ export const ContainerGrid: GridComponent = forwardRef<HTMLDivElement, Container
 
 ContainerGrid.Col = ContainerCol;
 ContainerGrid.displayName = 'ContainerGrid';
+
+type ContainerGrid2Props = Omit<GridProps, 'type' | 'breakpoints'>;
+type GridComponent2 = ForwardRefWithStaticComponents<ContainerGrid2Props, { Col: typeof Grid.Col }>;
+
+export const ContainerGrid2: GridComponent2 = forwardRef<HTMLDivElement, Omit<ContainerGrid2Props, 'type' | 'breakpoints'>>(({ gutter = 'md', children, ...props }, ref) => {
+  return (
+    <Grid type='container' gutter={gutter} breakpoints={breakpoints} {...props}>
+      {children}
+    </Grid>
+  );
+});
+
+ContainerGrid2.Col = Grid.Col;
+ContainerGrid2.displayName = 'ContainerGrid2';

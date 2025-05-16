@@ -17,7 +17,7 @@ import clsx from 'clsx';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -252,8 +252,8 @@ export default function Pricing() {
               </Alert>
             </Center>
           ) : (
-            <ContainerGrid justify="center">
-              <ContainerGrid.Col span={{ base: 12, sm: 6, md: 3 }}>
+            <ContainerGrid2 justify="center">
+              <ContainerGrid2.Col span={{ base: 12, sm: 6, md: 3 }}>
                 <Card className={classes.card}>
                   <Stack style={{ height: '100%' }}>
                     <Stack gap="md" mb="md">
@@ -290,13 +290,13 @@ export default function Pricing() {
                     <PlanBenefitList benefits={freePlanDetails.benefits} defaultBenefitsDisabled />
                   </Stack>
                 </Card>
-              </ContainerGrid.Col>
+              </ContainerGrid2.Col>
               {products.map((product) => (
-                <ContainerGrid.Col key={product.id} md={3} sm={6} xs={12}>
+                <ContainerGrid2.Col key={product.id} span={{ base: 12, sm: 6, md: 3 }}>
                   <PlanCard product={product} subscription={subscription} />
-                </ContainerGrid.Col>
+                </ContainerGrid2.Col>
               ))}
-            </ContainerGrid>
+            </ContainerGrid2>
           )}
         </Stack>
       </Container>

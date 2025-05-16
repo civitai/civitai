@@ -4,7 +4,7 @@ import { AnnouncementDTO } from '~/server/services/announcement.service';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import classes from './AnnouncementHomeBlock.module.scss';
 import clsx from 'clsx';
@@ -67,12 +67,12 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
           </CustomMarkdown>
         </Text>
 
-        <ContainerGrid className="mt-auto">
+        <ContainerGrid2 className="mt-auto">
           {actions &&
             actions.map((action, index) => {
               if (action.type === 'button') {
                 return (
-                  <ContainerGrid.Col key={index} span="auto">
+                  <ContainerGrid2.Col key={index} span="auto">
                     <Link legacyBehavior href={action.link} passHref>
                       <Button
                         component="a"
@@ -83,13 +83,13 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
                         {action.linkText}
                       </Button>
                     </Link>
-                  </ContainerGrid.Col>
+                  </ContainerGrid2.Col>
                 );
               }
 
               return null;
             })}
-        </ContainerGrid>
+        </ContainerGrid2>
       </Stack>
     </Card>
   );

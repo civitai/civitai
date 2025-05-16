@@ -61,6 +61,7 @@ export function PurchasableRewardsFiltersModeratorDropdown({
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
+      disabled={!filterLength}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >

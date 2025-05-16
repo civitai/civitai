@@ -131,6 +131,7 @@ export function MediaFiltersDropdown({
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
+      disabled={!filterLength}
       inline
     >
       <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>

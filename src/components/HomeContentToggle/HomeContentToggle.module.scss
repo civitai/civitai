@@ -1,6 +1,8 @@
 .tabHighlight {
-  background-color: light-dark(--alpha(var(--mantine-color-yellow-3), 0.1),
-      --alpha(var(--mantine-color-yellow-3), 0.3));
+  background-color: light-dark(
+    --alpha(var(--mantine-color-yellow-3), 0.3),
+    --alpha(var(--mantine-color-yellow-3), 0.1)
+  );
   background-image: linear-gradient(90deg,
       --alpha(var(--mantine-color-yellow-4), 0),
       --alpha(var(--mantine-color-yellow-4), 0.1),
@@ -8,7 +10,7 @@
   background-size: 50px;
   background-position: -300% 50%;
   background-repeat: no-repeat;
-  color: light-dark(var(--mantine-color-yellow-3), var(--mantine-color-yellow-8));
+  color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3));
   animation: button-highlight 5s linear infinite;
   will-change: background-position;
 }
@@ -63,22 +65,22 @@
   padding: 8px 10px 8px 16px;
   font-size: 16px;
   font-weight: 500;
-  display: none;
+  display: none !important;
 
   &[data-active="true"] {
-    background: light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-4));
-    color: light-dark(var(--mantine-color-white), var(--mantine-color-gray-8));
+    background: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4));
+    color: light-dark(var(--mantine-color-gray-8), var(--mantine-color-white));
   }
 
-  @container (min-width: 992px) and (max-width: 1440px) {
-    display: block;
+  @container (min-width: theme('screens.md')) and (max-width: theme('screens.xl')) {
+    display: block !important;
   }
 }
 
 .groupedOptions {
-  display: block;
+  display: block !important;
 
-  @container (min-width: 992px) and (max-width: 1440px) {
-    display: none;
+  @container (min-width: theme('screens.md')) and (max-width: theme('screens.xl')) {
+    display: none !important;
   }
 }

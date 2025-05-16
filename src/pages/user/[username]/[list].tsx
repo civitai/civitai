@@ -23,7 +23,7 @@ import FourOhFour from '~/pages/404';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
@@ -57,8 +57,8 @@ export default function UserLists() {
 
   return (
     <Container size="xs">
-      <ContainerGrid gutter="xl">
-        <ContainerGrid.Col span={12}>
+      <ContainerGrid2 gutter="xl">
+        <ContainerGrid2.Col span={12}>
           <Group gap="xl">
             <Link legacyBehavior href={`/user/${username}`} passHref>
               <ActionIcon component="a">
@@ -67,8 +67,8 @@ export default function UserLists() {
             </Link>
             <Title order={1}>{`@${username}`}</Title>
           </Group>
-        </ContainerGrid.Col>
-        <ContainerGrid.Col span={12}>
+        </ContainerGrid2.Col>
+        <ContainerGrid2.Col span={12}>
           <Tabs value={list} onChange={(value) => router.push(`/user/${username}/${value}`)}>
             <Tabs.List grow>
               <Tabs.Tab value="following">{`Following (${abbreviateNumber(
@@ -229,8 +229,8 @@ export default function UserLists() {
               </>
             )}
           </Tabs>
-        </ContainerGrid.Col>
-      </ContainerGrid>
+        </ContainerGrid2.Col>
+      </ContainerGrid2>
     </Container>
   );
 }

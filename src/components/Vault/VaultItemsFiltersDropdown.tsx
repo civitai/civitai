@@ -67,6 +67,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
+      disabled={!filterLength}
       inline
     >
       <FilterButton

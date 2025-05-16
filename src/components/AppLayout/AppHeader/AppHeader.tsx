@@ -52,94 +52,88 @@ export function AppHeader({
   const onSearchDone = () => setShowSearch(false);
 
   return (
-    <AppShell
-      header={{
-        height: HEADER_HEIGHT,
-      }}
+    <header
+      // fixed={fixed} TODO: Mantine7
+      className={clsx('z-[199]', {
+        ['border-green-8 border-b-[3px]']: features.isGreen,
+        ['border-red-8 border-b-[3px]']: features.isRed,
+      })}
+      style={{ height: HEADER_HEIGHT }}
     >
-      <AppShell.Header
-        // fixed={fixed} TODO: Mantine7
-        zIndex={199}
-        className={clsx({
-          ['border-green-8 border-b-[3px]']: features.isGreen,
-          ['border-red-8 border-b-[3px]']: features.isRed,
-        })}
-      >
-        <div className={clsx('h-full', { ['hidden']: !showSearch })}>
-          {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
-        </div>
+      <div className={clsx('h-full', { ['hidden']: !showSearch })}>
+        {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
+      </div>
 
-        <Grid
-          className={clsx('flex h-full flex-nowrap items-center justify-between px-2 @md:px-4', {
-            ['hidden']: showSearch,
-          })}
-          m={0}
-          gutter="xs"
-          align="center"
+      <Grid
+        className={clsx('flex h-full flex-nowrap items-center justify-between px-2 @md:px-4', {
+          ['hidden']: showSearch,
+        })}
+        m={0}
+        gutter="xs"
+        align="center"
+      >
+        <Grid.Col span="auto" pl={0}>
+          <div className="flex items-center gap-2.5">
+            <Logo />
+            {!features.canWrite ? <ReadOnlyNotice /> : <SupportButton />}
+            {/* Disabled until next event */}
+            {/* <EventButton /> */}
+          </div>
+        </Grid.Col>
+        <Grid.Col
+          span={{
+            base: 6,
+            md: 4,
+          }}
+          className="@max-md:hidden"
         >
-          <Grid.Col span="auto" pl={0}>
-            <div className="flex items-center gap-2.5">
-              <Logo />
-              {!features.canWrite ? <ReadOnlyNotice /> : <SupportButton />}
-              {/* Disabled until next event */}
-              {/* <EventButton /> */}
-            </div>
-          </Grid.Col>
-          <Grid.Col
-            span={{
-              base: 6,
-              md: 4,
-            }}
-            className="@max-md:hidden"
-          >
-            {renderSearchComponent({ onSearchDone, isMobile: false })}
-          </Grid.Col>
-          <Grid.Col span="auto" className="flex items-center justify-end gap-3 @max-md:hidden">
-            <div className="flex items-center gap-3">
-              {!isMuted && <CreateMenu />}
-              {currentUser && (
-                <>
-                  <UploadTracker />
-                  <CivitaiLinkPopover />
-                </>
-              )}
-              {currentUser && features.canViewNsfw && <BrowsingModeIcon />}
-              {currentUser && <NotificationBell />}
-              {currentUser && features.chat && <ChatButton />}
-              {currentUser?.isModerator && <ModerationNav />}
-              {currentUser && <ImpersonateButton />}
-            </div>
-            {!currentUser ? (
-              <Button
-                component={Link}
-                href={`/login?returnUrl=${router.asPath}`}
-                rel="nofollow"
-                variant="default"
-              >
-                Sign In
-              </Button>
-            ) : (
-              <Divider orientation="vertical" />
+          {renderSearchComponent({ onSearchDone, isMobile: false })}
+        </Grid.Col>
+        <Grid.Col span="auto" className="flex items-center justify-end gap-3 @max-md:hidden">
+          <div className="flex items-center gap-3">
+            {!isMuted && <CreateMenu />}
+            {currentUser && (
+              <>
+                <UploadTracker />
+                <CivitaiLinkPopover />
+              </>
             )}
+            {currentUser && features.canViewNsfw && <BrowsingModeIcon />}
+            {currentUser && <NotificationBell />}
+            {currentUser && features.chat && <ChatButton />}
+            {currentUser?.isModerator && <ModerationNav />}
+            {currentUser && <ImpersonateButton />}
+          </div>
+          {!currentUser ? (
+            <Button
+              component={Link}
+              href={`/login?returnUrl=${router.asPath}`}
+              rel="nofollow"
+              variant="default"
+            >
+              Sign In
+            </Button>
+          ) : (
+            <Divider orientation="vertical" />
+          )}
+          <UserMenu />
+        </Grid.Col>
+        <Grid.Col span="auto" className="flex items-center justify-end @md:hidden">
+          <div className="flex items-center gap-1">
+            {!isMuted && <CreateMenu />}
+            <ActionIcon variant="subtle" color="gray" onClick={() => setShowSearch(true)}>
+              <IconSearch />
+            </ActionIcon>
+            {currentUser && <CivitaiLinkPopover />}
+            {currentUser && <NotificationBell />}
+            {currentUser && features.chat && <ChatButton />}
+            {/*{currentUser?.isModerator && <ModerationNav />}*/}
+            {currentUser && <ImpersonateButton />}
             <UserMenu />
-          </Grid.Col>
-          <Grid.Col span="auto" className="flex items-center justify-end @md:hidden">
-            <div className="flex items-center gap-1">
-              {!isMuted && <CreateMenu />}
-              <ActionIcon variant="subtle" color="gray" onClick={() => setShowSearch(true)}>
-                <IconSearch />
-              </ActionIcon>
-              {currentUser && <CivitaiLinkPopover />}
-              {currentUser && <NotificationBell />}
-              {currentUser && features.chat && <ChatButton />}
-              {/*{currentUser?.isModerator && <ModerationNav />}*/}
-              {currentUser && <ImpersonateButton />}
-              <UserMenu />
-            </div>
-          </Grid.Col>
-        </Grid>
-      </AppShell.Header>
-    </AppShell>
+          </div>
+        </Grid.Col>
+      </Grid>
+    </header>
   );
 }
 

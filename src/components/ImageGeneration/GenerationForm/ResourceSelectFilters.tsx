@@ -99,6 +99,7 @@ export function ResourceSelectFiltersDropdown() {
       size={16}
       zIndex={10}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
+      disabled={!filterLength}
       inline
     >
       <Button
