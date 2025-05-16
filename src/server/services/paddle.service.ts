@@ -43,6 +43,7 @@ import {
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { getPlans } from '~/server/services/subscriptions.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
+import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import {
   handleLogError,
   sleep,
@@ -184,23 +185,43 @@ export const processCompleteBuzzTransaction = async (
   const userId = meta.user_id ?? meta.userId;
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
   const amount = meta.buzz_amount ?? meta.buzzAmount;
-  const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
+
+  const { blueBuzzAdded, totalYellowBuzz } = getBuzzBulkMultiplier({
+    buzzAmount: amount,
+    purchasesMultiplier,
+  });
 
   // Pay the user:
-  const buzzTransaction = await createBuzzTransaction({
-    amount: buzzAmount,
+  await createBuzzTransaction({
+    amount: totalYellowBuzz,
     fromAccountId: 0,
     toAccountId: userId,
     externalTransactionId: transaction.id,
     type: TransactionType.Purchase,
     description: `Purchase of ${amount} Buzz. ${
       purchasesMultiplier && purchasesMultiplier > 1 ? 'Multiplier applied due to membership. ' : ''
-    }A total of ${buzzAmount} Buzz was added to your account.`,
+    }A total of ${totalYellowBuzz} Buzz was added to your account.`,
     details: {
       paddleTransactionId: transaction.id,
       ...buzzTransactionExtras,
     },
   });
+
+  if (blueBuzzAdded > 0) {
+    await createBuzzTransaction({
+      amount: blueBuzzAdded,
+      fromAccountId: 0,
+      toAccountId: userId,
+      toAccountType: 'generation',
+      externalTransactionId: transaction.id,
+      type: TransactionType.Purchase,
+      description: `A total of ${blueBuzzAdded} Blue Buzz was added to your account for Bulk purchase.`,
+      details: {
+        paddleTransactionId: transaction.id,
+        ...buzzTransactionExtras,
+      },
+    });
+  }
 };
 
 export const purchaseBuzzWithSubscription = async ({
