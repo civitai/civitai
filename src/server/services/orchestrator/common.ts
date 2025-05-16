@@ -660,7 +660,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     images: videos,
     status: step.status,
     metadata,
-    resources: resources.map((item: any) => ({
+    resources: resources?.map((item: any) => ({
       ...item,
       air: stringifyAIR({
         baseModel: item.baseModel,

@@ -9,6 +9,7 @@ import { mochiGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema'
 import { viduGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
 import { wanGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
 
+// TODO - update this with new Wan base models
 export const baseModelEngineMap: Partial<Record<BaseModelSetType, OrchestratorEngine2>> = {
   WanVideo: 'wan',
   HyV1: 'hunyuan',
