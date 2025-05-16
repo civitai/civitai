@@ -322,8 +322,6 @@ async function getMediaGenerationData({
     resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
 
-  const type = getResourceGenerationType(baseModel);
-
   switch (media.type) {
     case 'image':
       let aspectRatio = '0';
@@ -339,9 +337,13 @@ async function getMediaGenerationData({
       const {
         'Clip skip': legacyClipSkip,
         clipSkip = legacyClipSkip,
-        comfy, // don't return to client
-        external, // don't return to client
-        ...meta
+        cfgScale,
+        steps,
+        seed,
+        sampler,
+        // comfy, // don't return to client
+        // external, // don't return to client
+        // ...meta
       } = imageGenerationSchema.parse(media.meta);
 
       // if (meta.hashes && meta.prompt) {
@@ -362,16 +364,16 @@ async function getMediaGenerationData({
       // }
 
       return {
-        type,
+        type: 'image',
         remixOfId: media.id, // TODO - remove
         remixOf,
         resources,
         params: {
           ...common,
-          cfgScale: meta.cfgScale !== 0 ? meta.cfgScale : undefined,
-          steps: meta.steps !== 0 ? meta.steps : undefined,
-          seed: meta.seed !== 0 ? meta.seed : undefined,
-          sampler: meta.sampler,
+          cfgScale: cfgScale !== 0 ? cfgScale : undefined,
+          steps: steps !== 0 ? steps : undefined,
+          seed: seed !== 0 ? seed : undefined,
+          sampler: sampler,
           width,
           height,
           aspectRatio,
@@ -380,9 +382,10 @@ async function getMediaGenerationData({
         },
       };
     case 'video':
-      const engine = baseModelEngineMap[baseModel];
+      const meta = media.meta as Record<string, any>;
+      meta.engine = meta.engine ?? baseModelEngineMap[baseModel];
       return {
-        type,
+        type: 'video',
         remixOfId: media.id, // TODO - remove,
         remixOf,
         resources,
@@ -391,7 +394,6 @@ async function getMediaGenerationData({
           ...common,
           width,
           height,
-          engine,
         },
       };
     case 'audio':
