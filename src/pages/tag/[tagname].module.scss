@@ -5,7 +5,7 @@
   padding-bottom: calc(var(--mantine-spacing-xl) * 2);
   background-color: light-dark(var(--mantine-color-dark-8), var(--mantine-color-gray-1));
 
-  @container (max-width: var(--mantine-breakpoint-xs)) {
+  @container (max-width: theme('screens.xs')) {
     padding-top: var(--mantine-spacing-md);
     padding-bottom: var(--mantine-spacing-md);
   }
@@ -20,7 +20,7 @@
 .wrapper {
   align-items: flex-start;
 
-  @container (max-width: var(--mantine-breakpoint-xs)) {
+  @container (max-width: theme('screens.xs')) {
     align-items: center;
   }
 }
@@ -28,19 +28,19 @@
 .outsideImage {
   display: none;
 
-  @container (max-width: var(--mantine-breakpoint-xs)) {
+  @container (max-width: theme('screens.xs')) {
     display: block;
   }
 }
 
 .insideImage {
-  @container (max-width: var(--mantine-breakpoint-xs)) {
+  @container (max-width: theme('screens.xs')) {
     display: none;
   }
 }
 
 .card {
-  @container (max-width: var(--mantine-breakpoint-xs)) {
+  @container (max-width: theme('screens.xs')) {
     width: 100%;
   }
 }

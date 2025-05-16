@@ -1,7 +1,7 @@
 .card {
   background: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-0));
 
-  @container (min-width: var(--mantine-breakpoint-sm)) {
+  @container (min-width: theme('screens.sm')) {
     max-height: 376px;
     display: flex;
     gap: 40px;
@@ -9,7 +9,7 @@
 }
 
 .section {
-  @container (min-width: var(--mantine-breakpoint-sm)) {
+  @container (min-width: theme('screens.sm')) {
     margin-right: 0;
     margin-bottom: -40px;
   }
@@ -18,7 +18,7 @@
 .title {
   font-size: 40px;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     font-size: 28px;
     margin-top: var(--mantine-spacing-xl);
   }

@@ -73,7 +73,7 @@
     width: 100%;
   }
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     gap: var(--mantine-spacing-md);
   }
 }

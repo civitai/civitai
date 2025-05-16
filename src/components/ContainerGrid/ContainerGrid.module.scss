@@ -10,23 +10,23 @@ $gridAlign: stretch;
   align-content: var(--grid-align, $gridAlign);
   margin: calc(var(--grid-gutter, $gridGutter) / -2);
 
-  @container (min-width: var(--mantine-breakpoint-xs)) {
+  @container (min-width: theme('screens.xs')) {
     margin: calc(var(--grid-gutter-xs, $gridGutter) / -2);
   }
 
-  @container (min-width: var(--mantine-breakpoint-sm)) {
+  @container (min-width: theme('screens.sm')) {
     margin: calc(var(--grid-gutter-sm, $gridGutter) / -2);
   }
 
-  @container (min-width: var(--mantine-breakpoint-md)) {
+  @container (min-width: theme('screens.md')) {
     margin: calc(var(--grid-gutter-md, $gridGutter) / -2);
   }
 
-  @container (min-width: var(--mantine-breakpoint-lg)) {
+  @container (min-width: theme('screens.lg')) {
     margin: calc(var(--grid-gutter-lg, $gridGutter) / -2);
   }
 
-  @container (min-width: var(--mantine-breakpoint-xl)) {
+  @container (min-width: theme('screens.xl')) {
     margin: calc(var(--grid-gutter-xl, $gridGutter) / -2);
   }
 

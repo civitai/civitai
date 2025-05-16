@@ -4,7 +4,7 @@ import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/Browser
 import { NsfwLevel } from '~/server/common/enums';
 import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
-import styles from './BrowsingLevelsGrouped.module.scss';
+import classes from './BrowsingLevelsGrouped.module.scss';
 
 export function BrowsingLevelsGrouped({ size, ...props }: GroupProps & { size?: MantineSize }) {
   const currentUser = useCurrentUser();
@@ -30,10 +30,10 @@ function BrowsingLevelLabel({ level, size }: { level: NsfwLevel; size?: MantineS
 
   return (
     <Chip
-      classNames={styles}
+      classNames={classes}
       checked={isSelected || isDefaultBrowsingLevel}
       onChange={() => toggleBrowsingLevel(level)}
-      variant={!isDefaultBrowsingLevel ? 'outline' : 'filled'}
+      variant="filled"
       size={size}
     >
       {/* Turns out, that when people are using google translate that string literals should be wrapped in a span to avoid errors  */}

@@ -1,14 +1,14 @@
 .root {
   flex-grow: 1;
 
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     height: 100%;
     flex-grow: 1;
   }
 }
 
 .wrapper {
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     height: 100%;
   }
 }
@@ -16,13 +16,13 @@
 .input {
   border-radius: 0;
 
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     height: 100%;
   }
 }
 
 .dropdown {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     margin-top: -7px;
   }
 }
@@ -30,7 +30,7 @@
 .targetSelectorRoot {
   width: 110px;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     width: 25%;
   }
 }
@@ -46,7 +46,7 @@
     border-right-style: none;
   }
 
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     height: 100%;
   }
 }
@@ -67,7 +67,7 @@
         var(--mantine-color-gray-7));
   }
 
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     display: none;
   }
 }

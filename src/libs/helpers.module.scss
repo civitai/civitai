@@ -1,11 +1,11 @@
 .hideMobile {
-  @media (max-width: var(--mantine-breakpoint-xs)) {
+  @media (max-width: calc(theme('screens.xs') - 1px)) {
     display: none;
   }
 }
 
 .showMobile {
-  @media (min-width: calc(var(--mantine-breakpoint-xs) + 1px)) {
+  @media (min-width: theme('screens.xs')) {
     display: none;
   }
 }

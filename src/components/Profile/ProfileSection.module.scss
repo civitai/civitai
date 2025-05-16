@@ -1,7 +1,7 @@
 .title {
   font-size: 32px;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     font-size: 24px;
   }
 }
@@ -88,7 +88,7 @@
     margin-top: var(--mantine-spacing-md);
   }
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     grid-auto-flow: column;
     grid-template-columns: repeat(var(--count, 4), var(--width-carousel, 280px));
     grid-template-rows: auto;

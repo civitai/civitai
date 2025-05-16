@@ -1,5 +1,5 @@
 .title {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     font-size: 24px;
   }
 }

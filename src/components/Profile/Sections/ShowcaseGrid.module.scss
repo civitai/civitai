@@ -24,7 +24,7 @@ $black: var(--mantine-color-black, #000000);
     margin: 8px;
   }
 
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     grid-auto-flow: column;
     grid-template-columns: repeat(var(--item-count), var(--default-width, 280px));
     grid-template-rows: auto;
@@ -56,7 +56,7 @@ $black: var(--mantine-color-black, #000000);
     scroll-snap-align: initial;
   }
 
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
 
     scroll-snap-type: x mandatory;
 
@@ -87,7 +87,7 @@ $black: var(--mantine-color-black, #000000);
   overflow: auto;
   scroll-snap-type: auto;
 
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
 
     scroll-snap-type: x mandatory;
   }

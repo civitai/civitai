@@ -1,5 +1,5 @@
 .message {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     border-radius: 0;
     width: auto;
     margin-left: -16px;
@@ -22,7 +22,7 @@
   align-items: center;
   justify-content: center;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     width: auto;
     margin-left: -16px;
     margin-right: -16px;
@@ -41,7 +41,7 @@
      style={{ paddingBottom: `${constants.profile.coverImageAspectRatio * 100}%` }}
   */
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     width: auto;
     border-radius: 0;
     /* The padding-bottom for mobile aspect ratio should be set inline via style prop:

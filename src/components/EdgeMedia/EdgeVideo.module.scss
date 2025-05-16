@@ -3,16 +3,14 @@
   display: flex;
   gap: 8px;
   flex-wrap: nowrap;
-  padding: var(--mantine-spacing-xs); // Replace with Mantine's spacing variable
+  padding: var(--mantine-spacing-xs);
   width: 100%;
   justify-content: space-between;
   bottom: 0;
 }
 
 .iosScroll {
-  @media (max-width: var(--mantine-breakpoint-md)) {
-
-    // Replace with Mantine's breakpoint variable
+  @container (max-width: theme('screens.md')) {
     &::after {
       position: absolute;
       top: 0;
@@ -30,7 +28,7 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: var(--mantine-color-white); // Replace with Mantine's white color variable
+  color: var(--mantine-color-white);
   opacity: 0;
   animation: fadeInOut 0.5s;
   pointer-events: none;
@@ -54,7 +52,7 @@
   display: none;
   position: absolute;
   line-height: 1;
-  padding: var(--mantine-spacing-xs); // Replace with Mantine's spacing variable
+  padding: var(--mantine-spacing-xs);
   top: 0;
   left: 0;
   transform: translate(-33%, -170%) rotate(270deg);
@@ -64,7 +62,7 @@
 .playButton {
   width: 80px;
   height: 80px;
-  color: var(--mantine-color-white); // Replace with Mantine's white color variable
+  color: var(--mantine-color-white);
   background-color: rgba(0, 0, 0, 0.6);
   padding: 20px;
   border-radius: 50%;

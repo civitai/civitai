@@ -1,7 +1,7 @@
 .epochRow {
   flex-wrap: nowrap;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     flex-direction: column;
     gap: var(--mantine-spacing-md);
   }

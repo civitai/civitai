@@ -1,5 +1,5 @@
 .filtersWrapper {
-  @media (max-width: var(--mantine-breakpoint-sm, 768px)) {
+  @container (max-width: theme('screens.sm')) {
     width: 100%;
 
     >* {

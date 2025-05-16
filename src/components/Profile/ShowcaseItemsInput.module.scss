@@ -3,7 +3,7 @@
   grid-template-columns: repeat(5, 1fr);
   grid-gap: 4px;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     grid-template-columns: repeat(3, 1fr);
   }
 }

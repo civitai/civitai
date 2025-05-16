@@ -1,5 +1,5 @@
 .actions {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     flex-direction: column;
     position: absolute;
     bottom: 0;
@@ -10,7 +10,7 @@
 }
 
 .submitButton {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     width: 100%;
     order: 1;
   }

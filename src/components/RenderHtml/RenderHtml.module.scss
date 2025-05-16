@@ -33,11 +33,11 @@
       flex-grow: 1;
     }
 
-    @media (max-width: var(--mantine-breakpoint-md)) {
+    @container (max-width: theme('screens.md')) {
       height: 649px;
     }
 
-    @media (max-width: var(--mantine-breakpoint-sm)) {
+    @container (max-width: theme('screens.sm')) {
       height: 681px;
 
       &>iframe {
@@ -76,8 +76,7 @@
     height: 4px;
     padding: 0;
     margin: 24px 0;
-    background-color: light-dark(var(--mantine-color-dark-4),
-        var(--mantine-color-gray-2));
+    background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
     border: 0;
   }
 }

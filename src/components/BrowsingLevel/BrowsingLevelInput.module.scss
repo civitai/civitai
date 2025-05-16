@@ -8,10 +8,9 @@
   justify-content: center;
 
   &[data-checked] {
-
     &,
     &:hover {
-      background-color: var(--mantine-color-blue-4, #228be6);
+      background-color: var(--mantine-color-blue-6, #228be6);
       color: var(--mantine-color-white, #ffffff);
     }
 
@@ -19,7 +18,7 @@
       color: var(--mantine-color-white, #ffffff);
       display: none;
 
-      @media (min-width: var(--mantine-breakpoint-xs, 576px)) {
+      @media (min-width: theme('screens.xs')) {
         display: inline-block;
       }
     }
@@ -28,7 +27,7 @@
   padding-left: 10px;
   padding-right: 10px;
 
-  @media (min-width: var(--mantine-breakpoint-xs, 576px)) {
+  @media (min-width: theme('screens.xs')) {
     padding-left: 20px;
     padding-right: 20px;
   }

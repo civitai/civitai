@@ -2,7 +2,7 @@
   position: relative;
   width: 100%;
   border-radius: var(--mantine-radius-sm);
-  border: 1px solid light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-2));
+  border: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
 
   &:hover:not([disabled]) {
     border-color: var(--mantine-color-blue-6);
@@ -30,7 +30,7 @@
 
     &[data-variant="filled"],
     &[data-variant="filled"]:hover {
-      background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-white));
+      background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
     }
   }
 }
@@ -42,13 +42,13 @@
 .chipGroup {
   gap: 8px;
 
-  @media (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     gap: var(--mantine-spacing-md);
   }
 }
 
 .actions {
-  @media (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     flex-direction: column;
     position: absolute;
     bottom: 0;
@@ -59,14 +59,14 @@
 }
 
 .cancelButton {
-  @media (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     width: 100%;
     order: 2;
   }
 }
 
 .submitButton {
-  @media (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     width: 100%;
     order: 1;
   }

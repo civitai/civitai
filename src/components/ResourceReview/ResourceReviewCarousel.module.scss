@@ -3,7 +3,7 @@
     width: 24px;
     height: 24px;
 
-    @container (max-width: var(--mantine-breakpoint-sm)) {
+    @container (max-width: theme('screens.sm')) {
       min-width: 16px;
       min-height: 16px;
     }

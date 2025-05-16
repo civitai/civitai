@@ -56,7 +56,7 @@ export function VideoGenerationFormWrapper() {
             ).map(({ engine, label }) => (
               <Button
                 key={engine}
-                compact
+                size="compact-sm"
                 onClick={() => setEngine(engine)}
                 variant="outline"
                 color="yellow"

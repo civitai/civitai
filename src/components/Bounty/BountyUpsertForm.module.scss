@@ -2,17 +2,17 @@
   .mantine-Group-root {
     align-items: stretch;
 
-    @container (max-width: var(--mantine-breakpoint-sm)) {
+    @container (max-width: theme('screens.sm')) {
       flex-direction: column;
     }
   }
 }
 
 .radioItem {
-  border: 1px solid light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-4));
+  border: 1px solid light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4));
   border-radius: var(--mantine-radius-sm);
   padding: var(--mantine-spacing-xs);
-  background-color: light-dark(var(--mantine-color-dark-6), var(--mantine-color-white));
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
   display: flex;
   flex: 1;
 
@@ -29,7 +29,7 @@
 }
 
 .root {
-  background-color: light-dark(var(--mantine-color-dark-6), var(--mantine-color-white));
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
 }
 
 .label {
@@ -42,19 +42,19 @@
 }
 
 .title {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     font-size: 24px;
   }
 }
 
 .sectionTitle {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     font-size: 18px;
   }
 }
 
 .fluid {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     max-width: 100% !important;
   }
 }
@@ -63,7 +63,7 @@
   position: sticky;
   top: calc(var(--header-height) + var(--mantine-spacing-md));
 
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     position: relative;
     top: 0;
   }

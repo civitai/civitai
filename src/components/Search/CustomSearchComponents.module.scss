@@ -9,19 +9,19 @@
 }
 
 .root {
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     height: 100%;
   }
 }
 
 .wrapper {
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     height: 100%;
   }
 }
 
 .input {
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     height: 100%;
   }
 }

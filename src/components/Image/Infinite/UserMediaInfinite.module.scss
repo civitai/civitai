@@ -12,7 +12,7 @@
     }
   }
 
-  @container (max-width: var(--mantine-breakpoint-xs)) {
+  @container (max-width: theme('screens.xs')) {
     padding: 4px var(--mantine-spacing-sm) !important;
     font-size: 18px;
     height: auto;
@@ -28,13 +28,13 @@
 }
 
 .chipGroup {
-  @container (max-width: var(--mantine-breakpoint-xs)) {
+  @container (max-width: theme('screens.xs')) {
     width: 100%;
   }
 }
 
 .filtersWrapper {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     width: 100%;
 
     >* {

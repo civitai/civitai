@@ -8,7 +8,7 @@
   max-width: 50%;
   overflow: hidden;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     max-width: 100%;
   }
 }

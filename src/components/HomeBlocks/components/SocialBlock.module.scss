@@ -7,7 +7,7 @@
     border: none !important;
   }
 
-  @container (min-width: var(--mantine-breakpoint-sm)) {
+  @container (min-width: theme('screens.sm')) {
 
     &.yt-long,
     &.twitch {

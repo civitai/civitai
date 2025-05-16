@@ -6,7 +6,7 @@
     flex-grow: 1;
   }
 
-  @container (min-width: var(--mantine-breakpoint-sm)) {
+  @container (min-width: theme('screens.sm')) {
     >* {
       flex-grow: 0;
     }

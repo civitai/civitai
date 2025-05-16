@@ -29,7 +29,7 @@ $open-colors: (
   .imageContainer-#{$color-name} {
     border-right: 1px solid var(--mantine-color-#{$color-name}-4);
 
-    @container (max-width: var(--mantine-breakpoint-md)) {
+    @container (max-width: theme('screens.md')) {
       border-bottom: 1px solid var(--mantine-color-#{$color-name}-4);
       border-right: none;
     }
@@ -50,7 +50,7 @@ $open-colors: (
 }
 
 .imageCard {
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     padding: 0;
     display: block;
 
@@ -65,11 +65,11 @@ $open-colors: (
   margin: calc(var(--mantine-spacing-lg) * -1);
   margin-right: var(--mantine-spacing-lg);
 
-  @container (max-width: var(--mantine-breakpoint-xl)) {
+  @container (max-width: theme('screens.xl')) {
     width: 120px;
   }
 
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     height: 120px;
     width: 100%;
     margin: 0;
@@ -87,7 +87,7 @@ $open-colors: (
 }
 
 .action {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     display: flex;
     flex-grow: 1;
     justify-content: center;

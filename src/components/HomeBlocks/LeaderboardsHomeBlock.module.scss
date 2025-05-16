@@ -1,5 +1,5 @@
 .carousel {
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     margin-right: calc(var(--mantine-spacing-md) * -1);
     margin-left: calc(var(--mantine-spacing-md) * -1);
   }
@@ -16,7 +16,7 @@
     opacity: 1;
   }
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     display: none;
   }
 }
@@ -35,7 +35,7 @@
   overflow-x: visible;
   padding-bottom: 4px;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     margin-right: calc(var(--mantine-spacing-md) * -1);
     margin-left: calc(var(--mantine-spacing-md) * -1);
     padding-left: var(--mantine-spacing-md);

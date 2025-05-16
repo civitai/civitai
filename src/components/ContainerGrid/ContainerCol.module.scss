@@ -13,7 +13,7 @@
   width: calc(100% / var(--col-columns) * var(--col-span));
   max-width: calc(100% / var(--col-columns) * var(--col-span));
 
-  @container (min-width: var(--mantine-breakpoint-xs)) {
+  @container (min-width: theme('screens.xs')) {
     order: var(--col-order-xs);
     padding: calc(var(--col-gutter-xs) / 2);
     margin-left: calc(100% / var(--col-columns) * var(--col-offset-xs));
@@ -21,7 +21,7 @@
     max-width: calc(100% / var(--col-columns) * var(--col-span-xs));
   }
 
-  @container (min-width: var(--mantine-breakpoint-sm)) {
+  @container (min-width: theme('screens.sm')) {
     order: var(--col-order-sm);
     padding: calc(var(--col-gutter-sm) / 2);
     margin-left: calc(100% / var(--col-columns) * var(--col-offset-sm));
@@ -29,7 +29,7 @@
     max-width: calc(100% / var(--col-columns) * var(--col-span-sm));
   }
 
-  @container (min-width: var(--mantine-breakpoint-md)) {
+  @container (min-width: theme('screens.md')) {
     order: var(--col-order-md);
     padding: calc(var(--col-gutter-md) / 2);
     margin-left: calc(100% / var(--col-columns) * var(--col-offset-md));
@@ -37,7 +37,7 @@
     max-width: calc(100% / var(--col-columns) * var(--col-span-md));
   }
 
-  @container (min-width: var(--mantine-breakpoint-lg)) {
+  @container (min-width: theme('screens.lg')) {
     order: var(--col-order-lg);
     padding: calc(var(--col-gutter-lg) / 2);
     margin-left: calc(100% / var(--col-columns) * var(--col-offset-lg));
@@ -45,7 +45,7 @@
     max-width: calc(100% / var(--col-columns) * var(--col-span-lg));
   }
 
-  @container (min-width: var(--mantine-breakpoint-xl)) {
+  @container (min-width: theme('screens.xl')) {
     order: var(--col-order-xl);
     padding: calc(var(--col-gutter-xl) / 2);
     margin-left: calc(100% / var(--col-columns) * var(--col-offset-xl));

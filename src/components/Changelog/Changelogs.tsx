@@ -256,7 +256,7 @@ const ChangelogItem = ({
                 component="a"
                 target="_blank"
                 rel="noopener noreferrer"
-                compact
+                size="compact-sm"
                 href={item.link}
                 color="gray"
                 variant="light"

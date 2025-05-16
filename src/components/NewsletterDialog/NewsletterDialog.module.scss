@@ -1,7 +1,7 @@
 .dialogRoot {
   width: 400px;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     width: 85vw;
   }
 }
@@ -14,7 +14,7 @@
   width: 70% !important;
   transform: translateX(-50%);
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     top: -65%;
     height: 65%;
     width: 65% !important;

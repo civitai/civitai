@@ -9,7 +9,7 @@
   overflow: visible;
   transition: margin-left 500ms;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     display: none;
   }
 }
@@ -27,7 +27,7 @@
 .drawerButton {
   display: none;
 
-  @container (max-width: var(--mantine-breakpoint-sm)) {
+  @container (max-width: theme('screens.sm')) {
     display: block;
   }
 }

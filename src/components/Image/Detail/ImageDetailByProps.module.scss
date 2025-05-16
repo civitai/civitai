@@ -24,7 +24,7 @@
   display: flex;
   flex-direction: column;
 
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     position: absolute;
     top: 100%;
     left: 0;
@@ -40,13 +40,13 @@
 }
 
 .mobileOnly {
-  @container (min-width: var(--mantine-breakpoint-md)) {
+  @container (min-width: theme('screens.md')) {
     display: none;
   }
 }
 
 .desktopOnly {
-  @container (max-width: var(--mantine-breakpoint-md)) {
+  @container (max-width: theme('screens.md')) {
     display: none;
   }
 }

@@ -154,7 +154,7 @@ export const ModelVersionEarlyAccessPurchase = ({
               </Stack>
             )}
 
-            <Button onClick={handleClose} variant="light" color="gray" compact>
+            <Button onClick={handleClose} variant="light" color="gray" size="compact-sm">
               Cancel
             </Button>
           </Stack>

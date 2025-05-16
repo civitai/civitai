@@ -8,20 +8,18 @@
   justify-content: center;
 
   &[data-checked] {
-
     &,
     &:hover {
-      background-color: var(--mantine-color-blue-filled); // Mantine's primary shade
-      color: var(--mantine-color-white); // Mantine's white color
+      background-color: var(--mantine-color-blue-6);
+      color: var(--mantine-color-white);
     }
 
     .iconWrapper {
-      color: var(--mantine-color-white); // Mantine's white color
+      color: var(--mantine-color-white);
       display: none;
 
-      @media (min-width: var(--mantine-breakpoint-xs)) {
-        // Mantine's xs breakpoint
-        display: inline-block;
+      @media (min-width: theme('screens.xs')) {
+        display: inline-block !important;
       }
     }
   }
@@ -29,9 +27,7 @@
   padding-left: 10px;
   padding-right: 10px;
 
-  @media (min-width: var(--mantine-breakpoint-xs)) {
-
-    // Mantine's xs breakpoint
+  @media (min-width: theme('screens.xs')) {
     & {
       padding-left: 20px;
       padding-right: 20px;

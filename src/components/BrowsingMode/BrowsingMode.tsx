@@ -63,11 +63,10 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                         onClick={closeMenu}
                         component={Link}
                         href="/games/knights-of-new-order"
-                        size="xs"
+                        size="compact-xs"
                         ml="auto"
                         variant="outline"
                         color="orange.5"
-                        compact
                       >
                         <Group gap={4}>
                           Join the Knights Order
@@ -106,18 +105,17 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
             label={
               <Text>
                 Apply{' '}
-                <Text
-                  component="span"
-                  variant="link"
-                  underline
+                <Anchor
+                  td="underline"
                   onClick={(e: React.MouseEvent) => {
                     e.preventDefault();
                     e.stopPropagation();
                     openHiddenTagsModal();
                   }}
+                  span
                 >
                   my filters
-                </Text>
+                </Anchor>
               </Text>
             }
             size="md"
