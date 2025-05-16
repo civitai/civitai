@@ -783,20 +783,16 @@ export function GenerationFormContent() {
                                           <Button
                                             variant="default"
                                             onClick={() => {
-                                              form.setValue(
-                                                'prompt',
-                                                remixPrompt.replace(
+                                              form.setValues({
+                                                prompt: remixPrompt.replace(
                                                   /\(*([^():,]+)(?::[0-9.]+)?\)*/g,
                                                   `$1`
-                                                )
-                                              );
-                                              form.setValue(
-                                                'negativePrompt',
-                                                remixNegativePrompt?.replace(
+                                                ),
+                                                negativePrompt: remixNegativePrompt?.replace(
                                                   /\(*([^():,]+)(?::[0-9.]+)?\)*/g,
                                                   `$1`
-                                                )
-                                              );
+                                                ),
+                                              });
                                             }}
                                             size="xs"
                                             color="default"
@@ -811,10 +807,12 @@ export function GenerationFormContent() {
                                             color="red"
                                             size="xs"
                                             onClick={() => {
-                                              form.setValue('remixOfId', undefined);
-                                              form.setValue('remixSimilarity', undefined);
-                                              form.setValue('remixPrompt', undefined);
-                                              form.setValue('remixNegativePrompt', undefined);
+                                              form.setValues({
+                                                remixOfId: undefined,
+                                                remixSimilarity: undefined,
+                                                remixPrompt: undefined,
+                                                remixNegativePrompt: undefined,
+                                              });
                                             }}
                                             fullWidth
                                             h={30}

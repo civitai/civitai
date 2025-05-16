@@ -9,7 +9,6 @@ import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
 
 export function HaiperFormInput() {
   const form = useFormContext();
-  const sourceImage = form.watch('sourceImage');
   const process = form.watch('process');
   const isTxt2Vid = process === 'txt2vid';
 
@@ -18,13 +17,13 @@ export function HaiperFormInput() {
       <InputVideoProcess name="process" />
       {process === 'img2vid' && <InputSourceImageUpload name="sourceImage" className="flex-1" />}
       <InputTextArea
-        required={!sourceImage}
+        required={isTxt2Vid}
         name="prompt"
         label="Prompt"
         placeholder="Your prompt goes here..."
         autosize
       />
-      <InputTextArea required={isTxt2Vid} name="negativePrompt" label="Negative Prompt" autosize />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       {isTxt2Vid && <HaiperAspectRatio name="aspectRatio" label="Aspect Ratio" />}
       <div className="flex flex-col gap-0.5">

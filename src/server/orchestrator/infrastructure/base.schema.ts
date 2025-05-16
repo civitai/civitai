@@ -24,7 +24,7 @@ export const sourceImageSchema = z.object({
   upscaleHeight: z.number().optional(),
 });
 
-export const seedSchema = z.number().optional();
+export const seedSchema = z.number().nullish();
 const prioritySchema = z.nativeEnum(Priority).default('low').catch('low');
 
 const baseGenerationSchema = z.object({

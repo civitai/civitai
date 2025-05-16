@@ -138,8 +138,8 @@ export function getInjectablResources(baseModelSetType: BaseModelSetType) {
 
 export const whatIfQueryOverrides = {
   prompt: '',
-  negativePrompt: undefined,
-  seed: undefined,
+  negativePrompt: '',
+  seed: null,
   // image: undefined,
   nsfw: false,
   cfgScale: generation.defaultValues.cfgScale,
