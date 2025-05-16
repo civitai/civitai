@@ -1,38 +1,7 @@
-:root {
-  --col-gutter: 0;
-  --col-columns: 12;
-  --col-grow: 0;
-  --col-offset: 0;
-  --col-span: auto;
-  --col-order: 0;
+// You can place these variable definitions on a wrapper/container class instead of :root.
+// For example, use `.container-grid` as the scope for your grid system variables.
 
-  /* Breakpoint-specific variables */
-  --col-gutter-xs: var(--col-gutter);
-  --col-gutter-sm: var(--col-gutter);
-  --col-gutter-md: var(--col-gutter);
-  --col-gutter-lg: var(--col-gutter);
-  --col-gutter-xl: var(--col-gutter);
-
-  --col-offset-xs: var(--col-offset);
-  --col-offset-sm: var(--col-offset);
-  --col-offset-md: var(--col-offset);
-  --col-offset-lg: var(--col-offset);
-  --col-offset-xl: var(--col-offset);
-
-  --col-span-xs: var(--col-span);
-  --col-span-sm: var(--col-span);
-  --col-span-md: var(--col-span);
-  --col-span-lg: var(--col-span);
-  --col-span-xl: var(--col-span);
-
-  --col-order-xs: var(--col-order);
-  --col-order-sm: var(--col-order);
-  --col-order-md: var(--col-order);
-  --col-order-lg: var(--col-order);
-  --col-order-xl: var(--col-order);
-}
-
-.col {
+.container-grid .col {
   box-sizing: border-box;
   flex-grow: var(--col-grow);
   order: var(--col-order);

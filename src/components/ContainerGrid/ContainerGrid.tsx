@@ -6,6 +6,7 @@ import { ContainerCol } from './ContainerCol';
 import { ContainerGridProvider } from './ContainerGrid.context';
 import { Box } from '@mantine/core';
 import classes from './ContainerGrid.module.scss';
+import clsx from 'clsx';
 
 export interface ContainerGridProps extends DefaultProps, React.ComponentPropsWithRef<'div'> {
   /** <Col /> components only */
@@ -112,7 +113,7 @@ export const ContainerGrid: GridComponent = forwardRef<HTMLDivElement, Container
           containerName,
         }}
       >
-        <Box className={className} style={style} {...others} ref={ref}>
+        <Box className={clsx(classes.grid, className)} style={style} {...others} ref={ref}>
           {children}
         </Box>
       </ContainerGridProvider>

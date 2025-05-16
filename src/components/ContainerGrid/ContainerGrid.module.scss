@@ -1,40 +1,65 @@
-:root {
-  --grid-gutter: 0;
-  --grid-justify: flex-start;
-  --grid-align: stretch;
-
-  /* Breakpoint-specific variables */
-  --grid-gutter-xs: var(--grid-gutter);
-  --grid-gutter-sm: var(--grid-gutter);
-  --grid-gutter-md: var(--grid-gutter);
-  --grid-gutter-lg: var(--grid-gutter);
-  --grid-gutter-xl: var(--grid-gutter);
-}
+$gridGutter: 0;
+$gridJustify: flex-start;
+$gridAlign: stretch; 
+ 
 
 .grid {
   display: flex;
   flex-wrap: wrap;
-  justify-content: var(--grid-justify);
-  align-content: var(--grid-align);
-  margin: calc(var(--grid-gutter) / -2);
+  justify-content: var(--grid-justify, $gridJustify);
+  align-content: var(--grid-align, $gridAlign);
+  margin: calc(var(--grid-gutter, $gridGutter) / -2);
 
   @container (min-width: var(--mantine-breakpoint-xs)) {
-    margin: calc(var(--grid-gutter-xs) / -2);
+    margin: calc(var(--grid-gutter-xs, $gridGutter) / -2);
   }
 
   @container (min-width: var(--mantine-breakpoint-sm)) {
-    margin: calc(var(--grid-gutter-sm) / -2);
+    margin: calc(var(--grid-gutter-sm, $gridGutter) / -2);
   }
 
   @container (min-width: var(--mantine-breakpoint-md)) {
-    margin: calc(var(--grid-gutter-md) / -2);
+    margin: calc(var(--grid-gutter-md, $gridGutter) / -2);
   }
 
   @container (min-width: var(--mantine-breakpoint-lg)) {
-    margin: calc(var(--grid-gutter-lg) / -2);
+    margin: calc(var(--grid-gutter-lg, $gridGutter) / -2);
   }
 
   @container (min-width: var(--mantine-breakpoint-xl)) {
-    margin: calc(var(--grid-gutter-xl) / -2);
+    margin: calc(var(--grid-gutter-xl, $gridGutter) / -2);
   }
+
+  /* Col variables:  */
+    --col-gutter: 0;
+    --col-columns: 12;
+    --col-grow: 0;
+    --col-offset: 0;
+    --col-span: auto;
+    --col-order: 0;
+  
+    /* Breakpoint-specific variables */
+    --col-gutter-xs: var(--col-gutter);
+    --col-gutter-sm: var(--col-gutter);
+    --col-gutter-md: var(--col-gutter);
+    --col-gutter-lg: var(--col-gutter);
+    --col-gutter-xl: var(--col-gutter);
+  
+    --col-offset-xs: var(--col-offset);
+    --col-offset-sm: var(--col-offset);
+    --col-offset-md: var(--col-offset);
+    --col-offset-lg: var(--col-offset);
+    --col-offset-xl: var(--col-offset);
+  
+    --col-span-xs: var(--col-span);
+    --col-span-sm: var(--col-span);
+    --col-span-md: var(--col-span);
+    --col-span-lg: var(--col-span);
+    --col-span-xl: var(--col-span);
+  
+    --col-order-xs: var(--col-order);
+    --col-order-sm: var(--col-order);
+    --col-order-md: var(--col-order);
+    --col-order-lg: var(--col-order);
+    --col-order-xl: var(--col-order);
 }

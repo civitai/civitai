@@ -5,6 +5,7 @@ import { useContainerGridContext } from './ContainerGrid.context';
 // import useStyles from './ContainerCol.styles';
 import { Box, ColSpan, DefaultProps, useProps } from '@mantine/core';
 import classes from './ContainerCol.module.scss';
+import clsx from 'clsx';
 
 export interface ColProps extends DefaultProps, React.ComponentPropsWithoutRef<'div'> {
   /** Default col span */
@@ -137,7 +138,7 @@ export const ContainerCol = forwardRef<HTMLDivElement, ColProps>((props: ColProp
   }
 
   return (
-    <Box className={className} ref={ref} style={style} {...others}>
+    <Box className={clsx(classes.col, className)} ref={ref} style={style} {...others}>
       {children}
     </Box>
   );
