@@ -1,16 +1,17 @@
 import type {
   Adjustment,
   AdjustmentAction,
+  Discount,
   IEventName,
   PriceNotification,
   ProductNotification,
   SubscriptionNotification,
   TransactionNotification,
 } from '@paddle/paddle-node-sdk';
-import { ApiError } from '@paddle/paddle-node-sdk';
+import { ApiError, SubscriptionItemNotification } from '@paddle/paddle-node-sdk';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
-import { HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
+import { constants, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -24,6 +25,7 @@ import {
   getPaddleSubscription,
   subscriptionBuzzOneTimeCharge,
   updatePaddleSubscription,
+  createAnnualSubscriptionDiscount,
 } from '~/server/paddle/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import {
@@ -672,6 +674,25 @@ export const updateSubscriptionPlan = async ({
   userId: number;
 } & UpdateSubscriptionInputSchema) => {
   const subscription = await dbWrite.customerSubscription.findFirst({
+    include: {
+      price: {
+        select: {
+          id: true,
+          unitAmount: true,
+          interval: true,
+          intervalCount: true,
+          currency: true,
+          active: true,
+        },
+      },
+      product: {
+        select: {
+          id: true,
+          metadata: true,
+          provider: true,
+        },
+      },
+    },
     where: {
       userId,
       status: {
@@ -685,6 +706,37 @@ export const updateSubscriptionPlan = async ({
 
   if (!subscription) {
     throw throwNotFoundError('No active subscription found');
+  }
+
+  const targetPrice = await dbWrite.price.findUnique({
+    where: { id: priceId, active: true },
+    select: {
+      id: true,
+      unitAmount: true,
+      interval: true,
+      intervalCount: true,
+      currency: true,
+      active: true,
+      product: {
+        select: {
+          id: true,
+          metadata: true,
+          provider: true,
+        },
+      },
+    },
+  });
+
+  if (!targetPrice) {
+    throw throwNotFoundError('The product you are trying to update to does not exist');
+  }
+
+  if (targetPrice.product.provider !== PaymentProvider.Paddle) {
+    throw throwBadRequestError('The product you are trying to update to is not managed by Paddle');
+  }
+
+  if (subscription.product.provider !== PaymentProvider.Paddle) {
+    throw throwBadRequestError('The product you are trying to update to is not managed by Paddle');
   }
 
   const paddleSubscription = await getPaddleSubscription({ subscriptionId: subscription.id });
@@ -716,16 +768,44 @@ export const updateSubscriptionPlan = async ({
           prorationBillingMode: 'do_not_bill',
         });
 
+        let discount: Discount | null = null;
+        // Will apply for both downgrades and upgrades. This is basically a pro-ration based off on
+        // the number of payments BUZZ we've made to this user
+        if (subscription?.price.interval === 'year' && targetPrice?.interval === 'year') {
+          const monthsSinceMembership =
+            dayjs().diff(subscription.currentPeriodStart ?? subscription.createdAt, 'month') + 1; // Must always assume we've given at least 1 payment.
+
+          const discountAmount = Math.floor(
+            monthsSinceMembership >= 12
+              ? 0
+              : (monthsSinceMembership / 12) * (subscription.price.unitAmount ?? 0)
+          );
+
+          discount = await createAnnualSubscriptionDiscount({
+            amount: discountAmount.toString(),
+            currency: targetPrice?.currency,
+            userId: userId,
+          });
+        }
+
         // For whatever random reason in the world, Paddle doesn't update the next billed at date
         // automatically when you change the subscription. So we do it manually.
+        const nextBilledAt = dayjs().add(30, 'minute').add(20, 'second').toISOString();
+
         await updatePaddleSubscription({
           subscriptionId: subscription.id,
-          nextBilledAt: dayjs().add(30, 'minute').add(20, 'second').toISOString(),
+          nextBilledAt: nextBilledAt,
           prorationBillingMode: 'prorated_immediately',
           customData: {
             ...paddleSubscription.customData,
             originalNextBilledAt: paddleSubscription?.nextBilledAt,
           },
+          discount: discount
+            ? {
+                id: discount.id,
+                effectiveFrom: 'immediately',
+              }
+            : null,
         });
       } catch (e) {
         logToAxiom({

@@ -18,6 +18,7 @@ export const getPlansHandler = async ({ input, ctx }: { input: GetPlansSchema; c
 
   return await getPlans({
     paymentProvider: input.paymentProvider ?? defaultPaymentProvider,
+    interval: input.interval,
   });
 };
 
