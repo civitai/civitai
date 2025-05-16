@@ -3,11 +3,11 @@
 
   &[data-checked] {
     background-color: var(--mantine-color-blue-6);
-    color: var(--mantine-white);
+    color: var(--mantine-color-white);
 
     &:hover {
       background-color: var(--mantine-color-blue-6);
-      color: var(--mantine-white);
+      color: var(--mantine-color-white);
     }
 
     .iconWrapper {

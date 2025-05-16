@@ -96,7 +96,7 @@
 
     &[data-variant='filled'],
     &[data-variant='filled']:hover {
-      background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-white));
+      background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-white));
     }
   }
 }
@@ -127,7 +127,7 @@
 
   &[data-active='true'] {
     border: 1px solid var(--mantine-color-accent-5);
-    background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-white));
+    background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-white));
   }
 }
 

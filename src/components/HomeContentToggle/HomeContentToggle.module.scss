@@ -67,7 +67,7 @@
 
   &[data-active="true"] {
     background: light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-4));
-    color: light-dark(var(--mantine-white), var(--mantine-color-gray-8));
+    color: light-dark(var(--mantine-color-white), var(--mantine-color-gray-8));
   }
 
   @container (min-width: 992px) and (max-width: 1440px) {

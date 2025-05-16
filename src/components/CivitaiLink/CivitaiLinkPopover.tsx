@@ -449,12 +449,12 @@ function LinkButton() {
   const color = civitaiLinkStatusColors[status];
 
   return (
-    <Box sx={{ position: 'relative' }}>
-      <ActionIcon>
-        <Indicator color={color}>
+    <div className="relative">
+      <Indicator className="flex items-center" color={color} disabled={!color}>
+        <ActionIcon variant="subtle" color="gray">
           <IconScreenShare />
-        </Indicator>
-      </ActionIcon>
+        </ActionIcon>
+      </Indicator>
       {activityProgress && activityProgress > 0 && activityProgress < 100 && (
         <Progress
           value={activityProgress}
@@ -464,7 +464,7 @@ function LinkButton() {
           style={{ position: 'absolute', bottom: -3, width: '100%' }}
         />
       )}
-    </Box>
+    </div>
   );
 }
 

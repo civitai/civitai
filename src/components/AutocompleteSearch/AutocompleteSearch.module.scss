@@ -1,28 +1,28 @@
 .root {
   flex-grow: 1;
 
-  @media (max-width: var(--mantine-breakpoint-md, 992px)) {
+  @container (max-width: var(--mantine-breakpoint-md, 992px)) {
     height: 100%;
     flex-grow: 1;
   }
 }
 
 .wrapper {
-  @media (max-width: var(--mantine-breakpoint-md, 992px)) {
+  @container (max-width: var(--mantine-breakpoint-md, 992px)) {
     height: 100%;
   }
 }
 
 .input {
-  border-radius: 0;
+  border-radius: 0 !important;
 
-  @media (max-width: var(--mantine-breakpoint-md, 992px)) {
+  @container (max-width: var(--mantine-breakpoint-md, 992px)) {
     height: 100%;
   }
 }
 
 .dropdown {
-  @media (max-width: var(--mantine-breakpoint-sm, 768px)) {
+  @container (max-width: var(--mantine-breakpoint-sm, 768px)) {
     margin-top: -7px;
   }
 }
@@ -30,7 +30,7 @@
 .targetSelectorRoot {
   width: 110px;
 
-  @media (max-width: var(--mantine-breakpoint-md, 992px)) {
+  @container (max-width: var(--mantine-breakpoint-md, 992px)) {
     display: none; // TODO.search: Remove this once we figure out a way to prevent hiding the whole bar when selecting a target
     height: 100%;
 
@@ -41,22 +41,22 @@
     }
   }
 
-  @media (max-width: var(--mantine-breakpoint-sm, 768px)) {
+  @container (max-width: var(--mantine-breakpoint-sm, 768px)) {
     width: 25%;
   }
 }
 
 .targetSelectorInput {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-  background-color: light-dark(var(--mantine-color-gray-8), var(--mantine-color-gray-3));
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-gray-8));
   padding-right: 18px;
 
   &:not(:focus) {
     border-right-style: none;
   }
 
-  @media (max-width: var(--mantine-breakpoint-md, 992px)) {
+  @container (max-width: var(--mantine-breakpoint-md, 992px)) {
     height: 100%;
   }
 }
@@ -66,16 +66,18 @@
 }
 
 .searchButton {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  background-color: light-dark(var(--mantine-color-gray-8), var(--mantine-color-gray-3));
-  color: light-dark(var(--mantine-white), var(--mantine-black));
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-color: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4)) !important;
+  border-left: none !important;
+  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-gray-8)) !important;
+  color: light-dark(var(--mantine-color-black), var(--mantine-color-white));
 
   &:hover {
-    background-color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-4));
+    background-color: light-dark(var(--mantine-color-gray-4), var(--mantine-color-gray-7)) !important;
   }
 
-  @media (max-width: var(--mantine-breakpoint-md, 992px)) {
+  @container (max-width: var(--mantine-breakpoint-md, 992px)) {
     display: none;
   }
 }

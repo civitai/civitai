@@ -3,11 +3,11 @@
   font-weight: 600;
 
   &[data-checked] {
-    color: light-dark(var(--mantine-white), var(--mantine-black));
+    color: light-dark(var(--mantine-color-white), var(--mantine-color-black));
     border: 1px solid var(--mantine-primary-color-filled);
 
     &:hover {
-      color: light-dark(var(--mantine-white), var(--mantine-black));
+      color: light-dark(var(--mantine-color-white), var(--mantine-color-black));
       border: 1px solid var(--mantine-primary-color-filled);
     }
 

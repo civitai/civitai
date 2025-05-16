@@ -16,7 +16,7 @@
 
 .sendIcon {
   background-color: var(--mantine-color-blue-5);
-  color: var(--mantine-white);
+  color: var(--mantine-color-white);
   border-top-right-radius: var(--mantine-radius-sm);
   border-bottom-right-radius: var(--mantine-radius-sm);
 }
@@ -30,7 +30,7 @@
 
     &[data-variant="filled"],
     &[data-variant="filled"]:hover {
-      background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-white));
+      background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-white));
     }
   }
 }

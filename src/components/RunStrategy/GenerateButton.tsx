@@ -72,7 +72,7 @@ export function GenerateButton({
     >
       <Group gap={0}>
         <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />{' '}
-        <Text color="dark.9">{abbreviateNumber(generationPrice ?? 0, { decimals: 0 })}</Text>
+        <Text c="dark.9">{abbreviateNumber(generationPrice ?? 0, { decimals: 0 })}</Text>
       </Group>
     </Badge>
   );
@@ -105,7 +105,7 @@ export function GenerateButton({
   ) : (
     <Button
       variant="filled"
-      sx={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
+      style={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
       onClick={onClickHandler}
       {...buttonProps}
     >

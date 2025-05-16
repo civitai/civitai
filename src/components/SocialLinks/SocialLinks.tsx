@@ -74,6 +74,8 @@ export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
           <ActionIcon
             key={option}
             component="a"
+            variant="subtle"
+            color="gray"
             href={`/${option}`}
             target="_blank"
             rel="nofollow noreferrer"

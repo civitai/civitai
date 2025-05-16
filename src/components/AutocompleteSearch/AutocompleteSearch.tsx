@@ -356,31 +356,29 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
       <Group className={classes.wrapper} gap={0} wrap="nowrap">
-        <Portal>
-          <Select
-            classNames={{
-              root: classes.targetSelectorRoot,
-              input: classes.targetSelectorInput,
-            }}
-            rightSectionProps={{
-              className: classes.targetSelectorRightSection,
-            }}
-            maxDropdownHeight={280}
-            defaultValue={targetData[0].value}
-            // Ensure we disable search targets if they are not enabled
-            data={targetData.filter(
-              ({ value }) =>
-                (features.imageSearch ? true : value !== 'images') &&
-                (features.bounties ? true : value !== 'bounties') &&
-                (features.articles ? true : value !== 'articles') &&
-                (features.toolSearch ? true : value !== 'tools')
-            )}
-            rightSection={<IconChevronDown size={16} color="currentColor" />}
-            style={{ flexShrink: 1 }}
-            onChange={(v: string | null) => onTargetChange(v as TKey)}
-            autoComplete="off"
-          />
-        </Portal>
+        <Select
+          classNames={{
+            root: classes.targetSelectorRoot,
+            input: classes.targetSelectorInput,
+          }}
+          rightSectionProps={{
+            className: classes.targetSelectorRightSection,
+          }}
+          maxDropdownHeight={280}
+          defaultValue={targetData[0].value}
+          // Ensure we disable search targets if they are not enabled
+          data={targetData.filter(
+            ({ value }) =>
+              (features.imageSearch ? true : value !== 'images') &&
+              (features.bounties ? true : value !== 'bounties') &&
+              (features.articles ? true : value !== 'articles') &&
+              (features.toolSearch ? true : value !== 'tools')
+          )}
+          rightSection={<IconChevronDown size={16} color="currentColor" />}
+          style={{ flexShrink: 1 }}
+          onChange={(v: string | null) => onTargetChange(v as TKey)}
+          autoComplete="off"
+        />
         <ClearableAutoComplete
           ref={inputRef}
           key={indexName}

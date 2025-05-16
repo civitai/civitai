@@ -126,7 +126,7 @@ export function AppHeader({
           <Grid.Col span="auto" className="flex items-center justify-end @md:hidden">
             <div className="flex items-center gap-1">
               {!isMuted && <CreateMenu />}
-              <ActionIcon onClick={() => setShowSearch(true)}>
+              <ActionIcon variant="subtle" color="gray" onClick={() => setShowSearch(true)}>
                 <IconSearch />
               </ActionIcon>
               {currentUser && <CivitaiLinkPopover />}

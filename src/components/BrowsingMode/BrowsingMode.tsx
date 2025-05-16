@@ -22,7 +22,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   return (
     <Popover zIndex={constants.imageGeneration.drawerZIndex + 1} withArrow withinPortal>
       <Popover.Target>
-        <ActionIcon>
+        <ActionIcon variant="subtle" color="gray">
           <IconEyeExclamation {...iconProps} />
         </ActionIcon>
       </Popover.Target>

@@ -1,7 +1,7 @@
 .header {
   position: sticky;
   top: 0;
-  background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-white));
+  background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-white));
   transition: box-shadow 150ms ease;
   z-index: 10;
 

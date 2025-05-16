@@ -12,11 +12,11 @@
     &,
     &:hover {
       background-color: var(--mantine-color-blue-4, #228be6);
-      color: var(--mantine-white, #ffffff);
+      color: var(--mantine-color-white, #ffffff);
     }
 
     .iconWrapper {
-      color: var(--mantine-white, #ffffff);
+      color: var(--mantine-color-white, #ffffff);
       display: none;
 
       @media (min-width: var(--mantine-breakpoint-xs, 576px)) {

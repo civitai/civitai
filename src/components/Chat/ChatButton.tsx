@@ -27,19 +27,21 @@ export function ChatButton() {
         disabled={unreadLoading || !totalUnread}
         // processing={unreadLoading} (this doesn't work)
         label={totalUnread}
-        inline
         size={16}
         offset={4}
-        withBorder
+        className="flex items-center"
         styles={{
           indicator: {
             height: '20px !important',
             '> span': { marginBottom: '2px' },
           },
         }}
+        withBorder
+        inline
       >
         <ActionIcon
-          variant={state.open ? 'filled' : undefined}
+          variant={state.open ? 'filled' : 'subtle'}
+          color="gray"
           onClick={() => setState((prev) => ({ ...prev, open: !state.open }))}
           data-testid="open-chat"
         >

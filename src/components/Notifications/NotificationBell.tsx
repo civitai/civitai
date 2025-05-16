@@ -34,17 +34,18 @@ export function NotificationBell() {
           label={count.all > 99 ? '99+' : count.all}
           size={16}
           offset={4}
-          withBorder
-          inline
-          className="text-sm font-bold"
+          className="flex items-center text-sm font-bold"
           styles={{
             indicator: {
               height: '20px !important',
               cursor: 'pointer',
             },
           }}
+          disabled={count.all <= 0}
+          withBorder
+          inline
         >
-          <ActionIcon>
+          <ActionIcon variant="subtle" color="gray">
             <IconBell />
           </ActionIcon>
         </Indicator>
