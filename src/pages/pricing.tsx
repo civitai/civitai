@@ -240,28 +240,30 @@ export default function Pricing() {
               </Alert>
             )}
           </Group>
-          <Center>
-            <SegmentedControl
-              radius="md"
-              value={interval}
-              onChange={(value) => setInterval(value as 'month' | 'year')}
-              size="md"
-              data={[
-                { value: 'month', label: 'Monthly Plans' },
-                {
-                  value: 'year',
-                  label: (
-                    <Center>
-                      <Box mr={6}>Annual Plans</Box>
-                      <Badge p={5} color="green" variant="filled" radius="xl">
-                        Save 15%!
-                      </Badge>
-                    </Center>
-                  ),
-                },
-              ]}
-            />
-          </Center>
+          {(features.annualMemberships || interval === 'year') && (
+            <Center>
+              <SegmentedControl
+                radius="md"
+                value={interval}
+                onChange={(value) => setInterval(value as 'month' | 'year')}
+                size="md"
+                data={[
+                  { value: 'month', label: 'Monthly Plans' },
+                  {
+                    value: 'year',
+                    label: (
+                      <Center>
+                        <Box mr={6}>Annual Plans</Box>
+                        <Badge p={5} color="green" variant="filled" radius="xl">
+                          Save 15%!
+                        </Badge>
+                      </Center>
+                    ),
+                  },
+                ]}
+              />
+            </Center>
+          )}
 
           {subscription?.price?.interval === 'year' && interval === 'month' && (
             <AlertWithIcon

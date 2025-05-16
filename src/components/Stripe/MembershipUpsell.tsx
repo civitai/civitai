@@ -152,6 +152,10 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
                   props: {
                     priceId,
                     meta: planMeta,
+                    price: {
+                      id: priceId,
+                      interval: 'month', // All our default plans are monthly
+                    },
                   },
                 });
               }}

@@ -35,7 +35,7 @@ export const deliverAnnualSubscriptionBuzz = createJob(
         fromAccountId: 0,
         toAccountId: d.userId,
         type: TransactionType.Purchase,
-        externalTransactionId: `annual-subscription-payment-${date}:${d.userId}:${d.productId}`,
+        externalTransactionId: `annual-sub-payment-${date}:${d.userId}:${d.productId}`,
         amount: Number(d.buzzAmount) ?? 3000, // assume a min of 3000.
         description: `Membership bonus`,
         details: {
