@@ -557,7 +557,12 @@ export const baseModelResourceTypes = {
     { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
   ],
   WanVideo14B_T2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_T2V.baseModels }],
-  WanVideo14B_I2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V.baseModels }],
+  WanVideo14B_I2V_480p: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_480p.baseModels },
+  ],
+  WanVideo14B_I2V_720p: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_720p.baseModels },
+  ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)

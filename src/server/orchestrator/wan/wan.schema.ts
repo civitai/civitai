@@ -31,9 +31,14 @@ export const wanModelMap = {
   ],
   img2vid: [
     {
-      label: 'Wan Video 14B i2v',
+      label: 'Wan Video 14B i2v 720p',
       value: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
-      resources: baseModelResourceTypes.WanVideo14B_I2V,
+      resources: baseModelResourceTypes.WanVideo14B_I2V_720p,
+    },
+    {
+      label: 'Wan Video 14B i2v 480p',
+      value: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501125',
+      resources: baseModelResourceTypes.WanVideo14B_I2V_480p,
     },
   ],
 };
