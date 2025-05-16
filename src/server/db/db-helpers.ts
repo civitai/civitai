@@ -145,6 +145,37 @@ export async function preventReplicationLag(type: LaggingType, id?: number) {
   });
 }
 
+function lsnGTE(lsn1: string, lsn2: string): boolean {
+  const [a1, b1] = lsn1.split('/').map((part) => parseInt(part, 16));
+  const [a2, b2] = lsn2.split('/').map((part) => parseInt(part, 16));
+  return a1 > a2 || (a1 === a2 && b1 >= b2);
+}
+
+export async function getCurrentLSN() {
+  try {
+    const currentRes = await dbWrite.$queryRaw<
+      {
+        lsn: string;
+      }[]
+    >`SELECT pg_current_wal_lsn() AS lsn`;
+    return currentRes[0]?.lsn ?? '';
+  } catch (e) {
+    // TODO what to return here
+    return '';
+  }
+}
+
+export async function checkUpToDate(lsn: string) {
+  try {
+    const roRes = await dbWrite.$queryRaw<
+      { application_name: string; state: string; replay_lsn: string }[]
+    >`SELECT * FROM get_replication_status() where application_name like 'ro-c16-%'`;
+    return roRes.some((row) => !lsnGTE(row.replay_lsn, lsn));
+  } catch (e) {
+    return false;
+  }
+}
+
 export type RunContext = {
   cancelFns: (() => Promise<void>)[];
   batchSize: number;
