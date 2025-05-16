@@ -769,7 +769,8 @@ export const updateSubscriptionPlan = async ({
         });
 
         let discount: Discount | null = null;
-        // Will apply for both downgrades and upgrades.
+        // Will apply for both downgrades and upgrades. This is basically a pro-ration based off on
+        // the number of payments BUZZ we've made to this user
         if (subscription?.price.interval === 'year' && targetPrice?.interval === 'year') {
           const monthsSinceMembership =
             dayjs().diff(subscription.currentPeriodStart ?? subscription.createdAt, 'month') + 1; // Must always assume we've given at least 1 payment.
