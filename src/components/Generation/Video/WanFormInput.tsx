@@ -31,7 +31,8 @@ export function WanFormInput() {
   useEffect(() => {
     const model = form.getValues('model');
     if (!availableModels.find((x) => x.value === model)) {
-      form.setValue('model', availableModels[0].value);
+      const defaultModel = availableModels.find((x) => x.default) ?? availableModels[0];
+      form.setValue('model', defaultModel.value);
     }
   }, [availableModels]);
 

@@ -320,6 +320,14 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'OpenAI')) return 'OpenAI';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo'))
     return 'WanVideo';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo14B_I2V_480p'))
+    return 'WanVideo14B_I2V_480p';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo14B_I2V_720p'))
+    return 'WanVideo14B_I2V_720p';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo14B_T2V'))
+    return 'WanVideo14B_T2V';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo1_3B_T2V'))
+    return 'WanVideo1_3B_T2V';
   else return 'SD1';
 }
 const videoBaseModelSetTypes = ['HyV1', 'WanVideo'];
