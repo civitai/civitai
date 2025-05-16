@@ -200,21 +200,21 @@ const StripeTransactionModal = ({
         {setupFuturePayment && (
           <Text size="sm">
             Don&rsquo;t see your payment method?{' '}
-            <Text color="blue.4" component="button" onClick={setupFuturePaymentToggle}>
+            <Text c="blue.4" component="button" onClick={setupFuturePaymentToggle}>
               Click here
             </Text>
           </Text>
         )}
         {!setupFuturePayment && (
           <Text size="sm">
-            <Text color="blue.4" component="button" onClick={setupFuturePaymentToggle}>
+            <Text c="blue.4" component="button" onClick={setupFuturePaymentToggle}>
               Back to default payment methods
             </Text>
           </Text>
         )}
         <PaymentElement id="payment-element" options={paymentElementOptions} />
         {errorMessage && (
-          <Text color="red" size="sm">
+          <Text c="red" size="sm">
             {errorMessage}
           </Text>
         )}

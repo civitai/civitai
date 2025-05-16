@@ -192,7 +192,7 @@ const { openModal, Modal } = createContextModal({
               <Title order={3} mb={0} style={{ lineHeight: 1 }}>
                 Download the Link desktop application
               </Title>
-              <Text mb="md" color="dimmed">
+              <Text mb="md" c="dimmed">
                 Run the installer and head to the next step to get a Link key.
               </Text>
               <Flex justify="center" w="100%">
@@ -216,7 +216,7 @@ const { openModal, Modal } = createContextModal({
               <Title order={3} mb={0} style={{ lineHeight: 1 }}>
                 Link your account
               </Title>
-              <Text mb="md" color="dimmed">
+              <Text mb="md" c="dimmed">
                 In your Link application, paste the code below to link your account and finish the
                 setup.
               </Text>

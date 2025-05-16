@@ -159,7 +159,7 @@ export function MultiFileInputUpload({
             )}
             <Stack gap={4} align={verticalOrientation ? 'center' : 'flex-start'}>
               <Text size="xl">Drop your files or click to select</Text>
-              <Text color="dimmed" size="sm">
+              <Text c="dimmed" size="sm">
                 {maxFiles ? `Attach up to ${maxFiles} files` : 'Attach as many files as you like'}
                 {maxSize && `. Each file should not exceed ${formatBytes(maxSize ?? 0)}`}
                 {fileExtensions.length > 0 && `. Accepted file types: ${fileExtensions.join(', ')}`}
@@ -232,8 +232,8 @@ function UploadItem({ progress, speed, timeRemaining, abort, name }: UploadItemP
           </Progress.Section>
         </Progress.Root>
         <Group justify="space-between">
-          <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
-          <Text size="xs" color="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
+          <Text size="xs" c="dimmed">{`${formatBytes(speed)}/s`}</Text>
+          <Text size="xs" c="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
         </Group>
       </Stack>
     </Stack>

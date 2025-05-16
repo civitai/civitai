@@ -56,13 +56,13 @@ export const ManageClubMembershipModal = ({ clubId, clubTierIds }: Props) => {
               ))}
             </>
           ) : (
-            <Text color="dimmed" size="sm">
+            <Text c="dimmed" size="sm">
               The owner of this club has not added any club tiers yet.
             </Text>
           )}
         </Stack>
       ) : (
-        <Text color="dimmed">This club does not exist.</Text>
+        <Text c="dimmed">This club does not exist.</Text>
       )}
 
       <Divider

@@ -104,7 +104,7 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 <Title order={3}>{clubTier.name}</Title>
                 <Group gap={0}>
                   <IconUser />
-                  <Text color="dimmed">
+                  <Text c="dimmed">
                     {numberWithCommas(clubTier._count?.memberships ?? 0) || 0}
                   </Text>
                 </Group>

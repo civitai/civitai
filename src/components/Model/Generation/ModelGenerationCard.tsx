@@ -138,7 +138,7 @@ export function ModelGenerationCard({
       >
         <Card
           ref={cardRef}
-          sx={{
+          style={{
             backgroundColor: theme.colors.dark[7],
             boxShadow: `0 0 8px 0 ${theme.colors.yellow[7]}`,
           }}
@@ -160,7 +160,7 @@ export function ModelGenerationCard({
                     <Text size="sm" weight="bold">
                       Generated Exploration
                     </Text>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       A service provided by{' '}
                       <Anchor
                         href="https://picfinder.ai"
@@ -194,7 +194,7 @@ export function ModelGenerationCard({
             </Stack>
           </Card.Section>
           <Card.Section
-            sx={{ position: 'relative', height, overflow: 'hidden' }}
+            style={{ position: 'relative', height, overflow: 'hidden' }}
             onKeyDown={getHotkeyHandler([
               ['ArrowLeft', (e) => e.preventDefault()],
               ['ArrowRight', (e) => e.preventDefault()],
@@ -234,7 +234,7 @@ export function ModelGenerationCard({
                     size="md"
                     color="gray"
                     p={4}
-                    sx={{ position: 'absolute', top: '50%', left: 10 }}
+                    style={{ position: 'absolute', top: '50%', left: 10 }}
                     onClick={() => {
                       viewportRef.current?.scrollBy({
                         left: imageContainerWidth * -1,

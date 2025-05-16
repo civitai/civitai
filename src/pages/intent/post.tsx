@@ -164,7 +164,7 @@ export default function IntentPost() {
           errors: queryParse.error.issues.map((i, idx) => (
             <Group key={idx}>
               <Code>{i.path.join('.')}</Code>
-              <Text color="dimmed" size="sm">
+              <Text c="dimmed" size="sm">
                 {i.message}
               </Text>
             </Group>
@@ -184,7 +184,7 @@ export default function IntentPost() {
           errors: [
             <Group key="tagfail">
               <Code>tags</Code>
-              <Text color="dimmed" size="sm">
+              <Text c="dimmed" size="sm">
                 Maximum of {POST_TAG_LIMIT} tags allowed (found {data.tags!.length})
               </Text>
             </Group>,
@@ -325,7 +325,7 @@ export default function IntentPost() {
             title: 'Checking media',
             status: 'failed',
             errors: [
-              <Text key={e.message} color="dimmed" size="sm">
+              <Text key={e.message} c="dimmed" size="sm">
                 {e.message.split('. ').map((m, idx) => (
                   <p key={idx}>{m}</p>
                 ))}
@@ -392,7 +392,7 @@ export default function IntentPost() {
                             </Group>
                           ))
                         ) : p.status !== undefined ? (
-                          <Text color="dimmed" size="sm">
+                          <Text c="dimmed" size="sm">
                             {p.msg ?? `${titleCase(p.status)}!`}
                           </Text>
                         ) : (

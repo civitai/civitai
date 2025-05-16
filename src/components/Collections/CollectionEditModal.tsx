@@ -219,13 +219,13 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         </Text>
                         <CopyButton value={joinUrl}>
                           {({ copied, copy }) => (
-                            <Box pos="relative" onClick={copy} sx={{ cursor: 'pointer' }}>
+                            <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
                               <ActionIcon
                                 pos="absolute"
                                 top="50%"
                                 right={10}
                                 variant="transparent"
-                                sx={{ transform: 'translateY(-50%) !important' }}
+                                style={{ transform: 'translateY(-50%) !important' }}
                               >
                                 <IconClipboard />
                               </ActionIcon>
@@ -251,7 +251,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       leftSection={<IconCalendar size={16} />}
                       clearable
                     />
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       This is only used to stop recurring job updating the random indexes. We
                       suggest you add this in to save some resources, but this value will not be
                       shown to end-users.

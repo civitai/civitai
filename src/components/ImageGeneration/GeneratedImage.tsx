@@ -406,7 +406,7 @@ function BlockedBlock({ title, message }: { title: string; message: string }) {
   return (
     <Center px="md">
       <Stack gap="xs">
-        <Text color="red" weight="bold" align="center" size="sm">
+        <Text c="red" weight="bold" align="center" size="sm">
           {title}
         </Text>
         <Text align="center" size="sm">

@@ -103,7 +103,7 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
             onClick={
               !toggleNotifyMutation.isLoading && features.canWrite ? handleNotifyMeClick : undefined
             }
-            sx={{
+            style={{
               cursor:
                 toggleNotifyMutation.isLoading || !features.canWrite ? 'not-allowed' : 'pointer',
               lineHeight: 1,

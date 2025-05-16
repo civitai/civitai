@@ -153,7 +153,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
           />
         </Box>
         <Divider />
-        <Box h="100%" mah={500} sx={{ overflowY: 'auto' }}>
+        <Box h="100%" mah={500} style={{ overflowY: 'auto' }}>
           {isLoading ? (
             <Center h="100%">
               <Loader />
@@ -212,7 +212,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <Text
                           size="xs"
-                          sx={{
+                          style={{
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',

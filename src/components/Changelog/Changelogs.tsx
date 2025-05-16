@@ -183,7 +183,7 @@ const ChangelogItem = ({
             <Group gap="xs">
               <Text size="md">{dayjs(item.effectiveAt).format('MMM DD, YYYY')}</Text>
               {item.updatedAt.getTime() > item.effectiveAt.getTime() && (
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Updated: {dayjs().to(dayjs(item.updatedAt))}
                 </Text>
               )}
@@ -592,7 +592,7 @@ export function Changelogs() {
 
           {hasNextPage && (
             <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
-              <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Center p="xl" style={{ height: 36 }} mt="md">
                 <Loader />
               </Center>
             </InViewLoader>

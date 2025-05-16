@@ -76,7 +76,7 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
 
         <Stack gap={4}>
           {cosmetic.type === CosmeticType.ContentDecoration && (
-            <Text size="xs" color="dimmed" align="center">
+            <Text size="xs" c="dimmed" align="center">
               This decoration is now available to apply to your content. You can select which piece
               to apply it on from your profile.
             </Text>
@@ -199,7 +199,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
                     <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>
                       Equip now
                     </Button>
-                    <Text size="sm" align="center" color="dimmed">
+                    <Text size="sm" align="center" c="dimmed">
                       You already own this cosmetic
                     </Text>
                   </Stack>
@@ -208,7 +208,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
             )}
             {cosmetic.type === CosmeticType.ContentDecoration && (
               <Group gap="xs" wrap="nowrap">
-                <Text color="yellow">
+                <Text c="yellow">
                   <IconAlertTriangleFilled />
                 </Text>
 

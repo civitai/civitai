@@ -127,7 +127,7 @@ function SupporterHelp() {
         variant="link"
         td="underline"
         onClick={() => refreshSession()}
-        sx={{ cursor: 'pointer' }}
+        style={{ cursor: 'pointer' }}
       >
         Click here
       </Text>
@@ -203,7 +203,7 @@ function LinkDropdown() {
           )}
         </Group>
         {!!instances?.length && (
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             {instance?.name ?? 'no instance selected'}
           </Text>
         )}
@@ -233,11 +233,11 @@ function NotConnected({ error }: { error?: string }) {
       <IconNetworkOff size={60} strokeWidth={1} />
       <Text>Cannot Connect</Text>
       <Text
-        color="dimmed"
+        c="dimmed"
         size="xs"
       >{`We're unable to connect to the Civitai Link Coordination Server.`}</Text>
       {error && (
-        <Text color="red" size="xs">
+        <Text c="red" size="xs">
           {error}
         </Text>
       )}
@@ -251,11 +251,11 @@ function LostConnection({ error }: { error?: string }) {
       <IconNetworkOff size={60} strokeWidth={1} />
       <Text>Connection Lost</Text>
       <Text
-        color="dimmed"
+        c="dimmed"
         size="xs"
       >{`We've lost connect to the Civitai Link Coordination Server.`}</Text>
       {error && (
-        <Text color="red" size="xs">
+        <Text c="red" size="xs">
           {error}
         </Text>
       )}
@@ -437,7 +437,7 @@ function ActivityList() {
     </ScrollArea.Autosize>
   ) : (
     <Center p="lg">
-      <Text color="dimmed">No activity for this instance</Text>
+      <Text c="dimmed">No activity for this instance</Text>
     </Center>
   );
 }
@@ -497,11 +497,11 @@ function LinkActivity({ id, ...props }: { id: string } & GroupProps) {
             onCancel={handleCancel}
           />
         ) : activity.status === 'error' ? (
-          <Text color="red" size="xs">
+          <Text c="red" size="xs">
             {activity.status}: {activity.error}
           </Text>
         ) : (
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             {activity.status === 'success'
               ? isAdd
                 ? 'Downloaded'
@@ -549,9 +549,9 @@ function RequestProgress({
       )}
       {(speed || remainingTime) && (
         <Group justify="space-between">
-          {speed ? <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text> : <span />}
+          {speed ? <Text size="xs" c="dimmed">{`${formatBytes(speed)}/s`}</Text> : <span />}
           {remainingTime ? (
-            <Text size="xs" color="dimmed">{`${formatSeconds(remainingTime)} remaining`}</Text>
+            <Text size="xs" c="dimmed">{`${formatSeconds(remainingTime)} remaining`}</Text>
           ) : (
             <span />
           )}

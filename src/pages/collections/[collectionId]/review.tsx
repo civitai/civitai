@@ -170,7 +170,7 @@ const ReviewCollection = () => {
               withBorder
               shadow="lg"
               p="xs"
-              sx={{
+              style={{
                 display: 'inline-flex',
                 float: 'right',
                 alignSelf: 'flex-end',
@@ -189,7 +189,7 @@ const ReviewCollection = () => {
                 <BackButton url={`/collections/${collectionId}`} />
                 <Title order={1}>Collection items that need review</Title>
               </Group>
-              <Text color="dimmed">
+              <Text c="dimmed">
                 You are reviewing items on the collection that are either pending review or have
                 been rejected. You can change the status of these to be accepted or rejected.
               </Text>
@@ -240,7 +240,7 @@ const ReviewCollection = () => {
                     loadCondition={!isFetching}
                     style={{ gridColumn: '1/-1' }}
                   >
-                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                    <Center p="xl" style={{ height: 36 }} mt="md">
                       <Loader />
                     </Center>
                   </InViewLoader>

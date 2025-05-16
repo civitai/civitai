@@ -41,7 +41,7 @@ export function Collection<T>({
             size="sm"
             {...badgeProps}
             onClick={open}
-            sx={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer' }}
           >
             + {collapsedItems.length}
           </Badge>
@@ -52,7 +52,7 @@ export function Collection<T>({
             size="sm"
             {...badgeProps}
             onClick={close}
-            sx={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer' }}
           >
             - Hide
           </Badge>

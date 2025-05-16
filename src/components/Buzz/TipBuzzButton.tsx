@@ -51,7 +51,7 @@ export function TipBuzzButton({ toUserId, entityId, entityType, label, ...button
         pl={8}
         pr={label ? 12 : 8}
         onClick={handleClick}
-        sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
+        style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
         {...buttonProps}
       >
         <Group gap={4} wrap="nowrap">

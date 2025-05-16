@@ -111,7 +111,7 @@ export function EditResourceReview({
                 <Stack gap={0} style={{ cursor: 'pointer' }}>
                   {modelName && <Text lineClamp={1}>{modelName}</Text>}
                   {modelVersionName && (
-                    <Text lineClamp={1} size="xs" color="dimmed">
+                    <Text lineClamp={1} size="xs" c="dimmed">
                       {modelVersionName}
                     </Text>
                   )}
@@ -119,7 +119,7 @@ export function EditResourceReview({
               </Link>
             </Group>
             {createdAt && (
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 Reviewed <DaysFromNow date={createdAt} />
               </Text>
             )}
@@ -133,7 +133,7 @@ export function EditResourceReview({
                 onClick={() => (!isThumbsUp ? handleRatingChange(true) : undefined)}
                 fullWidth
               >
-                <Text color="success.5" size="xs" inline>
+                <Text c="success.5" size="xs" inline>
                   <Group gap={4} wrap="nowrap">
                     <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
                   </Group>
@@ -147,7 +147,7 @@ export function EditResourceReview({
                 onClick={() => (!isThumbsDown ? handleRatingChange(false) : undefined)}
                 fullWidth
               >
-                <Text color="red" inline>
+                <Text c="red" inline>
                   <ThumbsDownIcon size={20} filled={isThumbsDown} />
                 </Text>
               </Button>
@@ -216,7 +216,7 @@ export function EditResourceReview({
             )}
           </Stack>
         ) : (
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             What did you think of this resource?
           </Text>
         )}

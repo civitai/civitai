@@ -196,7 +196,7 @@ export function ImagesAsPostsCard({
                 <IconPinned size={16} stroke={1.5} />
               )
             }
-            sx={{ alignItems: maxedOut ? 'flex-start' : 'center' }}
+            style={{ alignItems: maxedOut ? 'flex-start' : 'center' }}
             disabled={!alreadyPinned && maxedOut}
             onClick={() => handlePinPost({ postId: image.postId as number, alreadyPinned })}
           >

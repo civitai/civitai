@@ -133,7 +133,7 @@ export function ModelCategoryCard({
     <IconBadge
       className={classes.statBadge}
       icon={
-        <Text color={hasReview ? 'success.5' : undefined} inline>
+        <Text c={hasReview ? 'success.5' : undefined} inline>
           <ThumbsUpIcon size={14} filled={hasReview} />
         </Text>
       }
@@ -303,7 +303,7 @@ export function ModelCategoryCard({
                             e.preventDefault();
                             e.stopPropagation();
                           }}
-                          sx={{
+                          style={{
                             width: 30,
                             position: 'absolute',
                             top: 10,
@@ -399,7 +399,7 @@ export function ModelCategoryCard({
                         <Text size="sm" weight="bold">
                           Available for generation
                         </Text>
-                        <Text size="sm" color="dimmed">
+                        <Text size="sm" c="dimmed">
                           This resource has versions available for image generation
                         </Text>
                       </Stack>
@@ -419,7 +419,7 @@ export function ModelCategoryCard({
                   }
                 >
                   <Box
-                    sx={{ borderRadius: '50%' }}
+                    style={{ borderRadius: '50%' }}
                     onClick={(e: React.MouseEvent<HTMLDivElement>) => {
                       e.preventDefault();
                       e.stopPropagation();

@@ -404,7 +404,7 @@ export function ExistingChat() {
         myMember.status === ChatMemberStatus.Left ||
         myMember.status === ChatMemberStatus.Kicked ? (
         <>
-          <Box p="sm" sx={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
+          <Box p="sm" style={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
             {isRefetching || isLoading ? (
               <Center h="100%">
                 <Loader />
@@ -413,7 +413,7 @@ export function ExistingChat() {
               <Stack style={{ overflowWrap: 'break-word' }} gap={12}>
                 {hasNextPage && (
                   <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
-                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                    <Center p="xl" style={{ height: 36 }} mt="md">
                       <Loader />
                     </Center>
                   </InViewLoader>
@@ -439,7 +439,7 @@ export function ExistingChat() {
                 <>
                   <Group p="xs" wrap="nowrap">
                     <Text size="xs">Replying:</Text>
-                    <Box sx={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                    <Box style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
                       {allChats.find((ac) => ac.id === replyId)?.content ?? ''}
                     </Box>
                     <ActionIcon onClick={() => setReplyId(undefined)} ml="auto">
@@ -702,7 +702,7 @@ function ChatInputBox({
         w={60}
         onClick={sendMessage}
         disabled={isSending || !chatMsg.length || isMuted}
-        sx={{ borderRadius: 0 }}
+        style={{ borderRadius: 0 }}
       >
         {isSending ? <Loader /> : <IconSend />}
       </ActionIcon>
@@ -843,7 +843,7 @@ function DisplayMessages({
                 className={clsx(classes.chatMessage)}
                 size="xs"
                 py={0}
-                sx={{
+                style={{
                   alignSelf: 'center',
                   border: '1px solid gray',
                 }}
@@ -897,7 +897,7 @@ function DisplayMessages({
                 >
                   <Menu withArrow position={isMe ? 'left-start' : 'right-start'}>
                     <Menu.Target>
-                      <ActionIcon sx={{ alignSelf: 'flex-start', display: 'none' }}>
+                      <ActionIcon style={{ alignSelf: 'flex-start', display: 'none' }}>
                         <IconDotsVertical />
                       </ActionIcon>
                     </Menu.Target>

@@ -241,7 +241,7 @@ export default function ImagesAsPostsInfinite({
               </Group>
             </Group>
             {showPOIWarning && (
-              <Text size="sm" color="dimmed" lh={1.1}>
+              <Text size="sm" c="dimmed" lh={1.1}>
                 This resource is intended to depict a real person. All images that use this resource
                 are scanned for mature themes and manually reviewed by a moderator in accordance
                 with our{' '}
@@ -260,7 +260,7 @@ export default function ImagesAsPostsInfinite({
               </Text>
             )}
             {hasModerationPreferences ? (
-              <Text size="xs" color="dimmed" mt="-md">
+              <Text size="xs" c="dimmed" mt="-md">
                 Some images have been hidden based on moderation preferences set by the creator,{' '}
                 <Link legacyBehavior href={`/images?modelVersionId=${selectedVersionId}`} passHref>
                   <Anchor span>view all images using this resource</Anchor>
@@ -325,7 +325,7 @@ export default function ImagesAsPostsInfinite({
                     loadCondition={!isFetching}
                     style={{ gridColumn: '1/-1' }}
                   >
-                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                    <Center p="xl" style={{ height: 36 }} mt="md">
                       <Loader />
                     </Center>
                   </InViewLoader>

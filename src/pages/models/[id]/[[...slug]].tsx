@@ -1013,7 +1013,7 @@ export default function ModelDetailsV2({
                   </Group>
                 </Group>
                 <Group gap={4}>
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     Updated: {formatDate(model.updatedAt)}
                   </Text>
                   {category && (
@@ -1242,7 +1242,7 @@ export default function ModelDetailsV2({
                   <ThemeIcon color="gray" size="xl" radius="xl">
                     <IconMessageCircleOff />
                   </ThemeIcon>
-                  <Text size="lg" color="dimmed">
+                  <Text size="lg" c="dimmed">
                     Discussion is turned off for this model.
                   </Text>
                 </Group>

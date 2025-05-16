@@ -54,7 +54,7 @@ export function AttachmentCard({ id, name, sizeKB, url }: Props) {
           <Text size="sm" lineClamp={1}>
             {name}
           </Text>
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             {formatKBytes(sizeKB)}
           </Text>
         </Stack>

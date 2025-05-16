@@ -91,7 +91,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
           <ThemeIcon color="gray" size="md" radius="xl">
             <IconPlaylistX size={20} />
           </ThemeIcon>
-          <Text color="dimmed">No collections found</Text>
+          <Text c="dimmed">No collections found</Text>
         </Group>
       )}
     </Skeleton>

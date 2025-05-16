@@ -17,7 +17,7 @@ export const AvailableBuzzBadge = () => {
       }}
     >
       <Group gap={4} wrap="nowrap">
-        <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
+        <Text size="xs" c="dimmed" transform="capitalize" weight={600}>
           Available Buzz
         </Text>
         <UserBuzz iconSize={16} textSize="sm" accountType="user" withTooltip />

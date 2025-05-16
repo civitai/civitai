@@ -106,7 +106,7 @@ export const CosmeticPreview = ({
             <Text weight="bold" align="center">
               Preview
             </Text>
-            <Text size="sm" color="dimmed" align="center">
+            <Text size="sm" c="dimmed" align="center">
               You can apply this cosmetic to any image, model, article or post you own.
             </Text>
           </Stack>
@@ -167,11 +167,11 @@ export default function CosmeticStoreProducts() {
       <Container size="lg">
         <Stack gap={0} mb="xl">
           <Title order={1}>Available Cosmetics</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You can view manage all available cosmetics here, and create new shop items from this
             page.
           </Text>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             The ability to create cosmetics from this &amo; grant it to users will be coming soon
             (TM).
           </Text>
@@ -216,7 +216,7 @@ export default function CosmeticStoreProducts() {
                       <td>
                         <Stack gap={0} maw={350}>
                           <Text>{cosmetic.name}</Text>
-                          <Text color="dimmed" size="sm">
+                          <Text c="dimmed" size="sm">
                             {cosmetic.description}
                           </Text>
                         </Stack>

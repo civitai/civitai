@@ -28,7 +28,7 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
             {activeComment && (
               <Stack gap="xl">
                 <Divider />
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Viewing thread for
                 </Text>
                 <Comment comment={activeComment} viewOnly />

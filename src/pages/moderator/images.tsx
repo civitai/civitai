@@ -175,7 +175,7 @@ export default function Images() {
             withBorder
             shadow="lg"
             p="xs"
-            sx={{
+            style={{
               display: 'inline-flex',
               float: 'right',
               alignSelf: 'flex-end',
@@ -199,7 +199,7 @@ export default function Images() {
                 value={type}
               />
             </Group>
-            <Text color="dimmed">
+            <Text c="dimmed">
               These are images that have been{' '}
               {viewingReported ? 'reported by users' : 'marked by our AI'} which needs further
               attention from the mods
@@ -227,7 +227,7 @@ export default function Images() {
                     <Text component="span" size="xs" weight={500}>
                       {tag.name}
                     </Text>{' '}
-                    <Text component="span" size="xs" color="dimmed" weight={500}>
+                    <Text component="span" size="xs" c="dimmed" weight={500}>
                       {tag.count}
                     </Text>
                   </Badge>
@@ -260,7 +260,7 @@ export default function Images() {
                   loadCondition={!isRefetching && hasNextPage}
                   style={{ gridColumn: '1/-1' }}
                 >
-                  <Center p="xl" sx={{ height: 36 }} mt="md">
+                  <Center p="xl" style={{ height: 36 }} mt="md">
                     <Loader />
                   </Center>
                 </InViewLoader>
@@ -308,7 +308,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
       })}
     >
       <>
-        <Card.Section sx={{ height: `${height}px` }} className="relative">
+        <Card.Section style={{ height: `${height}px` }} className="relative">
           {inView && (
             <>
               <Checkbox
@@ -388,7 +388,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           <Stack gap={8} p="xs" style={{ cursor: 'auto', color: 'initial' }}>
             <Group justify="space-between" wrap="nowrap">
               <Stack gap={2}>
-                <Text size="xs" color="dimmed" inline>
+                <Text size="xs" c="dimmed" inline>
                   Reported by
                 </Text>
                 <Group gap={4}>
@@ -405,7 +405,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 </Group>
               </Stack>
               <Stack gap={2} align="flex-end">
-                <Text size="xs" color="dimmed" inline>
+                <Text size="xs" c="dimmed" inline>
                   Reported for
                 </Text>
                 <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
@@ -445,7 +445,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 !includesInappropriate ? (
                   <></>
                 ) : (
-                  <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
+                  <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
                     <div className="text-sm lh-1.2" dangerouslySetInnerHTML={{ __html: html }} />
                   </Card.Section>
                 )
@@ -454,7 +454,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </Stack>
         )}
         {image.needsReview === 'poi' && !!image.names?.length && (
-          <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
+          <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
             <Group gap={4}>
               {image.names.map((name) => (
                 <Badge key={name} size="sm">
@@ -465,7 +465,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </Card.Section>
         )}
         {image.needsReview === 'tag' && !!image.tags && (
-          <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
+          <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
             <Group gap={4}>
               {image.tags
                 .filter((x) => x.nsfwLevel === NsfwLevel.Blocked)
@@ -482,7 +482,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
             <Stack gap={8} style={{ cursor: 'auto', color: 'initial' }}>
               <Group justify="space-between" wrap="nowrap">
                 <Stack gap={2}>
-                  <Text size="xs" color="dimmed" inline>
+                  <Text size="xs" c="dimmed" inline>
                     Appealed by
                   </Text>
                   <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
@@ -492,7 +492,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   </Link>
                 </Stack>
                 <Stack gap={2} align="flex-end">
-                  <Text size="xs" color="dimmed" inline>
+                  <Text size="xs" c="dimmed" inline>
                     Created at
                   </Text>
                   {image.appeal?.createdAt ? (
@@ -503,7 +503,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               {image.appeal?.moderator && (
                 <Group justify="space-between" wrap="nowrap">
                   <Stack gap={2}>
-                    <Text size="xs" color="dimmed" inline>
+                    <Text size="xs" c="dimmed" inline>
                       Moderated by
                     </Text>
                     <Text size="xs" lineClamp={1} inline>
@@ -511,7 +511,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     </Text>
                   </Stack>
                   <Stack gap={2} align="flex-end">
-                    <Text size="xs" color="dimmed" inline>
+                    <Text size="xs" c="dimmed" inline>
                       Removed at
                     </Text>
                     {image.removedAt ? <Text size="xs">{formatDate(image.removedAt)}</Text> : null}

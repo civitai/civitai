@@ -101,7 +101,7 @@ export function ModelCard({ data }: Props) {
                 variant="light"
                 radius="xl"
               >
-                <Text color="white" size="xs" transform="capitalize">
+                <Text c="white" size="xs" transform="capitalize">
                   POI
                 </Text>
               </Badge>
@@ -112,7 +112,7 @@ export function ModelCard({ data }: Props) {
                 variant="light"
                 radius="xl"
               >
-                <Text color="white" size="xs" transform="capitalize">
+                <Text c="white" size="xs" transform="capitalize">
                   Minor
                 </Text>
               </Badge>
@@ -123,7 +123,7 @@ export function ModelCard({ data }: Props) {
                 variant="light"
                 radius="xl"
               >
-                <Text color="white" size="xs" transform="capitalize">
+                <Text c="white" size="xs" transform="capitalize">
                   NSFW
                 </Text>
               </Badge>
@@ -156,7 +156,7 @@ export function ModelCard({ data }: Props) {
                     : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
                 }}
               >
-                <Text color="white" size="xs" transform="capitalize">
+                <Text c="white" size="xs" transform="capitalize">
                   {isEarlyAccess ? 'Early Access' : isUpdated ? 'Updated' : 'New'}
                 </Text>
               </Badge>
@@ -253,7 +253,7 @@ export function ModelCard({ data }: Props) {
                   title={`${Math.round(positiveRating * 100)}% of reviews are positive`}
                   classNames={{ label: 'gap-1' }}
                 >
-                  <Text color={hasReview ? 'success.5' : 'yellow'} component="span" mt={2}>
+                  <Text c={hasReview ? 'success.5' : 'yellow'} component="span" mt={2}>
                     <ThumbsUpIcon size={20} filled={hasReview} strokeWidth={2.5} />
                   </Text>
                   <Text fz={16} component="span" weight={500}>

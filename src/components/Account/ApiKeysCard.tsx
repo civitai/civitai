@@ -58,12 +58,12 @@ export function ApiKeysCard() {
               Add API key
             </Button>
           </Group>
-          <Text color="dimmed" size="sm">
+          <Text c="dimmed" size="sm">
             You can use API keys to interact with the site through the API as your user. These
             should not be shared with anyone.
           </Text>
         </Stack>
-        <Box mt="md" sx={{ position: 'relative' }}>
+        <Box mt="md" style={{ position: 'relative' }}>
           <LoadingOverlay visible={isLoading} />
           {apiKeys.length > 0 ? (
             <Table highlightOnHover withTableBorder>
@@ -95,11 +95,11 @@ export function ApiKeysCard() {
               </tbody>
             </Table>
           ) : (
-            <Paper radius="md" mt="lg" p="lg" sx={{ position: 'relative' }} withBorder>
+            <Paper radius="md" mt="lg" p="lg" style={{ position: 'relative' }} withBorder>
               <Center>
                 <Stack gap={2}>
                   <Text weight="bold">There are no API keys in your account</Text>
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     Start by creating your first API Key to connect your apps.
                   </Text>
                 </Stack>

@@ -46,7 +46,7 @@ export function ReactionPicker({ reactions, disabled = false, onSelect }: Reacti
             {session ? (
               <ReactionSelector />
             ) : (
-              <Text color="dimmed" size="xs" px="xs">
+              <Text c="dimmed" size="xs" px="xs">
                 You must be logged in to react
               </Text>
             )}

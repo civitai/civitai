@@ -97,7 +97,7 @@ export type CollectionSelectModalProps = {
 
 function HiddenNotice({ hiddenCount }: { hiddenCount: number }) {
   return (
-    <Text color="dimmed">
+    <Text c="dimmed">
       {hiddenCount} {hiddenCount > 1 ? 'collections have' : 'collection has'} been hidden due to
       your settings.
     </Text>
@@ -163,7 +163,7 @@ function ResourceHitList() {
       </div>
       {items.length > 0 && !isLastPage && (
         <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
-          <Center sx={{ height: 36 }} my="md">
+          <Center style={{ height: 36 }} my="md">
             <Loader />
           </Center>
         </InViewLoader>
@@ -226,7 +226,7 @@ function CollectionSelectCard({ data }: { data: SearchIndexDataMap['collections'
             <ImageSrcCover data={data} coverSrcs={coverSrcs} />
           ) : (
             <Center h="100%">
-              <Text color="dimmed">This collection has no images</Text>
+              <Text c="dimmed">This collection has no images</Text>
             </Center>
           )}
         </div>

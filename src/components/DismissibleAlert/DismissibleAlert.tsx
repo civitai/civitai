@@ -74,7 +74,7 @@ function AlertContentInner({
     >
       <Group gap="xs" wrap="nowrap" pr="xs">
         {emoji && (
-          <Text fz={36} p={0} sx={{ lineHeight: 1.2 }}>
+          <Text fz={36} p={0} style={{ lineHeight: 1.2 }}>
             {emoji}
           </Text>
         )}

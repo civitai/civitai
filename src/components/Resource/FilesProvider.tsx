@@ -159,7 +159,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       styles: { root: { alignItems: 'flex-start' } },
       message: (
         <Stack gap={4}>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Your version has been published and is now available to the public.
           </Text>
           <Link
@@ -227,7 +227,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           <Stack gap={4}>
             {isVersionPublished ? (
               <>
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   All files finished uploading.
                 </Text>
                 <Link
@@ -242,13 +242,13 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
               </>
             ) : hasPublishedPosts ? (
               <>
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   {`Your files have finished uploading, let's publish this version.`}
                 </Text>
                 <Text
                   variant="link"
                   size="sm"
-                  sx={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer' }}
                   onClick={() => {
                     hideNotification(notificationId);
 
@@ -271,7 +271,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
               </>
             ) : (
               <>
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Your files have finished uploading, but you still need to add a post.
                 </Text>
                 <Link

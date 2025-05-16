@@ -27,7 +27,7 @@ export function MatureContentSettings() {
           onChange={() => toggleBlurNsfw()}
           disabled={!showNsfw}
         >
-          <Text color={!showNsfw ? 'dimmed' : undefined}>
+          <Text c={!showNsfw ? 'dimmed' : undefined}>
             <Text weight={500}>Blur mature content</Text>
             <Text size="sm">Blur images and videos that are marked as mature</Text>
           </Text>

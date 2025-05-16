@@ -254,7 +254,7 @@ export const ModelSelect = ({
             *
           </Text>
         </Title>
-        <Text color="dimmed" size="sm">
+        <Text c="dimmed" size="sm">
           Not sure which one to choose? Read our{' '}
           <Anchor
             href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"

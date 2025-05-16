@@ -121,7 +121,7 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
             Buzz in this club will be transfered to your account, but will not be refunded to your
             members.
           </Text>
-          <Text color="red" weight="bold">
+          <Text c="red" weight="bold">
             This action is not reversible
           </Text>
         </Stack>

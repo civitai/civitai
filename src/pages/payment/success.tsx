@@ -46,7 +46,7 @@ export default function PaymentSuccess() {
             </Group>
           </Alert>
           <Center
-            sx={{
+            style={{
               // animation: `${jelloVerical} 2s 1s ease-in-out`,
               animationName: `enterFall, jelloVertical`,
               animationDuration: `1.5s, 2s`,
@@ -79,7 +79,7 @@ export default function PaymentSuccess() {
           </Group>
           <Text
             size="xs"
-            color="dimmed"
+            c="dimmed"
           >{`*Cosmetics and other perks should be delivered within 2-3 minutes, but you may need to refresh the site before you're able to see them in your profile.`}</Text>
         </Stack>
       </Container>

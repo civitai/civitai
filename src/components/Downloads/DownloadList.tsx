@@ -35,10 +35,10 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
             >
               <Text component="a" className="flex p-8 hover:bg-gray-1 dark:hover:bg-dark-4">
                 <Stack gap={0}>
-                  <Text size={textSize} weight={500} lineClamp={2} sx={{ lineHeight: 1 }}>
+                  <Text size={textSize} weight={500} lineClamp={2} style={{ lineHeight: 1 }}>
                     {download.modelVersion.model.name}: {download.modelVersion.name}
                   </Text>
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     <abbr title={downloadDate.format()}>{downloadDate.fromNow()}</abbr>
                   </Text>
                 </Stack>

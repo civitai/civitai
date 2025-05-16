@@ -106,7 +106,7 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
       <Card.Section withBorder inheritPadding py="xs">
         <Text weight={500}>Hidden Tags</Text>
       </Card.Section>
-      <Card.Section withBorder sx={{ marginTop: -1 }}>
+      <Card.Section withBorder style={{ marginTop: -1 }}>
         <Portal reuseTargetNode>
           <Autocomplete
             name="tag"
@@ -133,7 +133,7 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
               {hiddenTags.map((tag) => (
                 <Badge
                   key={tag.id}
-                  sx={{ paddingRight: 3 }}
+                  style={{ paddingRight: 3 }}
                   rightSection={
                     <ActionIcon
                       size="xs"
@@ -151,7 +151,7 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
               ))}
             </Group>
           )}
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             Content with these tags will not show up in your resource gallery page.
           </Text>
         </Stack>
@@ -184,7 +184,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
       <Card.Section withBorder inheritPadding py="xs">
         <Text weight={500}>Hidden Users</Text>
       </Card.Section>
-      <Card.Section withBorder sx={{ marginTop: -1 }}>
+      <Card.Section withBorder style={{ marginTop: -1 }}>
         <Autocomplete
           name="tag"
           ref={searchInputRef}
@@ -208,7 +208,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
               {gallerySettings.hiddenUsers.map((user) => (
                 <Badge
                   key={user.id}
-                  sx={{ paddingRight: 3 }}
+                  style={{ paddingRight: 3 }}
                   rightSection={
                     <ActionIcon
                       size="xs"
@@ -226,7 +226,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
               ))}
             </Group>
           )}
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             Content from these users will not show up in your resource gallery page.
           </Text>
         </Stack>
@@ -282,11 +282,11 @@ function BrowsingLevelsStacked({
                 <Text weight={700} w={50} ta="center">
                   {browsingLevelLabels[level]}
                 </Text>
-                <Text lh={1.2} size="sm" ta="left" sx={{ flex: '1 1' }}>
+                <Text lh={1.2} size="sm" ta="left" style={{ flex: '1 1' }}>
                   {browsingLevelDescriptions[level]}
                 </Text>
               </Group>
-              <Text color="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>
+              <Text c="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>
                 <IconCheck />
               </Text>
             </Group>

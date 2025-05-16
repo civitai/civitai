@@ -49,7 +49,7 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
           <Text weight={500}>Hidden Tags</Text>
         </Card.Section>
       )}
-      <Card.Section withBorder sx={{ marginTop: -1 }}>
+      <Card.Section withBorder style={{ marginTop: -1 }}>
         <Portal reuseTargetNode>
           <Autocomplete
             name="tag"
@@ -82,7 +82,7 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
             columnGutter={4}
             columnWidth={140}
           />
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             {`We'll hide content with these tags throughout the site.`}
           </Text>
         </Stack>
@@ -101,7 +101,7 @@ function TagBadge({ data, width }: { data: { id: number; name: string }; width: 
   return (
     <Badge
       key={data.id}
-      sx={{ paddingRight: 3 }}
+      style={{ paddingRight: 3 }}
       w={width}
       rightSection={
         <ActionIcon

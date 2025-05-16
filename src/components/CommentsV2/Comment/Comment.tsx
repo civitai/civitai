@@ -157,7 +157,7 @@ export function CommentContent({
               withUsername
               badge={badge ? <CommentBadge {...badge} /> : null}
             />
-            <Text color="dimmed" size="xs" mt={2}>
+            <Text c="dimmed" size="xs" mt={2}>
               <DaysFromNow date={comment.createdAt} />
             </Text>
             {comment.pinnedAt && (
@@ -296,7 +296,7 @@ export function CommentContent({
           <Divider
             label={
               <Group gap="xs" align="center">
-                <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onToggleReplies}>
+                <Text variant="link" style={{ cursor: 'pointer' }} onClick={onToggleReplies}>
                   Show {replyCount} More
                 </Text>
               </Group>

@@ -137,7 +137,7 @@ export const VaultStorageDowngrade = () => {
               </Text>{' '}
               stored on your Vault. After downgrading, your Vault will be frozen.
             </Text>
-            <Text color="dimmed" align="center">
+            <Text c="dimmed" align="center">
               You will have a 7 day grace period to download models from your Vault.
             </Text>
           </div>

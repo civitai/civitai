@@ -150,7 +150,7 @@ function AdWrapper({
                 component={NextLink}
                 td="underline"
                 href="/pricing"
-                color="dimmed"
+                c="dimmed"
                 size="xs"
                 align="center"
               >

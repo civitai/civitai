@@ -248,7 +248,7 @@ export function PurchasableRewardUpsertForm({
                     <Group gap={4}>
                       <Text inline>Archived</Text>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       This reward is not available anymore
                     </Text>
                   </Stack>

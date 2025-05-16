@@ -112,7 +112,7 @@ export function BountyCard({ data }: Props) {
                 variant="light"
                 radius="xl"
               >
-                <Text color="white" size="xs" transform="capitalize">
+                <Text c="white" size="xs" transform="capitalize">
                   {getDisplayName(type)}
                 </Text>
               </Badge>
@@ -140,7 +140,7 @@ export function BountyCard({ data }: Props) {
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
                   <div>
-                    <Text color="yellow" weight={590}>
+                    <Text c="yellow" weight={590}>
                       Pending scan
                     </Text>
                     <Text size="sm">

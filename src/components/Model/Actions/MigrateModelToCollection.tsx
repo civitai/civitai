@@ -59,7 +59,7 @@ export default function MigrateModelToCollection({ modelId }: { modelId: number 
             <Text size="md" weight={600}>
               Migrating...
             </Text>
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               This may take a few minutes. Please do not close this window.
             </Text>
           </div>

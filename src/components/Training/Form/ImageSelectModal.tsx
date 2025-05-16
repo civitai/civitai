@@ -316,7 +316,7 @@ export default function ImageSelectModal({
                   loadFn={fetchNextPage}
                   loadCondition={!isLoading && !isFetchingNext && hasNextPage}
                 >
-                  <Center p="xl" sx={{ height: 36 }} mt="md">
+                  <Center p="xl" style={{ height: 36 }} mt="md">
                     <Loader />
                   </Center>
                 </InViewLoader>

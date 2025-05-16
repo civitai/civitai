@@ -78,7 +78,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
               <Loader />
             </div>
           ) : nothingFound ? (
-            <Text align="center" className="p-2" color="dimmed">
+            <Text align="center" className="p-2" c="dimmed">
               Nothing found
             </Text>
           ) : (
@@ -91,7 +91,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
                         label={
                           <Text
                             component="li"
-                            color="dimmed"
+                            c="dimmed"
                             className="px-2 py-1 text-sm font-semibold"
                           >
                             {key}

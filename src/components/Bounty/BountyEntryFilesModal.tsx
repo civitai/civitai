@@ -101,7 +101,7 @@ function BountyEntryFiles({ bountyEntry }: Props) {
                             {file.name}
                           </Text>
                         )}
-                        <Text color="dimmed" size="xs">
+                        <Text c="dimmed" size="xs">
                           {formatKBytes(file.sizeKB)}
                         </Text>
                       </Stack>

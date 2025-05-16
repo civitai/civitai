@@ -6,7 +6,7 @@ export const HelpButton = forwardRef<HTMLButtonElement, Props>(
   ({ iconProps, tooltip, ...actionIconProps }, ref) => {
     const button = (
       <ActionIcon ref={ref} {...actionIconProps}>
-        <Text color="dimmed" inline>
+        <Text c="dimmed" inline>
           <IconHelpCircle {...iconProps} />
         </Text>
       </ActionIcon>

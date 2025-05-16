@@ -29,7 +29,7 @@ export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbs
           </Text>
         </div>
       </Tooltip>
-      <Text color="dimmed">({numberWithCommas(totalCount)})</Text>
+      <Text c="dimmed">({numberWithCommas(totalCount)})</Text>
     </Group>
   );
 }

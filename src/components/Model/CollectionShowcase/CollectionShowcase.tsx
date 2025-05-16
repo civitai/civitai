@@ -65,7 +65,7 @@ export function CollectionShowcase({ modelId, loading }: Props) {
           </>
         ) : (
           <div className="flex items-center justify-center p-2">
-            <Text color="dimmed">There are no items for this collection</Text>
+            <Text c="dimmed">There are no items for this collection</Text>
           </div>
         )}
       </ScrollArea.Autosize>
@@ -144,7 +144,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
           <Text size="sm" weight={500} lineClamp={1}>
             {name}
           </Text>
-          <Text size="xs" color="dimmed" weight={500} lineClamp={1}>
+          <Text size="xs" c="dimmed" weight={500} lineClamp={1}>
             {version.name}
           </Text>
         </div>

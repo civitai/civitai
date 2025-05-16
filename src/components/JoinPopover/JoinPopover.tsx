@@ -64,7 +64,7 @@ export function JoinPopover({
               {typeof message != 'string' ? (
                 message
               ) : (
-                <Text size="sm" weight={500} sx={{ flex: 1 }}>
+                <Text size="sm" weight={500} style={{ flex: 1 }}>
                   {message ?? 'You must be a Member to access this content.'}
                 </Text>
               )}

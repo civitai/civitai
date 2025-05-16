@@ -52,7 +52,7 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
         onTabChange={handleTabChange}
         {...tabsProps}
       >
-        <Tabs.List sx={{ flexWrap: 'nowrap' }}>
+        <Tabs.List style={{ flexWrap: 'nowrap' }}>
           {allTabs.map((tab) => {
             const countValue = count[tab.toLowerCase() as keyof typeof count];
 

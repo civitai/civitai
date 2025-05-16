@@ -299,7 +299,7 @@ function CollectionListForm({
                   </Stack>
                 ) : (
                   <Center py="xl">
-                    <Text color="dimmed">{`You don't have any ${
+                    <Text c="dimmed">{`You don't have any ${
                       props.type?.toLowerCase() || ''
                     } collections yet.`}</Text>
                   </Center>
@@ -556,7 +556,7 @@ function NewCollectionForm({
                     leftSection={<IconCalendar size={16} />}
                     clearable
                   />
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     This is only used to stop recurring job updating the random indexes. We suggest
                     you add this in to save some resources, but this value will not be shown to
                     end-users.
@@ -585,7 +585,7 @@ const SelectItem = forwardRef<HTMLDivElement, PrivacyData>(
           <Icon size={18} />
           <div>
             <Text size="sm">{label}</Text>
-            <Text size="xs" sx={{ opacity: 0.7 }}>
+            <Text size="xs" style={{ opacity: 0.7 }}>
               {description}
             </Text>
           </div>

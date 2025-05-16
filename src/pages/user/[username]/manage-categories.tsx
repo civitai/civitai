@@ -233,11 +233,11 @@ export default function ManageCategories({
                           <Menu.Dropdown>
                             {loadingCategories ? (
                               <Center p="xs">
-                                <Text color="dimmed">Loading...</Text>
+                                <Text c="dimmed">Loading...</Text>
                               </Center>
                             ) : selection.length === 0 ? (
                               <Center p="xs">
-                                <Text color="dimmed">You must select at least one model</Text>
+                                <Text c="dimmed">You must select at least one model</Text>
                               </Center>
                             ) : (
                               categories

@@ -87,7 +87,7 @@ const DonationGoalItem = ({
     >
       <Stack gap="xs">
         {donationGoal.isEarlyAccess && progress < 100 && modelVersionIsEarlyAccess && (
-          <Text color="yellow" size="xs" weight={500}>
+          <Text c="yellow" size="xs" weight={500}>
             The creator of this {resourceLabel} has set a donation goal! You can donate to make this
             resource available to everyone before the end of Early Access.
           </Text>
@@ -100,7 +100,7 @@ const DonationGoalItem = ({
             <CurrencyIcon currency={Currency.BUZZ} size={16} />
             <Text
               size="xs"
-              sx={{
+              style={{
                 whiteSpace: 'nowrap',
               }}
             >

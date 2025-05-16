@@ -147,7 +147,7 @@ const RewardDetailsModal = ({
                   <ThemeIcon color="teal" radius="xl" size="sm">
                     <IconCheck size={14} />
                   </ThemeIcon>
-                  <Text color="teal" size="sm" weight="bold">
+                  <Text c="teal" size="sm" weight="bold">
                     Purchased
                   </Text>
                 </Group>
@@ -165,7 +165,7 @@ const RewardDetailsModal = ({
                   <ThemeIcon color="red" radius="xl" size="sm">
                     <IconCircleCheckFilled size={14} />
                   </ThemeIcon>
-                  <Text color="red" size="sm" weight="bold">
+                  <Text c="red" size="sm" weight="bold">
                     Not available
                   </Text>
                 </Group>
@@ -277,7 +277,7 @@ const PurchasableRewardListItem = ({
         )}
         <Stack style={{ flex: 1 }} gap={0}>
           <Group wrap="nowrap" justify="space-between">
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Added on {formatDate(purchasableReward.createdAt)}
             </Text>
             {isPurchased ? (
@@ -290,13 +290,13 @@ const PurchasableRewardListItem = ({
           </Group>
           <Text size="xl">{purchasableReward.title}</Text>
           {purchasableReward.availableCount && (
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               {purchasableReward.availableCount - purchasableReward._count.purchases} out of{' '}
               {purchasableReward.availableCount} available
             </Text>
           )}
           {purchasableReward.availableFrom && purchasableReward.availableTo && (
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Available from {formatDate(purchasableReward.availableFrom)} to{' '}
               {formatDate(purchasableReward.availableTo)}
             </Text>
@@ -366,20 +366,20 @@ const PurchasableRewardCard = ({
             </ImageCSSAspectRatioWrap>
           )}
           <Stack gap={0}>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Added on {formatDate(purchasableReward.createdAt)}
             </Text>
             <Text size="xl">{purchasableReward.title}</Text>
           </Stack>
           <Stack gap={0}>
             {purchasableReward.availableCount && (
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 {purchasableReward.availableCount - purchasableReward._count.purchases} out of{' '}
                 {purchasableReward.availableCount} available
               </Text>
             )}
             {purchasableReward.availableFrom && purchasableReward.availableTo && (
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 Available from {formatDate(purchasableReward.availableFrom)} to{' '}
                 {formatDate(purchasableReward.availableTo)}
               </Text>

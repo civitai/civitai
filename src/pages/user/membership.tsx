@@ -258,7 +258,7 @@ export default function UserMembership() {
                             <Text component="span" className={styles.price}>
                               {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                             </Text>{' '}
-                            <Text component="span" color="dimmed" size="sm">
+                            <Text component="span" c="dimmed" size="sm">
                               {price.currency.toUpperCase() +
                                 '/' +
                                 shortenPlanInterval(price.interval)}
@@ -315,7 +315,7 @@ export default function UserMembership() {
                     </Stack>
                   </Group>
                   {subscription.cancelAt && (
-                    <Text color="red">
+                    <Text c="red">
                       Your membership will be canceled on{' '}
                       {new Date(subscription.cancelAt).toLocaleDateString()}. You will lose your
                       benefits on that date.

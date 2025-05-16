@@ -80,7 +80,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
               <Popover.Target>
                 <Box
                   display="inline-block"
-                  sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                  style={{ lineHeight: 0.3, cursor: 'pointer' }}
                   color="white"
                 >
                   <IconInfoCircle size={20} />
@@ -159,7 +159,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
               size="md"
               color="gray"
               p={4}
-              sx={{ position: 'absolute', top: '50%', left: 10 }}
+              style={{ position: 'absolute', top: '50%', left: 10 }}
               onClick={() => scroll('left')}
             >
               <IconChevronLeft />
@@ -170,7 +170,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
               size="md"
               color="gray"
               p={4}
-              sx={{ position: 'absolute', top: '50%', right: 10 }}
+              style={{ position: 'absolute', top: '50%', right: 10 }}
               onClick={() => scroll('right')}
             >
               <IconChevronRight />

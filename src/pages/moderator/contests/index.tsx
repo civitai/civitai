@@ -44,7 +44,7 @@ export default function Contests() {
       <Container size="md">
         <Stack gap={0} mb="xl">
           <Title order={1}>Contests</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Manage our contests &amp; banned users{' '}
           </Text>
         </Stack>

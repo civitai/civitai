@@ -47,7 +47,7 @@ export function ExplainHiddenImages({
     <Stack gap="sm" align="center">
       {showHiddenBrowsingLevels && (
         <Stack gap={4}>
-          <Text size="sm" color="dimmed" ta="center">
+          <Text size="sm" c="dimmed" ta="center">
             Hidden by your browsing level:
           </Text>
           <Group gap="xs" justify="center">
@@ -75,7 +75,7 @@ export function ExplainHiddenImages({
       )}
       {!showHiddenBrowsingLevels && currentUser && totalHiddenByTags > 0 && (
         <Stack gap={4}>
-          <Text size="sm" color="dimmed" ta="center">
+          <Text size="sm" c="dimmed" ta="center">
             Hidden by your tag preferences:
           </Text>
           <Group gap="xs" justify="center">

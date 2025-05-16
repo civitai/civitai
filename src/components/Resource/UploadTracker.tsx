@@ -70,7 +70,7 @@ export function UploadTracker() {
                   size="sm"
                   weight={500}
                   lineClamp={1}
-                  sx={{ flex: 1, display: 'inline-block' }}
+                  style={{ flex: 1, display: 'inline-block' }}
                 >
                   {name}
                 </Text>
@@ -93,8 +93,8 @@ export function UploadTracker() {
                   </Progress.Section>
                 </Progress.Root>
                 <Group justify="space-between" wrap="nowrap">
-                  <Text color="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
-                  <Text color="dimmed" size="xs">{`${formatSeconds(
+                  <Text c="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
+                  <Text c="dimmed" size="xs">{`${formatSeconds(
                     timeRemaining
                   )} remaining`}</Text>
                 </Group>

@@ -399,7 +399,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               <ContainerGrid gutter="xs">
                 <ContainerGrid.Col xs={12} sm={6}>
                   <Stack gap="xs">
-                    <Text size="md" weight={500} sx={{ lineHeight: 1.2 }} mb="xs">
+                    <Text size="md" weight={500} style={{ lineHeight: 1.2 }} mb="xs">
                       {`When using this model, I give permission for users to:`}
                     </Text>
                     <InputCheckbox name="allowNoCredit" label="Use without crediting me" />
@@ -410,7 +410,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                         label="Use different permissions on merges"
                       />
                     )}
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       Learn more about how licensing works by reading our{' '}
                       <Anchor
                         href="https://education.civitai.com/guide-to-licensing-options-on-civitai/ "
@@ -427,7 +427,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   <Stack gap="xs">
                     <Stack gap={4}>
                       <Group gap={4} wrap="nowrap">
-                        <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
+                        <Text size="md" weight={500} style={{ lineHeight: 1.2 }}>
                           Commercial Use
                         </Text>
                         <InfoPopover size="xs" iconProps={{ size: 14 }}>
@@ -437,7 +437,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                           </Text>
                         </InfoPopover>
                       </Group>
-                      <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                      <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
                         Select all permissions you would like to apply to your model.
                       </Text>
                     </Stack>
@@ -558,12 +558,12 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                     <ThemeIcon color="red">
                       <IconExclamationMark />
                     </ThemeIcon>
-                    <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                    <Text size="xs" style={{ lineHeight: 1.2 }}>
                       Mature content depicting actual people is not permitted.
                     </Text>
                   </Group>
                 </Alert>
-                <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
                   Please revise the content of this listing to ensure no actual person is depicted
                   in an mature context out of respect for the individual.
                 </Text>
@@ -576,13 +576,13 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                     <ThemeIcon color="red">
                       <IconExclamationMark />
                     </ThemeIcon>
-                    <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                    <Text size="xs" style={{ lineHeight: 1.2 }}>
                       This resource is intended to produce mature themes and cannot be used for NSFW
                       generation. These options are mutually exclusive.
                     </Text>
                   </Group>
                 </Alert>
-                <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
                   Please revise the content of this listing.
                 </Text>
               </>

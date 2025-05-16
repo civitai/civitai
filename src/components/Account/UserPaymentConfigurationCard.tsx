@@ -163,7 +163,7 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
     case StripeConnectStatus.Rejected:
       return (
         <Stack>
-          <Text color="red" weight="bold">
+          <Text c="red" weight="bold">
             Looks like you can&rsquo;t receive payments
           </Text>
           <Text>

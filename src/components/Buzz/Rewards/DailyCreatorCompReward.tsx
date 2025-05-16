@@ -312,7 +312,7 @@ export function DailyCreatorCompReward() {
                                 <Text size="sm" weight="bold" lineClamp={1}>
                                   {version.modelName}
                                 </Text>
-                                <Text size="xs" color="dimmed" lineClamp={1}>
+                                <Text size="xs" c="dimmed" lineClamp={1}>
                                   {version.name}
                                 </Text>
                               </Stack>
@@ -356,7 +356,7 @@ export function DailyCreatorCompReward() {
 function NoData({ message }: { message?: string }) {
   return (
     <Center>
-      <Text color="dimmed">
+      <Text c="dimmed">
         {message ?? 'Looks like we are still collecting data. Check back later.'}
       </Text>
     </Center>

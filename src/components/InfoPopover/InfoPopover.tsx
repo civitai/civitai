@@ -41,7 +41,7 @@ export const InfoPopover = forwardRef<HTMLButtonElement, Props>(
               ['cursor-help']: !!hideClick,
             })}
           >
-            <Text color="dimmed" inline>
+            <Text c="dimmed" inline>
               <Icon {...iconProps} />
             </Text>
           </ActionIcon>

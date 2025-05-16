@@ -42,7 +42,7 @@ const { openModal, Modal } = createContextModal<{
                     Beta
                   </Badge>
                 </Group>
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Use Civitai AI to recommended resources related to your creation
                 </Text>
               </Stack>

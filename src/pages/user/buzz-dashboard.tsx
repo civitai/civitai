@@ -181,7 +181,7 @@ export default function UserBuzzDashboard() {
                         {reward.cap && (
                           <Group gap={4}>
                             <CurrencyIcon size={14} type={reward.accountType} />
-                            <Text color="dimmed" size="xs">
+                            <Text c="dimmed" size="xs">
                               {hasAwarded
                                 ? `${reward.awarded} / ${reward.cap.toLocaleString()} `
                                 : `${reward.cap.toLocaleString()} `}

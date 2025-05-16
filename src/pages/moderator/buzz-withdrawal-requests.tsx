@@ -271,7 +271,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
     <Container size="lg">
       <Stack gap={0} mb="xl">
         <Title order={1}>User Buzz Withdrawal Requests</Title>
-        <Text size="sm" color="dimmed">
+        <Text size="sm" c="dimmed">
           Review and approve or decline user withdrawal requests. You can also view a
           request&rsquo;s details and history as well as the user&rsquo;s account details.
         </Text>

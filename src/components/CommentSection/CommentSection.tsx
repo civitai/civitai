@@ -108,7 +108,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
           <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
           <Form form={form} onSubmit={handleSubmitComment} style={{ flex: '1 1 0' }}>
             <Stack gap="xs">
-              <Box sx={{ position: 'relative' }}>
+              <Box style={{ position: 'relative' }}>
                 {!currentUser ? (
                   <Overlay color={rgba(theme.colors.gray[9], 0.6)} opacity={1} zIndex={5}>
                     <Stack align="center" justify="center" gap={2} style={{ height: '100%' }}>

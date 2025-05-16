@@ -465,7 +465,7 @@ const { openModal, Modal } = createContextModal({
                     </Group>
                   </InputChipGroup>
                   {(creatorCardStatsPreferences?.length ?? 0) > creatorCardMaxStats && (
-                    <Text color="red" size="xs">
+                    <Text c="red" size="xs">
                       A maximum of {creatorCardMaxStats} stats can be displayed
                     </Text>
                   )}
@@ -513,7 +513,7 @@ const { openModal, Modal } = createContextModal({
                       <Popover.Target>
                         <Box
                           display="inline-block"
-                          sx={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
+                          style={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
                         >
                           <IconInfoCircle size={16} />
                         </Box>

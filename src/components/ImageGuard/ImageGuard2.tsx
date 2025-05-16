@@ -342,7 +342,7 @@ function toggleShow({
       component: ConfirmDialog,
       props: {
         message: (
-          <Text size="sm" weight={500} sx={{ flex: 1 }}>
+          <Text size="sm" weight={500} style={{ flex: 1 }}>
             Login now to continue viewing mature content and unblur everything.
           </Text>
         ),

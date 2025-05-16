@@ -205,7 +205,7 @@ export function QueueItem({
                 />
               )}
 
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 {formatDateMin(request.createdAt)}
               </Text>
               {!!actualCost &&
@@ -264,7 +264,7 @@ export function QueueItem({
 
             {prompt && (
               <ContentClamp maxHeight={36} labelSize="xs">
-                <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
+                <Text lh={1.3} style={{ wordBreak: 'break-all' }}>
                   {prompt}
                 </Text>
               </ContentClamp>
@@ -315,7 +315,7 @@ export function QueueItem({
                       ) : (
                         <>
                           <Loader size={24} />
-                          <Text color="dimmed" size="xs" align="center">
+                          <Text c="dimmed" size="xs" align="center">
                             Generating
                           </Text>
                         </>
@@ -326,23 +326,23 @@ export function QueueItem({
                     (queuePosition ? (
                       <>
                         {queuePosition.support === 'unavailable' && (
-                          <Text color="dimmed" size="xs" align="center">
+                          <Text c="dimmed" size="xs" align="center">
                             Currently unavailable
                           </Text>
                         )}
                         {!!queuePosition.precedingJobs && (
-                          <Text color="dimmed" size="xs" align="center">
+                          <Text c="dimmed" size="xs" align="center">
                             Your position in queue: {queuePosition.precedingJobs}
                           </Text>
                         )}
                         {queuePosition.startAt && (
-                          <Text size="xs" color="dimmed">
+                          <Text size="xs" c="dimmed">
                             Estimated start time: {formatDateMin(new Date(queuePosition.startAt))}
                           </Text>
                         )}
                       </>
                     ) : (
-                      <Text color="dimmed" size="xs" align="center">
+                      <Text c="dimmed" size="xs" align="center">
                         Pending
                       </Text>
                     ))}
@@ -379,7 +379,7 @@ const ResourceBadge = (props: GenerationResource) => {
       <Badge
         size="sm"
         color={unstable ? 'yellow' : undefined}
-        sx={{
+        style={{
           maxWidth: 200,
           cursor: 'pointer',
           borderTopRightRadius: hasEpochDetails ? 0 : undefined,
@@ -396,7 +396,7 @@ const ResourceBadge = (props: GenerationResource) => {
           <Badge
             size="sm"
             color={unstable ? 'yellow' : undefined}
-            sx={{
+            style={{
               borderTopLeftRadius: hasEpochDetails ? 0 : undefined,
               borderBottomLeftRadius: hasEpochDetails ? 0 : undefined,
             }}
@@ -425,7 +425,7 @@ const ProgressIndicator = ({
       thickness={8}
       sections={[{ value, color }]}
       label={
-        <Text color="blue" weight={700} align="center">
+        <Text c="blue" weight={700} align="center">
           {value.toFixed(0)}%
         </Text>
       }

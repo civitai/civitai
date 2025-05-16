@@ -18,7 +18,7 @@ export function SectionCard({
               </Title>
             )}
             {subtitle && (
-              <Text color="dimmed" size="xl" align={headerAlign}>
+              <Text c="dimmed" size="xl" align={headerAlign}>
                 {subtitle}
               </Text>
             )}

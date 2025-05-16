@@ -184,7 +184,7 @@ export function Setup() {
                   <EdgeMedia src={judge.avatar} width={48} />
                   <Stack gap={0}>
                     <Text weight={500}>{judge.name}</Text>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       {judge.shortDescription}
                     </Text>
                   </Stack>

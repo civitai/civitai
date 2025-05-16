@@ -95,17 +95,17 @@ export function MediaDropzone({
               {label ?? 'Drag images here or click to select files'}
             </Text>
             {description}
-            <Text size="sm" color="dimmed" mt={7} inline>
+            <Text size="sm" c="dimmed" mt={7} inline>
               {settings?.maxItems
                 ? `Attach up to ${settings?.maxItems} files`
                 : 'Attach as many files as you like'}
             </Text>
 
-            {/* <Text size="sm" color="dimmed" inline>
+            {/* <Text size="sm" c="dimmed" inline>
               {`Images cannot exceed ${formatBytes(maxSize)} `}
             </Text> */}
             {allowsVideo && (
-              <Text size="sm" color="dimmed" align="center" inline>
+              <Text size="sm" c="dimmed" align="center" inline>
                 {`Videos cannot exceed ${formatBytes(
                   maxVideoSize
                 )}, 4K resolution, or ${durationLabel} in duration`}

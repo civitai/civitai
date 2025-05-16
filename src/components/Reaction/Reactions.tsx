@@ -280,7 +280,7 @@ function ReactionBadge({
       classNames={{ label: 'flex gap-1' }}
       {...buttonStyling?.(reaction, hasReacted)}
     >
-      <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
+      <Text style={{ fontSize: '1.2em', lineHeight: 1.1 }}>
         {constants.availableReactions[reaction]}
       </Text>{' '}
       {!hideReactionCount && count}

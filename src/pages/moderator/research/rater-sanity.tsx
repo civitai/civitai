@@ -93,7 +93,7 @@ export default function RaterSanity() {
               shadow="lg"
               p={0}
               pr="xs"
-              sx={{
+              style={{
                 display: 'inline-flex',
                 float: 'right',
                 alignSelf: 'flex-end',
@@ -180,7 +180,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
       onClick={() => toggleSelected(image.id)}
     >
       <>
-        <Card.Section sx={{ height: `${height}px` }}>
+        <Card.Section style={{ height: `${height}px` }}>
           {inView && (
             <>
               <Checkbox

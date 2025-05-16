@@ -240,7 +240,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
 
                 {!isLoadingReport && !report.length && (
                   <Center>
-                    <Text color="dimmed" mt="md">
+                    <Text c="dimmed" mt="md">
                       We found no data on the provided timeframe.
                     </Text>
                   </Center>
@@ -256,7 +256,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                       datasets,
                     }}
                   />
-                  <Text color="yellow.7" size="xs">
+                  <Text c="yellow.7" size="xs">
                     All times are UTC
                   </Text>
                 </>
@@ -308,14 +308,14 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                                 <>{getDisplayName(TransactionType[transaction.type])}</>
                               )}
                             </Text>
-                            <Text size="xs" color="dimmed">
+                            <Text size="xs" c="dimmed">
                               <DaysFromNow date={date} />
                             </Text>
                           </Stack>
-                          <Text color={isDebit ? 'red' : 'green'}>
+                          <Text c={isDebit ? 'red' : 'green'}>
                             <Group gap={2} wrap="nowrap">
                               <IconBolt size={16} fill="currentColor" />
-                              <Text size="lg" sx={{ fontVariantNumeric: 'tabular-nums' }} span>
+                              <Text size="lg" style={{ fontVariantNumeric: 'tabular-nums' }} span>
                                 {amount.toLocaleString()}
                               </Text>
                             </Group>
@@ -331,7 +331,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                 <Loader />
               </Center>
             ) : (
-              <Text color="dimmed" mt="md">
+              <Text c="dimmed" mt="md">
                 No transactions yet.
               </Text>
             )}

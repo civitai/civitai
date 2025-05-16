@@ -88,14 +88,14 @@ export const MentionList = forwardRef<MentionListRef, Props>((props, ref) => {
           <Center p="sm">
             <Group gap="sm" wrap="nowrap">
               <Loader size="sm" />
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 Fetching...
               </Text>
             </Group>
           </Center>
         ) : items.length === 0 ? (
           <Center p="sm">
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               No results
             </Text>
           </Center>

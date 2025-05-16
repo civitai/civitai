@@ -149,7 +149,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
                   />
                   {hasNextPage && (
                     <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-                      <Center p="xl" sx={{ height: 36 }} mt="md">
+                      <Center p="xl" style={{ height: 36 }} mt="md">
                         <Loader />
                       </Center>
                     </InViewLoader>

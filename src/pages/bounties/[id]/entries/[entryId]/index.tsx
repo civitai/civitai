@@ -180,7 +180,7 @@ export default function BountyEntryDetailsPage({
 
   const navigateBackSection = (
     <div className="flex items-center justify-between">
-      <Text size="xs" color="dimmed">
+      <Text size="xs" c="dimmed">
         Entry added on {formatDate(bountyEntry.createdAt)} by
       </Text>
       <NavigateBack url={`/bounties/${bounty.id}`}>
@@ -255,7 +255,7 @@ export default function BountyEntryDetailsPage({
               children: (
                 <Stack>
                   <Text size="sm">Are you sure you want to delete this entry?</Text>
-                  <Text color="red.4" size="sm">
+                  <Text c="red.4" size="sm">
                     This action is not reversible. If you still want to participate in the hunt, you
                     will have to create a new submission.
                   </Text>
@@ -410,7 +410,7 @@ export default function BountyEntryDetailsPage({
                                     {file.name}
                                   </Text>
                                 )}
-                                <Text color="dimmed" size="xs">
+                                <Text c="dimmed" size="xs">
                                   {formatKBytes(file.sizeKB)}
                                 </Text>
                               </Stack>
@@ -439,7 +439,7 @@ export default function BountyEntryDetailsPage({
               </ScrollArea.Autosize>
             ) : (
               <Center p="xl">
-                <Text size="md" color="dimmed">
+                <Text size="md" c="dimmed">
                   No files were provided for this bounty
                 </Text>
               </Center>

@@ -54,7 +54,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
             {user ? (
               user?.id !== -1 && (
                 <UnstyledButton
-                  sx={{ color: isAwarded ? theme.colors.dark[7] : 'white' }}
+                  style={{ color: isAwarded ? theme.colors.dark[7] : 'white' }}
                   onClick={(e: React.MouseEvent) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -67,7 +67,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                     avatarProps={{ radius: 'xl', size: 32 }}
                     withUsername
                     subText={
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         <DaysFromNow date={data.createdAt} />
                       </Text>
                     }

@@ -36,7 +36,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
         p={0}
         shadow="sm"
         withBorder
-        sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         {...props}
       >
         <ArticleContextMenu
@@ -57,7 +57,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
                   <ImageGuard2.BlurToggle />
                   <Badge
                     size="sm"
-                    sx={{
+                    style={{
                       background: 'rgb(30 133 230 / 40%)',
                       color: 'white',
                       // backdropFilter: 'blur(7px)',
@@ -106,7 +106,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
                   e.stopPropagation();
                   router.push(`/user/${data.user.username}`);
                 }}
-                sx={{ borderRadius: '50%' }}
+                style={{ borderRadius: '50%' }}
                 ml="auto"
                 mr="xs"
               >

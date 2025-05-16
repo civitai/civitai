@@ -16,7 +16,7 @@ export const ReadOnlyNotice = () => {
         </Button>
       </Popover.Target>
       <Popover.Dropdown>
-        <Text color="yellow">We&rsquo;re in Read-only Mode</Text>
+        <Text c="yellow">We&rsquo;re in Read-only Mode</Text>
         <Text size="xs">
           Things like publishing, comments, and submitting bounties are currently disabled.
         </Text>

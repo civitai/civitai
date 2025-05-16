@@ -189,7 +189,7 @@ export function QueueSnackbar() {
               </div>
             </Text>
             <Button size="compact-md" color="dark" radius="xl" component={Link} href="/pricing">
-              <Text color="yellow">Increase</Text>
+              <Text c="yellow">Increase</Text>
             </Button>
           </div>
         </Badge>

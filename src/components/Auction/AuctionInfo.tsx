@@ -225,7 +225,7 @@ export const AuctionTopSection = ({
         )}
         <HoverCard withArrow width={380}>
           <HoverCard.Target>
-            <Text color="dimmed">
+            <Text c="dimmed">
               <IconMoodSmile />
             </Text>
           </HoverCard.Target>
@@ -452,7 +452,7 @@ export const AuctionInfo = () => {
         <Stack>
           <Title order={3}>{auctionData?.auctionBase?.name ?? 'Loading...'}</Title>
           {!!auctionData?.auctionBase?.description && (
-            <Text size="md" color="dimmed" fs="italic">
+            <Text size="md" c="dimmed" fs="italic">
               {auctionData.auctionBase.description}
             </Text>
           )}

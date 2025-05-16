@@ -222,7 +222,7 @@ export function UserAvatar({
                 radius={radius || 'xl'}
                 size={avatarSize ?? size}
                 imageProps={{ loading: 'lazy' }}
-                sx={{ backgroundColor: avatarBgColor }}
+                style={{ backgroundColor: avatarBgColor }}
                 {...avatarProps}
               >
                 {avatarUser.username && !userDeleted ? getInitials(avatarUser.username) : null}
@@ -248,7 +248,7 @@ export function UserAvatar({
             </UserProfileLink>
           )}
           {subText && (typeof subText === 'string' || subTextForce) ? (
-            <Text size={subTextSize} color="dimmed" my={-2} lineClamp={1}>
+            <Text size={subTextSize} c="dimmed" my={-2} lineClamp={1}>
               {subText}
             </Text>
           ) : (

@@ -185,7 +185,7 @@ export default function Leaderboard() {
             </Box>
           </ContainerGrid.Col>
 
-          <ContainerGrid.Col xs={12} sm={8} display="flex" sx={{ justifyContent: 'center' }}>
+          <ContainerGrid.Col xs={12} sm={8} display="flex" style={{ justifyContent: 'center' }}>
             <Stack gap={0} maw={600} w="100%">
               <Group gap={8} wrap="nowrap">
                 <Title className={classes.title}>{selectedLeaderboard?.title}</Title>
@@ -201,7 +201,7 @@ export default function Leaderboard() {
               </Group>
               {hasLegends && <LegendsToggle className={classes.legendsToggle} />}
               <Group gap={5}>
-                <Text className={classes.slogan} color="dimmed" size="lg">
+                <Text className={classes.slogan} c="dimmed" size="lg">
                   {selectedLeaderboard?.description}
                 </Text>
                 <Popover withArrow>
@@ -217,7 +217,7 @@ export default function Leaderboard() {
                         <Code block color="blue">
                           {selectedLeaderboard?.scoringDescription}
                         </Code>
-                        <Text color="dimmed" size="xs">
+                        <Text c="dimmed" size="xs">
                           Only the last 30 days are considered
                         </Text>
                       </Stack>
@@ -232,7 +232,7 @@ Gold - Top 3: ${constants.leaderboard.legendScoring.gold * 100} points per day
 Silver - Top 10: ${constants.leaderboard.legendScoring.silver * 100} points per day
 Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per day`}
                         </Code>
-                        <Text color="dimmed" size="xs">
+                        <Text c="dimmed" size="xs">
                           The entire history of the leaderboard is considered
                         </Text>
                       </Stack>
@@ -248,7 +248,7 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
                   </Text>
                 </Alert>
               ) : (
-                <Text color="dimmed" size="xs" mb="lg">
+                <Text c="dimmed" size="xs" mb="lg">
                   As of{' '}
                   {leaderboardResults[0]
                     ? dayjs(leaderboardResults[0].date).format('MMMM D, YYYY h:mma')

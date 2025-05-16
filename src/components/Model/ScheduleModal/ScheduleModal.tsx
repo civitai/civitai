@@ -33,7 +33,7 @@ export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
   return (
     <Modal opened={opened} onClose={onClose} title="Schedule your model" size="md" centered>
       <Stack gap="md">
-        <Text size="sm" color="dimmed">
+        <Text size="sm" c="dimmed">
           Select the date and time you want to publish this model.
         </Text>
         <Form form={form} onSubmit={handleSubmit}>
@@ -50,7 +50,7 @@ export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
                 />
                 <InputTime name="time" label="Publish Time" withAsterisk />
               </Group>
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 The date and time are in your local timezone.
               </Text>
             </Stack>

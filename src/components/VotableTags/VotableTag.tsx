@@ -173,7 +173,7 @@ export function VotableTag({
     <Badge
       radius="sm"
       key={tagId}
-      sx={{
+      style={{
         position: 'relative',
         background: badgeBg,
         borderColor: badgeBorder,
@@ -274,7 +274,7 @@ export function VotableTag({
       <HoverCard withArrow width={300} shadow="md" openDelay={500}>
         <HoverCard.Target>{badge}</HoverCard.Target>
         <HoverCard.Dropdown>
-          <Text color="yellow" weight={500}>
+          <Text c="yellow" weight={500}>
             Up for consideration
           </Text>
           <Text size="sm">
@@ -294,7 +294,7 @@ export function VotableTag({
             }
             mt="sm"
           />
-          <Text weight={500} size="sm" color="dimmed">
+          <Text weight={500} size="sm" c="dimmed">
             <Countdown endTime={votingEnds} />
           </Text>
         </HoverCard.Dropdown>

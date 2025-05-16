@@ -73,7 +73,7 @@ export function ClubCard({ data }: Props) {
                       <MediaHash {...coverImage} />
                     )
                   ) : (
-                    <Text color="dimmed">This club has no cover image</Text>
+                    <Text c="dimmed">This club has no cover image</Text>
                   )}
                 </>
               )}
@@ -87,7 +87,7 @@ export function ClubCard({ data }: Props) {
           {user ? (
             user?.id !== -1 && (
               <UnstyledButton
-                sx={{ color: 'white', alignSelf: 'flex-start' }}
+                style={{ color: 'white', alignSelf: 'flex-start' }}
                 onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -116,7 +116,7 @@ export function ClubCard({ data }: Props) {
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
                   <Stack gap={0}>
-                    <Text color="yellow" weight={590}>
+                    <Text c="yellow" weight={590}>
                       Pending scan
                     </Text>
                     <Text size="sm">

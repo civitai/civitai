@@ -626,7 +626,7 @@ export function Collection({
                         {submissionPeriod}
                       </Group>
                       {collection?.description && (
-                        <Text size="xs" color="dimmed">
+                        <Text size="xs" c="dimmed">
                           <CustomMarkdown
                             rehypePlugins={[rehypeRaw, remarkGfm]}
                             allowedElements={['a', 'p', 'strong', 'em', 'code', 'u']}

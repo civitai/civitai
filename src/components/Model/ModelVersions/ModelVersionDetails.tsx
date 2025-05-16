@@ -557,7 +557,7 @@ export function ModelVersionDetails({
       <Group>
         <VerifiedText file={file} />
         <Group gap={4}>
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             {file.type === 'Pruned Model' ? 'Pruned ' : ''}
             {file.metadata.format}
           </Text>
@@ -730,7 +730,7 @@ export function ModelVersionDetails({
                     <ThemeIcon color="gray" variant="filled" radius="xl">
                       <IconClock size={20} />
                     </ThemeIcon>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       Scheduled for {dayjs(scheduledPublishDate).format('MMMM D, h:mma')}
                     </Text>
                   </Group>
@@ -792,7 +792,7 @@ export function ModelVersionDetails({
                               onClick={onClick}
                               disabled={!primaryFile}
                               variant="light"
-                              sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                              style={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                               fullWidth
                             >
                               {icon}
@@ -818,7 +818,7 @@ export function ModelVersionDetails({
                         {...getDownloadProps(primaryFile)}
                         tooltip="Download"
                         disabled={!primaryFile || archived || isLoadingAccess}
-                        sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                        style={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                         iconOnly
                       />
                     ) : (
@@ -835,7 +835,7 @@ export function ModelVersionDetails({
                                 : undefined
                             }
                             disabled={!primaryFile || archived || isLoadingAccess}
-                            sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                            style={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                             iconOnly
                           />
                         </Menu.Target>
@@ -856,7 +856,7 @@ export function ModelVersionDetails({
                           : undefined
                       }
                       disabled={!primaryFile || archived || isLoadingAccess}
-                      sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                      style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                     >
                       <Text align="center">
                         {primaryFile ? (
@@ -880,7 +880,7 @@ export function ModelVersionDetails({
                         title={model.name}
                         collect={{ modelId: model.id, type: CollectionType.Model }}
                       >
-                        <Button sx={{ paddingLeft: 8, paddingRight: 8 }} color="gray" fullWidth>
+                        <Button style={{ paddingLeft: 8, paddingRight: 8 }} color="gray" fullWidth>
                           <IconShare3 size={24} />
                         </Button>
                       </ShareButton>
@@ -896,7 +896,7 @@ export function ModelVersionDetails({
                               onFavoriteClick({ versionId: version.id, setTo: !isFavorite })
                             }
                             color={isFavorite ? 'green' : 'gray'}
-                            sx={{ paddingLeft: 8, paddingRight: 8 }}
+                            style={{ paddingLeft: 8, paddingRight: 8 }}
                             fullWidth
                           >
                             <ThumbsUpIcon color="#fff" filled={isFavorite} size={24} />
@@ -914,7 +914,7 @@ export function ModelVersionDetails({
                           withArrow
                         >
                           <Button
-                            sx={{ paddingLeft: 8, paddingRight: 8 }}
+                            style={{ paddingLeft: 8, paddingRight: 8 }}
                             color={isInVault ? 'green' : 'gray'}
                             onClick={toggleVaultItem}
                             disabled={isLoading}
@@ -1130,7 +1130,7 @@ export function ModelVersionDetails({
                           {collection.name}
                         </Anchor>
                       </Link>
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         Collection
                         {collection.itemCount > 0
                           ? ` - ${collection.itemCount.toLocaleString()} items`
@@ -1246,7 +1246,7 @@ export function ModelVersionDetails({
                       downloadFileItems
                     ) : (
                       <Center p="xl">
-                        <Text size="md" color="dimmed">
+                        <Text size="md" c="dimmed">
                           This version is missing files
                         </Text>
                       </Center>
@@ -1281,7 +1281,7 @@ export function ModelVersionDetails({
                             </Text>
                             <Badge size="xs">{getDisplayName(resource.model.type)}</Badge>
                           </Group>
-                          <Text color="dimmed" size="xs">
+                          <Text c="dimmed" size="xs">
                             {resource.name}
                           </Text>
                         </Stack>
@@ -1297,7 +1297,7 @@ export function ModelVersionDetails({
                 <Accordion.Panel px="sm" pb="sm">
                   <Stack gap={4}>
                     {version.description && (
-                      <Box sx={{ p: { fontSize: 14, marginBottom: 10 } }}>
+                      <Box style={{ p: { fontSize: 14, marginBottom: 10 } }}>
                         <ContentClamp
                           maxHeight={200}
                           controlRef={controlRef}
@@ -1318,7 +1318,7 @@ export function ModelVersionDetails({
                           })
                         }
                         tabIndex={0}
-                        sx={{ cursor: 'pointer' }}
+                        style={{ cursor: 'pointer' }}
                       >
                         Show more
                       </Text>
@@ -1362,8 +1362,8 @@ export function ModelVersionDetails({
                 <IconLicense size={16} />
                 <Text
                   size="xs"
-                  color="dimmed"
-                  sx={{
+                  c="dimmed"
+                  style={{
                     whiteSpace: 'nowrap',
                     lineHeight: 1.1,
                   }}
@@ -1379,8 +1379,8 @@ export function ModelVersionDetails({
                       td="underline"
                       target="_blank"
                       size="xs"
-                      color="dimmed"
-                      sx={{ lineHeight: 1.1 }}
+                      c="dimmed"
+                      style={{ lineHeight: 1.1 }}
                     >
                       {license.name}
                     </Text>
@@ -1391,8 +1391,8 @@ export function ModelVersionDetails({
                         variant="text"
                         td="underline"
                         size="xs"
-                        color="dimmed"
-                        sx={{ lineHeight: 1.1 }}
+                        c="dimmed"
+                        style={{ lineHeight: 1.1 }}
                       >
                         Addendum
                       </Anchor>
@@ -1406,9 +1406,9 @@ export function ModelVersionDetails({
                       href={url}
                       td="underline"
                       size="xs"
-                      color="dimmed"
+                      c="dimmed"
                       target="_blank"
-                      sx={{ lineHeight: 1.1 }}
+                      style={{ lineHeight: 1.1 }}
                     >
                       {name}
                     </Text>
@@ -1419,7 +1419,7 @@ export function ModelVersionDetails({
             <PermissionIndicator gap={5} size={28} permissions={model} ml="auto" />
           </Group>
           {license?.notice && (
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               {license.notice}
             </Text>
           )}
@@ -1443,7 +1443,7 @@ export function ModelVersionDetails({
         sm={7}
         md={8}
         orderSm={1}
-        sx={(theme: MantineTheme) => ({
+        style={(theme: MantineTheme) => ({
           [containerQuery.largerThan('xs')]: {
             padding: `0 ${theme.spacing.sm}px`,
             margin: `${theme.spacing.sm}px 0`,

@@ -99,7 +99,7 @@ export function TagsInput({
           <Badge
             key={tag.id ?? index}
             size="xs"
-            sx={{ paddingRight: 5 }}
+            style={{ paddingRight: 5 }}
             rightSection={
               <ActionIcon
                 size="xs"

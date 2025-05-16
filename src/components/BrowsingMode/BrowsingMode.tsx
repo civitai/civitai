@@ -56,7 +56,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
             <Stack gap={4}>
               <Stack gap={0}>
                 <Group align="flex-start">
-                  <Text sx={{ lineHeight: 1 }}>Browsing Level</Text>
+                  <Text style={{ lineHeight: 1 }}>Browsing Level</Text>
                   {showNsfw && features.newOrderGame && (
                     <Tooltip label="Help us improve by playing!" withArrow color="dark">
                       <Button
@@ -77,13 +77,13 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                     </Tooltip>
                   )}
                 </Group>
-                <Text color="dimmed">Select the levels of content you want to see</Text>
+                <Text c="dimmed">Select the levels of content you want to see</Text>
               </Stack>
               <BrowsingLevelsGrouped />
               {browsingSettingsAddons.settings.disablePoi && (
                 <Group gap="sm" mt={4}>
                   <IconAlertTriangle size={16} />
-                  <Text color="dimmed" size="xs">
+                  <Text c="dimmed" size="xs">
                     With X or XXX enabled, some content may be hidden.{' '}
                     <Anchor href="/articles/13632">Learn more</Anchor>
                   </Text>

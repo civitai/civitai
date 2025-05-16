@@ -96,7 +96,7 @@ export function EditUserResourceReview({
             <Stack gap={0}>
               {modelName && <Text lineClamp={1}>{modelName}</Text>}
               {modelVersionName && (
-                <Text lineClamp={1} size="xs" color="dimmed">
+                <Text lineClamp={1} size="xs" c="dimmed">
                   {modelVersionName}
                 </Text>
               )}
@@ -261,7 +261,7 @@ export function EditUserResourceReviewV2({
           </Group>
         </Text>
         {userReview && showReviewedAt && (
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             Reviewed <DaysFromNow date={userReview.createdAt} />
           </Text>
         )}

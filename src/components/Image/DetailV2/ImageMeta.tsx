@@ -107,7 +107,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
               )}
             </CopyButton>
           </div>
-          <LineClamp color="dimmed" className="text-sm">
+          <LineClamp c="dimmed" className="text-sm">
             {prompt}
           </LineClamp>
         </div>
@@ -133,7 +133,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
               )}
             </CopyButton>
           </div>
-          <LineClamp color="dimmed" className="text-sm">
+          <LineClamp c="dimmed" className="text-sm">
             {negativePrompt}
           </LineClamp>
         </div>

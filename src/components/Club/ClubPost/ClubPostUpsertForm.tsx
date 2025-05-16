@@ -196,7 +196,7 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
                 <Group gap={4}>
                   <Text inline>Members only</Text>
                 </Group>
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   This post will only be visible to members of this club. People browsing the club
                   without a membership will not be able to see this post.
                 </Text>
@@ -281,7 +281,7 @@ export const ClubPostFromResourceModal = ({
             }}
           />
         ) : (
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You are not a member of, or own, any clubs that allow you to create posts.
           </Text>
         )}

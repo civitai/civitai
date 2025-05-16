@@ -431,7 +431,7 @@
 //         <Box className={classes.image}>
 //           {!isSane ? (
 //             <Card withBorder shadow="sm" radius="sm" className={classes.gameover}>
-//               <Text color="orange" weight={500} size={36}>
+//               <Text c="orange" weight={500} size={36}>
 //                 Game Over
 //               </Text>
 //               <Text>You failed 3 rating challenges.</Text>
@@ -653,7 +653,7 @@
 //                     </ActionIcon>
 //                   </Popover.Target>
 //                   <Popover.Dropdown>
-//                     <Text color="orange" weight={500}>
+//                     <Text c="orange" weight={500}>
 //                       What is this?
 //                     </Text>
 //                     <Text

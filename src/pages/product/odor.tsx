@@ -28,7 +28,7 @@ export default function CivitaiVault() {
           <Group justify="space-between">
             <Stack gap={12}>
               <Title className={classes.heroTitle}>O.D.O.R</Title>
-              <Text className={classes.heroText} sx={{ lineHeight: 1.25 }}>
+              <Text className={classes.heroText} style={{ lineHeight: 1.25 }}>
                 Optimized Diffusion of Olfactory Representations
               </Text>
             </Stack>

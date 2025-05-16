@@ -100,7 +100,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
             </Center>
           )}
           <Center
-            sx={{
+            style={{
               animationName: `enterFall, jelloVertical`,
               animationDuration: `1.5s, 2s`,
               animationDelay: `0s, 1.5s`,

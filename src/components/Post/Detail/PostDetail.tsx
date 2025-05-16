@@ -205,7 +205,7 @@ export function PostDetailContent({ postId }: Props) {
                   )}
                 </div>
                 <div className="flex flex-wrap justify-between gap-2 @md:items-center @max-md:flex-col">
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     {relatedResource && (
                       <>
                         Posted to{' '}

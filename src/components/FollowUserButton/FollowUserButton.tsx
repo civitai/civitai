@@ -72,7 +72,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Pro
         onClick={handleFollowClick}
         loading={toggleFollowMutation.isLoading}
         px="sm"
-        sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5 }}
+        style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5 }}
         {...buttonProps}
       >
         {alreadyFollowing ? 'Unfollow' : 'Follow'}

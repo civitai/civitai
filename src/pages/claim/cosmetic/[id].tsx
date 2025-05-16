@@ -167,7 +167,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
             </Center>
           )}
           <Center
-            sx={{
+            style={{
               animationName: `enterFall, jelloVertical`,
               animationDuration: `1.5s, 2s`,
               animationDelay: `0s, 1.5s`,

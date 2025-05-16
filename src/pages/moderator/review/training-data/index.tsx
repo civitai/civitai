@@ -51,7 +51,7 @@ export default function ReviewTrainingDataPage() {
                   <Text lineClamp={1}>
                     {item.model.name} - {item.name}
                   </Text>
-                  <Text color="dimmed" size="xs">
+                  <Text c="dimmed" size="xs">
                     Created: {formatDate(item.createdAt)}
                   </Text>
                 </div>

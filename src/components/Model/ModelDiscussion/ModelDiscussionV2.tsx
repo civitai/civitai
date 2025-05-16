@@ -34,7 +34,7 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
 
   return (
     <ContainerGrid gutter="xl">
-      <ContainerGrid.Col span={12} sx={{ position: 'relative' }}>
+      <ContainerGrid.Col span={12} style={{ position: 'relative' }}>
         <LoadingOverlay visible={isLoading} zIndex={10} />
         {hasItems ? (
           <Stack gap={8}>
@@ -55,7 +55,7 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
                 state={{ modelId }}
                 style={{ display: 'flex', justifyContent: 'center', alignSelf: 'center' }}
               >
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   <Group gap={4} justify="center">
                     <IconMessageCancel size={16} />
                     <Text inherit inline>
@@ -71,11 +71,11 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
         ) : (
           <Paper
             p="xl"
-            sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}
           >
             <Stack>
               <Text size="xl">There are no comments for this model yet.</Text>
-              <Text color="dimmed">
+              <Text c="dimmed">
                 Be the first to let the people know about this model by leaving your comment.
               </Text>
             </Stack>

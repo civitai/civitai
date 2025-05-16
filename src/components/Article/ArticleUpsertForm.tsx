@@ -263,7 +263,7 @@ export function ArticleUpsertForm({ article }: Props) {
                   >
                     <IconQuestionMark />
                   </ActionIcon>
-                  <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
+                  <ContentPolicyLink size="xs" variant="text" c="dimmed" td="underline" />
                 </Group>
               }
             />
@@ -408,11 +408,11 @@ function ActionButtons({
         </>
       )}
       {article?.publishedAt ? (
-        <Text size="xs" color="dimmed">
+        <Text size="xs" c="dimmed">
           Published at {formatDate(article.publishedAt)}
         </Text>
       ) : (
-        <Text size="xs" color="dimmed">
+        <Text size="xs" c="dimmed">
           Your article is currently{' '}
           <Tooltip
             label="Click the publish button to make your article public to share with the Civitai community for comments and reactions."

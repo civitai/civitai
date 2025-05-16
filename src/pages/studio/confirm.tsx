@@ -88,7 +88,7 @@ export default function Confirm() {
             <ThemeIcon size={46} color="green">
               <IconCircleCheck size={30} />
             </ThemeIcon>
-            <Text size="xl" sx={{ lineHeight: 1.2 }}>{`Your membership has been confirmed`}</Text>
+            <Text size="xl" style={{ lineHeight: 1.2 }}>{`Your membership has been confirmed`}</Text>
           </Group>
         </Alert>
         <Button

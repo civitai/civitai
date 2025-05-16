@@ -111,7 +111,7 @@ export default function MetadataTester() {
             <Text size="xl" inline>
               Drag image here or click to select file
             </Text>
-            <Text size="sm" color="dimmed" inline mt={7}>
+            <Text size="sm" c="dimmed" inline mt={7}>
               Image should not exceed 16mb
             </Text>
           </div>
@@ -142,7 +142,7 @@ export default function MetadataTester() {
             <Text size="lg" weight={700}>
               Detected Tags
             </Text>
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               No tags detected within policy.
             </Text>
           </Stack>

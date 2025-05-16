@@ -83,7 +83,7 @@ export default function PurchaseBuzz() {
     return (
       <Container size="md" mb="lg">
         <Center
-          sx={{
+          style={{
             animationName: `enterFall, jelloVertical`,
             animationDuration: `1.5s, 2s`,
             animationDelay: `0s, 1.5s`,

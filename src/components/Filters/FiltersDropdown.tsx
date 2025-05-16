@@ -18,7 +18,7 @@ export function FiltersDropdown({
           inline
           zIndex={10}
         >
-          <ActionIcon color="dark" variant="transparent" sx={{ width: 40 }}>
+          <ActionIcon color="dark" variant="transparent" style={{ width: 40 }}>
             <IconFilter size={20} stroke={2.5} />
             <IconChevronDown size={16} stroke={3} />
           </ActionIcon>

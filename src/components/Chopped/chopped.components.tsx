@@ -441,7 +441,7 @@ function ErrorBoundaryContent({
   return (
     <Alert color="yellow" title="An error has occurred">
       <div className="flex flex-col gap-3">
-        {error && <Text color="red">{error.message}</Text>}
+        {error && <Text c="red">{error.message}</Text>}
         <Text>To continue, try reloading your webpage.</Text>
         <Button onClick={handleClick}>Leave game</Button>
       </div>

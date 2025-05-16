@@ -134,7 +134,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
               <Wrapper resource={resource} key={key}>
                 <Card
                   p={8}
-                  sx={{
+                  style={{
                     backgroundColor: theme.colors.dark[7],
                     opacity: removing ? 0.3 : isAvailable ? 1 : 0.3,
                   }}
@@ -163,7 +163,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                                 onClick={copy}
                                 radius="sm"
                                 size="sm"
-                                sx={{ cursor: 'pointer' }}
+                                style={{ cursor: 'pointer' }}
                               >
                                 {copied ? 'Copied...' : resource.hash}
                               </Badge>
@@ -191,7 +191,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                     {isAvailable && (
                       <Group gap={8} justify="space-between" wrap="nowrap">
                         {resource.modelVersionName && (
-                          <Text color="dimmed" size="sm" lineClamp={1}>
+                          <Text c="dimmed" size="sm" lineClamp={1}>
                             {resource.modelVersionName}
                           </Text>
                         )}
@@ -199,7 +199,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                           <IconBadge
                             className={classes.statBadge}
                             icon={
-                              <Text color={hasReview ? 'success.5' : undefined} inline>
+                              <Text c={hasReview ? 'success.5' : undefined} inline>
                                 <ThumbsUpIcon size={14} filled={!!hasReview} />
                               </Text>
                             }
@@ -239,7 +239,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
         <Divider
           label={
             <Group gap="xs" align="center">
-              <Text variant="link" sx={{ cursor: 'pointer' }} onClick={() => setShowAll((x) => !x)}>
+              <Text variant="link" style={{ cursor: 'pointer' }} onClick={() => setShowAll((x) => !x)}>
                 {!showAll ? 'Show more' : 'Show less'}
               </Text>
             </Group>

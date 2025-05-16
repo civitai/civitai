@@ -180,7 +180,7 @@ export function ImageUpload({
               <Text size="xl" inline>
                 Drag images here or click to select files
               </Text>
-              <Text size="sm" color="dimmed" inline mt={7}>
+              <Text size="sm" c="dimmed" inline mt={7}>
                 {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
                 {`, each file should not exceed ${formatBytes(maxSize)}`}
               </Text>
@@ -307,7 +307,7 @@ function UploadedImage({
   return (
     <ImageUploadPreview image={image} isPrimary={isPrimary} id={image.url} disabled={!sortable}>
       {showLoading && (
-        <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+        <Center style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <Overlay blur={2} zIndex={10} color="#000" />
           <Stack gap="xs" style={{ zIndex: 11 }} align="center">
             <Loader size="lg" />
@@ -333,7 +333,7 @@ function UploadedImage({
             >
               <Group gap={4} wrap="nowrap" justify="center">
                 <IconAlertTriangle size={20} strokeWidth={2.5} />
-                <Text sx={{ lineHeight: 1.1 }} weight={500}>
+                <Text style={{ lineHeight: 1.1 }} weight={500}>
                   Will be reviewed
                 </Text>
               </Group>
@@ -343,7 +343,7 @@ function UploadedImage({
             <Text size="sm" weight={500}>
               Flagged for review
             </Text>
-            <Text size="sm" sx={{ lineHeight: 1.2 }}>
+            <Text size="sm" style={{ lineHeight: 1.2 }}>
               After submission this image will be reviewed by a moderator.
             </Text>
           </HoverCard.Dropdown>
@@ -635,7 +635,7 @@ function UploadedImage({
 //   const loading = loadingCategories || loadingTags;
 
 //   return (
-//     <Stack sx={{ position: 'relative' }}>
+//     <Stack style={{ position: 'relative' }}>
 //       <LoadingOverlay visible={loading} />
 //       <DismissibleAlert
 //         id="image-tagging"

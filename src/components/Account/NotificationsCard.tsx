@@ -79,7 +79,7 @@ export function NotificationsCard() {
           {!hasNotifications ? (
             <Group wrap="nowrap" mt="xs" pb="sm">
               <IconBellOff size={24} strokeWidth={2} />
-              <Text sx={{ lineHeight: 1.3 }}>
+              <Text style={{ lineHeight: 1.3 }}>
                 {`All non-essential notifications are turned off`}
               </Text>
             </Group>

@@ -136,7 +136,7 @@ export const ClubResourceManagementInput = ({
                     isFetching ? (
                       <Loader size="xs" />
                     ) : (
-                      <Text color="dimmed" size="sm">
+                      <Text c="dimmed" size="sm">
                         No tiers avilable for this club.
                       </Text>
                     )

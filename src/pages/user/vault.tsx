@@ -186,7 +186,7 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
                   )}
                   <Stack gap={0}>
                     <Text>{item.modelName}</Text>
-                    <Text color="dimmed" size="sm">
+                    <Text c="dimmed" size="sm">
                       {item.versionName}
                     </Text>
                   </Stack>
@@ -297,7 +297,7 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
                   )}
                   <Stack gap={0}>
                     <Text>{item.modelName}</Text>
-                    <Text color="dimmed" size="sm">
+                    <Text c="dimmed" size="sm">
                       {item.versionName}
                     </Text>
                   </Stack>
@@ -361,7 +361,7 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
           >
             <Stack gap={0}>
               <Text>{f.displayName}</Text>
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 {formatKBytes(f.sizeKB)}
               </Text>
             </Stack>
@@ -370,7 +370,7 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
         <Menu.Item component={Link} href={`/api/download/vault/${vaultItem.id}?type=details`}>
           <Stack gap={0}>
             <Text>Details</Text>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               {formatKBytes(vaultItem.detailsSizeKb)}
             </Text>
           </Stack>
@@ -378,7 +378,7 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
         <Menu.Item component={Link} href={`/api/download/vault/${vaultItem.id}?type=images`}>
           <Stack>
             <Text>Images</Text>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               {formatKBytes(vaultItem.imagesSizeKb)}
             </Text>
           </Stack>
@@ -447,8 +447,8 @@ const VaultStateNotice = () => {
 
 const vaultHelp = (
   <Tooltip label="What is Civitai Vault?">
-    <ActionIcon component="a" href="/product/vault" sx={{ alignSelf: 'center' }}>
-      <Text color="dimmed" inline>
+    <ActionIcon component="a" href="/product/vault" style={{ alignSelf: 'center' }}>
+      <Text c="dimmed" inline>
         <IconHelpCircle />
       </Text>
     </ActionIcon>
@@ -787,7 +787,7 @@ export default function CivitaiVault() {
                               >
                                 <Text>{item.modelName}</Text>
                               </Anchor>
-                              <Text color="dimmed" size="sm">
+                              <Text c="dimmed" size="sm">
                                 {item.versionName}
                               </Text>
                             </Stack>

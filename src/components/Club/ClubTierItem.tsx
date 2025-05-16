@@ -214,7 +214,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                     <Text align="center">
                       Memberships are billed monthly and can be canceled at any time.
                     </Text>
-                    <Text color="dimmed" size="sm" align="center">
+                    <Text c="dimmed" size="sm" align="center">
                       Your next billing date will be on{' '}
                       {formatDate(dayjs().add(1, 'month').toDate())}
                     </Text>
@@ -347,7 +347,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
                   <Text align="center" weight="bold">
                     Your next billing date will be on {formatDate(nextBillingDate)}.
                   </Text>
-                  <Text color="dimmed" align="center" size="sm">
+                  <Text c="dimmed" align="center" size="sm">
                     An additional{' '}
                     <Text component="span" weight="bold">
                       {addedDaysFromCurrentTier} days

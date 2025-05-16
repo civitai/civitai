@@ -32,7 +32,7 @@ export function AssistantChat({
       shadow="md"
       withBorder
       radius={16}
-      sx={{
+      style={{
         width,
         zIndex: 200,
         overflow: 'hidden',

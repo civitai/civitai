@@ -88,7 +88,7 @@ export const CreateWithdrawalRequest = () => {
             As a member of the Civitai creator&rsquo;s program, you are elegible to get paid for
             your hard earned Buzz.
           </Text>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             (You&rsquo;ll get $1.00 for {constants.buzz.buzzDollarRatio} Buzz)
           </Text>
         </Stack>
@@ -127,22 +127,22 @@ export const CreateWithdrawalRequest = () => {
                       <Text weight="bold">Payment</Text>
                       <Divider variant="dashed" />
                       <Group justify="space-between">
-                        <Text color="dimmed">USD</Text>
+                        <Text c="dimmed">USD</Text>
                         <Text>${formatCurrencyForDisplay(dollarAmount, Currency.USD)}</Text>
                       </Group>
                       <Divider variant="dashed" />
                       <Group justify="space-between">
-                        <Text color="dimmed">
+                        <Text c="dimmed">
                           Platform fee ({constants.buzz.platformFeeRate / 100}%)
                         </Text>
                         <Text>${formatCurrencyForDisplay(platformFee, Currency.USD)}</Text>
                       </Group>
                       <Divider variant="dashed" />
                       <Group justify="space-between">
-                        <Text color="green.4" weight="bold">
+                        <Text c="green.4" weight="bold">
                           You&rsquo;ll receive
                         </Text>
-                        <Text color="green.4" weight="bold">
+                        <Text c="green.4" weight="bold">
                           ${formatCurrencyForDisplay(payoutAmount, Currency.USD)}
                         </Text>
                       </Group>

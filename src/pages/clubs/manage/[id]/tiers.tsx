@@ -135,7 +135,7 @@ export default function ManageClubTiers({
       )}
       {tiers.length === 0 && !isRefetching && (
         <Center>
-          <Text color="dimmed">It looks like you have not added any tiers yet.</Text>
+          <Text c="dimmed">It looks like you have not added any tiers yet.</Text>
         </Center>
       )}
       {club && (

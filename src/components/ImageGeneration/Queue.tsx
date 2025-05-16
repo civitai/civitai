@@ -50,12 +50,12 @@ export function Queue() {
               <Text size="md" align="center">
                 The queue is empty
               </Text>
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 Try{' '}
                 <Text
                   variant="link"
                   onClick={() => generationPanel.setView('generate')}
-                  sx={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer' }}
                   span
                 >
                   generating
@@ -70,7 +70,7 @@ export function Queue() {
 
   return (
     <div className="flex flex-col gap-2 px-3">
-      <Text size="xs" color="dimmed" mt="xs">
+      <Text size="xs" c="dimmed" mt="xs">
         <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
         Creations are kept in the Generator for 30 days. Download or Post them to your Profile to
         save them!
@@ -97,7 +97,7 @@ export function Queue() {
           loadFn={fetchNextPage}
           loadCondition={!isFetching && !isRefetching && hasNextPage}
         >
-          <Center sx={{ height: 60 }}>
+          <Center style={{ height: 60 }}>
             <Loader />
           </Center>
         </InViewLoader>

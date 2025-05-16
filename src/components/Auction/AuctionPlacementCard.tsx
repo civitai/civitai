@@ -226,7 +226,7 @@ const SectionModelInfo = ({
             <Highlight
               size="lg"
               fw={500}
-              sx={{
+              style={{
                 textOverflow: 'ellipsis',
                 maxWidth: 'min(400px, 80vw)',
                 overflow: 'hidden',
@@ -239,8 +239,8 @@ const SectionModelInfo = ({
             </Highlight>
             <Highlight
               size="sm"
-              color="dimmed"
-              sx={{
+              c="dimmed"
+              style={{
                 textOverflow: 'ellipsis',
                 maxWidth: 'min(400px, 80vw)',
                 overflow: 'hidden',
@@ -452,7 +452,7 @@ export const ModelMyBidCard = ({
             top={
               <>
                 {!mobile && (
-                  <Text size="xs" color="dimmed" title={data.createdAt.toISOString()}>
+                  <Text size="xs" c="dimmed" title={data.createdAt.toISOString()}>
                     {formatDate(data.createdAt)}
                   </Text>
                 )}
@@ -476,7 +476,7 @@ export const ModelMyBidCard = ({
               mobile && (
                 <Group>
                   {!data.isActive && data.isRefunded && <Badge>Refunded</Badge>}
-                  <Text size="xs" color="dimmed" title={data.createdAt.toISOString()}>
+                  <Text size="xs" c="dimmed" title={data.createdAt.toISOString()}>
                     {formatDate(data.createdAt)}
                   </Text>
                 </Group>

@@ -143,7 +143,7 @@ function CollectionCardHeader({
       <Group gap="xs">
         {withinImageGuard && <ImageGuard2.BlurToggle className={cardClasses.chip} radius="xl" />}
         <Badge className={clsx(cardClasses.infoChip, cardClasses.chip)} variant="light" radius="xl">
-          <Text color="white" size="xs" transform="capitalize">
+          <Text c="white" size="xs" transform="capitalize">
             {data.type ? data.type + 's' : 'Mixed'}
           </Text>
         </Badge>
@@ -218,7 +218,7 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
       ))}
 
       {coverImages.length === 0 && (
-        <Text color="dimmed" sx={{ width: '100%', height: '100%' }}>
+        <Text c="dimmed" style={{ width: '100%', height: '100%' }}>
           This collection has no images
         </Text>
       )}

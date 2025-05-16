@@ -110,7 +110,7 @@ export function ProfileHeader({ username }: { username: string }) {
               </CustomMarkdown>
             </Text>
             {profile.messageAddedAt && (
-              <Text color="dimmed" size="xs">
+              <Text c="dimmed" size="xs">
                 <DaysFromNow date={profile.messageAddedAt} />
               </Text>
             )}

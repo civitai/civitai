@@ -28,11 +28,11 @@ export default function CivitaiVault() {
                 Civitai Vault
               </Title>
               {isMember ? (
-                <Text className="text-sm font-medium" sx={{ lineHeight: 1.25 }}>
+                <Text className="text-sm font-medium" style={{ lineHeight: 1.25 }}>
                   Keep Your Favorite Models Forever
                 </Text>
               ) : (
-                <Text className="text-sm font-medium" sx={{ lineHeight: 1.25 }}>
+                <Text className="text-sm font-medium" style={{ lineHeight: 1.25 }}>
                   ❤️ Civitai Vault is only available to Supporters
                 </Text>
               )}

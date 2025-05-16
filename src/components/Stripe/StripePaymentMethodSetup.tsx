@@ -34,7 +34,7 @@ export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props
   if (!clientSecret) {
     return (
       <Center>
-        <Text color="red" size="sm">
+        <Text c="red" size="sm">
           There was an error attempting to setup a payment method. Please try again later.
         </Text>
       </Center>
@@ -78,7 +78,7 @@ const SetupPaymentMethod = ({ redirectUrl, onCancel, cancelLabel }: Props) => {
       <Stack gap="md">
         <PaymentElement id="payment-element" options={paymentElementOptions} />
         {errorMessage && (
-          <Text color="red" size="sm">
+          <Text c="red" size="sm">
             {errorMessage}
           </Text>
         )}

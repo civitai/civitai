@@ -66,7 +66,7 @@ function ContestBanUserModal() {
           <Text size="md" weight={500}>
             Select user to ban
           </Text>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Banning will be immediate. The user will not be able to participate in any future
             contests until unbanned. This will not affect current submissions.
           </Text>
@@ -147,7 +147,7 @@ export default function ContestsBans() {
             <BackButton url="/moderator/contests" />
             <Title order={1}>Contest - Banned Users</Title>
           </Group>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You can add or remove banned users from contests. Banning a user from contests will
             prevent them from participating in any future contests. They will still be able to view
             the contests, but will not be able to submit entries.

@@ -66,7 +66,7 @@ export default function ImageTags() {
             withBorder
             shadow="lg"
             p="xs"
-            sx={{
+            style={{
               display: 'inline-flex',
               float: 'right',
               alignSelf: 'flex-end',
@@ -82,7 +82,7 @@ export default function ImageTags() {
 
           <Stack gap={0} mb="lg">
             <Title order={1}>Tags Needing Review</Title>
-            <Text color="dimmed">
+            <Text c="dimmed">
               These are images with moderation tags that users have voted to remove.
             </Text>
           </Stack>
@@ -118,7 +118,7 @@ export default function ImageTags() {
               loadCondition={!isRefetching}
               style={{ gridColumn: '1/-1' }}
             >
-              <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Center p="xl" style={{ height: 36 }} mt="md">
                 <Loader />
               </Center>
             </InViewLoader>
@@ -268,9 +268,9 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
   const selected = imageSelectStore.useIsSelected(image.id);
 
   return (
-    <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
+    <Card shadow="sm" p="xs" style={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
       <Card.Section
-        sx={{ height: `${height}px`, cursor: 'pointer' }}
+        style={{ height: `${height}px`, cursor: 'pointer' }}
         onClick={() => imageSelectStore.toggle(image.id)}
       >
         <Checkbox
@@ -281,7 +281,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
         />
         <ImageGuard2 image={image}>
           {(safe) => (
-            <Box sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
+            <Box style={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
               <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
               {!safe ? (
                 <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>

@@ -112,7 +112,7 @@ export function Files() {
             <Text size="xl" inline>
               Drop your files here or click to select
             </Text>
-            <Text size="sm" color="dimmed" inline>
+            <Text size="sm" c="dimmed" inline>
               {`Attach up to ${maxFiles} files. Accepted file types: ${fileExtensions.join(', ')}`}
             </Text>
           </Stack>
@@ -180,13 +180,13 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
   };
 
   return (
-    <Card sx={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder>
+    <Card style={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder>
       <Stack gap={4} pb="xs">
         <Group justify="space-between" gap={4} wrap="nowrap">
           <Text
             lineClamp={1}
             color={failedUpload ? 'red' : undefined}
-            sx={{ display: 'inline-block' }}
+            style={{ display: 'inline-block' }}
           >
             {versionFile.name}
           </Text>
@@ -209,7 +209,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
               <Text size="sm" weight="bold">
                 File Type
               </Text>
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 {getDisplayName(
                   versionFile.type === 'Model'
                     ? versionFile.modelType ?? versionFile.type ?? 'undefined'
@@ -223,7 +223,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
                   <Text size="sm" weight="bold">
                     Model size
                   </Text>
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     {versionFile.size ?? 'undefined'}
                   </Text>
                 </Stack>
@@ -231,7 +231,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
                   <Text size="sm" weight="bold">
                     Floating point
                   </Text>
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     {versionFile.fp ?? 'undefined'}
                   </Text>
                 </Stack>
@@ -240,7 +240,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
                     <Text size="sm" weight="bold">
                       Format
                     </Text>
-                    <Text size="sm" color="dimmed">
+                    <Text size="sm" c="dimmed">
                       {versionFile.format ?? 'undefined'}
                     </Text>
                   </Stack>
@@ -335,8 +335,8 @@ function TrackedFileStatus({
               </Tooltip>
             </Group>
             <Group justify="space-between" wrap="nowrap">
-              <Text color="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
-              <Text color="dimmed" size="xs">{`${formatSeconds(timeRemaining)} remaining`}</Text>
+              <Text c="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
+              <Text c="dimmed" size="xs">{`${formatSeconds(timeRemaining)} remaining`}</Text>
             </Group>
           </Stack>
         </Group>

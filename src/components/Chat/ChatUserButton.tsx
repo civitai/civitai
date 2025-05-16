@@ -42,7 +42,7 @@ export function ChatUserButton({
         pr={label ? 12 : 8}
         onClick={handleClick}
         // TODO do we like this color
-        sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.success[2] }}
+        style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.success[2] }}
         {...buttonProps}
       >
         <Group gap={4} wrap="nowrap">

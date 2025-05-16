@@ -164,7 +164,7 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
             )}
             <Text
               component={Link}
-              sx={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer' }}
               href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
               onClick={() => generationPanel.close()}
               rel="nofollow noindex"

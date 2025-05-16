@@ -99,7 +99,7 @@ function Home() {
           <Title order={3} mb={0} lh={1}>
             Link your account
           </Title>
-          <Text mb="md" color="dimmed">
+          <Text mb="md" c="dimmed">
             Time to connect your Stable Diffusion & Flux model library to your Civitai Account.
           </Text>
           <List type="ordered">

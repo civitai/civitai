@@ -242,7 +242,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             <Group gap={8}>
               <UserAvatar user={article.user} withUsername linkToProfile />
               <Divider orientation="vertical" />
-              <Text color="dimmed" size="sm">
+              <Text c="dimmed" size="sm">
                 {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
               </Text>
               {category && (
@@ -254,7 +254,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                       size="sm"
                       variant="gradient"
                       gradient={{ from: 'cyan', to: 'blue' }}
-                      sx={{ cursor: 'pointer' }}
+                      style={{ cursor: 'pointer' }}
                     >
                       {category.name}
                     </Badge>
@@ -277,7 +277,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                           component="a"
                           color="gray"
                           variant={colorScheme === 'dark' ? 'filled' : undefined}
-                          sx={{ cursor: 'pointer' }}
+                          style={{ cursor: 'pointer' }}
                         >
                           {tag.name}
                         </Badge>
@@ -313,7 +313,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                         ['Enter', handleOpenCoverImage(image.id)],
                         ['Space', handleOpenCoverImage(image.id)],
                       ])}
-                      sx={{ cursor: 'pointer' }}
+                      style={{ cursor: 'pointer' }}
                     >
                       <Center className="size-full">
                         <div className="relative size-full">

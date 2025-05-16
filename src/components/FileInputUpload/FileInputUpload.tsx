@@ -180,8 +180,8 @@ export function FileInputUpload({
                   </Progress.Section>
                   </Progress.Root>
                 <Group justify="space-between">
-                  <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
-                  <Text size="xs" color="dimmed">{`${formatSeconds(
+                  <Text size="xs" c="dimmed">{`${formatBytes(speed)}/s`}</Text>
+                  <Text size="xs" c="dimmed">{`${formatSeconds(
                     timeRemaining
                   )} remaining`}</Text>
                 </Group>

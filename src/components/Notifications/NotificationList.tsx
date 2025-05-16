@@ -129,13 +129,13 @@ export function NotificationList({
                   <Group gap={2} wrap="nowrap">
                     {notificationDetails?.content && (
                       <>
-                        <Text size="xs" color="dimmed" lineClamp={1}>
+                        <Text size="xs" c="dimmed" lineClamp={1}>
                           {notificationDetails.content}
                         </Text>
                         ・
                       </>
                     )}
-                    <Text size="xs" color="dimmed" style={{ whiteSpace: 'nowrap' }} span>
+                    <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }} span>
                       <DaysFromNow date={notification.createdAt} />
                     </Text>
                   </Group>

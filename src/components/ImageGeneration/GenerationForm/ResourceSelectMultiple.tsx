@@ -133,7 +133,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
                 {index !== 0 && <Divider />}
                 <Input.Wrapper
                   label={
-                    <Text color="dark.2" weight={590}>
+                    <Text c="dark.2" weight={590}>
                       {group.label}
                     </Text>
                   }
@@ -165,7 +165,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
             </Button>
           )}
           {hideButton && !_values.length && (
-            <Text color="dimmed" size="sm">
+            <Text c="dimmed" size="sm">
               No resources selected
             </Text>
           )}

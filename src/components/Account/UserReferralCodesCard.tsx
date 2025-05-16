@@ -63,10 +63,10 @@ export function UserReferralCodesCard() {
         <Stack gap={0}>
           <Title order={2}>Referral Codes</Title>
           {features.buzz && (
-            <Text color="dimmed" size="sm">
+            <Text c="dimmed" size="sm">
               You can use referral codes to invite your friends to join the platform. Referring
               accounts will grant you and your friend{' '}
-              <Text color="accent.5" span inline>
+              <Text c="accent.5" span inline>
                 <CurrencyBadge
                   currency={Currency.BUZZ}
                   unitAmount={constants.buzz.referralBonusAmount}
@@ -84,11 +84,11 @@ export function UserReferralCodesCard() {
           ) : (
             <>
               {userReferralCodes.length === 0 ? (
-                <Paper radius="md" p="lg" sx={{ position: 'relative' }} withBorder>
+                <Paper radius="md" p="lg" style={{ position: 'relative' }} withBorder>
                   <Center>
                     <Stack gap={2}>
                       <Text weight="bold">You have not created any referral codes</Text>
-                      <Text size="sm" color="dimmed">
+                      <Text size="sm" c="dimmed">
                         Start by creating your first referral code to invite friends.
                       </Text>
                     </Stack>
@@ -104,12 +104,12 @@ export function UserReferralCodesCard() {
                             {referralCode.code}
                           </Code>
                           {referralCode.note && (
-                            <Text color="dimmed" size="xs">
+                            <Text c="dimmed" size="xs">
                               {referralCode.note}
                             </Text>
                           )}
                           {referralCode._count && (
-                            <Text color="dimmed" size="xs">
+                            <Text c="dimmed" size="xs">
                               Referees: {referralCode._count.referees}
                             </Text>
                           )}

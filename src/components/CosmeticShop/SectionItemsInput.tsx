@@ -220,7 +220,7 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
                 </Grid>
               ) : (
                 <Center>
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     You have not selected any items to display in this section.
                   </Text>
                 </Center>

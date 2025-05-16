@@ -69,7 +69,7 @@ export default function MetadataTester() {
             <Text size="xl" inline>
               Drag images here or click to select files
             </Text>
-            <Text size="sm" color="dimmed" inline mt={7}>
+            <Text size="sm" c="dimmed" inline mt={7}>
               Attach as many files as you like, each file should not exceed 5mb
             </Text>
           </div>
@@ -88,7 +88,7 @@ export default function MetadataTester() {
                         {resource.type}
                         {resource.weight && <> {resource.weight}</>}
                       </Badge>
-                      <Text size="xs" color="dimmed" ml="auto">
+                      <Text size="xs" c="dimmed" ml="auto">
                         {resource.hash}
                       </Text>
                     </Group>

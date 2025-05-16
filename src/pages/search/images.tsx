@@ -126,7 +126,7 @@ function ImagesHitList() {
         <Center>
           <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
-              <Text color="dimmed">{hiddenCount} images have been hidden due to your settings</Text>
+              <Text c="dimmed">{hiddenCount} images have been hidden due to your settings</Text>
             )}
             <ThemeIcon size={128} radius={100} className="opacity-50">
               <IconCloudOff size={80} />
@@ -178,7 +178,7 @@ function ImagesHitList() {
   return (
     <Stack>
       {hiddenCount > 0 && (
-        <Text color="dimmed">{hiddenCount} images have been hidden due to your settings.</Text>
+        <Text c="dimmed">{hiddenCount} images have been hidden due to your settings.</Text>
       )}
       {/* <div
         className={classes.grid}
@@ -219,7 +219,7 @@ function ImagesHitList() {
           loadCondition={status === 'idle'}
           style={{ gridColumn: '1/-1' }}
         >
-          <Center p="xl" sx={{ height: 36 }} mt="md">
+          <Center p="xl" style={{ height: 36 }} mt="md">
             <Loader />
           </Center>
         </InViewLoader>

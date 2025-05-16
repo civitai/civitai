@@ -165,7 +165,7 @@ export function AssociateModels({
         </Center>
       ) : (
         <Stack gap={0}>
-          <Text align="right" color="dimmed" size="xs">
+          <Text align="right" c="dimmed" size="xs">
             You can select {limit - associatedResources.length} more resources
           </Text>
           {!!associatedResources.length ? (
@@ -252,7 +252,7 @@ const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
             <Text lineClamp={1} lh={1}>
               {value}
             </Text>
-            <Text size="xs" color="dimmed" lineClamp={1} lh={1}>
+            <Text size="xs" c="dimmed" lineClamp={1} lh={1}>
               by {item.user.username}
             </Text>
           </Stack>

@@ -54,7 +54,7 @@ const CosmeticSearchSelectItem = forwardRef<HTMLDivElement, CosmeticSearchCombob
     <div ref={ref} {...others}>
       <Stack gap={0}>
         <Text size="sm">{name}</Text>
-        <Text size="xs" color="dimmed">
+        <Text size="xs" c="dimmed">
           {description}
         </Text>
       </Stack>
@@ -185,7 +185,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
                   <Group gap={4}>
                     <Text inline>Archived</Text>
                   </Group>
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     Archive this item. Archived items are not shown in the shop even if they belong
                     in a section.
                   </Text>
@@ -196,7 +196,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
           {cosmetic && (
             <Paper radius="md" withBorder p="md">
               <Stack>
-                <Text color="dimmed" weight="bold">
+                <Text c="dimmed" weight="bold">
                   The following cosmetic will be made into a shop product
                 </Text>
                 <Divider mx="-md" />
@@ -204,7 +204,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
                   <CosmeticSample cosmetic={cosmetic} />
                   <Stack gap={0}>
                     <Text>{cosmetic.name}</Text>
-                    <Text color="dimmed" size="sm">
+                    <Text c="dimmed" size="sm">
                       {cosmetic.description}
                     </Text>
                   </Stack>
@@ -252,7 +252,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             />
           </Group>
           {shopItemMeta?.purchases > 0 && availableQuantity && (
-            <Text color="red" size="sm">
+            <Text c="red" size="sm">
               This item has been purchased {shopItemMeta.purchases} times. Changing the price or
               quantity will not affect existing purchases. And you cannot make the number of
               available items less than the number of purchases.

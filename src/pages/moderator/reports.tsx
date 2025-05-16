@@ -495,7 +495,7 @@ function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?
   return (
     <Menu>
       <Menu.Target>
-        <Badge color={statusColor} size={size} sx={{ cursor: 'pointer' }}>
+        <Badge color={statusColor} size={size} style={{ cursor: 'pointer' }}>
           {isLoading ? <Loader variant="dots" size="sm" mx="md" color={statusColor} /> : status}
         </Badge>
       </Menu.Target>

@@ -33,7 +33,7 @@ export const BountiesSearchItem = forwardRef<
   return (
     <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
       <Center
-        sx={{
+        style={{
           width: 64,
           height: 64,
           position: 'relative',

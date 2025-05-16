@@ -28,7 +28,7 @@ export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
             {activeComment && (
               <Stack gap="xl">
                 <Divider />
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Viewing thread for
                 </Text>
                 <Comment comment={activeComment} viewOnly />
@@ -45,7 +45,7 @@ export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
                     <Divider
                       label={
                         <Group gap="xs" align="center">
-                          <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                          <Text variant="link" style={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                             Show {remaining} More
                           </Text>
                         </Group>

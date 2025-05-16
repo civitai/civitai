@@ -35,7 +35,7 @@ export const ModelHash = ({
         variant="outline"
         color={color}
         px={6}
-        sx={{
+        style={{
           // width: 60,
           borderTopRightRadius: 0,
           borderBottomRightRadius: 0,
@@ -52,7 +52,7 @@ export const ModelHash = ({
               px={6}
               variant="outline"
               color={copied ? 'teal' : color}
-              sx={{
+              style={{
                 cursor: 'pointer',
                 overflow: 'hidden',
                 width,
@@ -77,7 +77,7 @@ export const ModelHash = ({
           size={20}
           variant="outline"
           color={color}
-          sx={{
+          style={{
             borderTopLeftRadius: 0,
             borderBottomLeftRadius: 0,
             borderLeft: 0,

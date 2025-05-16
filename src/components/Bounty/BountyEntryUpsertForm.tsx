@@ -242,7 +242,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                 key={image.id}
                 radius="sm"
                 p={0}
-                sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                style={{ position: 'relative', overflow: 'hidden', height: 332 }}
                 withBorder
               >
                 <EdgeMedia
@@ -284,7 +284,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   key={file.url}
                   radius="sm"
                   p={0}
-                  sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                  style={{ position: 'relative', overflow: 'hidden', height: 332 }}
                   withBorder
                 >
                   {file.status === 'success' ? (
@@ -386,7 +386,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                             {file.name}
                           </Text>
                         )}
-                        <Text color="dimmed" size="xs">
+                        <Text c="dimmed" size="xs">
                           {formatKBytes(file.sizeKB)}
                         </Text>
                       </Stack>
@@ -512,7 +512,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                             {file.name}
                           </Text>
                         )}
-                        <Text color="dimmed" size="xs">
+                        <Text c="dimmed" size="xs">
                           {formatKBytes(file.sizeKB)}
                         </Text>
                       </Stack>

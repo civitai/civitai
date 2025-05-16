@@ -133,7 +133,7 @@ export default function CosmeticShopMain() {
                 </NotificationToggle>
               </Group>
             </Group>
-            <Text size="sm" color="dimmed" mb="sm">
+            <Text size="sm" c="dimmed" mb="sm">
               Any cosmetic purchases directly contributes to Civitai ❤️
             </Text>
           </Stack>
@@ -223,7 +223,7 @@ function MerchShowcaseSection({
         <Text size={32} weight={600}>
           The backstory
         </Text>
-        <Text size={24} lh="40px" color="dimmed">
+        <Text size={24} lh="40px" c="dimmed">
           Civitai AiR is proud to present this limited edition t-shirt set by Artist Anne Horel,
           featuring her AI generated masks. Part of her upcoming exhibition at Julie Caredda Gallery
           in Paris, each unique design is limited to an edition of 25.

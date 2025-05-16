@@ -115,7 +115,7 @@ export const ModelVersionEarlyAccessPurchase = ({
                   onPerformTransaction={() => handlePurchase('download')}
                   disabled={canDownload}
                 />
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   Download access also grants generation access.
                 </Text>
               </Stack>
@@ -131,7 +131,7 @@ export const ModelVersionEarlyAccessPurchase = ({
                   onPerformTransaction={() => handlePurchase('generation')}
                   disabled={canGenerate}
                 />
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   The creator of the {resourceLabel} has enabled{' '}
                   {earlyAccessConfig.generationTrialLimit} trials for generation. Test this{' '}
                   {resourceLabel}{' '}
@@ -147,7 +147,7 @@ export const ModelVersionEarlyAccessPurchase = ({
                   </GenerateButton>
                   .
                 </Text>
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   By purchasing generation access, you will not be able to download this resource,
                   but you can make unlimited generations with it
                 </Text>

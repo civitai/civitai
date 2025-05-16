@@ -352,7 +352,7 @@ export function InteractiveTipBuzzButton({
             e.stopPropagation();
             return false;
           }}
-          sx={{
+          style={{
             position: 'relative',
             touchAction: 'none',
             userSelect: 'none',
@@ -360,8 +360,6 @@ export function InteractiveTipBuzzButton({
             WebkitTouchCallout: 'none',
             color: 'inherit',
             fontWeight: 'inherit',
-          }}
-          style={{
             cursor: !selfView ? 'pointer' : 'default',
           }}
           onClick={undefined}
@@ -377,7 +375,7 @@ export function InteractiveTipBuzzButton({
             </ActionIcon>
           )}
           <Stack gap={2} align="center">
-            <Text color="yellow.7" weight={500} size="xs" opacity={0.8}>
+            <Text c="yellow.7" weight={500} size="xs" opacity={0.8}>
               Tipping
             </Text>
             <Group gap={0} ml={-8}>

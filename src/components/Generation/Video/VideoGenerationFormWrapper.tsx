@@ -32,7 +32,7 @@ export function VideoGenerationFormWrapper() {
             video generation
           </Text>
         </Text>
-        <Text size="xs" color="dimmed">
+        <Text size="xs" c="dimmed">
           Note: this is an experimental build. Pricing, default settings, and results are subject to
           change.
         </Text>

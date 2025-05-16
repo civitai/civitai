@@ -53,7 +53,7 @@ export function VerifiedShield({ file, ...props }: Props) {
       <Popover.Target>
         <Button
           color={color}
-          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+          style={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
           {...props}
         >
           {icon}
@@ -72,7 +72,7 @@ export function VerifiedShield({ file, ...props }: Props) {
         )}
         <Group justify="space-between">
           {scannedDate && (
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Scanned: <abbr title={scannedDate.format()}>{scannedDate.fromNow()}</abbr>
             </Text>
           )}
@@ -82,7 +82,7 @@ export function VerifiedShield({ file, ...props }: Props) {
             target="_blank"
             rel="nofollow noreferrer"
             size="xs"
-            color="dimmed"
+            c="dimmed"
             td="underline"
           >
             What does this mean?

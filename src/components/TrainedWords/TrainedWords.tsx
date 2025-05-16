@@ -33,7 +33,7 @@ export function TrainedWords({
           size="sm"
           radius="sm"
           color="gray"
-          sx={{ cursor: 'pointer' }}
+          style={{ cursor: 'pointer' }}
           onClick={() => setShowAll(true)}
         >
           +{trainedWords.length - limit} more
@@ -60,7 +60,7 @@ export function TrainingWordBadge({ word, ...badgeProps }: BadgeProps & { word: 
             size="sm"
             radius="sm"
             color={copied ? 'green' : 'violet'}
-            sx={{ cursor: 'pointer', height: 'auto' }}
+            style={{ cursor: 'pointer', height: 'auto' }}
             onClick={copy}
             pr={2}
             {...badgeProps}

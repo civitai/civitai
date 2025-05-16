@@ -77,7 +77,7 @@ export default function GenerationPage() {
           <Group justify="space-between">
             <Stack gap={0}>
               <Title>Unavailable Resources</Title>
-              <Text color="dimmed">List of temporarily unavailable resources</Text>
+              <Text c="dimmed">List of temporarily unavailable resources</Text>
             </Stack>
             <Button
               leftIcon={<IconPlus />}

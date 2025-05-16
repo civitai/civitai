@@ -202,12 +202,12 @@ export function SubscribeButton({ children, priceId, onSuccess, disabled }: Prop
 
   if (currentUser && !currentUser.email)
     return (
-      <Button onClick={handleAddEmail} sx={{ height: 50 }}>
+      <Button onClick={handleAddEmail} style={{ height: 50 }}>
         <Stack align="center" gap={0}>
-          <Text align="center" sx={{ lineHeight: 1.1 }}>
+          <Text align="center" style={{ lineHeight: 1.1 }}>
             Subscribe
           </Text>
-          <Text align="center" size="xs" sx={{ color: 'rgba(255,255,255,.7)' }}>
+          <Text align="center" size="xs" style={{ color: 'rgba(255,255,255,.7)' }}>
             *Email Required. Click here to set it.
           </Text>
         </Stack>

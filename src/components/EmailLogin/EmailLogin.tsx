@@ -88,9 +88,9 @@ export const EmailLogin = ({
         <Stack gap={0}>
           <Text
             size="md"
-            // sx={{ lineHeight: 1.1 }}
+            // style={{ lineHeight: 1.1 }}
           >{`Check your email for a special login link`}</Text>
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             Be sure to check your spam...
           </Text>
         </Stack>

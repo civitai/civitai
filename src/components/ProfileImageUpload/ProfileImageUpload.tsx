@@ -114,7 +114,7 @@ export function ProfileImageUpload({
               root: hasError ? { borderColor: theme.colors.red[6] } : undefined,
             })}
           >
-            <Text color="dimmed">{`Drop image here, should not exceed ${formatBytes(
+            <Text c="dimmed">{`Drop image here, should not exceed ${formatBytes(
               maxSize
             )}`}</Text>
           </Dropzone>

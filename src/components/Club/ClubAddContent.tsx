@@ -100,7 +100,7 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
           )}
         </Group>
         {noActions && (
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You don&rsquo;t have permissions to add content to this club.
           </Text>
         )}

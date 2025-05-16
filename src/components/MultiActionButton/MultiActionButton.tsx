@@ -23,7 +23,7 @@ const _MultiActionButton = forwardRef<HTMLButtonElement, Props>(
       <Button
         variant={variant}
         px={4}
-        sx={() => ({ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 })}
+        style={() => ({ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 })}
       >
         <IconChevronDown stroke={1.5} size={18} />
       </Button>

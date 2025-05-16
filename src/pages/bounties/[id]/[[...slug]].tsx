@@ -285,7 +285,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
               <BountyContextMenu bounty={bounty} position="bottom-end" />
             </Group>
             <Group gap={8}>
-              <Text color="dimmed" size="xs">
+              <Text c="dimmed" size="xs">
                 {isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started'}:{' '}
                 {formatDate(bounty.startsAt, undefined, true)}
               </Text>
@@ -305,7 +305,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                           size="sm"
                           color="gray"
                           variant={colorScheme === 'dark' ? 'filled' : undefined}
-                          sx={{ cursor: 'pointer' }}
+                          style={{ cursor: 'pointer' }}
                         >
                           {tag.name}
                         </Badge>
@@ -622,7 +622,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                     </Text>{' '}
                     to this bounty?
                   </Text>
-                  <Text color="red.4" size="sm">
+                  <Text c="red.4" size="sm">
                     This action is non reversible.
                   </Text>
 
@@ -673,7 +673,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                     await handleEngagementClick('Track');
                   }}
                   color={isTracked ? 'green' : colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
-                  sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                  style={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                 >
                   <IconViewfinder color={colorScheme === 'light' ? theme.black : 'currentColor'} />{' '}
                 </Button>
@@ -686,7 +686,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                 <Button
                   onClick={() => handleEngagementClick('Favorite')}
                   color={isFavorite ? 'red' : colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
-                  sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                  style={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                 >
                   <IconHeart color={colorScheme === 'light' ? theme.black : 'currentColor'} />
                 </Button>
@@ -697,7 +697,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             <div style={{ marginLeft: 'auto' }}>
               <ShareButton url={router.asPath} title={bounty.name}>
                 <Button
-                  sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                  style={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                   color={colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
                 >
                   <IconShare3 />
@@ -818,7 +818,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                     </SimpleGrid>
                   ) : (
                     <Center p="xl">
-                      <Text size="md" color="dimmed">
+                      <Text size="md" c="dimmed">
                         No files were provided for this bounty
                       </Text>
                     </Center>
@@ -898,7 +898,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
               <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
             </Tooltip>
             {hiddenCount > 0 && (
-              <Text color="dimmed">
+              <Text c="dimmed">
                 {hiddenCount.toLocaleString()} entries have been hidden due to your settings or due
                 to lack of images
               </Text>
@@ -927,13 +927,13 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
           <ThemeIcon color="gray" size="xl" radius="xl">
             <IconTournament />
           </ThemeIcon>
-          <Text size="md" color="dimmed">
+          <Text size="md" c="dimmed">
             No submissions yet
           </Text>
           {displaySubmitAction && (
             <>
               <Divider orientation="vertical" />
-              <Text size="md" color="dimmed">
+              <Text size="md" c="dimmed">
                 Be the first to submit your solution.
               </Text>
             </>

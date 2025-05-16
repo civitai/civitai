@@ -147,7 +147,7 @@ export const EarlyAccessRewards = () => {
           </Center>
         ) : datasets.length === 0 ? (
           <Center>
-            <Text color="dimmed">
+            <Text c="dimmed">
               Whoops! Looks like we are still collecting data on your early access models on these
               past 14 days. Please check back later.
             </Text>

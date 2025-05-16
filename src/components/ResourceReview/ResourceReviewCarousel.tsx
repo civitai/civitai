@@ -151,7 +151,7 @@ export function ResourceReviewCarousel({
           </Embla>
         )}
 
-        <Text size="xs" color="dimmed" mt="xs" mb="-xs">
+        <Text size="xs" c="dimmed" mt="xs" mb="-xs">
           Images this user generated with this resource
         </Text>
       </Container>

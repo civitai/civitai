@@ -221,7 +221,7 @@ function AspectRatioCard({
         <Paper withBorder className="h-8  border-2" style={{ aspectRatio: rw / rh }}></Paper>
       </div>
       <Text className="font-semibold">{ratio}</Text>
-      <Text size="sm" color="dimmed">
+      <Text size="sm" c="dimmed">
         {rounded.width}x{rounded.height}
       </Text>
     </Card>

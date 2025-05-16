@@ -46,12 +46,12 @@ export function Feed() {
               <Text size="md" align="center">
                 The queue is empty
               </Text>
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 Try{' '}
                 <Text
                   variant="link"
                   onClick={() => generationPanel.setView('generate')}
-                  sx={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer' }}
                   span
                 >
                   generating
@@ -92,7 +92,7 @@ export function Feed() {
 
       {hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-          <Center sx={{ height: 60 }}>
+          <Center style={{ height: 60 }}>
             <Loader />
           </Center>
         </InViewLoader>

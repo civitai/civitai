@@ -60,7 +60,7 @@ export function ImpersonateButton() {
         color="red"
         variant="transparent"
         onClick={handleSwap}
-        sx={{ boxShadow: '0 0 16px 2px red', borderRadius: '50%' }}
+        style={{ boxShadow: '0 0 16px 2px red', borderRadius: '50%' }}
       >
         <IconCrystalBall />
       </ActionIcon>

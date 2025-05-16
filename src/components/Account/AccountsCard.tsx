@@ -44,14 +44,14 @@ export function AccountsCard() {
       <Stack>
         <Stack gap={0}>
           <Title order={2}>Connected Accounts</Title>
-          <Text color="dimmed" size="sm">
+          <Text c="dimmed" size="sm">
             Connect multiple accounts to your user and sign in with any of them
           </Text>
         </Stack>
         {error && (
           <Alert color="yellow">
             <Stack gap={4}>
-              <Text color="yellow" weight={500}>
+              <Text c="yellow" weight={500}>
                 Account not linked
               </Text>
               <Text size="sm" lh={1.2}>

@@ -118,7 +118,7 @@ export function ShareButton({
                 key={type}
                 variant="subtle"
                 color="gray"
-                sx={{ height: 'auto' }}
+                style={{ height: 'auto' }}
                 p={0}
                 onClick={onClick}
               >

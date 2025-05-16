@@ -45,7 +45,7 @@ export const EntityCollaboratorList = ({
         return (
           <Stack key={collaborator.user.id} gap={0}>
             {collaborator.status !== EntityCollaboratorStatus.Pending && isOwnerOrMod && (
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 {collaborator.status === EntityCollaboratorStatus.Approved
                   ? 'User Approved Collaboration'
                   : 'User Rejected Collaboration'}

@@ -532,7 +532,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       </Group>
                     )}
                     {!canIncreaseEarlyAccess && (
-                      <Text size="xs" color="dimmed" mt="sm">
+                      <Text size="xs" c="dimmed" mt="sm">
                         You cannot increase early access value after a model has been published
                       </Text>
                     )}

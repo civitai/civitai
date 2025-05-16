@@ -223,7 +223,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                 loadCondition={!isRefetching}
                 style={{ gridColumn: '1/-1' }}
               >
-                <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Center p="xl" style={{ height: 36 }} mt="md">
                   <Loader />
                 </Center>
               </InViewLoader>
@@ -250,7 +250,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                     onClick={() => {
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
-                    sx={{ cursor: 'pointer' }}
+                    style={{ cursor: 'pointer' }}
                   >
                     Back to the top
                   </Text>

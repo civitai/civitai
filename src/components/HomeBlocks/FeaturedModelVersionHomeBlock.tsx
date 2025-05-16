@@ -89,7 +89,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
               <Popover.Target>
                 <Box
                   display="inline-block"
-                  sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                  style={{ lineHeight: 0.3, cursor: 'pointer' }}
                   color="white"
                 >
                   <IconInfoCircle size={20} />

@@ -322,7 +322,7 @@ export function ChatList() {
           ]}
         />
       </Box>
-      <Box h="100%" sx={{ overflowY: 'auto' }}>
+      <Box h="100%" style={{ overflowY: 'auto' }}>
         {isLoading ? (
           <Center h="100%">
             <Loader />
@@ -384,7 +384,7 @@ export function ChatList() {
                       <Highlight
                         size="sm"
                         fw={500}
-                        sx={{
+                        style={{
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -399,7 +399,7 @@ export function ChatList() {
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <Text
                           size="xs"
-                          sx={{
+                          style={{
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',

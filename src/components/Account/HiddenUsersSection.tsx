@@ -40,7 +40,7 @@ export function HiddenUsersSection() {
       <Card.Section withBorder inheritPadding py="xs">
         <Text weight={500}>Hidden Users</Text>
       </Card.Section>
-      <Card.Section withBorder sx={{ marginTop: -1 }}>
+      <Card.Section withBorder style={{ marginTop: -1 }}>
         <Portal reuseTargetNode>
           <Autocomplete
             name="tag"
@@ -69,7 +69,7 @@ export function HiddenUsersSection() {
             columnGutter={4}
             columnWidth={140}
           />
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             {`We'll hide content from these users throughout the site.`}
           </Text>
         </Stack>
@@ -100,7 +100,7 @@ function UserBadge({
   return (
     <Badge
       key={data.id}
-      sx={{ paddingRight: 3 }}
+      style={{ paddingRight: 3 }}
       w={width}
       rightSection={
         <ActionIcon

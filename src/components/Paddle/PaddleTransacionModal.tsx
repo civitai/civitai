@@ -266,7 +266,7 @@ export default function PaddleTransactionModal({
         <Divider mx="-lg" />
         {message && <>{message}</>}
         <Stack gap={0}>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Transaction details
           </Text>
           <Paper
@@ -285,7 +285,7 @@ export default function PaddleTransactionModal({
                   color={colorScheme === 'dark' ? 'gray.0' : 'dark'}
                   fz={20}
                   weight="bold"
-                  sx={{ fontVariantNumeric: 'tabular-nums' }}
+                  style={{ fontVariantNumeric: 'tabular-nums' }}
                 >
                   ${formatPriceForDisplay(unitAmount)} {currency}
                 </Text>
@@ -307,7 +307,7 @@ export default function PaddleTransactionModal({
               Use Card on File
             </Button>
             {error && (
-              <Text color="red" size="sm">
+              <Text c="red" size="sm">
                 {error}
               </Text>
             )}

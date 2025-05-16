@@ -91,7 +91,7 @@ export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
       title={
         <Stack gap={0}>
           <Title order={3}>Rearrange versions</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Drag and drop the versions to set their order
           </Text>
         </Stack>

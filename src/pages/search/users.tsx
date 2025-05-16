@@ -134,7 +134,7 @@ export function UserHitList() {
           loadCondition={status === 'idle'}
           style={{ gridColumn: '1/-1' }}
         >
-          <Center p="xl" sx={{ height: 36 }} mt="md">
+          <Center p="xl" style={{ height: 36 }} mt="md">
             <Loader />
           </Center>
         </InViewLoader>

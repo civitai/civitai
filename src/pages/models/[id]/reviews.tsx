@@ -151,7 +151,7 @@ export default function ModelReviews() {
               Did you like this resource?
             </Text>
             {userReview && (
-              <Text color="dimmed" size="xs">
+              <Text c="dimmed" size="xs">
                 Reviewed <DaysFromNow date={userReview.createdAt} />
               </Text>
             )}
@@ -212,7 +212,7 @@ export default function ModelReviews() {
                     <ThemeIcon color="gray" size="xl" radius="xl">
                       <IconMessageCircleOff />
                     </ThemeIcon>
-                    <Text size="lg" color="dimmed">
+                    <Text size="lg" c="dimmed">
                       Reviews are turned off for this model.
                     </Text>
                   </Group>

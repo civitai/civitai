@@ -217,7 +217,7 @@ export const TrainingImagesTags = ({
               setAddTagTxt('');
             }}
             // disabled={!addTagTxt.length}
-            sx={{ borderRadius: 0 }}
+            style={{ borderRadius: 0 }}
           >
             <IconPlus />
           </ActionIcon>

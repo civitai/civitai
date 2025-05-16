@@ -531,7 +531,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
         <Box className="flex items-center justify-between gap-3 hover:bg-gray-2 hover:dark:bg-dark-5">
           <Text>
             {modelName} -{' '}
-            <Text span color="dimmed" size="sm">
+            <Text span c="dimmed" size="sm">
               {modelVersionName}
             </Text>
           </Text>
@@ -580,7 +580,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
     <div className="flex items-center justify-between gap-3">
       <Text>
         {modelName} -{' '}
-        <Text span color="dimmed" size="sm">
+        <Text span c="dimmed" size="sm">
           {modelVersionName}
         </Text>
       </Text>
@@ -686,7 +686,7 @@ function EditDetail() {
                 className={`p-3 @container ${showPreview ? 'rounded-none' : 'rounded-lg'}`}
                 classNames={{ message: 'flex flex-col items-center justify-center' }}
               >
-                <Text color="red" className="font-bold">
+                <Text c="red" className="font-bold">
                   Unable to Verify AI Generation
                 </Text>
                 <Text size="sm">
@@ -1155,14 +1155,14 @@ function TosViolationBanner() {
       className={`p-3 @container ${showPreview ? 'rounded-none' : 'rounded-lg'}`}
       classNames={{ message: 'flex flex-col items-center justify-center' }}
     >
-      <Text color="red" className="font-bold">
+      <Text c="red" className="font-bold">
         TOS Violation
       </Text>
       <Text>This image has been flagged as a TOS violation.</Text>
       {blockedFor && (
         <Text className="flex flex-wrap items-center gap-1">
           <span>Blocked for:</span>
-          <Text color="red" inline className="font-semibold">
+          <Text c="red" inline className="font-semibold">
             {blockedFor}
           </Text>
         </Text>

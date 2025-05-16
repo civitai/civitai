@@ -207,7 +207,7 @@ export const AdvancedSettings = ({
               color="pink"
               size="sm"
               pl={0}
-              sx={{ overflow: 'visible' }}
+              style={{ overflow: 'visible' }}
               leftSection={
                 <ThemeIcon variant="filled" size={18} color="pink" radius="xl" ml={-8}>
                   <IconConfetti size={12} />
@@ -240,7 +240,7 @@ export const AdvancedSettings = ({
             <Stack gap={4}>
               <Text>Sample Media Prompts</Text>
               {openedSections.includes('custom-prompts') && (
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   Set your own prompts for any of the 3 sample {isVideo ? 'videos' : 'images'} we
                   generate for each epoch.
                 </Text>
@@ -333,7 +333,7 @@ export const AdvancedSettings = ({
                   )}
                 </Group>
                 {openedSections.includes('training-settings') && (
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     Hover over each setting for more information.
                     <br />
                     Default settings are based on your chosen model. Altering these settings may

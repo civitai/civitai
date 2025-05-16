@@ -61,7 +61,7 @@ export function SchedulePostModal({
       centered
     >
       <Stack gap="md">
-        <Text size="sm" color="dimmed">
+        <Text size="sm" c="dimmed">
           {publishingModel
             ? 'Select the date and time you want to publish this model.'
             : 'Select the date and time you want to publish this post.'}
@@ -80,7 +80,7 @@ export function SchedulePostModal({
                 />
                 <InputTime name="time" label="Publish Time" withAsterisk />
               </Group>
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 The date and time are in your local timezone.
               </Text>
             </Stack>

@@ -111,7 +111,7 @@ export function ProfileCard() {
                             This is the email address associated with your account. You cannot edit
                             it here.
                           </Text>
-                          <Text size="xs" lh={1.3} color="dimmed">
+                          <Text size="xs" lh={1.3} c="dimmed">
                             If you need to update this address, please contact support@civitai.com
                           </Text>
                         </Stack>

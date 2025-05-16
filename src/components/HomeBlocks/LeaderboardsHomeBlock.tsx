@@ -110,7 +110,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
                       </Group>
                       <Stack mt="md">
                         {displayedResults.length === 0 && (
-                          <Text color="dimmed">
+                          <Text c="dimmed">
                             No results have been published for this leaderboard
                           </Text>
                         )}
@@ -136,7 +136,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
           size="md"
           color="gray"
           p={4}
-          sx={{ position: 'absolute', top: '50%', left: 10 }}
+          style={{ position: 'absolute', top: '50%', left: 10 }}
           onClick={() => scroll('left')}
         >
           <IconChevronLeft />
@@ -147,7 +147,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
           size="md"
           color="gray"
           p={4}
-          sx={{ position: 'absolute', top: '50%', right: 10 }}
+          style={{ position: 'absolute', top: '50%', right: 10 }}
           onClick={() => scroll('right')}
         >
           <IconChevronRight />

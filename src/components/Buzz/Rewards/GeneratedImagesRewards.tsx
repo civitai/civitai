@@ -174,7 +174,7 @@ export const GeneratedImagesReward = () => {
           </Center>
         ) : (
           <Center>
-            <Text color="dimmed">
+            <Text c="dimmed">
               Whoops! Looks like we are still collecting data on your models for this month. Come
               back later
             </Text>

@@ -269,7 +269,7 @@ export function ExplainImageRaterPopover() {
         </ActionIcon>
       </Popover.Target>
       <Popover.Dropdown>
-        <Text color="orange" weight={500}>
+        <Text c="orange" weight={500}>
           What is this?
         </Text>
         <Text

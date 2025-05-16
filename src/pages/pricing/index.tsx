@@ -227,7 +227,7 @@ export default function Pricing() {
                 <Group gap="xs">
                   <EdgeMedia src="df2b3298-7352-40d6-9fbc-17a08e2a43c5" width={48} />
                   <Stack gap={0}>
-                    <Text color="blue" weight="bold">
+                    <Text c="blue" weight="bold">
                       Supporter Offer!
                     </Text>
                     <Text>

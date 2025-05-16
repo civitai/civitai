@@ -144,7 +144,7 @@ export function ImageDetailByProps({
                         subText={
                           <>
                             {image.publishedAt || image.createdAt ? (
-                              <Text size="xs" color="dimmed">
+                              <Text size="xs" c="dimmed">
                                 Uploaded <DaysFromNow date={image.publishedAt || image.createdAt} />
                               </Text>
                             ) : (
@@ -171,7 +171,7 @@ export function ImageDetailByProps({
                 </Card.Section>
                 <Card.Section
                   py="xs"
-                  sx={{ backgroundColor: theme.colors.dark[7] }}
+                  style={{ backgroundColor: theme.colors.dark[7] }}
                   withBorder
                   inheritPadding
                 >
@@ -371,7 +371,7 @@ export function ImageDetailCarousel({
           >
             {(safe) => (
               <Center
-                sx={{
+                style={{
                   position: 'absolute',
                   top: 0,
                   left: 0,

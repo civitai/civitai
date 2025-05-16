@@ -120,7 +120,7 @@ export function SelectMenuV2<T extends string | number>({
                   <div className="flex justify-between">
                     <Text inline>{option.label}</Text>
                     {active && (
-                      <Text color={theme.primaryColor} inline>
+                      <Text c={theme.primaryColor} inline>
                         <IconCheck size={16} color="currentColor" />
                       </Text>
                     )}
@@ -155,7 +155,7 @@ export function SelectMenuV2<T extends string | number>({
                 data-hovered={`${active}`}
                 rightSection={
                   active && (
-                    <Text color={theme.primaryColor} inline>
+                    <Text c={theme.primaryColor} inline>
                       <IconCheck size={16} color="currentColor" />
                     </Text>
                   )

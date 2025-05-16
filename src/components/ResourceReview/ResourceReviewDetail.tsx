@@ -114,7 +114,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                 href={getModelWithVersionUrl(data)}
                 variant="link"
                 lineClamp={1}
-                sx={{ cursor: 'pointer' }}
+                style={{ cursor: 'pointer' }}
                 shallow={isModelPage}
               >
                 {data.model.name} - {data.modelVersion.name}

@@ -68,7 +68,7 @@ export function EventRewards({ event }: { event: string }) {
               <Text align="center" size="lg" weight={590} w="100%" tt="capitalize">
                 {reward.name}
               </Text>
-              <Text size="xs" color="dimmed" align="center">
+              <Text size="xs" c="dimmed" align="center">
                 {reward.description}
               </Text>
             </div>

@@ -85,7 +85,7 @@ export function ResourceReviewThumbActions({
           size={size}
           fullWidth
         >
-          <Text color="success.5" size="xs" inline>
+          <Text c="success.5" size="xs" inline>
             <Group gap={4} wrap="nowrap">
               <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
               {withCount && !loadingTotals && abbreviateNumber(totals?.up ?? 0)}
@@ -106,7 +106,7 @@ export function ResourceReviewThumbActions({
           size={size}
           fullWidth
         >
-          <Text color="red" inline>
+          <Text c="red" inline>
             <ThumbsDownIcon size={20} filled={isThumbsDown} />
           </Text>
         </Button>

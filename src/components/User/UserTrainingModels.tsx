@@ -377,7 +377,7 @@ export default function UserTrainingModels() {
                               size="xs"
                               color="gray"
                               py={0}
-                              sx={{ fontSize: 12, fontWeight: 600, height: 20 }}
+                              style={{ fontSize: 12, fontWeight: 600, height: 20 }}
                               component="a"
                               href="/support-portal"
                               target="_blank"
@@ -637,7 +637,7 @@ export default function UserTrainingModels() {
                     versionId: modalData.id as number,
                     type: 'Training Data',
                   })}
-                  sx={{ flex: 1 }}
+                  style={{ flex: 1 }}
                 >
                   <Text align="center">{`Download (${formatKBytes(modalData.file?.sizeKB)})`}</Text>
                 </DownloadButton>

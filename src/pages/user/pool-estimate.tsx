@@ -125,7 +125,7 @@ export default function EarnPotential() {
         <Stack>
           <Stack gap={0}>
             <Title mb={0}>Estimated Creator Compensation Pool Earnings</Title>
-            <Text color="dimmed">
+            <Text c="dimmed">
               This is an estimate of your potential earnings from the Creator Compensation Pool
               based on your earnings last month as well as the total earnings of all creators on the
               platform.

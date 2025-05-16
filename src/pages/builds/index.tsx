@@ -63,12 +63,12 @@ export default function BuildPage() {
         <Stack gap="xl">
           <Stack gap={0}>
             <Title>Hardware We Love</Title>
-            <Text size="sm" color="dimmed" mb="sm">
+            <Text size="sm" c="dimmed" mb="sm">
               Any purchases made using these links directly contributes to Civitai ❤️
             </Text>
             <Group justify="space-between" gap={8}>
               <Stack gap={8}>
-                <Text size="lg" weight={500} color="dimmed">
+                <Text size="lg" weight={500} c="dimmed">
                   Select your budget
                 </Text>
                 <Chip.Group
@@ -95,7 +95,7 @@ export default function BuildPage() {
                 </Chip.Group>
               </Stack>
               <Stack gap={8}>
-                <Text size="lg" weight={500} color="dimmed">
+                <Text size="lg" weight={500} c="dimmed">
                   Processor
                 </Text>
                 <Chip.Group
@@ -152,7 +152,7 @@ export default function BuildPage() {
                         </Stack>
                       </HoverCard.Target>
                       <HoverCard.Dropdown>
-                        <Text color="yellow" weight={500}>
+                        <Text c="yellow" weight={500}>
                           About Generation Speed
                         </Text>
                         <Text size="sm">
@@ -273,7 +273,7 @@ export default function BuildPage() {
                 ))}
                 {data && data.updatedAt && (
                   <Group justify="space-between" mt={5}>
-                    <Text color="dimmed" size="xs">
+                    <Text c="dimmed" size="xs">
                       Prices last updated <DaysFromNow date={data.updatedAt} />
                     </Text>
                   </Group>

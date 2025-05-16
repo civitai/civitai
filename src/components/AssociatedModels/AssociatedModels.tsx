@@ -123,7 +123,7 @@ export function AssociatedModels({
                 <ThemeIcon color="gray" size="xl" radius="xl">
                   <IconRocketOff />
                 </ThemeIcon>
-                <Text size="lg" color="dimmed">
+                <Text size="lg" c="dimmed">
                   {`You aren't suggesting any other resources yet...`}
                 </Text>
               </Group>

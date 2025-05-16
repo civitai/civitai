@@ -137,7 +137,7 @@ export default Page(
           {tagId && (tag || tagLoading) && (
             <Group gap="xs">
               {tagLoading && <Loader size="sm" />}
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 Posting to{' '}
                 <Text component="span" td="underline">
                   {tag?.name}
@@ -148,7 +148,7 @@ export default Page(
           {modelVersionId && (version || loading) && (
             <Group gap="xs">
               {loading && <Loader size="sm" />}
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 Posting to{' '}
                 <Text component="span" td="underline">
                   {version?.model.name} - {version?.name}
@@ -203,7 +203,7 @@ export default Page(
                   </Card>
 
                   {userReview && (
-                    <Text size="sm" color="dimmed">
+                    <Text size="sm" c="dimmed">
                       {`We've saved your review. Now, consider adding images below to create a post showcasing the resource.`}
                     </Text>
                   )}
@@ -216,7 +216,7 @@ export default Page(
             Image Feeds. Please allow a few minutes for your media to become visible after posting.
           </AlertWithIcon>
           {!displayReview && (
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Our site is mostly used for sharing AI generated content. You can start generating
               images using our{' '}
               <Link legacyBehavior href="/generate" passHref>

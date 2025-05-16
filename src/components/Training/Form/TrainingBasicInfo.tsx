@@ -111,7 +111,7 @@ const RadioImg = ({
           <source src={src} type="video/mp4" />
         </video>
         <figcaption>
-          <Text color="dimmed" align="center" mt={10}>
+          <Text c="dimmed" align="center" mt={10}>
             {caption}
           </Text>
         </figcaption>

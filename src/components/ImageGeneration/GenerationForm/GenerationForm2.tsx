@@ -493,7 +493,7 @@ export function GenerationFormContent() {
                         loading={loadingWorkflows}
                       />
                       {workflowDefinition?.description && (
-                        <Text size="xs" lh={1.2} color="dimmed" className="my-2">
+                        <Text size="xs" lh={1.2} c="dimmed" className="my-2">
                           {workflowDefinition.description}
                         </Text>
                       )}
@@ -916,7 +916,7 @@ export function GenerationFormContent() {
                             {trainedWords.length > 0 ? (
                               <div className="mb-1 flex flex-col gap-2">
                                 <Divider />
-                                <Text color="dimmed" className="text-xs font-semibold">
+                                <Text c="dimmed" className="text-xs font-semibold">
                                   Trigger words
                                 </Text>
                                 <div className="mb-2 flex items-center gap-1">
@@ -951,7 +951,7 @@ export function GenerationFormContent() {
                       variant="light"
                       onClick={handleParsePrompt}
                       leftIcon={<IconArrowAutofitDown size={16} />}
-                      sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
+                      style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
                       fullWidth
                     >
                       Apply Parameters
@@ -1011,7 +1011,7 @@ export function GenerationFormContent() {
                         <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
                           Draft Mode will generate images faster, cheaper, and with slightly less
                           quality. Use this for exploring concepts quickly.
-                          <Text size="xs" color="dimmed" mt={4}>
+                          <Text size="xs" c="dimmed" mt={4}>
                             Requires generating in batches of 4
                           </Text>
                         </InfoPopover>
@@ -1062,7 +1062,7 @@ export function GenerationFormContent() {
                             m={-8}
                             radius="md"
                             loader={
-                              <Text color="yellow" weight={500}>
+                              <Text c="yellow" weight={500}>
                                 Not available in Draft Mode
                               </Text>
                             }
@@ -1291,7 +1291,7 @@ export function GenerationFormContent() {
                         I Understand, Continue Generating
                       </Button>
                     </Alert>
-                    <Text size="xs" color="dimmed" mt={4}>
+                    <Text size="xs" c="dimmed" mt={4}>
                       Is this a mistake?{' '}
                       <Text
                         component="a"
@@ -1361,7 +1361,7 @@ export function GenerationFormContent() {
                         <WhatIfAlert />
                         <div className="flex gap-2">
                           <Card withBorder className="flex max-w-24 flex-1 flex-col p-0">
-                            <Text className="pr-6 text-center text-xs font-semibold" color="dimmed">
+                            <Text className="pr-6 text-center text-xs font-semibold" c="dimmed">
                               Quantity
                             </Text>
                             <InputQuantity
@@ -1507,12 +1507,12 @@ const getAspectRatioControls = (
         <Center>
           <Paper
             withBorder
-            sx={{ borderWidth: 2, aspectRatio: `${width}/${height}`, height: 20 }}
+            style={{ borderWidth: 2, aspectRatio: `${width}/${height}`, height: 20 }}
           />
         </Center>
         <Stack gap={0}>
           <Text size="xs">{label}</Text>
-          <Text fz={10} color="dimmed">{`${width}x${height}`}</Text>
+          <Text fz={10} c="dimmed">{`${width}x${height}`}</Text>
         </Stack>
       </Stack>
     ),

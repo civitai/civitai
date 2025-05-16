@@ -161,17 +161,17 @@ export default function UserTransactions() {
                         <Text weight="500">{formatDate(date)}</Text>
                         <Badge>{TransactionType[type]}</Badge>
                       </Group>
-                      <Text color={isDebit ? 'red' : 'green'}>
+                      <Text c={isDebit ? 'red' : 'green'}>
                         <Group gap={4}>
                           <IconBolt size={16} fill="currentColor" />
-                          <Text sx={{ fontVariantNumeric: 'tabular-nums' }} span>
+                          <Text style={{ fontVariantNumeric: 'tabular-nums' }} span>
                             {amount.toLocaleString()}
                           </Text>
                         </Group>
                       </Text>
                     </Group>
                     {fromUser && fromUser.id !== currentUser?.id && (
-                      <Text color="dimmed">
+                      <Text c="dimmed">
                         <Group gap={4}>
                           {isDebit ? 'To: ' : 'From: '}
                           <Text weight="500" span>
@@ -181,7 +181,7 @@ export default function UserTransactions() {
                       </Text>
                     )}
                     {toUser && toUser.id !== currentUser?.id && (
-                      <Text color="dimmed">
+                      <Text c="dimmed">
                         <Group gap={4}>
                           {isDebit ? 'From: ' : 'To: '}
                           <Text weight="500" span>
@@ -190,7 +190,7 @@ export default function UserTransactions() {
                         </Group>
                       </Text>
                     )}
-                    {description && <Text color="dimmed">{description}</Text>}
+                    {description && <Text c="dimmed">{description}</Text>}
                     {isImage && details?.entityId ? (
                       <RoutedDialogLink
                         name="imageDetail"

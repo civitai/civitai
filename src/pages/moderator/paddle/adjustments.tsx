@@ -48,7 +48,7 @@ export default function ModeratorPaddleAdjustments() {
       <Container size="lg">
         <Stack gap={0} mb="xl">
           <Title order={1}>Paddle Adjustments</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Includes refunds and Cashbacks we&rsquo;ve seen on Paddle. This mainly because Paddle
             has no way to check this on their platform.
           </Text>
@@ -193,7 +193,7 @@ export default function ModeratorPaddleAdjustments() {
             <Center>
               <Stack>
                 {!hasNextPage && (
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     No more adjustments
                   </Text>
                 )}
@@ -211,7 +211,7 @@ export default function ModeratorPaddleAdjustments() {
         ) : (
           <Paper p="xl" withBorder>
             <Center>
-              <Text size="md" color="dimmed">
+              <Text size="md" c="dimmed">
                 No adjustments found
               </Text>
             </Center>

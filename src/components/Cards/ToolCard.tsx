@@ -57,7 +57,7 @@ export function ToolCard({ data }: Props) {
               <Text size="lg" weight={600}>
                 {data.name}
               </Text>
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 {data.company}
               </Text>
             </div>

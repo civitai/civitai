@@ -117,7 +117,7 @@ export default function MetadataTester() {
                         <Divider label="Cleaned" mt="xs" />
                         <Text>{replaced.prompt}</Text>
                         {replaced.negativePrompt && (
-                          <Text color="dimmed">{replaced.negativePrompt}</Text>
+                          <Text c="dimmed">{replaced.negativePrompt}</Text>
                         )}
                       </>
                     )}

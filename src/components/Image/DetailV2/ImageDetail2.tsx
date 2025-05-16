@@ -181,7 +181,7 @@ export function ImageDetail2() {
       )}
       <Button {...sharedButtonProps} onClick={handleSaveClick}>
         <IconBookmark {...sharedIconProps} />
-        <Text color="white" size="xs" align="center" weight={500}>
+        <Text c="white" size="xs" align="center" weight={500}>
           Save
         </Text>
       </Button>
@@ -195,7 +195,7 @@ export function ImageDetail2() {
         >
           <Button {...sharedButtonProps}>
             <IconPhoto {...sharedIconProps} />
-            <Text color="white" size="xs" align="center" weight={500}>
+            <Text c="white" size="xs" align="center" weight={500}>
               View Post
             </Text>
           </Button>
@@ -206,7 +206,7 @@ export function ImageDetail2() {
           <Badge
             {...sharedBadgeProps}
             pr={12}
-            sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
+            style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
           >
             <IconBolt size={14} fill="currentColor" />
             Tip
@@ -257,7 +257,7 @@ export function ImageDetail2() {
                               {/* Disable view count  */}
                               {/* <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
-                        <Text color="white" size="xs" align="center" weight={500}>
+                        <Text c="white" size="xs" align="center" weight={500}>
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge> */}
@@ -387,7 +387,7 @@ export function ImageDetail2() {
                       <SmartCreatorCard
                         user={image.user}
                         subText={
-                          <Text size="xs" color="dimmed">
+                          <Text size="xs" c="dimmed">
                             {image.publishedAt || image.sortAt ? (
                               <>
                                 Uploaded <DaysFromNow date={image.publishedAt || image.sortAt} />

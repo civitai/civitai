@@ -223,7 +223,7 @@ export function ImageMeta({
                   generationPanel.open({ type: 'image', id: imageId ?? 0 });
                   onCreateClick?.();
                 }}
-                sx={{ flex: 1 }}
+                style={{ flex: 1 }}
               >
                 Remix
               </Button>

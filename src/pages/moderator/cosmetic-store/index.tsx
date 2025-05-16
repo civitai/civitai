@@ -24,7 +24,7 @@ export default function Rewards() {
       <Container size="xs">
         <Stack gap={0} mb="xl">
           <Title order={1}>Cosmetic Shop</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Manage products and sections for the Cosmetic Shop.
           </Text>
         </Stack>

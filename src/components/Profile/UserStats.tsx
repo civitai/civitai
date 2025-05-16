@@ -21,7 +21,7 @@ const UserStat = ({
           {abbreviateNumber(value ?? 0)}
         </Text>
       </Group>
-      <Text tt="uppercase" color="dimmed" fz={10} weight={510}>
+      <Text tt="uppercase" c="dimmed" fz={10} weight={510}>
         {subtext}
       </Text>
     </Stack>

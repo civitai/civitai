@@ -20,7 +20,7 @@ export function EndOfFeed({ text }: { text?: ReactNode }) {
       />
       <Center>
         <Stack gap={0} align="center">
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             {text ?? 'Consider changing your period or filters to find more'}
           </Text>
           <Text
@@ -29,7 +29,7 @@ export function EndOfFeed({ text }: { text?: ReactNode }) {
             onClick={() => {
               node?.current?.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            sx={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer' }}
           >
             Back to the top
           </Text>

@@ -154,7 +154,7 @@ function ManageHomeBlocks({ onClose }: Props) {
         <Badge color="yellow" variant="light" size="xs">
           Beta
         </Badge>
-        <Text size="xs" color="dimmed" inline>
+        <Text size="xs" c="dimmed" inline>
           Expect frequent changes.
         </Text>
       </Group>

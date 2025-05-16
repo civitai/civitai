@@ -86,7 +86,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                               spacing="md"
                               linkToProfile
                               subText={
-                                <Text color="dimmed" size="sm">
+                                <Text c="dimmed" size="sm">
                                   <DaysFromNow date={review.createdAt} />
                                 </Text>
                               }

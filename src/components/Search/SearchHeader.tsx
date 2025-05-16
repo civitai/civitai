@@ -234,7 +234,7 @@ export const SearchHeader = () => {
     return (
       <>
         <span>{nbHits > 0 ? `${hitsString} results for ` : `No results for `}</span>
-        <Text color="blue" span>
+        <Text c="blue" span>
           &lsquo;{query}&rsquo;
         </Text>
       </>
@@ -244,7 +244,7 @@ export const SearchHeader = () => {
   return (
     <Stack>
       <Title order={3}>{titleString}</Title>
-      <Box sx={{ overflow: 'hidden' }}>
+      <Box style={{ overflow: 'hidden' }}>
         <Group gap="xs" wrap="nowrap" className={classes.wrapper}>
           <Tooltip label="Filters & sorting" position="bottom" withArrow>
             <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>

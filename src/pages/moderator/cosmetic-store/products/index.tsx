@@ -67,7 +67,7 @@ export default function CosmeticStoreProducts() {
       children: (
         <Stack gap={0}>
           <Text size="sm">Are you sure you want to delete this Shop item?</Text>
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             Items with purchases cannot be deleted. Instead, please mark them as archived.
           </Text>
         </Stack>
@@ -88,7 +88,7 @@ export default function CosmeticStoreProducts() {
             <BackButton url="/moderator/cosmetic-store" />
             <Title order={1}>Cosmetic Shop Products</Title>
           </Group>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You can add and manage shop products here. A cosmetic must be created before hand for it
             to be created into a shop product. After creating, remember to add it to a section{' '}
             <Anchor component={Link} href="/moderator/cosmetic-store/sections">

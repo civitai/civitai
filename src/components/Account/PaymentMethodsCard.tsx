@@ -49,7 +49,7 @@ export const PaymentMethodItem = ({
       return (
         <Group {...groupProps}>
           <Stack gap={0}>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Card
             </Text>
             <Text size="sm">
@@ -70,7 +70,7 @@ export const PaymentMethodItem = ({
       return (
         <Group {...groupProps}>
           <Stack gap={0}>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               SEPA Debit
             </Text>
             <Text size="sm">
@@ -88,7 +88,7 @@ export const PaymentMethodItem = ({
       return (
         <Group {...groupProps}>
           <Stack gap={0}>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Link
             </Text>
             <Text size="sm">
@@ -106,7 +106,7 @@ export const PaymentMethodItem = ({
       return (
         <Group {...groupProps}>
           <Stack gap={0}>
-            <Text size="xs" transform="capitalize" color="dimmed">
+            <Text size="xs" transform="capitalize" c="dimmed">
               {type.replace(/_/gi, ' ')}
             </Text>
             <Text size="sm">Created on: {formatDate(new Date(paymentMethod.created * 1000))}</Text>
@@ -136,7 +136,7 @@ const StripePaymentMethods = () => {
           <Text>
             Are you sure you want to delete this payment method? This action is destructive.
           </Text>
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             If you have delete all your payment methods, your club memberships will be unable to be
             charged and you will lose access to those assets.
           </Text>
@@ -158,7 +158,7 @@ const StripePaymentMethods = () => {
           Payment methods
         </Title>
         {result.success && result.data.missingPaymentMethod && (
-          <Text color="red" size="sm">
+          <Text c="red" size="sm">
             It looks like you are trying to upgrade your membership but we do not have a payment
             method setup for you. Please add one before attempting to upgrade.
           </Text>
@@ -194,7 +194,7 @@ const StripePaymentMethods = () => {
             })}
           </Stack>
         ) : (
-          <Text align="center" color="dimmed" size="sm">
+          <Text align="center" c="dimmed" size="sm">
             &hellip;You have no payment methods added yet&hellip;
           </Text>
         )}
@@ -282,7 +282,7 @@ const PaddlePaymentMethods = () => {
         )}
         {!managementUrls?.updatePaymentMethod && managementUrls?.freeSubscriptionPriceId && (
           <Stack>
-            <Text align="center" size="sm" color="dimmed">
+            <Text align="center" size="sm" c="dimmed">
               We found no default payment method.
             </Text>
             <Button onClick={handleSetupDefaultPaymentMethod}>Setup default payment method</Button>

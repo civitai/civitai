@@ -237,7 +237,7 @@ export function ClubUpsertForm({
                         <IconQuestionMark />
                       </ActionIcon>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       This club is intended to produce mature content. A badge will be added to the
                       club&rsquo;s card on the main feed.
                     </Text>
@@ -251,7 +251,7 @@ export function ClubUpsertForm({
                     <Group gap={4}>
                       <Text inline>Unlisted</Text>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       This club should not appear in the main feed
                     </Text>
                   </Stack>
@@ -273,7 +273,7 @@ export function ClubUpsertForm({
                           </ThemeIcon>
                         </Tooltip>
                       </Group>
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         Members of your club will be charged a monthly fee to keep access to your
                         club. Turning this off does not affect the initial membership fee.
                       </Text>

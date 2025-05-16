@@ -244,7 +244,7 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
       color="gray"
       variant="filled"
       size="md"
-      sx={{ flexShrink: 0 }}
+      style={{ flexShrink: 0 }}
       {...props}
       onClick={refine}
     >

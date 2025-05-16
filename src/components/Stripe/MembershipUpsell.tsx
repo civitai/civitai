@@ -94,7 +94,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
         )}
         <Stack gap={0}>
           <Text className={classes.title}>{capitalize(targetTier)} membership</Text>
-          <Text color="yellow.7" className={classes.subtitle}>
+          <Text c="yellow.7" className={classes.subtitle}>
             {subscription ? 'Upgrade to get even more perks:' : 'Get more with a membership:'}
           </Text>
         </Stack>

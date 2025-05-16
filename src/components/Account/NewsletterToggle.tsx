@@ -76,7 +76,7 @@ export function NewsletterToggle({
                 <Text size="xs" lh={1.3}>
                   {`We hate spam as much as you do, so we'll only send you the good stuff.`}
                 </Text>
-                <Text size="xs" color="dimmed" lh={1.3}>
+                <Text size="xs" c="dimmed" lh={1.3}>
                   Emails will be sent to{' '}
                   <Text component="span" td="underline">
                     {currentUser.email}
@@ -87,7 +87,7 @@ export function NewsletterToggle({
           </Popover>
         </Group>
         {description && (
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             {description}
           </Text>
         )}

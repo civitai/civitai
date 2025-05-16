@@ -32,7 +32,7 @@ export function ModelDiscussionComments({
               <Divider
                 label={
                   <Group gap="xs" align="center">
-                    <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                    <Text variant="link" style={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                       Show {remaining} More
                     </Text>
                   </Group>

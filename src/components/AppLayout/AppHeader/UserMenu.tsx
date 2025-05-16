@@ -385,7 +385,7 @@ function CustomUserAvatar({ data }: { data: CivitaiAccount }) {
         radius="xl"
         size="sm"
         imageProps={{ loading: 'lazy', referrerPolicy: 'no-referrer' }}
-        sx={{ backgroundColor: avatarBgColor }}
+        style={{ backgroundColor: avatarBgColor }}
       >
         {getInitials(username)}
       </Avatar>

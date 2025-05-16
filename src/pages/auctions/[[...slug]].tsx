@@ -233,7 +233,7 @@ export default function Auctions({
             </ContainerGrid.Col>
           )}
 
-          <ContainerGrid.Col xs={12} md={8} display="flex" sx={{ justifyContent: 'center' }}>
+          <ContainerGrid.Col xs={12} md={8} display="flex" style={{ justifyContent: 'center' }}>
             {slug !== MY_BIDS ? <AuctionInfo /> : <AuctionMyBids />}
           </ContainerGrid.Col>
         </ContainerGrid>

@@ -316,7 +316,7 @@ export function BountyCreateForm() {
                           key={file.url}
                           radius="sm"
                           p={0}
-                          sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                          style={{ position: 'relative', overflow: 'hidden', height: 332 }}
                           withBorder
                         >
                           {file.status === 'success' ? (
@@ -544,7 +544,7 @@ export function BountyCreateForm() {
                     <Group gap={4}>
                       <Text inline>Depicts an actual person</Text>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       For example: Tom Cruise or Tom Cruise as Maverick
                     </Text>
                   </Stack>
@@ -560,7 +560,7 @@ export function BountyCreateForm() {
                         <IconQuestionMark />
                       </ActionIcon>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       This bounty is intended to produce mature content.
                     </Text>
                   </Stack>
@@ -612,7 +612,7 @@ type RadioItemProps = { label: string; description: string };
 const RadioItem = ({ label, description }: RadioItemProps) => (
   <Stack gap={4}>
     <Text inline>{label}</Text>
-    <Text size="xs" color="dimmed">
+    <Text size="xs" c="dimmed">
       {description}
     </Text>
   </Stack>

@@ -101,7 +101,7 @@ function EventHomeBlockContent({ metadata }: Props) {
               <Stack align="end" gap={0}>
                 <Group gap={4} wrap="nowrap">
                   <CurrencyIcon currency={Currency.BUZZ} />
-                  <Text size="xl" lh={1} weight={590} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                  <Text size="xl" lh={1} weight={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {abbreviateNumber(totalTeamScores)}
                   </Text>
                 </Group>
@@ -111,7 +111,7 @@ function EventHomeBlockContent({ metadata }: Props) {
                 <Stack align="end" gap={0}>
                   <Group gap={4} wrap="nowrap">
                     <Lightbulb color={userTeam} size={24} transform="rotate(180)" animated />
-                    <Text size="xl" lh={1} weight={590} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                    <Text size="xl" lh={1} weight={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
                       {abbreviateNumber(teamScore.score ?? 0)}
                     </Text>
                   </Group>

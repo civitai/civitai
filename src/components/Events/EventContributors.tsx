@@ -45,7 +45,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                 Top Donors All Time
               </Text>
               {!ended && (
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
                   <Countdown endTime={resetTime} format="short" />
                 </Text>
@@ -73,7 +73,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                   </Group>
                   <Group gap={4}>
                     <CurrencyIcon currency={Currency.BUZZ} />
-                    <Text size="xl" weight={500} color="dimmed">
+                    <Text size="xl" weight={500} c="dimmed">
                       {abbreviateNumber(contributor.amount ?? 0)}
                     </Text>
                   </Group>
@@ -82,7 +82,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
             ) : (
               <Paper p="xl">
                 <Center>
-                  <Text color="dimmed">No donors yet</Text>
+                  <Text c="dimmed">No donors yet</Text>
                 </Center>
               </Paper>
             )}
@@ -105,7 +105,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                   Top Donors Today
                 </Text>
                 {!ended && (
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
                     <Countdown endTime={resetTime} format="short" />
                   </Text>
@@ -131,7 +131,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                     />
                     <Group gap={4}>
                       <CurrencyIcon currency={Currency.BUZZ} />
-                      <Text size="xl" weight={500} color="dimmed">
+                      <Text size="xl" weight={500} c="dimmed">
                         {abbreviateNumber(contributor.amount ?? 0)}
                       </Text>
                     </Group>
@@ -140,7 +140,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
               ) : (
                 <Paper p="xl">
                   <Center>
-                    <Text color="dimmed">No donors yet</Text>
+                    <Text c="dimmed">No donors yet</Text>
                   </Center>
                 </Paper>
               )}
@@ -163,7 +163,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                 <Text fz={32} weight="bold">
                   Top Donors by Team
                 </Text>
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
                   <Countdown endTime={resetTime} format="short" />
                 </Text>
@@ -198,7 +198,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                     ) : (
                       <Paper py="md">
                         <Center>
-                          <Text color="dimmed">No donors yet</Text>
+                          <Text c="dimmed">No donors yet</Text>
                         </Center>
                       </Paper>
                     )}

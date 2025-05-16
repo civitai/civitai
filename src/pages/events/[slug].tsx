@@ -322,7 +322,7 @@ export default function EventPageDetails({
                         </Text>
                         <Group gap={4} wrap="nowrap">
                           <CurrencyIcon currency={Currency.BUZZ} />
-                          <Text fz={32} weight={590} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                          <Text fz={32} weight={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
                             {numberWithCommas(totalTeamScores)}
                           </Text>
                         </Group>
@@ -363,7 +363,7 @@ export default function EventPageDetails({
                                   <Text
                                     size="xl"
                                     weight={590}
-                                    sx={{ fontVariantNumeric: 'tabular-nums' }}
+                                    style={{ fontVariantNumeric: 'tabular-nums' }}
                                   >
                                     {numberWithCommas(teamScore.score)}
                                   </Text>
@@ -639,7 +639,7 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
             size="md"
             variant="light"
             radius="xl"
-            sx={{ alignSelf: 'flex-start' }}
+            style={{ alignSelf: 'flex-start' }}
             rightIcon={<IconChevronRight />}
             href="/forms/matching-partner"
             target="_blank"

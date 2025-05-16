@@ -80,7 +80,7 @@ export function ImageProcess({ imageId }: { imageId: number }) {
               <li key={id}>
                 <Text>{name}</Text>
                 {notes && (
-                  <LineClamp lineClamp={1} color="dimmed">
+                  <LineClamp lineClamp={1} c="dimmed">
                     {notes}
                   </LineClamp>
                 )}

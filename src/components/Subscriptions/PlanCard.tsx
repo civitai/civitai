@@ -139,7 +139,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                         price.currency
                       )}
                     </Text>
-                    <Text align="center" color="dimmed">
+                    <Text align="center" c="dimmed">
                       / {shortenPlanInterval(price.interval)}
                     </Text>
                   </Group>
@@ -149,7 +149,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   <Text className="text-5xl font-bold" align="center" lh={1}>
                     {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                   </Text>
-                  <Text align="center" color="dimmed">
+                  <Text align="center" c="dimmed">
                     / {shortenPlanInterval(price.interval)}
                   </Text>
                 </Group>

@@ -32,7 +32,7 @@ export function TourPopover(props: TooltipRenderProps) {
         <Text className={clsx(step.showProgress && 'hidden')} size="lg" weight={600} lineClamp={2}>
           {step.title}
         </Text>
-        <Text className={clsx(!step.showProgress && 'hidden')} size="sm" color="dimmed">
+        <Text className={clsx(!step.showProgress && 'hidden')} size="sm" c="dimmed">
           {index + 1} of {size}
         </Text>
         {!step.hideCloseButton && <CloseButton {...closeProps} ml="auto" />}

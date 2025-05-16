@@ -33,7 +33,7 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
       >
         <Group gap={0}>
           <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />{' '}
-          <Text color="dark.9">{abbreviateNumber(downloadPrice ?? 0, { decimals: 0 })}</Text>
+          <Text c="dark.9">{abbreviateNumber(downloadPrice ?? 0, { decimals: 0 })}</Text>
         </Group>
       </Badge>
     );

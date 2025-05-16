@@ -54,11 +54,11 @@ export function VerifiedText({ file, iconOnly }: Props) {
         {icon}
       </ThemeIcon>
       {!iconOnly ? (
-        <Text color="dimmed" size="xs">
+        <Text c="dimmed" size="xs">
           <Text component="span">{verified ? 'Verified' : 'Unverified'}: </Text>
           <Popover withArrow width={350} position="bottom" withinPortal>
             <Popover.Target>
-              <Text component="a" sx={{ cursor: 'pointer' }}>
+              <Text component="a" style={{ cursor: 'pointer' }}>
                 {scannedDate ? (
                   <abbr title={scannedDate.format()}>{scannedDate.fromNow()}</abbr>
                 ) : (
@@ -83,7 +83,7 @@ export function VerifiedText({ file, iconOnly }: Props) {
                 target="_blank"
                 rel="nofollow noreferrer"
                 size="xs"
-                color="dimmed"
+                c="dimmed"
                 td="underline"
               >
                 What does this mean?

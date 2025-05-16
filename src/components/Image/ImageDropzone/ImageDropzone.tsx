@@ -111,20 +111,20 @@ export function ImageDropzone({
               </Text>
               {description}
               {(!max || max > 1) && (
-                <Text size="sm" color="dimmed" mt={7} inline>
+                <Text size="sm" c="dimmed" mt={7} inline>
                   {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
                 </Text>
               )}
               {fileExtensions.length > 0 && (
-                <Text size="sm" color="dimmed" inline>
+                <Text size="sm" c="dimmed" inline>
                   {`Accepted file types: ${fileExtensions.join(', ')}`}
                 </Text>
               )}
-              <Text size="sm" color="dimmed" inline>
+              <Text size="sm" c="dimmed" inline>
                 {`Images cannot exceed ${formatBytes(maxSize)} `}
               </Text>
               {allowsVideo && (
-                <Text size="sm" color="dimmed" inline>
+                <Text size="sm" c="dimmed" inline>
                   {`Videos cannot exceed ${formatBytes(
                     constants.mediaUpload.maxVideoFileSize
                   )}, 4K resolution, or ${

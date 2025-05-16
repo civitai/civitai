@@ -32,7 +32,7 @@ export const LeaderHomeBlockCreatorItem = ({
   return (
     <div style={{ minHeight: 42 }}>
       <Link legacyBehavior href={link} passHref>
-        <Box sx={{ cursor: 'pointer' }}>
+        <Box style={{ cursor: 'pointer' }}>
           <ContainerGrid align="center">
             <ContainerGrid.Col span={8}>
               <Group gap="xs" wrap="nowrap">

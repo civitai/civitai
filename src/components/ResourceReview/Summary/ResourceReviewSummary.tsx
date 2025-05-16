@@ -82,7 +82,7 @@ ResourceReviewSummary.Header = function Header({
         <>
           <Group>
             <Text>Reviews</Text>
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               {count ?? initialCount} {!!modelVersionId ? 'version' : ''} ratings
             </Text>
           </Group>

@@ -164,7 +164,7 @@ export function NewChat() {
             .slice(4)}
         />
       </Box>
-      <Box p="sm" sx={{ flexGrow: 1 }}>
+      <Box p="sm" style={{ flexGrow: 1 }}>
         {state.selectedUsers.length === 0 ? (
           <Center mt="md">
             <Text>Select at least 1 user above</Text>

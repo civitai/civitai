@@ -15,9 +15,9 @@ export function StatTooltip({ value, label }: Props) {
   return (
     <Stack gap={0} align="center" w="100%">
       <Text
-        sx={{ borderBottom: '1px solid rgba(255,255,255,0.2)' }}
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.2)' }}
         size="xs"
-        color="dimmed"
+        c="dimmed"
         mb={4}
         mt={-5}
         mx={-8}

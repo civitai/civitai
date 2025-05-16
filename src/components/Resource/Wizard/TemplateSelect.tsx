@@ -58,7 +58,7 @@ export function TemplateSelect({ userId, onSelect }: Props) {
         </ScrollArea.Autosize>
       ) : (
         <Center p="sm" mt={4}>
-          <Text color="dimmed" size="sm">
+          <Text c="dimmed" size="sm">
             No models found
           </Text>
         </Center>

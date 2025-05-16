@@ -153,7 +153,7 @@ export function ClubTierUpsertForm({
                       <Group gap={4}>
                         <Text inline>Unlisted</Text>
                       </Group>
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         This tier will not be displayed to users directly, but they can join it if
                         they have the link.
                       </Text>
@@ -167,7 +167,7 @@ export function ClubTierUpsertForm({
                       <Group gap={4}>
                         <Text inline>Joinable</Text>
                       </Group>
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         This tier will not be joinable by users, regardless of whether they have a
                         link or not. This is useful to create tiers that are only available to users
                         you want to invite and to start working on a tier before other users get
@@ -183,7 +183,7 @@ export function ClubTierUpsertForm({
                       <Group gap={4}>
                         <Text inline>One time payment</Text>
                       </Group>
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         This tier will not be charged on a monthly basis and its users will only pay
                         the joining fee.
                       </Text>

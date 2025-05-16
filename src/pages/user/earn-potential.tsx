@@ -167,7 +167,7 @@ export default function EarnPotential() {
         <Stack>
           <Stack gap={0}>
             <Title mb={0}>Your Monthly Generation Earning Potential</Title>
-            <Text color="dimmed">
+            <Text c="dimmed">
               This is an estimate of your potential earnings based on the use of your resources in
               the Civitai generator over the last 30 days.
             </Text>

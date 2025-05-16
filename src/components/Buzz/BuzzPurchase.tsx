@@ -339,7 +339,7 @@ export const BuzzPurchase = ({
                           disabled={disabled}
                         >
                           <Group gap="sm" align="center">
-                            <Text color="accent.5">
+                            <Text c="accent.5">
                               <BuzzTierIcon tier={index + 1} />
                             </Text>
                             {price ? (
@@ -351,13 +351,13 @@ export const BuzzPurchase = ({
                                   color={colorScheme === 'dark' ? 'gray.0' : 'dark'}
                                   fz={20}
                                   weight="bold"
-                                  sx={{ fontVariantNumeric: 'tabular-nums' }}
+                                  style={{ fontVariantNumeric: 'tabular-nums' }}
                                 >
                                   ${price}
                                 </Text>
                               </Group>
                             ) : (
-                              <Text size="md" color="dimmed">
+                              <Text size="md" c="dimmed">
                                 I&apos;ll enter my own amount
                               </Text>
                             )}
@@ -435,7 +435,7 @@ export const BuzzPurchase = ({
                           w="80%"
                         />
                       </Group>
-                      <Text size="xs" color="dimmed" mt="xs">
+                      <Text size="xs" c="dimmed" mt="xs">
                         {`Minimum amount ${Number(
                           constants.buzz.minChargeAmount * 10
                         ).toLocaleString()} Buzz or $${formatPriceForDisplay(

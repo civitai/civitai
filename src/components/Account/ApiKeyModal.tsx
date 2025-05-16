@@ -67,13 +67,13 @@ export function ApiKeyModal({ ...props }: Props) {
           <Text weight={500}>Here is your API Key:</Text>
           <CopyButton value={apiKey}>
             {({ copied, copy }) => (
-              <Box pos="relative" onClick={copy} sx={{ cursor: 'pointer' }}>
+              <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
                 <ActionIcon
                   pos="absolute"
                   top="50%"
                   right={10}
                   variant="transparent"
-                  sx={{ transform: 'translateY(-50%) !important' }}
+                  style={{ transform: 'translateY(-50%) !important' }}
                 >
                   <IconClipboard />
                 </ActionIcon>
@@ -83,7 +83,7 @@ export function ApiKeyModal({ ...props }: Props) {
               </Box>
             )}
           </CopyButton>
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             {`Be sure to save this, you won't be able to see it again.`}
           </Text>
         </Stack>

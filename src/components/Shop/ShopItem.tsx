@@ -123,7 +123,7 @@ export const ShopItem = ({
           >
             <div className={classes.cardHeader}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
-              <Text size="xs" color="dimmed" px={6} component="div" className={classes.type}>
+              <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>
                 {getDisplayName(item.cosmetic.type)}
               </Text>
             </div>

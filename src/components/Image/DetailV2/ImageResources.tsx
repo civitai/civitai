@@ -94,7 +94,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                   <Wrapper resource={resource}>
                     <Text
                       lineClamp={1}
-                      color="dimmed"
+                      c="dimmed"
                       className={`text-xs ${resource.modelId ? 'cursor-pointer' : ''}`}
                     >
                       {resource.versionName}

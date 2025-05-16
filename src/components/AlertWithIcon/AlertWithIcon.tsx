@@ -32,12 +32,12 @@ export const AlertWithIcon = ({
               size={titleSize[size]}
               weight={500}
               color={props.color ?? 'blue'}
-              sx={{ lineHeight: 1.1 }}
+              style={{ lineHeight: 1.1 }}
             >
               {title}
             </Text>
           )}
-          <Text size={size} sx={{ lineHeight: 1.15 }}>
+          <Text size={size} style={{ lineHeight: 1.15 }}>
             {children}
           </Text>
         </Stack>

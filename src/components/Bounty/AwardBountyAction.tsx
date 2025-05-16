@@ -166,7 +166,7 @@ export const AwardBountyAction = ({
           {bountyEntry && bountyEntry?.user && (
             <Center>
               <Stack>
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   Entry added on {formatDate(bountyEntry.createdAt)} by
                 </Text>
                 <SmartCreatorCard user={bountyEntry.user} />
@@ -181,12 +181,12 @@ export const AwardBountyAction = ({
           <Text>
             Awarding this entry will grant you access to all files uploaded by the entry creator.
           </Text>
-          <Text color="red.4" size="sm">
+          <Text c="red.4" size="sm">
             This action is non refundable.
           </Text>
           {/* TODO.bounty: turn this back on once we have open entries in place */}
           {/* {fileUnlockAmount > benefactorItem.unitAmount && (
-            <Text color="red.4" size="sm">
+            <Text c="red.4" size="sm">
               <strong>Note:</strong> Some files on this entry <strong>will not</strong> reach the
               unlock amount after awarding this entry. If the bounty expires before the unlock
               amount is reached, you will not gain access to these files and your funds not be

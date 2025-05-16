@@ -439,7 +439,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         key={image.id}
                         radius="sm"
                         p={0}
-                        sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                        style={{ position: 'relative', overflow: 'hidden', height: 332 }}
                         withBorder
                       >
                         <EdgeMedia
@@ -481,7 +481,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           key={file.url}
                           radius="sm"
                           p={0}
-                          sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                          style={{ position: 'relative', overflow: 'hidden', height: 332 }}
                           withBorder
                         >
                           {file.status === 'success' ? (
@@ -576,7 +576,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
                 <Stack gap={4}>
                   <Divider label="Bounty rewards" />
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     Learn more about the rewards and Buzz system{' '}
                     <Anchor
                       href="https://education.civitai.com/civitais-guide-to-on-site-currency-buzz-%e2%9a%a1/"
@@ -798,7 +798,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                     <Group gap={4}>
                       <Text inline>Depicts an actual person</Text>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       For example: Tom Cruise or Tom Cruise as Maverick
                     </Text>
                   </Stack>
@@ -890,7 +890,7 @@ type RadioItemProps = { label: string; description: string };
 const RadioItem = ({ label, description }: RadioItemProps) => (
   <Stack gap={4}>
     <Text inline>{label}</Text>
-    <Text size="xs" color="dimmed">
+    <Text size="xs" c="dimmed">
       {description}
     </Text>
   </Stack>

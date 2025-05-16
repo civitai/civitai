@@ -180,7 +180,7 @@ export function SimpleImageUpload({
           <Dropzone.Idle>
             <Group justify="center" gap="xs">
               <IconPhoto size={32} stroke={1.5} />
-              <Text color="dimmed">{`Drop image here, should not exceed ${formatBytes(
+              <Text c="dimmed">{`Drop image here, should not exceed ${formatBytes(
                 maxSize
               )}`}</Text>
             </Group>

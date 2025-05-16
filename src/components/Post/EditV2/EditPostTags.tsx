@@ -309,7 +309,7 @@ function TagPicker() {
                     <Text size="sm">{tag.name}</Text>
                     {tag.isCategory && <IconStar className={classes.categoryIcon} size={12} />}
                   </Group>
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     {tag.postCount.toString()} posts
                   </Text>
                 </Group>

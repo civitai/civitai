@@ -130,7 +130,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       onClick={() => {
         openUserProfileEditModal({});
       }}
-      sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+      style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
       radius="xl"
       fullWidth
     >
@@ -225,7 +225,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       <RankBadge rank={user.rank} size={sizeOpts.rankBadge} withTitle />
       <Stack gap={0}>
         <Username {...user} cosmetics={equippedCosmetics} size="xl" />
-        <Text color="dimmed" size="sm">
+        <Text c="dimmed" size="sm">
           Joined {formatDate(user.createdAt)}
         </Text>
         {user?.bannedAt && (
@@ -258,7 +258,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       {profile.location && !muted && (
         <Group gap="sm" wrap="nowrap">
           <IconMapPin size={16} style={{ flexShrink: 0 }} />
-          <Text color="dimmed" truncate size={sizeOpts.text}>
+          <Text c="dimmed" truncate size={sizeOpts.text}>
             {profile.location}
           </Text>
         </Group>
@@ -310,7 +310,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
       {badges.length > 0 && (
         <Stack gap={sizeOpts.spacing}>
-          <Text size={sizeOpts.text} color="dimmed" weight={590}>
+          <Text size={sizeOpts.text} c="dimmed" weight={590}>
             Badges
           </Text>
           <Group gap="xs">
@@ -387,7 +387,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                 variant="light"
                 onClick={() => setShowAllBadges((prev) => !prev)}
                 size="xs"
-                sx={{ fontSize: 12, fontWeight: 600 }}
+                style={{ fontSize: 12, fontWeight: 600 }}
                 fullWidth
               >
                 {showAllBadges ? 'Show less' : `Show all (${badges.length})`}

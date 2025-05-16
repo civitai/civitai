@@ -45,7 +45,7 @@ export default function Rewards() {
       <Container size="lg">
         <Stack gap={0} mb="xl">
           <Title order={1}>Purchasable Rewards</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Manage the rewards that users can purchase with their Buzz.
           </Text>
         </Stack>

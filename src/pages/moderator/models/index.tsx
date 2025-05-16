@@ -126,7 +126,7 @@ export default function ModeratorModels() {
             }
             value={state.section}
           />
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Unpublished models for violating ToS which their owners have requested a review
           </Text>
         </Stack>
@@ -198,7 +198,7 @@ export default function ModeratorModels() {
                             </Anchor>
                           </Link>
                           {unpublishedAt && (
-                            <Text size="xs" color="dimmed">
+                            <Text size="xs" c="dimmed">
                               Unpublished at: {formatDate(unpublishedAt)}
                             </Text>
                           )}
@@ -254,7 +254,7 @@ export default function ModeratorModels() {
             ) : (
               <Paper p="xl" withBorder>
                 <Center>
-                  <Text size="md" color="dimmed">
+                  <Text size="md" c="dimmed">
                     There are no models that need review
                   </Text>
                 </Center>

@@ -426,7 +426,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                           </AspectRatio>
 //                         </div>
 //                       )}
-//                       <Stack gap="xs" sx={{ flexGrow: 1 }}>
+//                       <Stack gap="xs" style={{ flexGrow: 1 }}>
 //                         <Group justify="space-between" gap={8} align="flex-start">
 //                           <Stack gap={0}>
 //                             <Title
@@ -438,7 +438,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                             >
 //                               <Username {...user} size="md" inherit />
 //                             </Title>
-//                             <Text className={classes.joinedDate} size="md" color="dimmed">
+//                             <Text className={classes.joinedDate} size="md" c="dimmed">
 //                               {`Joined ${formatDate(user.createdAt)}`}
 //                             </Text>
 //                           </Stack>

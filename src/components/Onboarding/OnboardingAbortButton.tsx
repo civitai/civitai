@@ -14,7 +14,7 @@ export function OnboardingAbortButton({
         {children}
       </Button>
       {showWarning && (
-        <Text size="xs" color="dimmed">
+        <Text size="xs" c="dimmed">
           You will be logged out.
         </Text>
       )}

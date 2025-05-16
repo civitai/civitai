@@ -606,7 +606,7 @@ function ResourceHitList({
         <Center>
           <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
-              <Text color="dimmed">
+              <Text c="dimmed">
                 {hiddenCount} models have been hidden due to your settings.
               </Text>
             )}
@@ -642,7 +642,7 @@ function ResourceHitList({
     // <ScrollArea id="resource-select-modal" className="flex-1 p-3">
     <div className="flex flex-col gap-3 p-3">
       {hiddenCount > 0 && (
-        <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
+        <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
 
       {topItems.length > 0 && (
@@ -691,7 +691,7 @@ function ResourceHitList({
       </div>
       {items.length > 0 && !isLastPage && (
         <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
-          <Center sx={{ height: 36 }} my="md">
+          <Center style={{ height: 36 }} my="md">
             <Loader />
           </Center>
         </InViewLoader>
@@ -1105,7 +1105,7 @@ function ResourceSelectCard({
                             backgroundColor: isUpdated ? '#1EBD8E' : theme.colors.blue[4],
                           }}
                         >
-                          <Text color="white" size="xs" transform="capitalize">
+                          <Text c="white" size="xs" transform="capitalize">
                             {isUpdated ? 'Updated' : 'New'}
                           </Text>
                         </Badge>

@@ -252,7 +252,7 @@ export const FeatureCard = ({ title, description, icon, btnProps, withCTA }: Fea
         <Text weight={500} size="xl" align="center" transform="capitalize">
           {title}
         </Text>
-        <Text color="dimmed" align="center">
+        <Text c="dimmed" align="center">
           {description}
         </Text>
         {withCTA && <Button component="a" mt="auto" w="100%" {...btnProps} />}
@@ -275,7 +275,7 @@ export const FeatureList = ({ data }: { data: FeatureCardProps[] }) => {
               {item.title}
               {item.btnProps.disabled ? ' (Coming Soon)' : ''}
             </Text>
-            <Text color="dimmed">{item.description}</Text>
+            <Text c="dimmed">{item.description}</Text>
           </Stack>
         </List.Item>
       ))}
