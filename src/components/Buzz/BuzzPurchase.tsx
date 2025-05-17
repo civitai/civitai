@@ -430,6 +430,7 @@ export const BuzzPurchase = ({
                             setCustomAmount(value ?? 0);
                           }}
                           w="80%"
+                          mt={-24}
                         />
                       </Group>
                       <Text size="xs" color="dimmed" mt="xs">
