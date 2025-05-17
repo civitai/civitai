@@ -6,10 +6,8 @@ import {
   Button,
   Card,
   Center,
-  Grid,
   Group,
   Loader,
-  MantineTheme,
   Menu,
   Modal,
   Stack,
@@ -124,7 +122,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
@@ -153,7 +150,7 @@ export function ModelVersionDetails({
     key: 'model-version-details-accordions',
     defaultValue: ['version-details'],
   });
-  const adContainerRef = useRef<HTMLDialogElement | null>(null);
+  const adContainerRef = useRef<HTMLDivElement | null>(null);
 
   const {
     isLoadingAccess,
@@ -779,7 +776,7 @@ export function ModelVersionDetails({
                             ref={ref}
                             color={color}
                             onClick={onClick}
-                            leftIcon={icon}
+                            leftSection={icon}
                             disabled={!primaryFile}
                             style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                             fullWidth

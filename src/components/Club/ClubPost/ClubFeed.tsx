@@ -50,6 +50,7 @@ import { ContentClamp } from '../../ContentClamp/ContentClamp';
 import { Reactions } from '../../Reaction/Reactions';
 import classes from './ClubFeed.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ClubPostContextMenu({
   clubPost,
@@ -143,7 +144,7 @@ export function ClubPostContextMenu({
   return (
     <Menu {...menuProps}>
       <Menu.Target>
-        <ActionIcon
+        <LegacyActionIcon
           color="gray"
           radius="xl"
           variant="filled"
@@ -154,7 +155,7 @@ export function ClubPostContextMenu({
           }}
         >
           <IconDotsVertical size={iconSize} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>{menuItems}</Menu.Dropdown>
     </Menu>

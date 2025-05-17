@@ -205,7 +205,7 @@ function CollectionListForm({
             </Text>
             <Button
               variant="subtle"
-              leftIcon={<IconPlus size={16} />}
+              leftSection={<IconPlus size={16} />}
               onClick={onNewClick}
               size="compact-xs"
             >
@@ -493,7 +493,7 @@ function NewCollectionForm({
             </Text>
             <Button
               variant="subtle"
-              leftIcon={<IconArrowLeft size={16} />}
+              leftSection={<IconArrowLeft size={16} />}
               onClick={onBack}
               size="compact-xs"
             >

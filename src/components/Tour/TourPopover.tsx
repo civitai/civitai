@@ -59,7 +59,7 @@ export function TourPopover(props: TooltipRenderProps) {
                   {...backProps}
                   variant="subtle"
                   size="xs"
-                  leftIcon={<IconChevronLeft size={16} />}
+                  leftSection={<IconChevronLeft size={16} />}
                 >
                   {backProps.title ?? 'Back'}
                 </Button>

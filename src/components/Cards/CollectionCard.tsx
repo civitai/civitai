@@ -16,6 +16,7 @@ import { SimpleUser } from '~/server/selectors/user.selector';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { CollectionGetInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type ImageProps = {
   id: number;
@@ -154,7 +155,7 @@ function CollectionCardHeader({
         position="left-start"
         mode={data.mode}
       >
-        <ActionIcon
+        <LegacyActionIcon
           variant="transparent"
           p={0}
           onClick={(e: React.MouseEvent) => {
@@ -163,7 +164,7 @@ function CollectionCardHeader({
           }}
         >
           <IconDotsVertical />
-        </ActionIcon>
+        </LegacyActionIcon>
       </CollectionContextMenu>
     </Group>
   );

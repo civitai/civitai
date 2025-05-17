@@ -73,7 +73,7 @@ export const ManageClubMembershipModal = ({ clubId, clubTierIds }: Props) => {
         labelPosition="center"
       />
       <Link legacyBehavior href={`/clubs/${clubId}`} passHref>
-        <Button fullWidth onClick={handleClose} leftIcon={<IconClubs size={16} />}>
+        <Button fullWidth onClick={handleClose} leftSection={<IconClubs size={16} />}>
           Check this club&rsquo;s page
         </Button>
       </Link>

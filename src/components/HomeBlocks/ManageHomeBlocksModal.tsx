@@ -29,6 +29,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import classes from './ManageHomeBlocksModal.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const { openModal: openManageHomeBlocksModal, Modal } = createContextModal({
   name: 'manageHomeBlocks',
@@ -277,9 +278,9 @@ function SortableHomeBlock({
           {homeBlockName}
         </Text>
         {onRemove && (
-          <ActionIcon ml="auto" color="red" onClick={() => onRemove(homeBlock.id)}>
+          <LegacyActionIcon ml="auto" color="red" onClick={() => onRemove(homeBlock.id)}>
             <IconTrash size={16} />
-          </ActionIcon>
+          </LegacyActionIcon>
         )}
       </Group>
     </Card>
@@ -304,9 +305,9 @@ function SystemHomeBlock({
         </Text>
 
         {onAdd && (
-          <ActionIcon ml="auto" onClick={() => onAdd(homeBlock.id)}>
+          <LegacyActionIcon ml="auto" onClick={() => onAdd(homeBlock.id)}>
             <IconPlus size={16} />
-          </ActionIcon>
+          </LegacyActionIcon>
         )}
       </Group>
     </Card>

@@ -96,6 +96,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { Meta } from '../Meta/Meta';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
@@ -522,9 +523,9 @@ export function Collection({
         middlewares={{ flip: true, shift: true }}
       >
         <Popover.Target>
-          <ActionIcon variant="transparent" size="lg">
+          <LegacyActionIcon variant="transparent" size="lg">
             <IconInfoCircle />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Popover.Target>
         <Popover.Dropdown maw={468} p="md" w="100%">
           <Stack gap="xs">
@@ -718,7 +719,7 @@ export function Collection({
                             />
                             {canAddContent && (
                               <Tooltip label="Add from your library." position="bottom" withArrow>
-                                <ActionIcon
+                                <LegacyActionIcon
                                   color="blue"
                                   variant="subtle"
                                   radius="xl"
@@ -736,7 +737,7 @@ export function Collection({
                                   }}
                                 >
                                   <IconCirclePlus />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Tooltip>
                             )}
                           </>
@@ -747,9 +748,9 @@ export function Collection({
                           permissions={permissions}
                           mode={collection.mode}
                         >
-                          <ActionIcon variant="subtle">
+                          <LegacyActionIcon variant="subtle">
                             <IconDotsVertical size={16} />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </CollectionContextMenu>
                       </Group>
                       {entryCountDetails?.max &&

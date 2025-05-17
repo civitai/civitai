@@ -1,4 +1,4 @@
-import { ActionIcon, Autocomplete, Badge, Card, Loader, Portal, Stack, Text } from '@mantine/core';
+import { Autocomplete, Badge, Card, Loader, Portal, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
@@ -7,8 +7,8 @@ import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { getTagDisplayName } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
-
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -104,7 +104,7 @@ function TagBadge({ data, width }: { data: { id: number; name: string }; width: 
       style={{ paddingRight: 3 }}
       w={width}
       rightSection={
-        <ActionIcon
+        <LegacyActionIcon
           size="xs"
           color="blue"
           radius="xl"
@@ -112,7 +112,7 @@ function TagBadge({ data, width }: { data: { id: number; name: string }; width: 
           onClick={() => handleToggleBlocked(data)}
         >
           <IconX size={10} />
-        </ActionIcon>
+        </LegacyActionIcon>
       }
     >
       {getTagDisplayName(data.name ?? '[deleted]')}

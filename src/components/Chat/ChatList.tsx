@@ -49,6 +49,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import styles from './ChatList.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 
@@ -230,9 +231,9 @@ export function ChatList() {
           <Text>Chats</Text>
           <Menu withArrow position="bottom">
             <Menu.Target>
-              <ActionIcon variant="light">
+              <LegacyActionIcon variant="light">
                 <IconTool size={18} strokeWidth={1.5} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
               <Menu.Item
@@ -264,7 +265,7 @@ export function ChatList() {
             size="xs"
             variant="light"
             styles={{ section: { marginRight: 6 } }}
-            leftIcon={<IconCirclePlus size={18} />}
+            leftSection={<IconCirclePlus size={18} />}
             onClick={() => {
               setState((prev) => ({ ...prev, isCreating: true, existingChatId: undefined }));
             }}
@@ -273,9 +274,9 @@ export function ChatList() {
           </Button>
 
           {isMobile && (
-            <ActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
+            <LegacyActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
               <IconX />
-            </ActionIcon>
+            </LegacyActionIcon>
           )}
         </Group>
       </Group>
@@ -286,14 +287,14 @@ export function ChatList() {
           value={searchInput}
           onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
           rightSection={
-            <ActionIcon
+            <LegacyActionIcon
               onClick={() => {
                 setSearchInput('');
               }}
               disabled={!searchInput.length}
             >
               <IconX size={16} />
-            </ActionIcon>
+            </LegacyActionIcon>
           }
         />
       </Box>

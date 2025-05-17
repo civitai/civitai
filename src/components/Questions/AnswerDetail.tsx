@@ -15,6 +15,7 @@ import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { trpc } from '~/utils/trpc';
 import { QuestionAnswerComments } from '~/components/Questions/QuestionAnswerComments';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function AnswerDetail({
   answer,
@@ -62,9 +63,9 @@ export function AnswerDetail({
               }}
             >
               <Menu.Target>
-                <ActionIcon variant="outline">
+                <LegacyActionIcon variant="outline">
                   <IconDotsVertical size={16} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Menu.Target>
               <Menu.Dropdown>
                 {(isOwner || isModerator) && (

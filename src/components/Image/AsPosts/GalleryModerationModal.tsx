@@ -30,6 +30,7 @@ import { TagSort } from '~/server/common/enums';
 import { openConfirmModal } from '@mantine/modals';
 import classes from './GalleryModerationModal.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function GalleryModerationModal({ modelId }: { modelId: number }) {
   const dialog = useDialogContext();
@@ -135,7 +136,7 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
                   key={tag.id}
                   style={{ paddingRight: 3 }}
                   rightSection={
-                    <ActionIcon
+                    <LegacyActionIcon
                       size="xs"
                       color="blue"
                       radius="xl"
@@ -143,7 +144,7 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
                       onClick={() => handleToggleBlockedTag(tag)}
                     >
                       <IconX size={10} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   }
                 >
                   {tag.name}
@@ -210,7 +211,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
                   key={user.id}
                   style={{ paddingRight: 3 }}
                   rightSection={
-                    <ActionIcon
+                    <LegacyActionIcon
                       size="xs"
                       color="blue"
                       radius="xl"
@@ -218,7 +219,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
                       onClick={() => handleToggleBlocked(user)}
                     >
                       <IconX size={10} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   }
                 >
                   {user.username}

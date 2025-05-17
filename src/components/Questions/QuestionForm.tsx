@@ -25,6 +25,7 @@ import { TagTarget } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const schema = upsertQuestionSchema.extend({ tags: z.string().array().nullish() });
 
@@ -111,9 +112,9 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
   return (
     <Container>
       <Group gap="lg" mb="lg">
-        <ActionIcon variant="outline" size="lg" onClick={() => router.back()}>
+        <LegacyActionIcon variant="outline" size="lg" onClick={() => router.back()}>
           <IconArrowLeft size={20} stroke={1.5} />
-        </ActionIcon>
+        </LegacyActionIcon>
         <Title order={3}>{question ? 'Editing question' : 'Ask a question'}</Title>
       </Group>
       <Form form={form} onSubmit={handleSubmit}>

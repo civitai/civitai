@@ -47,6 +47,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { GalleryModerationModal } from './GalleryModerationModal';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -185,7 +186,7 @@ export default function ImagesAsPostsInfinite({
                     <Button
                       variant="outline"
                       size="xs"
-                      leftIcon={<IconPlus size={16} />}
+                      leftSection={<IconPlus size={16} />}
                       onClick={() => handleAddPostClick()}
                     >
                       Add Post
@@ -194,7 +195,7 @@ export default function ImagesAsPostsInfinite({
                   {canReview && (
                     <LoginRedirect reason="create-review">
                       <Button
-                        leftIcon={<IconStar size={16} />}
+                        leftSection={<IconStar size={16} />}
                         variant="outline"
                         size="xs"
                         onClick={() => handleAddPostClick({ reviewing: true })}
@@ -212,18 +213,18 @@ export default function ImagesAsPostsInfinite({
                   <>
                     {!!gallerySettings?.hiddenImages.length && (
                       <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="light"
                           radius="xl"
                           color="red"
                           onClick={() => setShowHidden((h) => !h)}
                         >
                           {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </ButtonTooltip>
                     )}
                     <ButtonTooltip label="Gallery Moderation Preferences">
-                      <ActionIcon
+                      <LegacyActionIcon
                         variant="filled"
                         radius="xl"
                         onClick={() =>
@@ -234,7 +235,7 @@ export default function ImagesAsPostsInfinite({
                         }
                       >
                         <IconSettings size={16} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </ButtonTooltip>
                   </>
                 )}

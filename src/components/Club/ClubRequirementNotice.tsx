@@ -236,7 +236,7 @@ export const ClubRequirementButton = ({
   return (
     <Menu position="bottom" shadow="md">
       <Menu.Target>
-        <Button radius="md" leftIcon={<IconClubs size={16} />} {...actionBtnProps}>
+        <Button radius="md" leftSection={<IconClubs size={16} />} {...actionBtnProps}>
           {label}
         </Button>
       </Menu.Target>

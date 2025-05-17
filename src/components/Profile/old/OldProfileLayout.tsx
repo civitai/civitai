@@ -36,6 +36,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
@@ -220,7 +221,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   return (
     <Menu position="left-start" withinPortal>
       <Menu.Target>
-        <ActionIcon
+        <LegacyActionIcon
           loading={removeContentMutation.isLoading}
           size={30}
           radius="xl"
@@ -229,7 +230,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           ml="auto"
         >
           <IconDotsVertical size={16} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         <>
@@ -464,7 +465,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                         {!!user.links?.length && (
 //                           <Group gap={4}>
 //                             {sortDomainLinks(user.links).map((link, index) => (
-//                               <ActionIcon
+//                               <LegacyActionIcon
 //                                 key={index}
 //                                 component="a"
 //                                 href={link.url}
@@ -473,7 +474,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                                 size={32}
 //                               >
 //                                 <DomainIcon domain={link.domain} size={22} />
-//                               </ActionIcon>
+//                               </LegacyActionIcon>
 //                             ))}
 //                           </Group>
 //                         )}

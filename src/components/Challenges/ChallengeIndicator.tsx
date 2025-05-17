@@ -5,6 +5,7 @@ import { useGetActiveChallenges, dismissChallenges } from '~/components/Challeng
 import { ChallengeInvitation } from '~/components/Challenges/ChallengeInvitation';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useEffect } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ChallengeIndicator() {
   const { challenges } = useGetActiveChallenges();
@@ -38,7 +39,7 @@ export function ChallengeIndicator() {
 
   return (
     <Indicator color="red" size={12} disabled={!hasUnseen} inline>
-      <ActionIcon
+      <LegacyActionIcon
         size="lg"
         className={clsx(hasUnseen && 'animate-wiggle')}
         color={hasUnseen ? (futureChallenge ? 'yellow' : 'teal') : 'dark'}
@@ -46,7 +47,7 @@ export function ChallengeIndicator() {
         onClick={handleOpen}
       >
         <IconTrophy size={20} color="currentColor" />
-      </ActionIcon>
+      </LegacyActionIcon>
     </Indicator>
   );
 }

@@ -1,6 +1,5 @@
 import {
   Accordion,
-  ActionIcon,
   Button,
   Card,
   Center,
@@ -12,13 +11,12 @@ import {
   Text,
   Title,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 
 import React from 'react';
 import { formatDate } from '~/utils/date-helpers';
 import { useMutateStripe, useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
-import { IconCreditCard, IconCurrencyDollar, IconMoodDollar, IconTrash } from '@tabler/icons-react';
+import { IconCreditCard, IconTrash } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
 import { UserPaymentMethod } from '~/types/router';
@@ -31,6 +29,7 @@ import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Pad
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { usePaddle } from '~/providers/PaddleProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const PaymentMethodItem = ({
   paymentMethod,
@@ -170,11 +169,10 @@ const StripePaymentMethods = () => {
           </Center>
         ) : (userPaymentMethods?.length ?? 0) > 0 ? (
           <Stack>
-            {userPaymentMethods.map((paymentMethod, index) => {
-              const { type } = paymentMethod;
+            {userPaymentMethods.map((paymentMethod) => {
               const deleteAction = (
                 <Tooltip label="Delete payment method">
-                  <ActionIcon
+                  <LegacyActionIcon
                     color="red"
                     onClick={() => handleDeletePaymentMethod(paymentMethod.id)}
                     loading={deletingPaymentMethod}
@@ -182,7 +180,7 @@ const StripePaymentMethods = () => {
                     size="md"
                   >
                     <IconTrash size={14} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               );
 
@@ -225,7 +223,6 @@ const PaddlePaymentMethods = () => {
   const { managementUrls, isLoading } = useSubscriptionManagementUrls();
   const { paddle } = usePaddle();
   const currentUser = useCurrentUser();
-  const { subscription } = useActiveSubscription();
   const { getOrCreateCustomer } = useMutatePaddle();
 
   if (!currentUser?.email) {

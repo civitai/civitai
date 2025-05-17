@@ -13,6 +13,7 @@ import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import homeBlockClasses from '~/components/HomeBlocks/HomeBlock.module.scss';
 import classes from './SocialHomeBlock.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const SocialHomeBlock = ({ showAds, ...props }: Props) => {
   if (!props.metadata.socials?.length) return null;
@@ -153,7 +154,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
         </div>
         {blocks.length > 2 && (
           <>
-            <ActionIcon
+            <LegacyActionIcon
               className={clsx(classes.nextButton, { [classes.hidden]: atStart })}
               radius="xl"
               size="md"
@@ -163,8 +164,8 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
               onClick={() => scroll('left')}
             >
               <IconChevronLeft />
-            </ActionIcon>
-            <ActionIcon
+            </LegacyActionIcon>
+            <LegacyActionIcon
               className={clsx(classes.nextButton, { [classes.hidden]: atEnd })}
               radius="xl"
               size="md"
@@ -174,7 +175,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
               onClick={() => scroll('right')}
             >
               <IconChevronRight />
-            </ActionIcon>
+            </LegacyActionIcon>
           </>
         )}
       </div>

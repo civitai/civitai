@@ -46,6 +46,7 @@ import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './Files.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 // TODO.Briant - compare file extension when checking for duplicate files
 export function Files() {
@@ -193,13 +194,13 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
           {/* Checking for tracked files here is a safeguard for failed uploads that ended up in the air.*/}
           {(!versionFile.isUploading || !trackedFile) && (
             <Tooltip label="Remove file" position="left">
-              <ActionIcon
+              <LegacyActionIcon
                 color="red"
                 onClick={() => handleRemoveFile(versionFile.uuid)}
                 loading={deleteFileMutation.isLoading}
               >
                 <IconTrash />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           )}
         </Group>
@@ -323,7 +324,7 @@ function TrackedFileStatus({
                 </Progress.Section>
               </Progress.Root>
               <Tooltip label="Cancel upload" position="left">
-                <ActionIcon
+                <LegacyActionIcon
                   color="red"
                   onClick={() => {
                     abort(uuid);
@@ -331,7 +332,7 @@ function TrackedFileStatus({
                   }}
                 >
                   <IconX />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
             </Group>
             <Group justify="space-between" wrap="nowrap">
@@ -349,9 +350,9 @@ function TrackedFileStatus({
             <Text size="sm">Aborted upload</Text>
           </Group>
           <Tooltip label="Remove file" position="left">
-            <ActionIcon color="red" onClick={handleRemoveFile}>
+            <LegacyActionIcon color="red" onClick={handleRemoveFile}>
               <IconTrash />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
         </Group>
       );
@@ -363,9 +364,9 @@ function TrackedFileStatus({
             <Text size="sm">Failed to upload</Text>
           </Group>
           <Tooltip label="Retry upload" position="left">
-            <ActionIcon color="blue" onClick={() => retry(versionFileUuid)}>
+            <LegacyActionIcon color="blue" onClick={() => retry(versionFileUuid)}>
               <IconRefresh />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
         </Group>
       );
@@ -384,9 +385,9 @@ function TrackedFileStatus({
             <Text size="sm">Pending upload</Text>
           </Group>
           <Tooltip label="Remove file" position="left">
-            <ActionIcon color="red" onClick={handleRemoveFile}>
+            <LegacyActionIcon color="red" onClick={handleRemoveFile}>
               <IconTrash />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
         </Group>
       );

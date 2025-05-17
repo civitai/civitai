@@ -19,6 +19,7 @@ import React from 'react';
 import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useMutatePurchasableReward } from '~/components/PurchasableRewards/purchasableRewards.util';
 import {
   Form,
@@ -106,7 +107,7 @@ export function PurchasableRewardUpsertForm({
                         radius="sm"
                       />
                       <Tooltip label="Remove image">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="sm"
                           variant="filled"
                           color="red"
@@ -124,7 +125,7 @@ export function PurchasableRewardUpsertForm({
                           }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </div>
                   )}

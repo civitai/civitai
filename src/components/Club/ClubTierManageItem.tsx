@@ -104,9 +104,7 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
                 <Title order={3}>{clubTier.name}</Title>
                 <Group gap={0}>
                   <IconUser />
-                  <Text c="dimmed">
-                    {numberWithCommas(clubTier._count?.memberships ?? 0) || 0}
-                  </Text>
+                  <Text c="dimmed">{numberWithCommas(clubTier._count?.memberships ?? 0) || 0}</Text>
                 </Group>
               </Group>
             </Stack>
@@ -125,7 +123,7 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
               onClick={() => {
                 setIsEditing(true);
               }}
-              leftIcon={<IconPencilMinus />}
+              leftSection={<IconPencilMinus />}
               disabled={deletingTier}
             >
               Edit
@@ -134,7 +132,7 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
               color="red"
               onClick={onDeleteClubTier}
               loading={deletingTier}
-              leftIcon={<IconTrash />}
+              leftSection={<IconTrash />}
             >
               Delete
             </Button>

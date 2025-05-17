@@ -21,6 +21,7 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 import { useCreatorProgramMutate } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { PeriodFilter } from '~/components/Filters';
 import { FilterChip } from '~/components/Filters/FilterChip';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -170,7 +171,7 @@ export function MediaFiltersDropdown({
                 </FilterChip>
               ))}
               {activeBaseModels.length > baseModelLimit && (
-                <ActionIcon
+                <LegacyActionIcon
                   variant="transparent"
                   size="sm"
                   onClick={() => setTruncateBaseModels((prev) => !prev)}
@@ -180,7 +181,7 @@ export function MediaFiltersDropdown({
                   ) : (
                     <IconChevronUp strokeWidth={3} />
                   )}
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
             </Group>
           </Chip.Group>

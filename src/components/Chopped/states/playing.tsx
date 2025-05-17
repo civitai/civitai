@@ -168,7 +168,7 @@ function RoundSubmissions({ theme }: RoundProps) {
         <img src={submittedImage} className="w-80 rounded-md shadow-lg shadow-black" />
       )}
       {submittedImage && !submitted && (
-        <Button size="md" onClick={submit} leftIcon={<IconSend />}>
+        <Button size="md" onClick={submit} leftSection={<IconSend />}>
           Submit Image
         </Button>
       )}

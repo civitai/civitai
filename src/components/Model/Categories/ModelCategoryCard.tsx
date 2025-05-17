@@ -57,6 +57,7 @@ import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import classes from './ModelCategoryCard.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -296,7 +297,7 @@ export function ModelCategoryCard({
                   {contextMenuItems.length > 0 && (
                     <Menu position="left-start" withArrow offset={-5}>
                       <Menu.Target>
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="transparent"
                           p={0}
                           onClick={(e: React.MouseEvent) => {
@@ -316,7 +317,7 @@ export function ModelCategoryCard({
                             color="#fff"
                             style={{ filter: `drop-shadow(0 0 2px #000)` }}
                           />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>
                         {contextMenuItems.map((el) => (
@@ -373,7 +374,7 @@ export function ModelCategoryCard({
                   }}
                 >
                   {({ color, onClick, ref, icon }) => (
-                    <ActionIcon
+                    <LegacyActionIcon
                       component="button"
                       className={classes.hoverable}
                       ref={ref}
@@ -384,7 +385,7 @@ export function ModelCategoryCard({
                       onClick={onClick}
                     >
                       {icon}
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   )}
                 </CivitaiLinkManageButton>
                 {features.imageGeneration && data.canGenerate && (

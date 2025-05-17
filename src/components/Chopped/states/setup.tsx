@@ -25,6 +25,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useChoppedServer } from '~/components/Chopped/chopped.connection';
 import { ChoppedLayout } from '~/components/Chopped/chopped.components';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function Setup() {
   const global = useChoppedStore((state) => state.global);
@@ -135,9 +136,9 @@ export function Setup() {
                     }}
                     className="flex-1"
                   />
-                  <ActionIcon size="xs" onClick={() => removeRound(i)}>
+                  <LegacyActionIcon size="xs" onClick={() => removeRound(i)}>
                     <IconX strokeWidth={2.5} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Group>
               </Card.Section>
             );
@@ -188,7 +189,7 @@ export function Setup() {
                       {judge.shortDescription}
                     </Text>
                   </Stack>
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="md"
                     variant="filled"
                     color={isSelected ? 'blue' : 'gray'}
@@ -197,7 +198,7 @@ export function Setup() {
                     ml="auto"
                   >
                     {isSelected ? <IconCheck strokeWidth={2.5} /> : <IconX strokeWidth={2.5} />}
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Group>
               </Card.Section>
             );

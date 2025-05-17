@@ -6,6 +6,7 @@ import { BaseModel } from '~/server/common/constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/utils/string-helpers';
 import classes from './ModelURN.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const ModelURN = ({ baseModel, type, modelId, modelVersionId, withCopy = true }: Props) => {
   const { copied, copy } = useClipboard();
@@ -49,7 +50,7 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId, withCopy = 
         )}
       </Group>
       {withCopy && (
-        <ActionIcon
+        <LegacyActionIcon
           size="xs"
           onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
@@ -57,7 +58,7 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId, withCopy = 
           }}
         >
           {copied ? <IconCheck size="20" /> : <IconCopy size="20" />}
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
     </Group>
   );

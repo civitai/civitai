@@ -35,6 +35,7 @@ import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector'
 import { CosmeticGetById } from '~/types/router';
 
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const CosmeticPreview = ({
   cosmetic,
@@ -231,9 +232,9 @@ export default function CosmeticStoreProducts() {
                         </Badge>
                       </td>
                       <td>
-                        <ActionIcon component={Link} href="/moderator/rewards/update/test">
+                        <LegacyActionIcon component={Link} href="/moderator/rewards/update/test">
                           <IconEdit />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </td>
                     </tr>
                   );

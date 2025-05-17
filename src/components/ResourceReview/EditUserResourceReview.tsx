@@ -18,6 +18,7 @@ import {
 } from '~/server/selectors/resourceReview.selector';
 import classes from './ResourceReview.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const schema = z.object({
   details: z.string().optional(),
@@ -357,15 +358,15 @@ export function EditUserResourceReviewLight({
           autosize
         />
         <Group gap={8} wrap="nowrap">
-          <ActionIcon
+          <LegacyActionIcon
             size="lg"
             variant="light"
             disabled={updateMutation.isLoading}
             onClick={handleImageUploadClick}
           >
             <IconPhotoPlus size={16} />
-          </ActionIcon>
-          <ActionIcon
+          </LegacyActionIcon>
+          <LegacyActionIcon
             variant="filled"
             size="lg"
             color="blue"
@@ -374,7 +375,7 @@ export function EditUserResourceReviewLight({
             loading={updateMutation.isLoading || loadingUserReview}
           >
             <IconSend size={16} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Group>
       </Group>
     </Form>

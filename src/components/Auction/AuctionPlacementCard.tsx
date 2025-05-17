@@ -41,6 +41,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -255,7 +256,7 @@ const SectionModelInfo = ({
         ) : (
           <div className="flex">
             <Button
-              leftIcon={<IconEye size={14} strokeWidth={2.5} />}
+              leftSection={<IconEye size={14} strokeWidth={2.5} />}
               onClick={() => setHideText(false)}
               size="xs"
               variant="outline"
@@ -463,9 +464,14 @@ export const ModelMyBidCard = ({
                       className={!mobile ? 'opacity-0 group-hover:opacity-100' : ''}
                       label="Cancel"
                     >
-                      <ActionIcon size="sm" color="red" variant="filled" onClick={handleDelete}>
+                      <LegacyActionIcon
+                        size="sm"
+                        color="red"
+                        variant="filled"
+                        onClick={handleDelete}
+                      >
                         <IconTrash size={16} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Tooltip>
                   </Group>
                 )}
@@ -620,7 +626,7 @@ export const ModelMyRecurringBidCard = ({
                   className={!mobile ? 'opacity-0 group-hover:opacity-100' : ''}
                   label={data.isPaused ? 'Resume' : 'Pause'}
                 >
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="sm"
                     color={data.isPaused ? 'green' : 'orange'}
                     variant="filled"
@@ -631,15 +637,15 @@ export const ModelMyRecurringBidCard = ({
                     ) : (
                       <IconPlayerPauseFilled size={16} />
                     )}
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
                 <Tooltip
                   className={!mobile ? 'opacity-0 group-hover:opacity-100' : ''}
                   label="Cancel"
                 >
-                  <ActionIcon size="sm" color="red" variant="filled" onClick={handleDelete}>
+                  <LegacyActionIcon size="sm" color="red" variant="filled" onClick={handleDelete}>
                     <IconTrash size={16} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               </Group>
             }
@@ -759,7 +765,7 @@ export const ModelPlacementCard = ({
             right={
               !!data.entityData && canBid ? (
                 <Tooltip label="Support this model" position="top" withinPortal>
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="lg"
                     variant="light"
                     color="blue"
@@ -780,7 +786,7 @@ export const ModelPlacementCard = ({
                     }
                   >
                     <IconPlus size={16} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               ) : undefined
             }

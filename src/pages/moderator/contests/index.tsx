@@ -14,6 +14,7 @@ import {
 import { IconEdit, IconExternalLink } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { useQueryCollections } from '~/components/Collections/collection.utils';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CollectionSort } from '~/server/common/enums';
@@ -94,7 +95,7 @@ export default function Contests() {
                           : 'N/A'}
                       </td>
                       <td>
-                        <ActionIcon
+                        <LegacyActionIcon
                           component={Link}
                           href={`/collections/${collection.id}`}
                           variant="transparent"
@@ -107,7 +108,7 @@ export default function Contests() {
                             strokeWidth={2.5}
                             size={26}
                           />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </td>
                     </tr>
                   ))}

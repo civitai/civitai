@@ -75,6 +75,7 @@ import { isDefined } from '~/utils/type-guards';
 import { sleep } from '~/server/utils/concurrency-helpers';
 import styles from './vault.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -348,9 +349,9 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
   return (
     <Menu withinPortal>
       <Menu.Target>
-        <ActionIcon ml="auto">
+        <LegacyActionIcon ml="auto">
           <IconDownload />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         {vaultItem.files.map((f) => (
@@ -447,11 +448,11 @@ const VaultStateNotice = () => {
 
 const vaultHelp = (
   <Tooltip label="What is Civitai Vault?">
-    <ActionIcon component="a" href="/product/vault" style={{ alignSelf: 'center' }}>
+    <LegacyActionIcon component="a" href="/product/vault" style={{ alignSelf: 'center' }}>
       <Text c="dimmed" inline>
         <IconHelpCircle />
       </Text>
-    </ActionIcon>
+    </LegacyActionIcon>
   </Tooltip>
 );
 

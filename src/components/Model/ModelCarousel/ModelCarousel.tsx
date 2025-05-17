@@ -21,6 +21,7 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import classes from './ModelCarousel.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ModelCarousel(props: Props) {
   return (
@@ -147,7 +148,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                         {image.hasMeta && (
                           <div className="absolute bottom-0.5 right-0.5 z-10">
                             <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                              <ActionIcon variant="transparent" size="lg">
+                              <LegacyActionIcon variant="transparent" size="lg">
                                 <IconInfoCircle
                                   color="white"
                                   filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -155,7 +156,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                                   strokeWidth={2.5}
                                   size={26}
                                 />
-                              </ActionIcon>
+                              </LegacyActionIcon>
                             </ImageMetaPopover2>
                           </div>
                         )}

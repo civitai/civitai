@@ -6,6 +6,7 @@ import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants'
 import { GetPlayer } from '~/types/router';
 import { useInquisitorTools } from '~/components/Games/KnightsNewOrder.utils';
 import { PlayerStats } from '~/components/Games/PlayerCard';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function NewOrderImageRatings({ imageId, imageNsfwLevel, ratings }: Props) {
   const [opened, setOpened] = useState(false);
@@ -58,14 +59,14 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel, ratings }: Props
                         <PlayerStats stats={{ ...player.stats }} size="sm" showSmiteCount />
                       </div>
                       <Tooltip label="Smite player" withinPortal>
-                        <ActionIcon
+                        <LegacyActionIcon
                           color="red"
                           variant="filled"
                           onClick={() => smitePlayer({ playerId: player.id, imageId })}
                           loading={loading}
                         >
                           <IconHammer size={18} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </div>
                   </Card>

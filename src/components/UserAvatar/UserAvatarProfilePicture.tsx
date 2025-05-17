@@ -3,6 +3,7 @@ import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ProfileImage } from '~/server/selectors/image.selector';
 
@@ -28,7 +29,7 @@ export function UserAvatarProfilePicture({
               {/* TODO: this nests a button inside a button */}
               <ImageGuard2.BlurToggle>
                 {(toggle) => (
-                  <ActionIcon
+                  <LegacyActionIcon
                     color="red"
                     radius="xl"
                     style={{
@@ -45,7 +46,7 @@ export function UserAvatarProfilePicture({
                     ) : (
                       <IconEye size={14} strokeWidth={2.5} />
                     )}
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 )}
               </ImageGuard2.BlurToggle>
               <MediaHash {...image} />

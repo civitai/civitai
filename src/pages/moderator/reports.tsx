@@ -57,6 +57,7 @@ import { QS } from '~/utils/qs';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const limit = constants.reportingFilterDefaults.limit;
 
@@ -130,7 +131,7 @@ export default function Reports() {
               Details
             </Button>
             <Tooltip label="Open reported item" withArrow>
-              <ActionIcon
+              <LegacyActionIcon
                 component="a"
                 href={getReportLink(report)}
                 target="_blank"
@@ -138,7 +139,7 @@ export default function Reports() {
                 size="sm"
               >
                 <IconExternalLink />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           </Group>
         ),

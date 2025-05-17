@@ -8,6 +8,7 @@ import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import classes from './AnnouncementHomeBlock.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDismiss }: Props) => {
   const announcementMetadata = announcement.metadata;
@@ -25,7 +26,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
       className={clsx(classes.card, classes[`card-${color}`], { [classes.imageCard]: image })}
     >
       {dismissible && (
-        <ActionIcon
+        <LegacyActionIcon
           variant="subtle"
           radius="xl"
           color="red"
@@ -37,7 +38,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
           }}
         >
           <IconX size={20} />
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
       {image && (
         <Box className={clsx(classes.imageContainer, classes[`imageContainer-${color}`])}>

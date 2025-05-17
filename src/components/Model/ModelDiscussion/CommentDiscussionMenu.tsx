@@ -15,6 +15,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -157,9 +158,9 @@ export function CommentDiscussionMenu({
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
-        <ActionIcon size={size} variant="subtle">
+        <LegacyActionIcon size={size} variant="subtle">
           <IconDotsVertical size={14} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         {(isOwner || isMod) && (

@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import { IconClearAll, IconCloudUpload, IconX } from '@tabler/icons-react';
 import React from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 
@@ -34,9 +35,9 @@ export function UploadTracker() {
     <Popover width={400} position="bottom-end">
       <Popover.Target>
         <Indicator color="blue" label={uploadingItems.length} size={16}>
-          <ActionIcon>
+          <LegacyActionIcon>
             <IconCloudUpload />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Indicator>
       </Popover.Target>
 
@@ -46,9 +47,9 @@ export function UploadTracker() {
             Files
           </Text>
           <Tooltip label="Cancel all" position="left">
-            <ActionIcon size="sm" onClick={handleAbortAll}>
+            <LegacyActionIcon size="sm" onClick={handleAbortAll}>
               <IconClearAll />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
         </Group>
         <Divider />
@@ -76,9 +77,9 @@ export function UploadTracker() {
                 </Text>
 
                 <Tooltip label="Cancel upload" position="left">
-                  <ActionIcon color="red" onClick={() => abort(uuid)}>
+                  <LegacyActionIcon color="red" onClick={() => abort(uuid)}>
                     <IconX size={20} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               </Group>
               <Stack gap={4} style={{ flex: 1 }}>
@@ -94,9 +95,7 @@ export function UploadTracker() {
                 </Progress.Root>
                 <Group justify="space-between" wrap="nowrap">
                   <Text c="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
-                  <Text c="dimmed" size="xs">{`${formatSeconds(
-                    timeRemaining
-                  )} remaining`}</Text>
+                  <Text c="dimmed" size="xs">{`${formatSeconds(timeRemaining)} remaining`}</Text>
                 </Group>
               </Stack>
             </Stack>

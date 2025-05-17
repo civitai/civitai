@@ -43,6 +43,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { useCollection } from './collection.utils';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function AddUserContentModal({ collectionId }: Props) {
   const dialog = useDialogContext();
@@ -279,9 +280,9 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
         {image.hasMeta && (
           <div className="absolute bottom-0.5 right-0.5 z-10">
             <ImageMetaPopover2 imageId={image.id} type={image.type}>
-              <ActionIcon variant="light" color="dark" size="lg">
+              <LegacyActionIcon variant="light" color="dark" size="lg">
                 <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ImageMetaPopover2>
           </div>
         )}

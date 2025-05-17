@@ -75,6 +75,7 @@ import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSearchParams } from 'next/navigation';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = { postId: number };
 
@@ -227,7 +228,7 @@ export function PostDetailContent({ postId }: Props) {
                       radius="xl"
                       color="gray"
                       variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                      leftIcon={<IconBookmark size={14} />}
+                      leftSection={<IconBookmark size={14} />}
                       onClick={() =>
                         openContext('addToCollection', {
                           postId: post.id,
@@ -247,7 +248,7 @@ export function PostDetailContent({ postId }: Props) {
                         radius="xl"
                         color="gray"
                         variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                        leftIcon={<IconShare3 size={14} />}
+                        leftSection={<IconShare3 size={14} />}
                         size="compact-md"
                       >
                         <Text size="xs">Share</Text>
@@ -258,14 +259,14 @@ export function PostDetailContent({ postId }: Props) {
                       userId={post.user.id}
                       isModelVersionPost={post.modelVersionId}
                     >
-                      <ActionIcon
+                      <LegacyActionIcon
                         variant={colorScheme === 'dark' ? 'filled' : 'light'}
                         size={30}
                         radius="xl"
                         className="@max-md:ml-auto"
                       >
                         <IconDotsVertical size={16} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </PostControls>
                   </div>
                 </div>
@@ -310,7 +311,7 @@ export function PostDetailContent({ postId }: Props) {
                             collaborator.status === EntityCollaboratorStatus.Pending && (
                               <Fragment key={collaborator.user.id}>
                                 <Tooltip label="Accept collaboration">
-                                  <ActionIcon
+                                  <LegacyActionIcon
                                     onClick={() => {
                                       actionEntityCollaborator({
                                         entityId: postId,
@@ -321,10 +322,10 @@ export function PostDetailContent({ postId }: Props) {
                                     loading={actioningEntityCollaborator}
                                   >
                                     <IconCheck size={20} />
-                                  </ActionIcon>
+                                  </LegacyActionIcon>
                                 </Tooltip>
                                 <Tooltip label="Reject collaboration">
-                                  <ActionIcon
+                                  <LegacyActionIcon
                                     onClick={() => {
                                       actionEntityCollaborator({
                                         entityId: postId,
@@ -335,14 +336,14 @@ export function PostDetailContent({ postId }: Props) {
                                     loading={actioningEntityCollaborator}
                                   >
                                     <IconX size={20} />
-                                  </ActionIcon>
+                                  </LegacyActionIcon>
                                 </Tooltip>
                               </Fragment>
                             )}
 
                           {isOwnerOrMod && (
                             <Tooltip label="Remove collaborator">
-                              <ActionIcon
+                              <LegacyActionIcon
                                 onClick={() => {
                                   removeEntityCollaborator({
                                     entityId: postId,
@@ -354,7 +355,7 @@ export function PostDetailContent({ postId }: Props) {
                                 color="red"
                               >
                                 <IconTrash size={20} />
-                              </ActionIcon>
+                              </LegacyActionIcon>
                             </Tooltip>
                           )}
                         </Group>

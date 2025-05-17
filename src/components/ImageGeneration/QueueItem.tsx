@@ -59,6 +59,7 @@ import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import classes from './QueueItem.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -224,15 +225,15 @@ export function QueueItem({
             <div className="flex gap-1">
               <SubmitBlockedImagesForReviewButton step={step} />
               <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
-                <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
+                <LegacyActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                   {copied ? <IconCheck /> : <IconInfoHexagon />}
-                </ActionIcon>
+                </LegacyActionIcon>
               </ButtonTooltip>
               {generationStatus.available && canRemix && (
                 <ButtonTooltip {...tooltipProps} label="Remix">
-                  <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
+                  <LegacyActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
                     <IconArrowsShuffle />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </ButtonTooltip>
               )}
               <CancelOrDeleteWorkflow workflowId={request.id} cancellable={cancellable} />
@@ -477,9 +478,9 @@ function CancelOrDeleteWorkflow({
       disabled={cancellingDeleting}
     >
       <ButtonTooltip {...tooltipProps} label={cancellable ? 'Cancel' : 'Delete'}>
-        <ActionIcon size="md" disabled={cancellingDeleting} color="red">
+        <LegacyActionIcon size="md" disabled={cancellingDeleting} color="red">
           {cancellable ? <IconBan size={20} /> : <IconTrash size={20} />}
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
     </PopConfirm>
   );
@@ -492,7 +493,7 @@ function SubmitBlockedImagesForReviewButton({ step }: { step: NormalizedGenerate
 
   return (
     <ButtonTooltip {...tooltipProps} label="Submit blocked images for review">
-      <ActionIcon
+      <LegacyActionIcon
         component="a"
         target="_blank"
         size="md"
@@ -508,7 +509,7 @@ function SubmitBlockedImagesForReviewButton({ step }: { step: NormalizedGenerate
         )}&Job%20IDs=${encodeURIComponent(blockedImages.map((x) => x.jobId).join(','))}`}
       >
         <IconFlagQuestion size={20} />
-      </ActionIcon>
+      </LegacyActionIcon>
     </ButtonTooltip>
   );
 }

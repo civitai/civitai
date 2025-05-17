@@ -54,7 +54,7 @@ export function SensitiveShield({
           <Button
             component={Link}
             href={`/login?returnUrl=${router.asPath}`}
-            leftIcon={<IconKey />}
+            leftSection={<IconKey />}
           >
             Log in to view
           </Button>

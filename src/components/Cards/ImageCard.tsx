@@ -10,6 +10,7 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ImageCard({ data }: Props) {
   const context = useImagesContext();
@@ -56,9 +57,9 @@ export function ImageCard({ data }: Props) {
             />
             {data.hasMeta && (
               <ImageMetaPopover2 imageId={data.id} type={data.type}>
-                <ActionIcon className={cardClasses.infoChip} variant="light">
+                <LegacyActionIcon className={cardClasses.infoChip} variant="light">
                   <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </ImageMetaPopover2>
             )}
           </div>

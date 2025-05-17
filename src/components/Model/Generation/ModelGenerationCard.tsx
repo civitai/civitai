@@ -34,6 +34,7 @@ import { usePicFinder } from '~/libs/picfinder';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelGenerationCard.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = {
   columnWidth: number;
@@ -176,9 +177,9 @@ export function ModelGenerationCard({
                 </Group>
                 <Popover width={300} withArrow withinPortal>
                   <Popover.Target>
-                    <ActionIcon radius="xl" variant="transparent">
+                    <LegacyActionIcon radius="xl" variant="transparent">
                       <IconInfoCircle />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </Popover.Target>
                   <Popover.Dropdown>
                     The images you see here are being generated on demand by the PicFinder service.
@@ -228,7 +229,7 @@ export function ModelGenerationCard({
                   ))}
                 </div>
                 {!!data.length && !!images.length && currentIndex > 0 && (
-                  <ActionIcon
+                  <LegacyActionIcon
                     className={classes.nextButton}
                     radius="xl"
                     size="md"
@@ -252,10 +253,10 @@ export function ModelGenerationCard({
                     }}
                   >
                     <IconChevronLeft />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 )}
                 {!!data.length && !!images.length && (
-                  <ActionIcon
+                  <LegacyActionIcon
                     className={classes.nextButton}
                     radius="xl"
                     size="md"
@@ -281,7 +282,7 @@ export function ModelGenerationCard({
                     }}
                   >
                     <IconChevronRight />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 )}
               </>
             )}
@@ -289,7 +290,7 @@ export function ModelGenerationCard({
           <Card.Section pt="xs" inheritPadding withBorder>
             <Group gap={8} align="flex-start" wrap="nowrap">
               {withEditingActions && (
-                <ActionIcon
+                <LegacyActionIcon
                   variant="outline"
                   size="sm"
                   onClick={() =>
@@ -301,7 +302,7 @@ export function ModelGenerationCard({
                   }
                 >
                   <IconPlus />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
               <ScrollArea styles={{ viewport: { overflowY: 'hidden' } }} offsetScrollbars>
                 <Chip.Group
@@ -333,9 +334,9 @@ export function ModelGenerationCard({
                           {withEditingActions && (
                             <Menu position="top-end" withinPortal>
                               <Menu.Target>
-                                <ActionIcon size="xs" variant="transparent">
+                                <LegacyActionIcon size="xs" variant="transparent">
                                   <IconDotsVertical />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Menu.Target>
                               <Menu.Dropdown>
                                 <Menu.Item

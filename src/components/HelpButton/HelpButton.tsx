@@ -1,15 +1,16 @@
 import { ActionIcon, ActionIconProps, Text, Tooltip } from '@mantine/core';
 import { IconHelpCircle, IconProps } from '@tabler/icons-react';
 import { forwardRef } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const HelpButton = forwardRef<HTMLButtonElement, Props>(
   ({ iconProps, tooltip, ...actionIconProps }, ref) => {
     const button = (
-      <ActionIcon ref={ref} {...actionIconProps}>
+      <LegacyActionIcon ref={ref} {...actionIconProps}>
         <Text c="dimmed" inline>
           <IconHelpCircle {...iconProps} />
         </Text>
-      </ActionIcon>
+      </LegacyActionIcon>
     );
 
     if (tooltip) return <Tooltip label={tooltip}>{button}</Tooltip>;

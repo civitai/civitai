@@ -327,7 +327,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             color="red"
             loading={isLoading}
             variant="outline"
-            leftIcon={<IconTrash size={20} />}
+            leftSection={<IconTrash size={20} />}
             disabled={!features.canWrite}
           >
             Delete Post

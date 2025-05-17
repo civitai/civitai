@@ -82,7 +82,7 @@ export default function LinkRole({ providers, linked }: Props) {
                 >{`We've updated your Discord account with the latest data from Civitai`}</Text>
               </Group>
             </Alert>
-            <Button size="lg" leftIcon={<IconHome />} component={Link} href="/">
+            <Button size="lg" leftSection={<IconHome />} component={Link} href="/">
               Back home!
             </Button>
           </Stack>

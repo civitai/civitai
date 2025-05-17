@@ -17,6 +17,7 @@ import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import classes from './ResourceReviewCarousel.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ResourceReviewCarousel({
   userId,
@@ -112,7 +113,7 @@ export function ResourceReviewCarousel({
                           {image.hasMeta && (
                             <div className="absolute bottom-0.5 right-0.5 z-10">
                               <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                                <ActionIcon variant="transparent" size="lg">
+                                <LegacyActionIcon variant="transparent" size="lg">
                                   <IconInfoCircle
                                     color="white"
                                     filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -120,7 +121,7 @@ export function ResourceReviewCarousel({
                                     strokeWidth={2.5}
                                     size={26}
                                   />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </ImageMetaPopover2>
                             </div>
                           )}

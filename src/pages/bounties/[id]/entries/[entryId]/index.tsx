@@ -8,7 +8,6 @@ import { trpc } from '~/utils/trpc';
 import { Meta } from '~/components/Meta/Meta';
 import {
   Accordion,
-  ActionIcon,
   ActionIconProps,
   Alert,
   Anchor,
@@ -31,6 +30,7 @@ import {
   Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -317,14 +317,14 @@ export default function BountyEntryDetailsPage({
       {!isOwner && (
         <Menu>
           <Menu.Target>
-            <ActionIcon
+            <LegacyActionIcon
               radius="xl"
               color="gray"
               size="md"
               variant={colorScheme === 'dark' ? 'filled' : 'light'}
             >
               <IconDotsVertical size={16} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
             <ReportMenuItem
@@ -602,9 +602,9 @@ export function BountyEntryCarousel({
             <div className="absolute inset-x-0 top-0 z-10 flex justify-between p-3">
               <ImageGuard2.BlurToggle {...sharedBadgeProps} />
               <ImageContextMenu image={image}>
-                <ActionIcon {...sharedActionIconProps}>
+                <LegacyActionIcon {...sharedActionIconProps}>
                   <IconDotsVertical {...sharedIconProps} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </ImageContextMenu>
             </div>
             <ImageDetailCarousel images={images} connect={connect} {...carouselNavigation} />

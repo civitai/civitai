@@ -29,6 +29,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const reports = [
   {
@@ -260,9 +261,9 @@ export default function ReportModal({
         <Group justify="space-between" wrap="nowrap">
           <Group gap={4}>
             {!!reason && (
-              <ActionIcon onClick={() => setReason(undefined)}>
+              <LegacyActionIcon onClick={() => setReason(undefined)}>
                 <IconArrowLeft size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             )}
             <Text>{title}</Text>
           </Group>

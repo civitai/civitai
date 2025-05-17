@@ -39,6 +39,7 @@ import {
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function CosmeticStoreProducts() {
   const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticShopItemInput, 'limit'>>({
@@ -188,15 +189,15 @@ export default function CosmeticStoreProducts() {
                       <td>{shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}</td>
                       <td>
                         <Group gap={4} wrap="nowrap">
-                          <ActionIcon
+                          <LegacyActionIcon
                             component={Link}
                             href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
                           >
                             <IconEdit />
-                          </ActionIcon>
-                          <ActionIcon onClick={() => handleDeleteItem(shopItem.id)}>
+                          </LegacyActionIcon>
+                          <LegacyActionIcon onClick={() => handleDeleteItem(shopItem.id)}>
                             <IconTrash />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </Group>
                       </td>
                     </tr>

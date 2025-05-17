@@ -29,6 +29,7 @@ import { useTrackEvent } from '../TrackView/track.utils';
 import { useBuzzTransaction } from './buzz.utils';
 import classes from './InteractiveTipBuzzButton.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = UnstyledButtonProps &
   React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -370,9 +371,9 @@ export function InteractiveTipBuzzButton({
       <Popover.Dropdown py={4} className={clsx({ [classes.confirming]: showCountDown })}>
         <Group className={classes.popoverContent}>
           {status !== 'pending' && (
-            <ActionIcon color="red.5" onClick={cancelTip}>
+            <LegacyActionIcon variant="subtle" color="red.5" onClick={cancelTip}>
               <IconX size={20} />
-            </ActionIcon>
+            </LegacyActionIcon>
           )}
           <Stack gap={2} align="center">
             <Text c="yellow.7" weight={500} size="xs" opacity={0.8}>
@@ -398,14 +399,14 @@ export function InteractiveTipBuzzButton({
             </Group>
           </Stack>
           {status !== 'pending' && (
-            <ActionIcon
+            <LegacyActionIcon
               variant="transparent"
               color={status === 'confirmed' ? 'green' : 'yellow.5'}
               onClick={status === 'confirming' ? () => sendTip() : undefined}
               loading={tipUserMutation.isLoading}
             >
               {status === 'confirmed' ? <IconCheck size={20} /> : <IconSend size={20} />}
-            </ActionIcon>
+            </LegacyActionIcon>
           )}
         </Group>
       </Popover.Dropdown>

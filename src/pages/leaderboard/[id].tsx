@@ -29,6 +29,7 @@ import { Countdown } from '~/components/Countdown/Countdown';
 import { CreatorList } from '~/components/Leaderboard/CreatorList';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { numericString, stringDate } from '~/utils/zod-helpers';
@@ -185,19 +186,23 @@ export default function Leaderboard() {
             </Box>
           </ContainerGrid2.Col>
 
-          <ContainerGrid2.Col span={{ base: 12, sm: 8 }} display="flex" style={{ justifyContent: 'center' }}>
+          <ContainerGrid2.Col
+            span={{ base: 12, sm: 8 }}
+            display="flex"
+            style={{ justifyContent: 'center' }}
+          >
             <Stack gap={0} maw={600} w="100%">
               <Group gap={8} wrap="nowrap">
                 <Title className={classes.title}>{selectedLeaderboard?.title}</Title>
                 {hasLegends && <LegendsToggle className={classes.legendsToggleSm} />}
-                <ActionIcon
+                <LegacyActionIcon
                   className={classes.drawerButton}
                   size="md"
                   variant="transparent"
                   onClick={toggle}
                 >
                   <IconLayoutSidebarLeftExpand />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Group>
               {hasLegends && <LegendsToggle className={classes.legendsToggle} />}
               <Group gap={5}>
@@ -206,9 +211,9 @@ export default function Leaderboard() {
                 </Text>
                 <Popover withArrow>
                   <Popover.Target>
-                    <ActionIcon variant="transparent" size="sm">
+                    <LegacyActionIcon variant="transparent" size="sm">
                       <IconInfoCircle />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </Popover.Target>
                   <Popover.Dropdown>
                     {board === 'season' ? (

@@ -6,6 +6,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const NotificationsDrawer = dynamic(() => import('~/components/Notifications/NotificationsDrawer'));
 
@@ -45,9 +46,9 @@ export function NotificationBell() {
           withBorder
           inline
         >
-          <ActionIcon variant="subtle" color="gray">
+          <LegacyActionIcon variant="subtle" color="gray">
             <IconBell />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Indicator>
       </div>
     </>

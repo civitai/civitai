@@ -6,7 +6,6 @@ import {
   Button,
   Group,
   Code,
-  ActionIcon,
   Tooltip,
   Paper,
   Loader,
@@ -23,6 +22,7 @@ import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function UserReferralCodesCard() {
   const { copied, copy } = useClipboard();
@@ -121,7 +121,7 @@ export function UserReferralCodesCard() {
                             withArrow
                             withinPortal
                           >
-                            <ActionIcon
+                            <LegacyActionIcon
                               size="md"
                               color="blue"
                               radius="xl"
@@ -129,10 +129,10 @@ export function UserReferralCodesCard() {
                               onClick={() => copy(`${referralUrl}${referralCode.code}`)}
                             >
                               <IconClipboardCopy size={20} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </Tooltip>
                           <Tooltip label="Delete" withArrow withinPortal>
-                            <ActionIcon
+                            <LegacyActionIcon
                               size="md"
                               color="red"
                               radius="xl"
@@ -140,7 +140,7 @@ export function UserReferralCodesCard() {
                               onClick={() => deleteUserReferralCode({ id: referralCode.id })}
                             >
                               <IconTrash size={20} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </Tooltip>
                         </Group>
                       </Group>

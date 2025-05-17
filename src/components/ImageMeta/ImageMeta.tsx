@@ -15,6 +15,7 @@ import {
 import { useClipboard } from '@mantine/hooks';
 import { IconBrush, IconCheck, IconCopy } from '@tabler/icons-react';
 import { cloneElement, useMemo, useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageGenerationProcess, ModelType } from '~/shared/utils/prisma/enums';
@@ -143,7 +144,7 @@ export function ImageMeta({
                   <CopyButton value={value as string}>
                     {({ copied, copy }) => (
                       <Tooltip label={`Copy ${label.toLowerCase()}`} color="dark" withArrow>
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="transparent"
                           size="xs"
                           color={copied ? 'green' : 'blue'}
@@ -152,7 +153,7 @@ export function ImageMeta({
                           data-activity="copy:prompt"
                         >
                           {!copied ? <IconCopy size={16} /> : <IconCheck size={16} />}
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     )}
                   </CopyButton>
@@ -217,7 +218,7 @@ export function ImageMeta({
               <Button
                 size="xs"
                 variant="light"
-                leftIcon={<IconBrush size={16} />}
+                leftSection={<IconBrush size={16} />}
                 data-activity="remix:image-meta"
                 onClick={() => {
                   generationPanel.open({ type: 'image', id: imageId ?? 0 });

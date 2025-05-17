@@ -39,6 +39,7 @@ import { IconDotsVertical } from '@tabler/icons-react';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type VotableTagProps = VotableTagConnectorInput & {
   tagId: number;
@@ -230,9 +231,9 @@ export function VotableTag({
           </LoginPopover>
         )}
         {!canVote && (
-          <ActionIcon variant="transparent" size="sm" onClick={handleRemove}>
+          <LegacyActionIcon variant="transparent" size="sm" onClick={handleRemove}>
             <IconX strokeWidth={2.5} size=".75rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         )}
         {needsReview && (
           <IconFlag size={12} strokeWidth={4} className="mr-0.5 text-yellow-4 dark:text-orange-9" />
@@ -256,9 +257,9 @@ export function VotableTag({
         {!!currentUser && (
           <Menu withinPortal withArrow>
             <Menu.Target>
-              <ActionIcon size="sm">
+              <LegacyActionIcon size="sm">
                 <IconDotsVertical strokeWidth={2.5} size=".75rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
               <TagContexDropdown tagId={tagId} name={name} />

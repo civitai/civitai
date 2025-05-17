@@ -84,6 +84,7 @@ import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import classes from './BountyUpsertForm.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -450,7 +451,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           style={{ objectFit: 'cover', height: '100%' }}
                         />
                         <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                          <ActionIcon
+                          <LegacyActionIcon
                             variant="filled"
                             size="lg"
                             color="red"
@@ -461,14 +462,14 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                             }}
                           >
                             <IconTrash size={26} strokeWidth={2.5} />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </div>
                         {image.meta && (
                           <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                             <ImageMetaPopover meta={image.meta}>
-                              <ActionIcon variant="light" color="dark" size="lg">
+                              <LegacyActionIcon variant="light" color="dark" size="lg">
                                 <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                              </ActionIcon>
+                              </LegacyActionIcon>
                             </ImageMetaPopover>
                           </div>
                         )}
@@ -494,21 +495,21 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                                 style={{ objectFit: 'cover', height: '100%' }}
                               />
                               <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                                <ActionIcon
+                                <LegacyActionIcon
                                   variant="filled"
                                   size="lg"
                                   color="red"
                                   onClick={() => removeImage(file.url)}
                                 >
                                   <IconTrash size={26} strokeWidth={2.5} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </div>
                               {file.type === 'image' && (
                                 <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                                   <ImageMetaPopover meta={file.meta}>
-                                    <ActionIcon variant="light" color="dark" size="lg">
+                                    <LegacyActionIcon variant="light" color="dark" size="lg">
                                       <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                                    </ActionIcon>
+                                    </LegacyActionIcon>
                                   </ImageMetaPopover>
                                 </div>
                               )}
@@ -721,14 +722,14 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         </Text>
                       )}
                       <Tooltip label="Remove">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="sm"
                           color="red"
                           variant="transparent"
                           onClick={() => onRemove()}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </>
                   )}

@@ -22,6 +22,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import classes from './EditPostTags.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type TagProps = {
   id?: number;
@@ -103,7 +104,7 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
       <Group gap="xs">
         <Text>{tag.name}</Text>
         {tag.id && canRemove && (
-          <ActionIcon
+          <LegacyActionIcon
             size="xs"
             variant="outline"
             radius="xl"
@@ -111,7 +112,7 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
             disabled={isLoading}
           >
             <IconX size={14} />
-          </ActionIcon>
+          </LegacyActionIcon>
         )}
       </Group>
     </Alert>

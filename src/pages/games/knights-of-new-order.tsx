@@ -34,6 +34,7 @@ import { RankUp } from '~/components/Games/LevelProgress/RankUp';
 import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderBetaBanner } from '~/components/Games/NewOrder/NewOrderBetaBanner';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 let levelUpTimer: NodeJS.Timeout | null = null;
 let rankUpTimer: NodeJS.Timeout | null = null;
@@ -208,7 +209,7 @@ export default Page(
                             contain
                           />
                           {playerData.rankType !== NewOrderRankType.Acolyte && (
-                            <ActionIcon
+                            <LegacyActionIcon
                               component={Link}
                               href={`/images/${currentImage.id}`}
                               target="_blank"
@@ -219,7 +220,7 @@ export default Page(
                               className="absolute bottom-2 right-2 text-white"
                             >
                               <IconExternalLink size={16} color="currentColor" />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           )}
                         </div>
                       )}

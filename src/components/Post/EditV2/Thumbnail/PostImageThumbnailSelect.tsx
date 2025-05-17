@@ -14,6 +14,7 @@ import { uniq } from 'lodash-es';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { MIME_TYPES } from '~/server/common/mime-types';
@@ -207,13 +208,13 @@ export function CurrentThumbnail({
         />
       </div>
 
-      <ActionIcon
+      <LegacyActionIcon
         color="red"
         onClick={() => setThumbnail({ frame: null, customThumbnail: null }).catch(() => null)}
         loading={loading}
       >
         <IconTrash size={16} />
-      </ActionIcon>
+      </LegacyActionIcon>
     </div>
   );
 }

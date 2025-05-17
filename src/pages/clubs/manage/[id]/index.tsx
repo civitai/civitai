@@ -168,7 +168,7 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
                 available, meaning users will not lose access to the resources, however, Buzz will
                 not be refunded to any of your members, so use with care.
               </Text>
-              <Button color="red" mt="lg" fullWidth onClick={onDelete} leftIcon={<IconTrash />}>
+              <Button color="red" mt="lg" fullWidth onClick={onDelete} leftSection={<IconTrash />}>
                 Delete this club
               </Button>
             </Stack>

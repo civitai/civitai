@@ -3,6 +3,7 @@ import { showNotification, updateNotification } from '@mantine/notifications';
 import { IconCrystalBall, IconX } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ImpersonateButton() {
@@ -55,7 +56,7 @@ export function ImpersonateButton() {
       }
       position="bottom"
     >
-      <ActionIcon
+      <LegacyActionIcon
         disabled={loading}
         color="red"
         variant="transparent"
@@ -63,7 +64,7 @@ export function ImpersonateButton() {
         style={{ boxShadow: '0 0 16px 2px red', borderRadius: '50%' }}
       >
         <IconCrystalBall />
-      </ActionIcon>
+      </LegacyActionIcon>
     </Tooltip>
   );
 }

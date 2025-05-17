@@ -4,6 +4,7 @@ import { useChatContext } from '~/components/Chat/ChatProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function ChatButton() {
   const { state, setState } = useChatContext();
@@ -39,14 +40,14 @@ export function ChatButton() {
         withBorder
         inline
       >
-        <ActionIcon
+        <LegacyActionIcon
           variant={state.open ? 'filled' : 'subtle'}
           color="gray"
           onClick={() => setState((prev) => ({ ...prev, open: !state.open }))}
           data-testid="open-chat"
         >
           <IconMessage2 />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Indicator>
     </>
   );

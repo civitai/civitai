@@ -19,6 +19,7 @@ import { BackButton } from '~/components/BackButton/BackButton';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditorComponent';
@@ -97,7 +98,7 @@ function ContestBanUserModal() {
 
         <Button
           color="red"
-          leftIcon={<IconBan size={14} />}
+          leftSection={<IconBan size={14} />}
           disabled={!selectedUser || !banReason}
           loading={toggleBanMutation.isLoading}
           onClick={onToggleBanUser}
@@ -154,7 +155,7 @@ export default function ContestsBans() {
           </Text>
           <Button
             color="red"
-            leftIcon={<IconBan size={14} />}
+            leftSection={<IconBan size={14} />}
             onClick={() => {
               dialogStore.trigger({
                 component: ContestBanUserModal,
@@ -206,7 +207,7 @@ export default function ContestsBans() {
                       </td>
 
                       <td>
-                        <ActionIcon
+                        <LegacyActionIcon
                           onClick={() => {
                             onToggleBanUser(user.id);
                           }}
@@ -215,7 +216,7 @@ export default function ContestsBans() {
                           <Tooltip label="Unban">
                             <IconTrashOff size={16} />
                           </Tooltip>
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </td>
                     </tr>
                   ))}

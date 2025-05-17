@@ -37,6 +37,7 @@ import {
   allBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number }>;
 
@@ -209,13 +210,13 @@ export function AssociateModels({
                               </Group>
                             </Stack>
                           </Group>
-                          <ActionIcon
+                          <LegacyActionIcon
                             variant="outline"
                             color="red"
                             onClick={() => handleRemove(association.item.id)}
                           >
                             <IconTrash size={20} />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </Group>
                       </Card>
                     </SortableItem>

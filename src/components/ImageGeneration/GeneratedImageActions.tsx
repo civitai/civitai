@@ -25,6 +25,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import classes from './GeneratedImageActions.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -205,24 +206,24 @@ export function GeneratedImageActions({
       {hasSelected && (
         <div className="flex gap-2">
           <Tooltip label="Download selected">
-            <ActionIcon
+            <LegacyActionIcon
               size={actionIconSize}
               onClick={downloadSelected}
               variant="light"
               loading={zipping}
             >
               <IconDownload size={iconSize} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
           <Tooltip label="Delete selected">
-            <ActionIcon
+            <LegacyActionIcon
               size={actionIconSize}
               onClick={deleteSelectedImages}
               color="red"
               variant="light"
             >
               <IconTrash size={iconSize} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
           <Tooltip label="Post your generations to earn Buzz!">
             <Button

@@ -11,6 +11,7 @@ import { trpc } from '~/utils/trpc';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import clsx from 'clsx';
 import classes from './LeaderboardsHomeBlock.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; showAds?: boolean };
 
@@ -130,7 +131,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
                 })}
           </div>
         </div>
-        <ActionIcon
+        <LegacyActionIcon
           className={clsx(classes.nextButton, { [classes.hidden]: atStart })}
           radius="xl"
           size="md"
@@ -140,8 +141,8 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
           onClick={() => scroll('left')}
         >
           <IconChevronLeft />
-        </ActionIcon>
-        <ActionIcon
+        </LegacyActionIcon>
+        <LegacyActionIcon
           className={clsx(classes.nextButton, { [classes.hidden]: atEnd })}
           radius="xl"
           size="md"
@@ -151,7 +152,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
           onClick={() => scroll('right')}
         >
           <IconChevronRight />
-        </ActionIcon>
+        </LegacyActionIcon>
       </div>
     </Stack>
   );

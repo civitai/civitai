@@ -155,7 +155,7 @@ export default function ManageClubTiers({
               onClick={() => setAddNewTier(true)}
               loading={isRefetching}
               variant="light"
-              leftIcon={<IconPlus />}
+              leftSection={<IconPlus />}
             >
               Add new tier
             </Button>

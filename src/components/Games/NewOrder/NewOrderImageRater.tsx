@@ -10,6 +10,7 @@ import {
 import { useState, useMemo, useCallback } from 'react';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { damnedReasonOptions, ratingOptions } from '~/components/Games/KnightsNewOrder.utils';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
 import { browsingLevelDescriptions } from '~/shared/constants/browsingLevel.constants';
@@ -194,9 +195,14 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
           )}
         </Text>
         <div className="flex items-center gap-1">
-          <ActionIcon className="ml-auto" size="sm" variant="transparent" onClick={onVolumeClick}>
+          <LegacyActionIcon
+            className="ml-auto"
+            size="sm"
+            variant="transparent"
+            onClick={onVolumeClick}
+          >
             {muted ? <IconVolumeOff size={16} /> : <IconVolume size={16} />}
-          </ActionIcon>
+          </LegacyActionIcon>
           <ExplainImageRaterPopover />
         </div>
       </div>
@@ -264,9 +270,9 @@ export function ExplainImageRaterPopover() {
   return (
     <Popover width={300} withArrow>
       <Popover.Target>
-        <ActionIcon size="xs" color="dark">
+        <LegacyActionIcon size="xs" color="dark">
           <IconHelpHexagon strokeWidth={2.5} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Popover.Target>
       <Popover.Dropdown>
         <Text c="orange" weight={500}>

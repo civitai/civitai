@@ -1,7 +1,8 @@
-import { ActionIcon, Autocomplete, Badge, Card, Loader, Portal, Stack, Text } from '@mantine/core';
+import { Autocomplete, Badge, Card, Loader, Portal, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
@@ -103,7 +104,7 @@ function UserBadge({
       style={{ paddingRight: 3 }}
       w={width}
       rightSection={
-        <ActionIcon
+        <LegacyActionIcon
           size="xs"
           color="blue"
           radius="xl"
@@ -111,7 +112,7 @@ function UserBadge({
           onClick={() => handleToggleBlocked(data)}
         >
           <IconX size={10} />
-        </ActionIcon>
+        </LegacyActionIcon>
       }
     >
       {data.username ?? '[deleted]'}

@@ -22,6 +22,7 @@ import { generationPanel } from '~/store/generation.store';
 import { PostContestCollectionItem } from '~/types/router';
 import classes from './PostImages.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
@@ -185,7 +186,7 @@ export function PostImages({
                     {image.hasMeta && (
                       <div className="absolute bottom-2 right-2">
                         <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                          <ActionIcon variant="transparent" size="lg" component="span">
+                          <LegacyActionIcon variant="transparent" size="lg" component="span">
                             <IconInfoCircle
                               color="white"
                               filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -193,7 +194,7 @@ export function PostImages({
                               strokeWidth={2.5}
                               size={26}
                             />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </ImageMetaPopover2>
                       </div>
                     )}

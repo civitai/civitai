@@ -28,6 +28,7 @@ import { showSuccessNotification } from '../../../utils/notifications';
 import { UserAvatar } from '../../UserAvatar/UserAvatar';
 // import { ClubAdminUpdateModal } from '../ClubAdminUpsertForm';
 import { ClubAdmin } from '../../../types/router';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ClubAdminsPaged({ clubId }: Props) {
   // TODO.clubs: Add some custom filters for admins
@@ -98,7 +99,7 @@ export function ClubAdminsPaged({ clubId }: Props) {
                     </td>
                     <td>
                       <Group justify="flex-end">
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="transparent"
                           aria-label="Update invite"
                           onClick={() => {
@@ -111,8 +112,8 @@ export function ClubAdminsPaged({ clubId }: Props) {
                           }}
                         >
                           <IconPencil />
-                        </ActionIcon>
-                        <ActionIcon
+                        </LegacyActionIcon>
+                        <LegacyActionIcon
                           variant="transparent"
                           aria-label="Delete invite"
                           loading={deletingAdmin}
@@ -121,7 +122,7 @@ export function ClubAdminsPaged({ clubId }: Props) {
                           }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
                     </td>
                   </tr>

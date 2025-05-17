@@ -2,6 +2,7 @@ import { ActionIcon, Badge, CopyButton, Group, MantineColor, Tooltip } from '@ma
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelHashType } from '~/shared/utils/prisma/enums';
 
 export const ModelHash = ({
@@ -72,7 +73,7 @@ export const ModelHash = ({
         )}
       </CopyButton>
       {hasMore && (
-        <ActionIcon
+        <LegacyActionIcon
           px={2}
           size={20}
           variant="outline"
@@ -89,7 +90,7 @@ export const ModelHash = ({
           }}
         >
           <IconChevronRight />
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
     </Group>
   );

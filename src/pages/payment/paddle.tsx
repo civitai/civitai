@@ -113,7 +113,7 @@ export default function CompletePaddlePaymentTransaction() {
                   component={Link}
                   href="/models"
                   size="md"
-                  leftIcon={<IconLayoutDashboard />}
+                  leftSection={<IconLayoutDashboard />}
                 >
                   View Models
                 </Button>

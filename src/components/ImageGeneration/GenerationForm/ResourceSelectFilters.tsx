@@ -35,6 +35,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from './ResourceSelectFilters.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const baseModelLimit = 4;
 
@@ -151,7 +152,7 @@ export function ResourceSelectFiltersDropdown() {
               </Chip>
             ))}
             {baseModelsList.length > baseModelLimit && (
-              <ActionIcon
+              <LegacyActionIcon
                 variant="transparent"
                 size="sm"
                 onClick={() => setTruncateBaseModels((prev) => !prev)}
@@ -161,7 +162,7 @@ export function ResourceSelectFiltersDropdown() {
                 ) : (
                   <IconChevronUp strokeWidth={3} />
                 )}
-              </ActionIcon>
+              </LegacyActionIcon>
             )}
           </Group>
         </Chip.Group>

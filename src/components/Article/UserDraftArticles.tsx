@@ -21,6 +21,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './UserDraftArticles.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function UserDraftArticles() {
   const queryUtils = trpc.useContext();
@@ -101,14 +102,14 @@ export function UserDraftArticles() {
                   <td>{article.updatedAt ? formatDate(article.updatedAt) : 'N/A'}</td>
                   <td>
                     <Group justify="flex-end" pr="xs">
-                      <ActionIcon
+                      <LegacyActionIcon
                         color="red"
                         variant="subtle"
                         size="sm"
                         onClick={() => handleDeleteArticle(article)}
                       >
                         <IconTrash />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Group>
                   </td>
                 </tr>

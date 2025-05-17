@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 import {
   Form,
@@ -118,7 +119,7 @@ export function ClubTierUpsertForm({
                         radius="sm"
                       />
                       <Tooltip label="Remove image">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="sm"
                           variant="filled"
                           color="red"
@@ -133,7 +134,7 @@ export function ClubTierUpsertForm({
                           }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </div>
                   )}

@@ -59,6 +59,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './UserModelsTable.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 type TrainingFileData = {
   type: string;
@@ -446,7 +447,7 @@ export default function UserTrainingModels() {
                             </Button>
                           </Link>
                         )}
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="filled"
                           radius="xl"
                           size="md"
@@ -464,8 +465,8 @@ export default function UserTrainingModels() {
                           }}
                         >
                           <IconFileDescription size={16} />
-                        </ActionIcon>
-                        <ActionIcon
+                        </LegacyActionIcon>
+                        <LegacyActionIcon
                           color="red"
                           variant="light"
                           size="md"
@@ -476,7 +477,7 @@ export default function UserTrainingModels() {
                           disabled={isNotDeletable}
                         >
                           <IconTrash size={16} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
                     </td>
                   </tr>
@@ -536,9 +537,9 @@ export default function UserTrainingModels() {
                   <Text>{jobId ?? 'Unknown'}</Text>
                   {!!jobId && (
                     <ButtonTooltip withinPortal withArrow label="Copy - send this to support!">
-                      <ActionIcon size={18} p={0} onClick={() => copy(jobId)}>
+                      <LegacyActionIcon size={18} p={0} onClick={() => copy(jobId)}>
                         {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </ButtonTooltip>
                   )}
                 </Group>

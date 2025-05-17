@@ -12,7 +12,7 @@ import {
   getPrimaryShade,
   useMantineColorScheme,
 } from '@mantine/core';
-import { useColorScheme, useHotkeys } from '@mantine/hooks';
+import { useHotkeys } from '@mantine/hooks';
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -42,6 +42,7 @@ import {
   useAccountContext,
 } from '~/components/CivitaiWrapped/AccountProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { UserBuzz } from '~/components/User/UserBuzz';
@@ -143,7 +144,8 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
-  const { colorScheme, toggleColorScheme } = useMantineColorScheme();
+  const { toggleColorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { logout } = useAccountContext();
 
   const { handleClose } = useUserMenuContext();
@@ -185,7 +187,8 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
       </div>
       <div className="flex gap-3 border-t border-gray-3 px-3 py-2 dark:border-dark-4">
         <Tooltip label="Color scheme">
-          <ActionIcon
+          <LegacyActionIcon
+            color="gray"
             variant="default"
             onClick={() => toggleColorScheme()}
             size="lg"
@@ -198,13 +201,14 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
             }}
           >
             {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
-          </ActionIcon>
+          </LegacyActionIcon>
         </Tooltip>
         {currentUser && (
           <>
             <Tooltip label="Account settings">
-              <ActionIcon
+              <LegacyActionIcon
                 variant="default"
+                color="gray"
                 size="lg"
                 onClick={handleClose}
                 component={NextLink}
@@ -212,15 +216,21 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
                 className="flex-1"
               >
                 <IconSettings stroke={1.5} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
             <Tooltip label="Logout">
-              <ActionIcon variant="default" onClick={() => logout()} size="lg" className="flex-1">
+              <LegacyActionIcon
+                variant="default"
+                color="gray"
+                onClick={() => logout()}
+                size="lg"
+                className="flex-1"
+              >
                 <IconLogout
                   stroke={1.5}
                   color={theme.colors.red[getPrimaryShade(theme, colorScheme)]}
                 />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           </>
         )}
@@ -350,7 +360,7 @@ function ActionButtons({ close }: { close: () => void }) {
       </Button>
       <Button
         variant="default"
-        leftIcon={<IconLogout stroke={1.5} size={18} />}
+        leftSection={<IconLogout stroke={1.5} size={18} />}
         loading={loggingOut}
         disabled={loggingOutAll}
         onClick={handleLogout}
@@ -359,7 +369,7 @@ function ActionButtons({ close }: { close: () => void }) {
       </Button>
       <Button
         variant="default"
-        leftIcon={<IconLogout2 stroke={1.5} size={18} />}
+        leftSection={<IconLogout2 stroke={1.5} size={18} />}
         loading={loggingOutAll}
         disabled={loggingOut}
         onClick={handleLogoutAll}
@@ -371,7 +381,6 @@ function ActionButtons({ close }: { close: () => void }) {
 }
 
 function CustomUserAvatar({ data }: { data: CivitaiAccount }) {
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const { avatarUrl, email, username } = data;
   const imageUrl = useGetEdgeUrl(avatarUrl, { width: 96 });

@@ -11,13 +11,13 @@ import {
   Box,
   LoadingOverlay,
   Table,
-  ActionIcon,
   Center,
   Paper,
 } from '@mantine/core';
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import { ApiKeyModal } from '~/components/Account/ApiKeyModal';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ApiKeysCard() {
   const utils = trpc.useUtils();
@@ -51,7 +51,7 @@ export function ApiKeysCard() {
             <Title order={2}>API Keys</Title>
             <Button
               variant="outline"
-              leftIcon={<IconPlus size={14} stroke={1.5} />}
+              leftSection={<IconPlus size={14} stroke={1.5} />}
               onClick={() => toggle()}
               size="compact-md"
             >
@@ -85,9 +85,13 @@ export function ApiKeysCard() {
                     <td>{formatDate(apiKey.createdAt)}</td>
                     <td>
                       <Group justify="flex-end">
-                        <ActionIcon color="red" onClick={() => handleDeleteApiKey(apiKey.id)}>
+                        <LegacyActionIcon
+                          variant="subtle"
+                          color="red"
+                          onClick={() => handleDeleteApiKey(apiKey.id)}
+                        >
                           <IconTrash size="16" stroke={1.5} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
                     </td>
                   </tr>

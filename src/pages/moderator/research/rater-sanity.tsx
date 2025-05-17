@@ -40,6 +40,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { SanityImage } from '~/server/routers/research.router';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -197,7 +198,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               />
               {!!entityUrl && (
                 <Link legacyBehavior href={entityUrl} passHref>
-                  <ActionIcon
+                  <LegacyActionIcon
                     component="a"
                     variant="transparent"
                     style={{ position: 'absolute', bottom: '5px', left: '5px' }}
@@ -214,7 +215,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                       strokeWidth={2.5}
                       size={26}
                     />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Link>
               )}
             </>
@@ -297,18 +298,18 @@ function Controls({ images }: { images: SanityImage[] }) {
   return (
     <Group wrap="nowrap" gap="xs">
       <ButtonTooltip label="Select all" {...tooltipProps}>
-        <ActionIcon
+        <LegacyActionIcon
           variant="outline"
           onClick={handleSelectAll}
           disabled={selected.length === images.length}
         >
           <IconSquareCheck size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <ButtonTooltip label="Clear selection" {...tooltipProps}>
-        <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+        <LegacyActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
           <IconSquareOff size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <PopConfirm
         message={`Are you sure you want to delete ${selected.length} image(s)?`}
@@ -317,16 +318,20 @@ function Controls({ images }: { images: SanityImage[] }) {
         withArrow
       >
         <ButtonTooltip label="Delete" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
             <IconTrash size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <Popover position="bottom-end" width={300} opened={addPopoverOpen}>
         <Popover.Target>
-          <ActionIcon variant="outline" color="green" onClick={() => setAddPopoverOpen((x) => !x)}>
+          <LegacyActionIcon
+            variant="outline"
+            color="green"
+            onClick={() => setAddPopoverOpen((x) => !x)}
+          >
             <IconPlus size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Popover.Target>
         <Popover.Dropdown px="xs">
           <Stack gap={4}>

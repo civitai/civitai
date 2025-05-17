@@ -57,6 +57,7 @@ import { isDefined } from '~/utils/type-guards';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import classes from './ImagesAsPostsCard.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ImagesAsPostsCard({
   data,
@@ -328,9 +329,9 @@ export function ImagesAsPostsCard({
                     {!data.publishedAt && (
                       <Tooltip label="Post not Published" withArrow>
                         <Link href={`/posts/${data.postId}/edit`}>
-                          <ActionIcon color="red" variant="outline">
+                          <LegacyActionIcon color="red" variant="outline">
                             <IconExclamationMark />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </Link>
                       </Tooltip>
                     )}
@@ -433,7 +434,7 @@ export function ImagesAsPostsCard({
                       {image.hasMeta && (
                         <div className="absolute bottom-0.5 right-0.5 z-10">
                           <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                            <ActionIcon variant="transparent" size="lg">
+                            <LegacyActionIcon variant="transparent" size="lg">
                               <IconInfoCircle
                                 color="white"
                                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -441,7 +442,7 @@ export function ImagesAsPostsCard({
                                 strokeWidth={2.5}
                                 size={26}
                               />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </ImageMetaPopover2>
                         </div>
                       )}
@@ -530,7 +531,7 @@ export function ImagesAsPostsCard({
                                 {image.hasMeta && (
                                   <div className="absolute bottom-0.5 right-0.5 z-10">
                                     <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                                      <ActionIcon variant="transparent" size="lg">
+                                      <LegacyActionIcon variant="transparent" size="lg">
                                         <IconInfoCircle
                                           color="white"
                                           filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -538,7 +539,7 @@ export function ImagesAsPostsCard({
                                           strokeWidth={2.5}
                                           size={26}
                                         />
-                                      </ActionIcon>
+                                      </LegacyActionIcon>
                                     </ImageMetaPopover2>
                                   </div>
                                 )}

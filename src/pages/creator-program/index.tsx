@@ -455,7 +455,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                 size="lg"
                 mt="auto"
                 rightIcon={availability.isAvailable ? <IconCaretRightFilled /> : undefined}
-                leftIcon={isJoined && availability.isAvailable ? <IconCircleCheck /> : undefined}
+                leftSection={isJoined && availability.isAvailable ? <IconCircleCheck /> : undefined}
                 component="a"
                 href={applyFormUrl}
                 target="_blank"

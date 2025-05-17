@@ -25,6 +25,7 @@ import {
 import { useDebouncer } from '~/utils/debouncer';
 import 'draft-js/dist/Draft.css';
 import styles from './TrainingImagesCaptionViewer.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const TrainingImagesCaptions = ({
   imgData,
@@ -116,14 +117,14 @@ export const TrainingImagesCaptionViewer = ({
               onChange={(event) => setSearchCaption(event.currentTarget.value.toLowerCase())}
               style={{ flexGrow: 1 }}
               rightSection={
-                <ActionIcon
+                <LegacyActionIcon
                   onClick={() => {
                     setSearchCaption('');
                   }}
                   disabled={!searchCaption.length}
                 >
                   <IconX size={16} />
-                </ActionIcon>
+                </LegacyActionIcon>
               }
             />
             <Divider orientation="vertical" />

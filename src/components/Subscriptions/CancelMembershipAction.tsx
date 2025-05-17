@@ -83,7 +83,7 @@ export function CancelMembershipAction({
       {label}
     </Menu.Item>
   ) : (
-    <Button className="capitalize" {...buttonProps} leftIcon={icon} onClick={handleClick}>
+    <Button className="capitalize" {...buttonProps} leftSection={icon} onClick={handleClick}>
       {label}
     </Button>
   );

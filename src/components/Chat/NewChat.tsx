@@ -10,6 +10,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function NewChat() {
   const { state, setState } = useChatContext();
@@ -119,7 +120,7 @@ export function NewChat() {
             color="yellow"
             variant="light"
             onClick={handleAck}
-            leftIcon={<IconCheck />}
+            leftSection={<IconCheck />}
             mt={10}
             fullWidth
             disabled={acking}
@@ -174,7 +175,7 @@ export function NewChat() {
             {state.selectedUsers.map((u) => (
               <Group key={u.id}>
                 <UserAvatar user={u} size="md" withUsername />
-                <ActionIcon
+                <LegacyActionIcon
                   title="Remove user"
                   onClick={() =>
                     setState((prev) => ({
@@ -184,7 +185,7 @@ export function NewChat() {
                   }
                 >
                   <IconX />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Group>
             ))}
           </Group>

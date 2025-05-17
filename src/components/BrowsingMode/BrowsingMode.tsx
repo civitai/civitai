@@ -17,14 +17,15 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { constants } from '~/server/common/constants';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   return (
     <Popover zIndex={constants.imageGeneration.drawerZIndex + 1} withArrow withinPortal>
       <Popover.Target>
-        <ActionIcon variant="subtle" color="gray">
+        <LegacyActionIcon variant="subtle" color="gray">
           <IconEyeExclamation {...iconProps} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Popover.Target>
       <Popover.Dropdown p="md">
         <BrowsingModeMenu />

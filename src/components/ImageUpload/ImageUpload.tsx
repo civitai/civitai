@@ -51,6 +51,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { formatBytes } from '~/utils/number-helpers';
 import styles from './ImageUpload.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -354,23 +355,23 @@ function UploadedImage({
           <>
             {/* Disable as part of move to advanced self-mod */}
             {/* <Tooltip label="Toggle NSFW">
-              <ActionIcon
+              <LegacyActionIcon
                 color={image.nsfw ? 'red' : undefined}
                 variant={image.nsfw ? 'filled' : 'outline'}
                 disabled={image.nsfw === undefined}
                 onClick={() => filesHandler.setItem(index, { ...image, nsfw: !image.nsfw })}
               >
                 <IconRating18Plus />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip> */}
             {withMeta && (
               <ImageMetaPopover meta={image.meta as ImageMetaProps}>
-                <ActionIcon
+                <LegacyActionIcon
                   variant="outline"
                   color={image.meta && Object.keys(image.meta).length ? 'primary' : undefined}
                 >
                   <IconPencil />
-                </ActionIcon>
+                </LegacyActionIcon>
               </ImageMetaPopover>
               // <ImageMetaPopover
               //   meta={image.meta}
@@ -381,17 +382,17 @@ function UploadedImage({
               //     filesHandler.apply((item) => ({ ...item, tags }));
               //   }}
               // >
-              //   <ActionIcon
+              //   <LegacyActionIcon
               //     variant="outline"
               //     color={image.meta && Object.keys(image.meta).length ? 'primary' : undefined}
               //   >
               //     <IconPencil />
-              //   </ActionIcon>
+              //   </LegacyActionIcon>
               // </ImageMetaPopover>
             )}
           </>
         )}
-        <ActionIcon
+        <LegacyActionIcon
           color="red"
           variant="outline"
           onClick={() => {
@@ -400,7 +401,7 @@ function UploadedImage({
           }}
         >
           <IconTrash size={16} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Group>
     </ImageUploadPreview>
   );

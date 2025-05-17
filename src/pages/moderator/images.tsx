@@ -50,6 +50,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -340,7 +341,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 )}
               </ImageGuard2>
               {!!entityUrl && (
-                <ActionIcon
+                <LegacyActionIcon
                   component={Link}
                   href={`${entityUrl}?moderator`}
                   variant="transparent"
@@ -355,11 +356,11 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     strokeWidth={2.5}
                     size={26}
                   />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
               {image.meta ? (
                 <ImageMetaPopover meta={image.meta}>
-                  <ActionIcon
+                  <LegacyActionIcon
                     variant="transparent"
                     style={{ position: 'absolute', bottom: '5px', right: '5px' }}
                     size="lg"
@@ -371,7 +372,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                       strokeWidth={2.5}
                       size={26}
                     />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </ImageMetaPopover>
               ) : image.metadata?.profilePicture ? (
                 <Badge
@@ -446,7 +447,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   <></>
                 ) : (
                   <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
-                    <div className="text-sm lh-1.2" dangerouslySetInnerHTML={{ __html: html }} />
+                    <div className="lh-1.2 text-sm" dangerouslySetInnerHTML={{ __html: html }} />
                   </Card.Section>
                 )
               }
@@ -737,18 +738,18 @@ function ModerationControls({
     <div className="flex flex-col items-center gap-2">
       <Group wrap="nowrap" gap="xs">
         <ButtonTooltip label="Select all" {...tooltipProps}>
-          <ActionIcon
+          <LegacyActionIcon
             variant="outline"
             onClick={handleSelectAll}
             disabled={selected.length === images.length}
           >
             <IconSquareCheck size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
         <ButtonTooltip label="Clear selection" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+          <LegacyActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
             <IconSquareOff size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
         {view === 'appeal' ? (
           <AppealActions selected={selected} filters={filters} />
@@ -761,9 +762,9 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Accept" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="green">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
                 <IconCheck size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
@@ -776,9 +777,9 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Not POI" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="green">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
                 <IconUserOff size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
@@ -791,9 +792,9 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Remove Name" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="yellow">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="yellow">
                 <IconUserMinus size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
@@ -806,27 +807,27 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Delete" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="red">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
                 <IconTrash size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
 
         <ButtonTooltip {...tooltipProps} label="Report CSAM">
-          <ActionIcon
+          <LegacyActionIcon
             variant="outline"
             disabled={!selected.length}
             onClick={handleReportCsam}
             color="orange"
           >
             <IconAlertTriangle size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
         <ButtonTooltip label="Refresh" {...tooltipProps}>
-          <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+          <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
             <IconReload size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </Group>
       <BrowsingLevelsGrouped gap={4} size="xs" />
@@ -910,9 +911,9 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
         withinPortal
       >
         <ButtonTooltip label="Approve" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
             <IconCheck size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <PopConfirm
@@ -931,9 +932,9 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
         withinPortal
       >
         <ButtonTooltip label="Reject" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
             <IconBan size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
     </>

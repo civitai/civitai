@@ -13,6 +13,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { useTipStore } from '~/store/tip.store';
 import classes from './GenerationCostPopover.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const getEmojiByValue = (value: number) => {
   if (value === 0) return '😢';
@@ -37,9 +38,15 @@ export function GenerationCostPopover({
     <Popover shadow="md" {...popoverProps} withinPortal>
       <Popover.Target>
         {variant === 'info-circle' ? (
-          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={disabled}>
+          <LegacyActionIcon
+            variant="subtle"
+            size="xs"
+            color="yellow.7"
+            radius="xl"
+            disabled={disabled}
+          >
             <IconInfoCircle stroke={2.5} />
-          </ActionIcon>
+          </LegacyActionIcon>
         ) : (
           <CurrencyBadge
             unitAmount={totalCost}
@@ -235,9 +242,9 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
       title={
         <div className={clsx(classes.baseCostCell, 'flex items-center justify-between gap-4 p-2')}>
           <div className="font-semibold">Generation Cost Breakdown</div>
-          <ActionIcon variant="subtle" radius="xl" onClick={handleShowExplanationClick}>
+          <LegacyActionIcon variant="subtle" radius="xl" onClick={handleShowExplanationClick}>
             <IconInfoCircle size={18} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </div>
       }
       items={items}

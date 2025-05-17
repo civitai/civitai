@@ -27,6 +27,7 @@ import {
 } from '~/components/Collections/collection.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -220,7 +221,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         <CopyButton value={joinUrl}>
                           {({ copied, copy }) => (
                             <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                              <ActionIcon
+                              <LegacyActionIcon
                                 pos="absolute"
                                 top="50%"
                                 right={10}
@@ -228,7 +229,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                                 style={{ transform: 'translateY(-50%) !important' }}
                               >
                                 <IconClipboard />
-                              </ActionIcon>
+                              </LegacyActionIcon>
                               <Code block color={copied ? 'green' : undefined}>
                                 {copied ? 'Copied' : joinUrl}
                               </Code>

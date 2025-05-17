@@ -4,6 +4,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useMemo } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { sortByModelTypes } from '~/utils/array-helpers';
@@ -180,7 +181,7 @@ function RemoveResource({ imageId, modelVersionId }: { imageId: number; modelVer
   };
 
   return (
-    <ActionIcon
+    <LegacyActionIcon
       size="xs"
       color="red"
       variant="light"
@@ -190,6 +191,6 @@ function RemoveResource({ imageId, modelVersionId }: { imageId: number; modelVer
       w={20}
     >
       <IconX size={14} stroke={1.5} />
-    </ActionIcon>
+    </LegacyActionIcon>
   );
 }

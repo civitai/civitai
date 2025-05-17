@@ -157,7 +157,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
           {canAdd && !hideButton && (
             <Button
               variant="light"
-              leftIcon={<IconPlus size={18} />}
+              leftSection={<IconPlus size={18} />}
               onClick={handleOpenModal}
               {...buttonProps}
             >

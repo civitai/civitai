@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Center,
   CloseButton,
   Group,
@@ -17,6 +16,7 @@ import React, { forwardRef, useMemo, useState } from 'react';
 import { dismissAnnouncements } from '~/components/Announcements/announcements.utils';
 import { AnnouncementsList } from '~/components/Announcements/AnnouncementsList';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 
 import { NotificationList } from '~/components/Notifications/NotificationList';
@@ -89,18 +89,18 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
                 onChange={(e) => setHideRead(e.currentTarget.checked)}
               />
               <Tooltip label={`Mark ${categoryName} as read`} position="bottom">
-                <ActionIcon size="lg" onClick={handleMarkAsRead}>
+                <LegacyActionIcon size="lg" onClick={handleMarkAsRead}>
                   <IconListCheck />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
               <Tooltip label="Notification settings" position="bottom">
-                <ActionIcon
+                <LegacyActionIcon
                   component={NextLink}
                   size="lg"
                   href="/user/account#notification-settings"
                 >
                   <IconSettings />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
               {onClose && <CloseButton size="lg" onClick={onClose} />}
             </Group>
@@ -116,9 +116,9 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
             disabled={!notifications || notifications.length === 0}
             onChange={(event) => setSearchText(event.currentTarget.value)}
             rightSection={
-              <ActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
+              <LegacyActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
                 <IconX size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             }
           />
         </div>

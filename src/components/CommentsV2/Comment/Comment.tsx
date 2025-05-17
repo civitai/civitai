@@ -48,6 +48,7 @@ import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import classes from './Comment.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Store = {
   id?: number;
@@ -170,9 +171,9 @@ export function CommentContent({
           {/* CONTROLS */}
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
-              <ActionIcon size="xs" variant="subtle">
+              <LegacyActionIcon size="xs" variant="subtle">
                 <IconDotsVertical size={14} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
               {canDelete && (

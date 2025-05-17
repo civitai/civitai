@@ -449,7 +449,7 @@
 //               <Button.Group mt="sm">
 //                 <Button
 //                   variant="default"
-//                   leftIcon={<IconRotate />}
+//                   leftSection={<IconRotate />}
 //                   onClick={handleRestart}
 //                   fullWidth
 //                 >
@@ -485,7 +485,7 @@
 //           </Card>
 //           {!loading && image && sanityStatus !== 'assessing' && (
 //             <>
-//               <ActionIcon
+//               <LegacyActionIcon
 //                 className={classes.link}
 //                 component={Link}
 //                 target="_blank"
@@ -493,7 +493,7 @@
 //                 variant="transparent"
 //               >
 //                 <IconExternalLink />
-//               </ActionIcon>
+//               </LegacyActionIcon>
 //             </>
 //           )}
 //         </Box>
@@ -557,7 +557,7 @@
 
 //           {(progression?.level ?? 0) > 20 && (
 //             <Tooltip label="View Leaderboard">
-//               <ActionIcon
+//               <LegacyActionIcon
 //                 size="md"
 //                 component={Link}
 //                 href="/leaderboard/rater"
@@ -565,7 +565,7 @@
 //                 color="yellow"
 //               >
 //                 <IconCrown />
-//               </ActionIcon>
+//               </LegacyActionIcon>
 //             </Tooltip>
 //           )}
 //         </Group>
@@ -643,14 +643,14 @@
 //                   <Kbd>1-6</Kbd> to rate, <Kbd>Space</Kbd> to skip, <Kbd>Ctrl</Kbd>+<Kbd>Z</Kbd> to
 //                   undo
 //                 </Text>
-//                 <ActionIcon size="xs" onClick={() => setMuted((x) => !x)} color="dark">
+//                 <LegacyActionIcon size="xs" onClick={() => setMuted((x) => !x)} color="dark">
 //                   {muted ? <IconVolumeOff strokeWidth={2.5} /> : <IconVolume strokeWidth={2.5} />}
-//                 </ActionIcon>
+//                 </LegacyActionIcon>
 //                 <Popover width={300} withArrow>
 //                   <Popover.Target>
-//                     <ActionIcon size="xs" color="dark">
+//                     <LegacyActionIcon size="xs" color="dark">
 //                       <IconHelpHexagon strokeWidth={2.5} />
-//                     </ActionIcon>
+//                     </LegacyActionIcon>
 //                   </Popover.Target>
 //                   <Popover.Dropdown>
 //                     <Text c="orange" weight={500}>

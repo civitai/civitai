@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Button,
   ButtonProps,
@@ -15,7 +14,6 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '../../utils/trpc';
 import { IconExternalLink, IconInfoCircle } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -31,6 +29,7 @@ import {
 } from '~/components/UserPaymentConfiguration/util';
 import dynamic from 'next/dynamic';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
@@ -43,7 +42,7 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
   });
 
   const updateUserSettings = useMutateUserSettings({
-    onError(_error, _payload, context) {
+    onError() {
       showErrorNotification({
         title: 'Failed to accept code of conduct',
         error: new Error('Something went wrong, please try again later.'),
@@ -231,7 +230,9 @@ const StripeConnectConfigurationCard = () => {
       <Stack>
         <Group justify="space-between">
           <Title order={3}>Stripe Connect</Title>
-          <ActionIcon
+          <LegacyActionIcon
+            color="gray"
+            variant="subtle"
             onClick={() => {
               dialogStore.trigger({
                 component: FeatureIntroductionModal,
@@ -243,7 +244,7 @@ const StripeConnectConfigurationCard = () => {
             }}
           >
             <IconInfoCircle />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Group>
       </Stack>
 

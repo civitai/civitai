@@ -7,6 +7,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
 import { BaseModelSetType } from '~/server/common/constants';
 import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
 const simpleMetaProps = {
@@ -101,9 +102,9 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             </div>
             <CopyButton value={prompt}>
               {({ copy, Icon, color }) => (
-                <ActionIcon onClick={copy} color={color}>
+                <LegacyActionIcon onClick={copy} color={color}>
                   <Icon size={16} />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
             </CopyButton>
           </div>
@@ -127,9 +128,9 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             <Text className="font-semibold">Negative prompt</Text>
             <CopyButton value={negativePrompt}>
               {({ copy, Icon, color }) => (
-                <ActionIcon onClick={copy} color={color}>
+                <LegacyActionIcon onClick={copy} color={color}>
                   <Icon size={16} />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
             </CopyButton>
           </div>

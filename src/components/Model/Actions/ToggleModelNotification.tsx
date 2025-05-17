@@ -1,5 +1,6 @@
 import { ActionIcon, ActionIconProps, Tooltip } from '@mantine/core';
 import { IconBellCheck, IconBellPlus } from '@tabler/icons-react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -50,7 +51,7 @@ export function ToggleModelNotification({
       {/* Need div to keep ref with tooltip */}
       <div>
         <LoginRedirect reason="notify-model">
-          <ActionIcon
+          <LegacyActionIcon
             variant="light"
             {...actionIconProps}
             color={isOn ? 'success' : undefined}
@@ -63,7 +64,7 @@ export function ToggleModelNotification({
             loading={toggleNotifyModelMutation.isLoading}
           >
             {isOn ? <IconBellCheck size={20} /> : <IconBellPlus size={20} />}
-          </ActionIcon>
+          </LegacyActionIcon>
         </LoginRedirect>
       </div>
     </Tooltip>

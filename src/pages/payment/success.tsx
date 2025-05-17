@@ -64,7 +64,7 @@ export default function PaymentSuccess() {
           </Text>
 
           <Group grow>
-            <Button component={Link} href="/models" size="md" leftIcon={<IconLayoutDashboard />}>
+            <Button component={Link} href="/models" size="md" leftSection={<IconLayoutDashboard />}>
               View Models
             </Button>
             <Button

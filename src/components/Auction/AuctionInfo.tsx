@@ -49,6 +49,7 @@ import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -157,7 +158,9 @@ export const AuctionTopSection = ({
         {showHistory && (
           <Tooltip label="View History">
             <Group gap={6}>
-              <ActionIcon
+              <LegacyActionIcon
+                variant="subtle"
+                color="gray"
                 disabled={dToDayjs.valueOf() <= minDate.valueOf()}
                 className="disabled:opacity-50"
                 onClick={() => {
@@ -165,7 +168,7 @@ export const AuctionTopSection = ({
                 }}
               >
                 <IconChevronLeft size={18} />
-              </ActionIcon>
+              </LegacyActionIcon>
               <DatePickerInput
                 placeholder="View History"
                 value={dToDate}
@@ -189,7 +192,9 @@ export const AuctionTopSection = ({
                 w={165}
                 size="xs"
               />
-              <ActionIcon
+              <LegacyActionIcon
+                variant="subtle"
+                color="gray"
                 disabled={realD >= 0}
                 className="disabled:opacity-50"
                 onClick={() => {
@@ -197,7 +202,7 @@ export const AuctionTopSection = ({
                 }}
               >
                 <IconChevronRight size={18} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Group>
           </Tooltip>
         )}
@@ -788,9 +793,14 @@ export const AuctionInfo = () => {
               disabled={!auctionData?.bids || auctionData.bids.length === 0}
               onChange={(event) => setSearchText(event.currentTarget.value)}
               rightSection={
-                <ActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
+                <LegacyActionIcon
+                  color="gray"
+                  variant="subtle"
+                  onClick={() => setSearchText('')}
+                  disabled={!searchText.length}
+                >
                   <IconX size={16} />
-                </ActionIcon>
+                </LegacyActionIcon>
               }
             />
           </Group>

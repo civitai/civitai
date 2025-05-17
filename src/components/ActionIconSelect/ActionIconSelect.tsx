@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   ActionIconProps,
   Popover,
   Box,
@@ -13,6 +12,7 @@ import {
 import { getHotkeyHandler, useClickOutside } from '@mantine/hooks';
 import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ActionIconSelect<T>({
   items,
@@ -96,14 +96,15 @@ export function ActionIconSelect<T>({
   return (
     <Popover opened={editing} position="bottom-start" shadow="lg" {...popoverProps}>
       <Popover.Target>
-        <ActionIcon
+        <LegacyActionIcon
+          color="gray"
           variant="outline"
           {...actionIconProps}
           ref={setToggle}
           onClick={() => setEditing((x) => !x)}
         >
           {children}
-        </ActionIcon>
+        </LegacyActionIcon>
       </Popover.Target>
       <Popover.Dropdown p={0}>
         <TextInput

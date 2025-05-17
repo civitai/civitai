@@ -23,6 +23,7 @@ import {
 } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
@@ -125,9 +126,9 @@ function CheckpointInfo({
         </Stack>
       </Group>
       {onRemove ? (
-        <ActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
+        <LegacyActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
           <IconX size={20} />
-        </ActionIcon>
+        </LegacyActionIcon>
       ) : (
         <Button variant="light" radius="xl" onClick={onSwap} size="compact-sm">
           <Group gap={4} wrap="nowrap">
@@ -189,18 +190,18 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
 
             {(resource.availability === Availability.Private || !!resource.epochDetails) && (
               <Tooltip label="This resource is private" position="top" withArrow>
-                <ActionIcon size={18} color="dark.5" variant="filled">
+                <LegacyActionIcon size={18} color="dark.5" variant="filled">
                   <IconLock size={14} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
             )}
 
             {resource.additionalResourceCost && selectSource === 'generation' && (
               <Popover position="bottom" withArrow width={200}>
                 <Popover.Target>
-                  <ActionIcon size={18} color="blue" variant="filled">
+                  <LegacyActionIcon size={18} color="blue" variant="filled">
                     <IconWeight size={14} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Popover.Target>
                 <Popover.Dropdown>
                   <Text size="sm">
@@ -215,9 +216,9 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
             {resource.earlyAccessEndsAt && (
               <Popover position="bottom" withArrow width={200}>
                 <Popover.Target>
-                  <ActionIcon size={18} color="yellow.7" variant="filled">
+                  <LegacyActionIcon size={18} color="yellow.7" variant="filled">
                     <IconBolt className="text-dark-9" fill="currentColor" size={16} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Popover.Target>
                 <Popover.Dropdown>
                   <Text size="sm">This resource is in early access</Text>
@@ -242,9 +243,9 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
         )}
       </Stack>
       {onRemove && (
-        <ActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
+        <LegacyActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
           <IconX size={20} />
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
     </Group>
   );

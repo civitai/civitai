@@ -42,6 +42,7 @@ import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRati
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { constants } from '~/server/common/constants';
 import { showSuccessNotification } from '~/utils/notifications';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function CosmeticStoreSections() {
   const { cosmeticShopSections, isLoading: isLoadingSections } = useQueryCosmeticShopSections();
@@ -220,18 +221,18 @@ export default function CosmeticStoreSections() {
                             )}
                           </Stack>
                           <Group>
-                            <ActionIcon
+                            <LegacyActionIcon
                               component={Link}
                               href={`/moderator/cosmetic-store/sections/${section.id}/edit`}
                             >
                               <IconEdit />
-                            </ActionIcon>
-                            <ActionIcon
+                            </LegacyActionIcon>
+                            <LegacyActionIcon
                               onClick={() => handleDeleteSection(section.id)}
                               loading={deletingShopSection}
                             >
                               <IconTrash />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </Group>
                         </Group>
                       </Paper>

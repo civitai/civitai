@@ -19,6 +19,7 @@ import { BackButton } from '../BackButton/BackButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
 import classes from './BountyEditForm.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const schema = updateBountyInputSchema
   .refine((data) => data.startsAt < data.expiresAt, {
@@ -147,14 +148,14 @@ export function BountyEditForm({ bounty }: Props) {
               {/* TODO we should probably allow users to remove existing files here */}
               {!file.id && (
                 <Tooltip label="Remove">
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="sm"
                     color="red"
                     variant="transparent"
                     onClick={() => onRemove()}
                   >
                     <IconTrash />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               )}
             </>

@@ -45,6 +45,7 @@ import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SortFilter } from '~/components/Filters';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BuzzWithdrawalRequestSort } from '~/server/common/enums';
@@ -192,28 +193,28 @@ export default function ModeratorBuzzWithdrawalRequests() {
         key="approve-btn"
         {...tooltipProps}
       >
-        <ActionIcon
+        <LegacyActionIcon
           onClick={() => {
             handleUpdateRequest(requestIds, BuzzWithdrawalRequestStatus.Approved);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Approved]}
         >
           <IconCheck />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Tooltip>
     );
   };
   const rejectBtn = (requestIds: string[]) => {
     return (
       <Tooltip label="Reject withdrawal request." key="reject-btn" {...tooltipProps}>
-        <ActionIcon
+        <LegacyActionIcon
           onClick={() => {
             handleUpdateRequest(requestIds, BuzzWithdrawalRequestStatus.Rejected);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Rejected]}
         >
           <IconX />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Tooltip>
     );
   };
@@ -221,7 +222,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
   const revertBtn = (requestId: string) =>
     features.buzzWithdrawalTransfer ? (
       <Tooltip label="Revert stripe transfer. Use with care" key="revert-btn" {...tooltipProps}>
-        <ActionIcon
+        <LegacyActionIcon
           onClick={() => {
             handleUpdateRequest([requestId], BuzzWithdrawalRequestStatus.Reverted);
           }}
@@ -229,7 +230,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
           key="revert-btn"
         >
           <IconCashBanknoteOff />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Tooltip>
     ) : null;
 
@@ -241,14 +242,14 @@ export default function ModeratorBuzzWithdrawalRequests() {
         key="transfer-btn"
         {...tooltipProps}
       >
-        <ActionIcon
+        <LegacyActionIcon
           onClick={() => {
             handleUpdateRequest([requestId], BuzzWithdrawalRequestStatus.Transferred);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Transferred]}
         >
           <IconCashBanknote />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Tooltip>
     ) : null;
   };
@@ -256,14 +257,14 @@ export default function ModeratorBuzzWithdrawalRequests() {
   const externallyResolvedBtn = (requestId: string) =>
     features.buzzWithdrawalTransfer ? (
       <Tooltip label="Resolved externally" key="externally-resolved-btn" {...tooltipProps}>
-        <ActionIcon
+        <LegacyActionIcon
           onClick={() => {
             handleUpdateRequest([requestId], BuzzWithdrawalRequestStatus.ExternallyResolved);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.ExternallyResolved]}
         >
           <IconExternalLink size={22} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Tooltip>
     ) : null;
 
@@ -482,9 +483,9 @@ export default function ModeratorBuzzWithdrawalRequests() {
                             withinPortal
                             label="Once approved, Tipalti items must be resolved in the Tipalti dashboard. Resolving them there will update the status here automatically."
                           >
-                            <ActionIcon color="blue">
+                            <LegacyActionIcon color="blue">
                               <IconInfoTriangleFilled size={16} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </Tooltip>
                         )}
                       </Group>

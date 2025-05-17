@@ -34,6 +34,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import classes from '~/components/Chat/ChatList.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const { openModal: openChatShareModal, Modal } = createContextModal<{ message: string }>({
   name: 'chatShareModal',
@@ -141,14 +142,14 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
             value={searchInput}
             onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
             rightSection={
-              <ActionIcon
+              <LegacyActionIcon
                 onClick={() => {
                   setSearchInput('');
                 }}
                 disabled={!searchInput.length}
               >
                 <IconX size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             }
           />
         </Box>
@@ -251,7 +252,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
         <Button
           loading={isSending}
           disabled={!selectedChat}
-          leftIcon={<IconSend />}
+          leftSection={<IconSend />}
           onClick={handleClick}
         >
           Send

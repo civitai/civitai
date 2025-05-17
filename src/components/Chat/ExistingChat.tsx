@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   Box,
   Button,
@@ -18,7 +17,6 @@ import {
   Title,
   Tooltip,
   useComputedColorScheme,
-  useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
@@ -62,6 +60,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './ExistingChat.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type TypingStatus = {
   [key: string]: boolean;
@@ -75,7 +74,6 @@ export function ExistingChat() {
   const { state, setState } = useChatContext();
   const queryUtils = trpc.useUtils();
   const isMobile = useContainerSmallerThan(700);
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
   const lastReadRef = useRef<HTMLDivElement>(null);
@@ -331,9 +329,9 @@ export function ExistingChat() {
       >
         <Group m="sm" mb={0} justify="space-between" wrap="nowrap" align="flex-start" gap="sm">
           {isMobile && (
-            <ActionIcon onClick={goBack}>
+            <LegacyActionIcon onClick={goBack}>
               <IconChevronLeft />
-            </ActionIcon>
+            </LegacyActionIcon>
           )}
           {allChatLoading ? (
             <Center h="100%">
@@ -442,9 +440,9 @@ export function ExistingChat() {
                     <Box style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
                       {allChats.find((ac) => ac.id === replyId)?.content ?? ''}
                     </Box>
-                    <ActionIcon onClick={() => setReplyId(undefined)} ml="auto">
+                    <LegacyActionIcon onClick={() => setReplyId(undefined)} ml="auto">
                       <IconX size={14} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </Group>
                   <Divider />
                 </>
@@ -697,7 +695,7 @@ function ChatInputBox({
         }}
         classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
       />
-      <ActionIcon
+      <LegacyActionIcon
         h="100%"
         w={60}
         onClick={sendMessage}
@@ -705,7 +703,7 @@ function ChatInputBox({
         style={{ borderRadius: 0 }}
       >
         {isSending ? <Loader /> : <IconSend />}
-      </ActionIcon>
+      </LegacyActionIcon>
     </Group>
   );
 }
@@ -897,9 +895,9 @@ function DisplayMessages({
                 >
                   <Menu withArrow position={isMe ? 'left-start' : 'right-start'}>
                     <Menu.Target>
-                      <ActionIcon style={{ alignSelf: 'flex-start', display: 'none' }}>
+                      <LegacyActionIcon style={{ alignSelf: 'flex-start', display: 'none' }}>
                         <IconDotsVertical />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Menu.Target>
                     <Menu.Dropdown>
                       <Menu.Item

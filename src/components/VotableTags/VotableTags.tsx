@@ -14,6 +14,7 @@ import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.const
 import { trpc } from '~/utils/trpc';
 import { NsfwLevel } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function VotableTags({
   entityId: id,
@@ -143,9 +144,13 @@ export function VotableTags({
         />
       ))}
       {collapsible && tags.length > limit && (
-        <ActionIcon variant="transparent" size="sm" onClick={() => setShowAll((prev) => !prev)}>
+        <LegacyActionIcon
+          variant="transparent"
+          size="sm"
+          onClick={() => setShowAll((prev) => !prev)}
+        >
           {showAll ? <IconChevronUp strokeWidth={3} /> : <IconChevronDown strokeWidth={3} />}
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
     </Group>
   );

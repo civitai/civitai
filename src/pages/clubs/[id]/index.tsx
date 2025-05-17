@@ -302,7 +302,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                             },
                           });
                         }}
-                        leftIcon={<IconPlus />}
+                        leftSection={<IconPlus />}
                       >
                         Add content
                       </Button>
@@ -311,7 +311,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                       <Button
                         component={'a'}
                         href={`/clubs/manage/${club.id}`}
-                        leftIcon={<IconSettings />}
+                        leftSection={<IconSettings />}
                         color="gray"
                       >
                         Manage

@@ -29,6 +29,7 @@ import {
   useSubscriptionManagementUrls,
 } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
@@ -284,9 +285,9 @@ export default function UserMembership() {
                                 multiline
                                 label="Your old subscription price has been discontinued and cannot be restored. If you'd like to keep supporting us, consider upgrading"
                               >
-                                <ActionIcon variant="light" color="dark" size="lg">
+                                <LegacyActionIcon variant="light" color="dark" size="lg">
                                   <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Tooltip>
                             )}
                           </>

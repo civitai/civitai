@@ -24,6 +24,7 @@ import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import styles from './UserModelsTable.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function UserDraftModels() {
   const queryUtils = trpc.useUtils();
@@ -140,14 +141,14 @@ export function UserDraftModels() {
                     </Table.Td>
                     <Table.Td>
                       <Group justify="flex-end" pr="xs">
-                        <ActionIcon
+                        <LegacyActionIcon
                           color="red"
                           variant="subtle"
                           size="sm"
                           onClick={() => handleDeleteModel(model)}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
                     </Table.Td>
                   </Table.Tr>

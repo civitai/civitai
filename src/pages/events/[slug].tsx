@@ -5,6 +5,7 @@ import {
   Center,
   Container,
   Divider,
+  getPrimaryShade,
   Grid,
   Group,
   Loader,
@@ -15,6 +16,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
@@ -108,6 +110,7 @@ export default function EventPageDetails({
   event,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -132,10 +135,7 @@ export default function EventPageDetails({
 
     const datasets = teamScoresHistory.map(({ team, scores }) => {
       let lastMatchedIndex = 0;
-      const color =
-        theme.colors[team.toLowerCase()][
-          typeof theme.primaryShade === 'number' ? theme.primaryShade : theme.primaryShade.dark
-        ];
+      const color = theme.colors[team.toLowerCase()][getPrimaryShade(theme, colorScheme)];
 
       return {
         label: 'Buzz donated',
@@ -153,7 +153,7 @@ export default function EventPageDetails({
     });
 
     return datasets;
-  }, [teamScoresHistory, theme.colors, theme.primaryShade]);
+  }, [teamScoresHistory, theme.colors, colorScheme]);
 
   if (loading) return <PageLoader />;
   if (!eventData) return <NotFound />;

@@ -18,6 +18,7 @@ import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { zc } from '~/utils/schema-helpers';
 import { isEqual } from 'lodash-es';
 import { LinkType } from '~/shared/utils/prisma/enums';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type InlineSocialLinkInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: { url: string; id?: number; type: LinkType }[];
@@ -74,7 +75,7 @@ export function InlineSocialLinkInput({
                     <Group align="center" wrap="nowrap">
                       <DomainIcon url={link.url} size={24} />
                       <Text size="sm">{link.url}</Text>
-                      <ActionIcon
+                      <LegacyActionIcon
                         variant="outline"
                         color="red"
                         size="md"
@@ -88,7 +89,7 @@ export function InlineSocialLinkInput({
                         }}
                       >
                         <IconTrash size={16} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Group>
                     {!isLast && <Divider />}
                   </Fragment>
@@ -109,7 +110,7 @@ export function InlineSocialLinkInput({
               root: { flex: 1 },
             }}
           />
-          <ActionIcon
+          <LegacyActionIcon
             variant="filled"
             color="blue"
             size="lg"
@@ -118,7 +119,7 @@ export function InlineSocialLinkInput({
             onClick={onAddLink}
           >
             <IconPlus size={16} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Group>
       </Stack>
     </Input.Wrapper>

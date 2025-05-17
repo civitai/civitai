@@ -76,6 +76,7 @@ import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import classes from './GeneratedImage.module.scss';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -295,13 +296,13 @@ export function GeneratedImage({
           <Menu zIndex={400} withinPortal>
             <Menu.Target>
               <div className="absolute right-3 top-3">
-                <ActionIcon variant="transparent">
+                <LegacyActionIcon variant="transparent">
                   <IconDotsVertical
                     size={26}
                     color="#fff"
                     filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
                   />
-                </ActionIcon>
+                </LegacyActionIcon>
               </div>
             </Menu.Target>
             <Menu.Dropdown>
@@ -321,15 +322,15 @@ export function GeneratedImage({
                 'absolute bottom-1 left-1 flex flex-wrap items-center gap-1 p-1'
               )}
             >
-              <ActionIcon
+              <LegacyActionIcon
                 size="md"
                 className={state.favorite ? classes.favoriteButton : undefined}
-                variant={state.favorite ? 'light' : undefined}
-                color={state.favorite ? 'red' : undefined}
+                variant={state.favorite ? 'light' : 'subtle'}
+                color={state.favorite ? 'red' : 'gray'}
                 onClick={() => handleToggleFavorite(!state.favorite)}
               >
                 <IconHeart size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
 
               <Menu
                 zIndex={400}
@@ -344,9 +345,9 @@ export function GeneratedImage({
                 position="top"
               >
                 <Menu.Target>
-                  <ActionIcon size="md">
+                  <LegacyActionIcon size="md">
                     <IconWand size={16} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown className={classes.improveMenu}>
                   <GeneratedImageWorkflowMenuItems
@@ -358,23 +359,23 @@ export function GeneratedImage({
                 </Menu.Dropdown>
               </Menu>
 
-              <ActionIcon
+              <LegacyActionIcon
                 size="md"
-                variant={state.feedback === 'liked' ? 'light' : undefined}
-                color={state.feedback === 'liked' ? 'green' : undefined}
+                variant={state.feedback === 'liked' ? 'light' : 'subtle'}
+                color={state.feedback === 'liked' ? 'green' : 'gray'}
                 onClick={() => handleToggleFeedback('liked')}
               >
                 <IconThumbUp size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
 
-              <ActionIcon
+              <LegacyActionIcon
                 size="md"
-                variant={state.feedback === 'disliked' ? 'light' : undefined}
-                color={state.feedback === 'disliked' ? 'red' : undefined}
+                variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
+                color={state.feedback === 'disliked' ? 'red' : 'gray'}
                 onClick={() => handleToggleFeedback('disliked')}
               >
                 <IconThumbDown size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </div>
           )}
           {!isLightbox && (
@@ -384,7 +385,7 @@ export function GeneratedImage({
                 zIndex={constants.imageGeneration.drawerZIndex + 1}
                 hideSoftware
               >
-                <ActionIcon variant="transparent" size="md">
+                <LegacyActionIcon variant="transparent" size="md">
                   <IconInfoCircle
                     color="white"
                     filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -392,7 +393,7 @@ export function GeneratedImage({
                     strokeWidth={2.5}
                     size={26}
                   />
-                </ActionIcon>
+                </LegacyActionIcon>
               </ImageMetaPopover>
             </div>
           )}

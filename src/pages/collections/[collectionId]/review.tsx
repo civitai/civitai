@@ -29,6 +29,7 @@ import { immer } from 'zustand/middleware/immer';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -330,7 +331,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
               <div>
                 {reviewData.url && (
                   <Link href={reviewData.url} passHref legacyBehavior>
-                    <ActionIcon
+                    <LegacyActionIcon
                       component="a"
                       variant="transparent"
                       size="lg"
@@ -346,7 +347,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                         strokeWidth={2.5}
                         size={26}
                       />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </Link>
                 )}
                 <Checkbox checked={selected} readOnly size="lg" />
@@ -523,18 +524,18 @@ function ModerationControls({
   return (
     <Group wrap="nowrap" gap="xs">
       <ButtonTooltip label="Select all" {...tooltipProps}>
-        <ActionIcon
+        <LegacyActionIcon
           variant="outline"
           onClick={handleSelectAll}
           disabled={selected.length === collectionItems.length}
         >
           <IconSquareCheck size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <ButtonTooltip label="Clear selection" {...tooltipProps}>
-        <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+        <LegacyActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
           <IconSquareOff size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <PopConfirm
         message={`Are you sure you want to approve ${selected.length} image(s)?`}
@@ -543,9 +544,9 @@ function ModerationControls({
         withArrow
       >
         <ButtonTooltip label="Accept" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
             <IconCheck size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <PopConfirm
@@ -555,15 +556,15 @@ function ModerationControls({
         withArrow
       >
         <ButtonTooltip label="Reject" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
             <IconTrash size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <ButtonTooltip label="Refresh" {...tooltipProps}>
-        <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+        <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
           <IconReload size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
     </Group>
   );

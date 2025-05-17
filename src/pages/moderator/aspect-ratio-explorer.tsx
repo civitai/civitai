@@ -2,6 +2,7 @@ import { ActionIcon, Button, NumberInput, TextInput } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconX } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AspectRatio, AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
 
 export default function AspectRatioExplorer() {
@@ -63,9 +64,9 @@ export default function AspectRatioExplorer() {
                   <span>
                     {key} - {width}:{height}
                   </span>
-                  <ActionIcon color="red" onClick={() => removeAspectRatio(key)}>
+                  <LegacyActionIcon color="red" onClick={() => removeAspectRatio(key)}>
                     <IconX />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </li>
               );
             } catch (e: any) {
@@ -74,9 +75,9 @@ export default function AspectRatioExplorer() {
                   <span>
                     {key} - {e.message}
                   </span>
-                  <ActionIcon color="red" onClick={() => removeAspectRatio(key)}>
+                  <LegacyActionIcon color="red" onClick={() => removeAspectRatio(key)}>
                     <IconX />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </li>
               );
             }

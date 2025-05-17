@@ -17,6 +17,7 @@ import React, { useMemo, useState } from 'react';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import {
   useSignalConnection,
   useSignalContext,
@@ -253,15 +254,16 @@ export const BidModelButton = ({
       </Group>
     </Button>
   ) : (
-    <ActionIcon
+    <LegacyActionIcon
       onClick={handle}
       disabled={!destAuction}
+      color="gray"
       size="xl"
       variant="light"
       {...actionIconProps}
     >
       <IconGavel size={30} />
-    </ActionIcon>
+    </LegacyActionIcon>
   );
 
   return (

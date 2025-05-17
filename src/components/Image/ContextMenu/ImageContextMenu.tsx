@@ -85,7 +85,7 @@ export function ImageContextMenu({
         {children ?? (
           <ActionIconDotsVertical
             className={!image.needsReview ? className : undefined}
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.preventDefault();
               e.stopPropagation();
             }}

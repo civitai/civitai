@@ -24,6 +24,7 @@ import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { DataFromFile } from '~/utils/metadata';
 import { formatBytes } from '~/utils/number-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?:
@@ -118,7 +119,7 @@ export function SimpleImageUpload({
       ) : !previewDisabled && image ? (
         <div style={{ position: 'relative', width: '100%', marginTop: 5 }}>
           <Tooltip label="Remove image">
-            <ActionIcon
+            <LegacyActionIcon
               size="sm"
               variant={aspectRatio ? 'filled' : 'light'}
               color="red"
@@ -126,7 +127,7 @@ export function SimpleImageUpload({
               className="absolute right-1 top-1 z-[1]"
             >
               <IconTrash />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
 
           <div
@@ -180,9 +181,7 @@ export function SimpleImageUpload({
           <Dropzone.Idle>
             <Group justify="center" gap="xs">
               <IconPhoto size={32} stroke={1.5} />
-              <Text c="dimmed">{`Drop image here, should not exceed ${formatBytes(
-                maxSize
-              )}`}</Text>
+              <Text c="dimmed">{`Drop image here, should not exceed ${formatBytes(maxSize)}`}</Text>
             </Group>
           </Dropzone.Idle>
         </Dropzone>

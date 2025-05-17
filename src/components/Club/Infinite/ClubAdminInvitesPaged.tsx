@@ -25,6 +25,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconCheck, IconClipboard } from '@tabler/icons-react';
 import { env } from '../../../env/client';
 import { showSuccessNotification } from '../../../utils/notifications';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ClubAdminInvitesPaged({ clubId }: Props) {
   // TODO.clubs: Add some custom filters for invites (?)
@@ -98,13 +99,13 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
                         >
                           {({ copied, copy }) => (
                             <Tooltip label="Copy invite link">
-                              <ActionIcon onClick={copy}>
+                              <LegacyActionIcon onClick={copy}>
                                 {copied ? <IconCheck /> : <IconClipboard />}
-                              </ActionIcon>
+                              </LegacyActionIcon>
                             </Tooltip>
                           )}
                         </CopyButton>
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="transparent"
                           aria-label="Update invite"
                           onClick={() => {
@@ -118,8 +119,8 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
                           }}
                         >
                           <IconPencil />
-                        </ActionIcon>
-                        <ActionIcon
+                        </LegacyActionIcon>
+                        <LegacyActionIcon
                           variant="transparent"
                           aria-label="Delete invite"
                           loading={deletingInvite}
@@ -128,7 +129,7 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
                           }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
                     </td>
                   </tr>

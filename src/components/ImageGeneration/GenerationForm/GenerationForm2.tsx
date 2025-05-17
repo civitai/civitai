@@ -805,7 +805,7 @@ export function GenerationFormContent() {
                                             color="default"
                                             fullWidth
                                             h={30}
-                                            leftIcon={<IconRestore size={14} />}
+                                            leftSection={<IconRestore size={14} />}
                                           >
                                             Restore Prompt
                                           </Button>
@@ -821,7 +821,7 @@ export function GenerationFormContent() {
                                             }}
                                             fullWidth
                                             h={30}
-                                            leftIcon={<IconX size={14} />}
+                                            leftSection={<IconX size={14} />}
                                           >
                                             Stop Remixing
                                           </Button>
@@ -950,7 +950,7 @@ export function GenerationFormContent() {
                     <Button
                       variant="light"
                       onClick={handleParsePrompt}
-                      leftIcon={<IconArrowAutofitDown size={16} />}
+                      leftSection={<IconArrowAutofitDown size={16} />}
                       style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
                       fullWidth
                     >
@@ -1285,7 +1285,7 @@ export function GenerationFormContent() {
                         variant="light"
                         onClick={clearWarning}
                         style={{ marginTop: 10 }}
-                        leftIcon={<IconCheck />}
+                        leftSection={<IconCheck />}
                         fullWidth
                       >
                         I Understand, Continue Generating
@@ -1337,7 +1337,7 @@ export function GenerationFormContent() {
                             if (running) helpers?.next();
                           }}
                           style={{ marginTop: 10 }}
-                          leftIcon={<IconCheck />}
+                          leftSection={<IconCheck />}
                           fullWidth
                         >
                           I Confirm, Start Generating

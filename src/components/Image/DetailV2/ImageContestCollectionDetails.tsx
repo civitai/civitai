@@ -382,7 +382,7 @@ function ReviewActions({
         >
           <Button
             className="flex-1"
-            leftIcon={<IconBan size="1.25rem" />}
+            leftSection={<IconBan size="1.25rem" />}
             color="red"
             disabled={loading}
             loading={loading && status === CollectionItemStatus.REJECTED}
@@ -398,7 +398,7 @@ function ReviewActions({
         >
           <Button
             className="flex-1"
-            leftIcon={<IconCheck size="1.25rem" />}
+            leftSection={<IconCheck size="1.25rem" />}
             disabled={loading}
             loading={loading && status === CollectionItemStatus.ACCEPTED}
           >

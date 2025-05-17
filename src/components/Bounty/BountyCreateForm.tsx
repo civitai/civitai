@@ -73,6 +73,7 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import classes from './BountyCreateForm.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -329,21 +330,21 @@ export function BountyCreateForm() {
                                 style={{ objectFit: 'cover', height: '100%' }}
                               />
                               <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                                <ActionIcon
+                                <LegacyActionIcon
                                   variant="filled"
                                   size="lg"
                                   color="red"
                                   onClick={() => removeImage(file.url)}
                                 >
                                   <IconTrash size={26} strokeWidth={2.5} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </div>
                               {file.type === 'image' && (
                                 <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                                   <ImageMetaPopover meta={file.meta}>
-                                    <ActionIcon variant="light" color="dark" size="lg">
+                                    <LegacyActionIcon variant="light" color="dark" size="lg">
                                       <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                                    </ActionIcon>
+                                    </LegacyActionIcon>
                                   </ImageMetaPopover>
                                 </div>
                               )}
@@ -557,9 +558,15 @@ export function BountyCreateForm() {
                   <Stack gap={4}>
                     <Group gap={4}>
                       <Text inline>Mature theme</Text>
-                      <ActionIcon radius="xl" size="xs" onClick={openBrowsingLevelGuide}>
+                      <LegacyActionIcon
+                        color="gray"
+                        variant="subtle"
+                        radius="xl"
+                        size="xs"
+                        onClick={openBrowsingLevelGuide}
+                      >
                         <IconQuestionMark />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Group>
                     <Text size="xs" c="dimmed">
                       This bounty is intended to produce mature content.

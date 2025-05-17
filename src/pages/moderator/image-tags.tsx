@@ -43,6 +43,7 @@ import { createSelectStore } from '~/store/select.store';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const imageSelectStore = createSelectStore<number>();
 
@@ -204,14 +205,14 @@ function ModerationControls<T extends { id: number }>({
   return (
     <Group wrap="nowrap" gap="xs">
       <ButtonTooltip label="Select all" {...tooltipProps}>
-        <ActionIcon variant="outline" onClick={handleSelectAll}>
+        <LegacyActionIcon variant="outline" onClick={handleSelectAll}>
           <IconSquareCheck size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <ButtonTooltip label="Clear selection" {...tooltipProps}>
-        <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+        <LegacyActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
           <IconSquareOff size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <PopConfirm
         message={`Are you sure you want to approve ${selected.length} tag removal(s)?`}
@@ -220,9 +221,9 @@ function ModerationControls<T extends { id: number }>({
         withArrow
       >
         <ButtonTooltip label="Approve selected" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
             <IconCheck size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <PopConfirm
@@ -232,15 +233,15 @@ function ModerationControls<T extends { id: number }>({
         withArrow
       >
         <ButtonTooltip label="Decline selected" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
             <IconBan size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <ButtonTooltip label="Refresh" {...tooltipProps}>
-        <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+        <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
           <IconReload size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
     </Group>
   );
@@ -299,7 +300,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                   />
                   {entityUrl && (
                     <Link legacyBehavior href={entityUrl} passHref>
-                      <ActionIcon
+                      <LegacyActionIcon
                         component="a"
                         variant="transparent"
                         className="absolute bottom-[5px] left-[5px]"
@@ -316,12 +317,12 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                           strokeWidth={2.5}
                           size={26}
                         />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Link>
                   )}
                   {image.meta && (
                     <ImageMetaPopover meta={image.meta as ImageMetaProps}>
-                      <ActionIcon
+                      <LegacyActionIcon
                         variant="transparent"
                         style={{ position: 'absolute', bottom: '5px', right: '5px' }}
                         size="lg"
@@ -333,7 +334,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                           strokeWidth={2.5}
                           size={26}
                         />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </ImageMetaPopover>
                   )}
                 </>

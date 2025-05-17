@@ -25,6 +25,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ImageResources.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const LIMIT = 3;
 export function ImageResources({ imageId }: { imageId: number }) {
@@ -171,7 +172,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                           </CopyButton>
                         )} */}
                         {currentUser?.isModerator && (
-                          <ActionIcon
+                          <LegacyActionIcon
                             size="xs"
                             color="red"
                             onClick={(e: React.MouseEvent) => {
@@ -184,7 +185,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                             disabled={removing}
                           >
                             <IconX size={14} stroke={1.5} />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         )}
                       </Group>
                     </Group>
@@ -239,7 +240,11 @@ export function ImageResources({ imageId }: { imageId: number }) {
         <Divider
           label={
             <Group gap="xs" align="center">
-              <Text variant="link" style={{ cursor: 'pointer' }} onClick={() => setShowAll((x) => !x)}>
+              <Text
+                variant="link"
+                style={{ cursor: 'pointer' }}
+                onClick={() => setShowAll((x) => !x)}
+              >
                 {!showAll ? 'Show more' : 'Show less'}
               </Text>
             </Group>

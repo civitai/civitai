@@ -20,6 +20,7 @@ import { removeDuplicates } from '~/utils/array-helpers';
 import { bytesToKB, formatBytes, formatSeconds } from '~/utils/number-helpers';
 import classes from './MultiFileInputUpload.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: BaseFileSchema[];
@@ -185,14 +186,14 @@ export function MultiFileInputUpload({
                   {file.name}
                 </Text>
                 <Tooltip label="Remove">
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="sm"
                     color="red"
                     variant="transparent"
                     onClick={() => handleRemove(index)}
                   >
                     <IconTrash />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               </>
             )}
@@ -215,9 +216,9 @@ function UploadItem({ progress, speed, timeRemaining, abort, name }: UploadItemP
           {name}
         </Text>
         <Tooltip label="Cancel">
-          <ActionIcon size="sm" color="red" variant="transparent" onClick={() => abort()}>
+          <LegacyActionIcon size="sm" color="red" variant="transparent" onClick={() => abort()}>
             <IconX />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Tooltip>
       </Group>
       <Stack gap={2}>

@@ -48,6 +48,7 @@ import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -125,7 +126,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const equippedCosmetics = user?.cosmetics.filter((c) => !!c.equippedAt);
   const editProfileBtn = isCurrentUser && (
     <Button
-      leftIcon={isMobile ? undefined : <IconPencilMinus size={16} />}
+      leftSection={isMobile ? undefined : <IconPencilMinus size={16} />}
       size={sizeOpts.button}
       onClick={() => {
         openUserProfileEditModal({});
@@ -170,7 +171,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
   const shareBtn = (
     <ShareButton url={router.asPath} title={`${user.username} Profile`}>
-      <ActionIcon
+      <LegacyActionIcon
         size={30}
         radius="xl"
         color="gray"
@@ -178,7 +179,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         ml="auto"
       >
         <IconShare3 size={16} />
-      </ActionIcon>
+      </LegacyActionIcon>
     </ShareButton>
   );
 
@@ -271,7 +272,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       {!muted && (
         <Group gap={4}>
           {sortDomainLinks(user.links).map((link, index) => (
-            <ActionIcon
+            <LegacyActionIcon
               key={index}
               component="a"
               href={link.url}
@@ -280,7 +281,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               size={24}
             >
               <DomainIcon domain={link.domain} size={sizeOpts.icons} />
-            </ActionIcon>
+            </LegacyActionIcon>
           ))}
         </Group>
       )}

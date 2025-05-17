@@ -36,6 +36,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ClubAdminPermission, Currency } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
   // TODO.clubs: Add some custom filters for members.
@@ -185,7 +186,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                               membership.billingPausedAt ? 'Resume' : 'Pause'
                             } billing for this user`}
                           >
-                            <ActionIcon
+                            <LegacyActionIcon
                               size="sm"
                               color="red"
                               variant="transparent"
@@ -197,11 +198,11 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                               ) : (
                                 <IconPlayerPause />
                               )}
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </Tooltip>
                         )}
                         <Tooltip label="Remove and refund last payment">
-                          <ActionIcon
+                          <LegacyActionIcon
                             size="sm"
                             color="red"
                             variant="transparent"
@@ -209,7 +210,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                             loading={removingAndRefundingMember}
                           >
                             <IconTrash />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </Tooltip>
                       </Group>
                     ) : null}

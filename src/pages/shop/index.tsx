@@ -29,6 +29,7 @@ import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdo
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ShopItem } from '~/components/Shop/ShopItem';
 import { ShopSection } from '~/components/Shop/ShopSection';
 import Image from 'next/image';
@@ -105,7 +106,7 @@ export default function CosmeticShopMain() {
 
               <Group>
                 <Button
-                  leftIcon={<IconPencilMinus size={16} />}
+                  leftSection={<IconPencilMinus size={16} />}
                   onClick={() => {
                     openUserProfileEditModal({});
                   }}
@@ -117,7 +118,7 @@ export default function CosmeticShopMain() {
                 </Button>
                 <NotificationToggle type="cosmetic-shop-item-added-to-section">
                   {({ onToggle, isEnabled, isLoading }) => (
-                    <ActionIcon onClick={onToggle} loading={isLoading}>
+                    <LegacyActionIcon onClick={onToggle} loading={isLoading}>
                       <Tooltip
                         w={200}
                         multiline
@@ -128,7 +129,7 @@ export default function CosmeticShopMain() {
                       >
                         {isEnabled ? <IconBellOff /> : <IconBell />}
                       </Tooltip>
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   )}
                 </NotificationToggle>
               </Group>

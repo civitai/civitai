@@ -51,6 +51,7 @@ import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -255,14 +256,15 @@ export function ArticleUpsertForm({ article }: Props) {
               label={
                 <Group gap={4} wrap="nowrap">
                   Maturity Level
-                  <ActionIcon
+                  <LegacyActionIcon
                     radius="xl"
                     size="xs"
                     variant="outline"
+                    color="gray"
                     onClick={openBrowsingLevelGuide}
                   >
                     <IconQuestionMark />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                   <ContentPolicyLink size="xs" variant="text" c="dimmed" td="underline" />
                 </Group>
               }
@@ -349,9 +351,14 @@ export function ArticleUpsertForm({ article }: Props) {
                       </Text>
                     )}
                     <Tooltip label="Remove">
-                      <ActionIcon size="sm" color="red" variant="transparent" onClick={onRemove}>
+                      <LegacyActionIcon
+                        size="sm"
+                        color="red"
+                        variant="transparent"
+                        onClick={onRemove}
+                      >
                         <IconTrash />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Tooltip>
                   </Group>
                 </Paper>

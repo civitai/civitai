@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Box,
   Button,
   Code,
@@ -17,6 +16,7 @@ import { addApiKeyInputSchema } from '~/server/schema/api-key.schema';
 import { KeyScope } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const schema = addApiKeyInputSchema;
 
@@ -68,15 +68,16 @@ export function ApiKeyModal({ ...props }: Props) {
           <CopyButton value={apiKey}>
             {({ copied, copy }) => (
               <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                <ActionIcon
+                <LegacyActionIcon
                   pos="absolute"
                   top="50%"
                   right={10}
                   variant="transparent"
+                  color="gray"
                   style={{ transform: 'translateY(-50%) !important' }}
                 >
                   <IconClipboard />
-                </ActionIcon>
+                </LegacyActionIcon>
                 <Code block color={copied ? 'green' : undefined}>
                   {copied ? 'Copied' : apiKey}
                 </Code>

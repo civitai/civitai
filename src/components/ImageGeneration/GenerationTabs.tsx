@@ -28,6 +28,7 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -113,13 +114,13 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
           <div className="flex flex-1 justify-end">
             {!fullScreen && !isGeneratePage && (
               <Tooltip label="Maximize">
-                <ActionIcon
+                <LegacyActionIcon
                   size="lg"
                   onClick={() => router.push('/generate')}
                   variant="transparent"
                 >
                   <IconArrowsDiagonal size={20} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
             )}
             <CloseButton

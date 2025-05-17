@@ -1,10 +1,11 @@
-import { ActionIcon, Popover, Stack, Text, Group, Badge, Divider } from '@mantine/core';
+import { Popover, Stack, Text, Group, Badge, Divider } from '@mantine/core';
 import { IconInfoSquareRounded } from '@tabler/icons-react';
 import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BuzzWithdrawalRequestHistoryRecord } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const BuzzWithdrawalRequestHistory = ({
   history,
@@ -14,9 +15,9 @@ const BuzzWithdrawalRequestHistory = ({
   return (
     <Popover width={300} withArrow withinPortal shadow="sm">
       <Popover.Target>
-        <ActionIcon color="gray">
+        <LegacyActionIcon color="gray">
           <IconInfoSquareRounded size={20} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Popover.Target>
       <Popover.Dropdown>
         <Stack gap="xs">

@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import dayjs from 'dayjs';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import { DownloadGetAll } from '~/types/router';
@@ -44,9 +45,9 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
                 </Stack>
               </Text>
             </Link>
-            <ActionIcon onClick={() => onHideClick(download)} radius="xl" color="red">
+            <LegacyActionIcon onClick={() => onHideClick(download)} radius="xl" color="red">
               <IconTrash size={16} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Group>
         );
       })}

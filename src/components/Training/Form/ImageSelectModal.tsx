@@ -73,6 +73,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from '~/components/Search/SearchLayout.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 // const take = 20;
 
@@ -536,7 +537,7 @@ const ImageGridMedia = ({
             })}
             color="cyan"
             size="compact-md"
-            leftIcon={<IconDownload size={16} />}
+            leftSection={<IconDownload size={16} />}
           >
             <Text align="center">{`Download (${formatKBytes(sizeKB)})`}</Text>
           </Button>
@@ -674,7 +675,7 @@ const ImageGridMedia = ({
             meta={type === 'generation' ? imageMetaSchema.parse(img.params) : img.meta!}
             hideSoftware
           >
-            <ActionIcon variant="transparent" size="md">
+            <LegacyActionIcon variant="transparent" size="md">
               <IconInfoCircle
                 color="white"
                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -682,7 +683,7 @@ const ImageGridMedia = ({
                 strokeWidth={2.5}
                 size={26}
               />
-            </ActionIcon>
+            </LegacyActionIcon>
           </ImageMetaPopover>
         </div>
       ) : undefined}

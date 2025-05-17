@@ -44,6 +44,7 @@ import {
 } from '~/store/training.store';
 import { titleCase } from '~/utils/string-helpers';
 import styles from './TrainingImagesTagViewer.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const TrainingImagesLabelTypeSelect = ({
   modelId,
@@ -167,7 +168,7 @@ export const TrainingImagesTags = ({
                 classNames={{ label: 'overflow-auto break-words whitespace-normal' }}
               >
                 <Text>{cap}</Text>
-                <ActionIcon
+                <LegacyActionIcon
                   disabled={autoLabeling.isRunning}
                   size={14}
                   variant="transparent"
@@ -175,7 +176,7 @@ export const TrainingImagesTags = ({
                   onClick={() => removeTag(cap)}
                 >
                   <IconX size={12} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Badge>
             ))}
           </Group>
@@ -209,7 +210,7 @@ export const TrainingImagesTags = ({
         styles={{ input: { scrollbarWidth: 'thin' } }}
         rightSectionWidth={52}
         rightSection={
-          <ActionIcon
+          <LegacyActionIcon
             h="100%"
             onClick={() => {
               if (!addTagTxt.length) return;
@@ -220,7 +221,7 @@ export const TrainingImagesTags = ({
             style={{ borderRadius: 0 }}
           >
             <IconPlus />
-          </ActionIcon>
+          </LegacyActionIcon>
         }
       />
     </Stack>
@@ -311,14 +312,14 @@ export const TrainingImagesTagViewer = ({
                 onChange={(event) => setTagSearchInput(event.currentTarget.value.toLowerCase())}
                 style={{ flexGrow: 1 }}
                 rightSection={
-                  <ActionIcon
+                  <LegacyActionIcon
                     onClick={() => {
                       setTagSearchInput('');
                     }}
                     disabled={!tagSearchInput.length}
                   >
                     <IconX size={16} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 }
               />
               <Button

@@ -137,6 +137,7 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
 import classes from './[[...slug]].module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -779,9 +780,9 @@ export default function ModelDetailsV2({
                       withinPortal
                     >
                       <Menu.Target>
-                        <ActionIcon className={classes.headerButton} variant="light">
+                        <LegacyActionIcon className={classes.headerButton} variant="light">
                           <IconDotsVertical />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>
                         {currentUser && isCreator && published && (
@@ -1127,18 +1128,18 @@ export default function ModelDetailsV2({
                   {model.availability !== Availability.Private && (
                     <ButtonTooltip label="Add Version">
                       <Link href={`/models/${model.id}/model-versions/create`}>
-                        <ActionIcon variant="light" color="blue">
+                        <LegacyActionIcon variant="light" color="blue">
                           <IconPlus size={14} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Link>
                     </ButtonTooltip>
                   )}
 
                   {versionCount > 1 && (
                     <ButtonTooltip label="Rearrange Versions">
-                      <ActionIcon onClick={toggle}>
+                      <LegacyActionIcon onClick={toggle}>
                         <IconArrowsLeftRight size={14} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </ButtonTooltip>
                   )}
                 </>
@@ -1206,7 +1207,7 @@ export default function ModelDetailsV2({
                       <>
                         <LoginRedirect reason="create-comment">
                           <Button
-                            leftIcon={<IconMessage size={16} />}
+                            leftSection={<IconMessage size={16} />}
                             variant="outline"
                             onClick={() => triggerRoutedDialog({ name: 'commentEdit', state: {} })}
                             size="xs"
@@ -1220,7 +1221,7 @@ export default function ModelDetailsV2({
                       onlyEarlyAccess && (
                         <JoinPopover message="You must be a Civitai Member to join this discussion">
                           <Button
-                            leftIcon={<IconClock size={16} />}
+                            leftSection={<IconClock size={16} />}
                             variant="outline"
                             size="xs"
                             color="green"

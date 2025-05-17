@@ -57,6 +57,7 @@ import { constants } from '~/server/common/constants';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import classes from './CivitaiLinkPopover.module.scss';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function CivitaiLinkPopover() {
   return (
@@ -157,7 +158,7 @@ function AboutCivitaiLink() {
       <Divider />
       <Group gap={0} grow>
         <Button
-          leftIcon={<IconVideo size={18} />}
+          leftSection={<IconVideo size={18} />}
           radius={0}
           component="a"
           href="/v/civitai-link-intro"
@@ -196,9 +197,9 @@ function LinkDropdown() {
           </Group>
           {canToggleManageInstances && (
             <Tooltip label="Manage instances">
-              <ActionIcon onClick={handleManageClick}>
+              <LegacyActionIcon onClick={handleManageClick}>
                 <IconSettings size={20} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           )}
         </Group>
@@ -288,7 +289,7 @@ function InstancesManager() {
           <Button
             size="compact-xs"
             variant="outline"
-            leftIcon={<IconPlus size={18} />}
+            leftSection={<IconPlus size={18} />}
             onClick={handleAddClick}
           >
             Add Instance
@@ -307,21 +308,21 @@ function InstancesManager() {
                   <>
                     {isSelected ? (
                       <Tooltip label="disconnect" withinPortal>
-                        <ActionIcon onClick={deselectInstance}>
+                        <LegacyActionIcon onClick={deselectInstance}>
                           <IconLinkOff size={20} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     ) : (
                       <Tooltip label="connect" withinPortal>
-                        <ActionIcon onClick={() => selectInstance(instance.id)}>
+                        <LegacyActionIcon onClick={() => selectInstance(instance.id)}>
                           <IconLink size={20} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     )}
                     <Tooltip label="delete" withinPortal>
-                      <ActionIcon color="red" onClick={() => deleteInstance(instance.id)}>
+                      <LegacyActionIcon color="red" onClick={() => deleteInstance(instance.id)}>
                         <IconTrash size={20} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Tooltip>
                   </>
                 )}
@@ -357,7 +358,7 @@ function GetStarted() {
       <Divider />
       <Stack>
         <Button
-          leftIcon={<IconPlus size={18} />}
+          leftSection={<IconPlus size={18} />}
           radius={0}
           onClick={() => openContext('civitai-link-wizard', {})}
         >
@@ -451,9 +452,9 @@ function LinkButton() {
   return (
     <div className="relative">
       <Indicator className="flex items-center" color={color} disabled={!color}>
-        <ActionIcon variant="subtle" color="gray">
+        <LegacyActionIcon variant="subtle" color="gray">
           <IconScreenShare />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Indicator>
       {activityProgress && activityProgress > 0 && activityProgress < 100 && (
         <Progress
@@ -542,9 +543,9 @@ function RequestProgress({
               <Progress.Label>{`${Math.floor(progress)}%`}</Progress.Label>
             </Progress.Section>
           </Progress.Root>
-          <ActionIcon onClick={onCancel}>
+          <LegacyActionIcon onClick={onCancel}>
             <IconX />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Group>
       )}
       {(speed || remainingTime) && (

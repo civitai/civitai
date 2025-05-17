@@ -23,6 +23,7 @@ import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import clsx from 'clsx';
 import styles from './EdgeVideo.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type VideoProps = Omit<
   React.DetailedHTMLProps<React.VideoHTMLAttributes<HTMLVideoElement>, HTMLVideoElement>,
@@ -258,7 +259,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         )}
         {showCustomControls && (
           <div className={styles.controls}>
-            <ActionIcon
+            <LegacyActionIcon
               onClick={handleTogglePlayPause}
               className="z-10"
               variant="light"
@@ -266,7 +267,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
               radius="xl"
             >
               {isPlaying ? <IconPlayerPauseFilled size={16} /> : <IconPlayerPlayFilled size={16} />}
-            </ActionIcon>
+            </LegacyActionIcon>
             <div className="flex flex-nowrap gap-4">
               {enableAudioControl && (
                 <div className={styles.volumeControl}>
@@ -281,7 +282,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                       onChange={(e) => handleVolumeChange(e.currentTarget.valueAsNumber)}
                     />
                   </div>
-                  <ActionIcon
+                  <LegacyActionIcon
                     onClick={handleToggleMuted}
                     className="z-10"
                     variant="light"
@@ -294,10 +295,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                     ) : (
                       <IconVolume size={16} />
                     )}
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </div>
               )}
-              <ActionIcon
+              <LegacyActionIcon
                 onClick={handleToggleFullscreen}
                 className="z-10"
                 variant="light"
@@ -309,7 +310,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                 ) : (
                   <IconMaximize size={16} />
                 )}
-              </ActionIcon>
+              </LegacyActionIcon>
             </div>
           </div>
         )}

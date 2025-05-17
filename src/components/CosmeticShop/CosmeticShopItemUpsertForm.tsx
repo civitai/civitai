@@ -19,6 +19,7 @@ import { useQueryCosmetic, useQueryCosmeticsPaged } from '~/components/Cosmetics
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
@@ -294,7 +295,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
               <Group mx="auto" justify="space-between">
                 {paidToUserIds?.map((userId) => (
                   <Box style={{ position: 'relative' }} key={userId} w={455}>
-                    <ActionIcon
+                    <LegacyActionIcon
                       pos="absolute"
                       top={-5}
                       right={-5}
@@ -312,7 +313,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
                       }}
                     >
                       <IconX size={16} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                     <SmartCreatorCard user={{ id: userId }} />
                   </Box>
                 ))}

@@ -15,6 +15,7 @@ import { IconPlus, IconX } from '@tabler/icons-react';
 import { useCallback, useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import styles from './TagsInput.module.scss';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 type TagProps = {
   id?: number;
@@ -101,7 +102,7 @@ export function TagsInput({
             size="xs"
             style={{ paddingRight: 5 }}
             rightSection={
-              <ActionIcon
+              <LegacyActionIcon
                 size="xs"
                 color="blue"
                 radius="xl"
@@ -109,7 +110,7 @@ export function TagsInput({
                 onClick={() => handleRemoveTag(index)}
               >
                 <IconX size={12} />
-              </ActionIcon>
+              </LegacyActionIcon>
             }
           >
             {tag.name}

@@ -83,6 +83,7 @@ import { CustomCard } from './CustomCard';
 import { BlockedReason } from '~/server/common/enums';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import { VotableTagModel } from '~/libs/tags';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -549,28 +550,28 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
             <></>
           ) : (
             <Tooltip label="Copy to All">
-              <ActionIcon
+              <LegacyActionIcon
                 color="violet"
                 size="sm"
                 onClick={handleCopyResource}
                 loading={copyResourceMutation.isLoading}
               >
                 <IconArrowFork size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           )}
           {!canAdd ? (
             <></>
           ) : (
             <Tooltip label="Delete">
-              <ActionIcon
+              <LegacyActionIcon
                 color="red"
                 size="sm"
                 onClick={handleRemoveResource}
                 loading={removeResourceMutation.isLoading}
               >
                 <IconTrash size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           )}
         </Group>
@@ -917,9 +918,9 @@ function EditDetail() {
                   <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
                     Techniques
                   </h3>
-                  {/* <ActionIcon variant="transparent" size="sm">
+                  {/* <LegacyActionIcon variant="transparent" size="sm">
                     <IconInfoCircle />
-                  </ActionIcon> */}
+                  </LegacyActionIcon> */}
                 </div>
                 <Popover>
                   <PopoverButton
@@ -1116,12 +1117,12 @@ function PostImage() {
       <div className="absolute right-2 top-2 z-20 flex gap-1">
         <Menu withArrow position="bottom-end">
           <Menu.Target>
-            <ActionIcon>
+            <LegacyActionIcon>
               <IconDotsVertical
                 color="#fff"
                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
               />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
             {!isBlocked && (
@@ -1176,7 +1177,7 @@ function TosViolationBanner() {
                 loading={isLoading}
                 color="gray.6"
                 mt="xs"
-                leftIcon={<IconArrowBackUp size={20} />}
+                leftSection={<IconArrowBackUp size={20} />}
               >
                 Unblock
               </Button>
@@ -1188,7 +1189,7 @@ function TosViolationBanner() {
           loading={isDeleting}
           color="red.7"
           mt="xs"
-          leftIcon={<IconTrash size={20} />}
+          leftSection={<IconTrash size={20} />}
         >
           Delete
         </Button>

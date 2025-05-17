@@ -19,6 +19,7 @@ import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons-react';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import clsx from 'clsx';
 import styles from './ImageUploadPreview.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 //TODO - handle what to display when there is an error
 type Props = {
@@ -103,9 +104,9 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
                 <Group gap={4}>
                   <Popover position="top" withinPortal withArrow>
                     <Popover.Target>
-                      <ActionIcon>
+                      <LegacyActionIcon>
                         <IconInfoCircle />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Popover.Target>
                     <Popover.Dropdown style={{ maxWidth: 400 }} pb={14}>
                       <Stack gap={0}>

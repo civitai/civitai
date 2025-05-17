@@ -28,6 +28,7 @@ import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import classes from './Questions.Provider.module.scss';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function Questions({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
@@ -88,9 +89,9 @@ function QuestionsFilter() {
           disabled={!filterLength}
           inline
         >
-          <ActionIcon color="dark" variant="transparent">
+          <LegacyActionIcon color="dark" variant="transparent">
             <IconFilter size={24} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Indicator>
       </Popover.Target>
       <Popover.Dropdown>

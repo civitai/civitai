@@ -79,7 +79,7 @@ function EarlyAccessBadge() {
       color="success.5"
       onClick={() => setFilters({ earlyAccess: !earlyAccess })}
       size="compact-md"
-      leftIcon={<IconClock size={16} />}
+      leftSection={<IconClock size={16} />}
     >
       Early Access
     </Button>

@@ -29,6 +29,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import classes from './CollectionsLayout.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 
@@ -79,7 +80,7 @@ const MyCollectionsDrawer = ({
                   position="top"
                   withArrow
                 >
-                  <ActionIcon
+                  <LegacyActionIcon
                     variant="light"
                     size="sm"
                     onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
@@ -89,7 +90,7 @@ const MyCollectionsDrawer = ({
                     ) : (
                       <IconSortAscending size={18} />
                     )}
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               </Group>
               <Divider />
@@ -122,12 +123,12 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
           style={{ marginLeft: showSidebar ? 0 : -250 - 16 }}
         >
           <Tooltip label="Toggle Sidebar" position="right" openDelay={500}>
-            <ActionIcon
+            <LegacyActionIcon
               onClick={() => setShowSidebar((val) => !val)}
               className={classes.sidebarToggle}
             >
               {!showSidebar ? <IconLayoutSidebarLeftExpand /> : <IconLayoutSidebarLeftCollapse />}
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
           <Card.Section py="md" inheritPadding>
             <Group justify="space-between" wrap="nowrap">
@@ -158,7 +159,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                         position="top"
                         withArrow
                       >
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="light"
                           size="sm"
                           onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
@@ -168,7 +169,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                           ) : (
                             <IconSortAscending size={18} />
                           )}
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </Group>
                   </Card.Section>

@@ -27,6 +27,7 @@ import { formatDate } from '~/utils/date-helpers';
 
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function Rewards() {
   const [filters, setFilters] = useState<
@@ -54,7 +55,7 @@ export default function Rewards() {
             <Button
               component={Link}
               href="/moderator/rewards/create"
-              leftIcon={<IconPlus size={16} />}
+              leftSection={<IconPlus size={16} />}
               radius="xl"
             >
               Create
@@ -120,12 +121,12 @@ export default function Rewards() {
                           : '-'}
                       </td>
                       <td>
-                        <ActionIcon
+                        <LegacyActionIcon
                           component={Link}
                           href={`/moderator/rewards/update/${purchasableReward.id}`}
                         >
                           <IconEdit />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </td>
                     </tr>
                   );

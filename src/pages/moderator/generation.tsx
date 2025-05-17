@@ -4,6 +4,7 @@ import { MantineReactTable, MRT_ColumnDef, MRT_PaginationState } from 'mantine-r
 import { useCallback, useMemo, useState } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { useUnsupportedResources } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { GenerationGetResources } from '~/types/router';
@@ -60,9 +61,9 @@ export default function GenerationPage() {
         mantineTableBodyCellProps: { align: 'right' },
         size: 80,
         Cell: ({ row: { original } }) => (
-          <ActionIcon color="red" onClick={() => handleRemoveResource(original.id)}>
+          <LegacyActionIcon color="red" onClick={() => handleRemoveResource(original.id)}>
             <IconTrash />
-          </ActionIcon>
+          </LegacyActionIcon>
         ),
       },
     ],
@@ -80,7 +81,7 @@ export default function GenerationPage() {
               <Text c="dimmed">List of temporarily unavailable resources</Text>
             </Stack>
             <Button
-              leftIcon={<IconPlus />}
+              leftSection={<IconPlus />}
               onClick={() =>
                 openResourceSelectModal({ onSelect: (resource) => handleAddResource(resource.id) })
               }

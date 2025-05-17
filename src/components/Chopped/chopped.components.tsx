@@ -59,6 +59,7 @@ import { useBase64Audio } from '~/server/utils/audio-utils';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { openConfirmModal } from '@mantine/modals';
 import { useChoppedServer } from '~/components/Chopped/chopped.connection';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type JudgeThinkType = 'critiquing' | 'deciding';
 
@@ -94,9 +95,9 @@ export function ChoppedLayoutOld({
               }`}
             >
               {canBack && (
-                <ActionIcon onClick={() => setGameState(undefined)}>
+                <LegacyActionIcon onClick={() => setGameState(undefined)}>
                   <IconArrowLeft />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
               {typeof title === 'string' ? <Title>{title}</Title> : title}
             </div>
@@ -162,16 +163,16 @@ export function ChoppedLayout({
               }`}
             >
               {canBack && (
-                <ActionIcon onClick={() => setGameState(undefined)}>
+                <LegacyActionIcon onClick={() => setGameState(undefined)}>
                   <IconArrowLeft />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
               {typeof title === 'string' ? <Title>{title}</Title> : title}
               <Menu position="bottom-end">
                 <Menu.Target>
-                  <ActionIcon className="ml-auto">
+                  <LegacyActionIcon className="ml-auto">
                     <IconMenu2 />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown>
                   <Menu.Item
@@ -213,9 +214,9 @@ export function ChoppedHeader({
   return (
     <Group>
       {canBack && (
-        <ActionIcon onClick={() => setGameState(undefined)}>
+        <LegacyActionIcon onClick={() => setGameState(undefined)}>
           <IconArrowLeft />
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
       {typeof children === 'string' ? <Title>{children}</Title> : children}
     </Group>
@@ -353,9 +354,15 @@ export function ChoppedJudgeComment({
               {indicator}
             </div>
             {audio && (
-              <ActionIcon color="gray" variant="filled" radius="xl" size="xl" onClick={toggleAudio}>
+              <LegacyActionIcon
+                color="gray"
+                variant="filled"
+                radius="xl"
+                size="xl"
+                onClick={toggleAudio}
+              >
                 <Icon />
-              </ActionIcon>
+              </LegacyActionIcon>
             )}
           </div>
           <div className="flex-1">

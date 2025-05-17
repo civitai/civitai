@@ -395,7 +395,7 @@ const CreateChangelog = ({
 
       <Button
         px="lg"
-        leftIcon={opened ? <IconMinus /> : <IconPlus />}
+        leftSection={opened ? <IconMinus /> : <IconPlus />}
         onClick={() => setOpened((o) => !o)}
       >
         {opened ? 'Hide' : !!existing ? 'Update' : 'Create New'}

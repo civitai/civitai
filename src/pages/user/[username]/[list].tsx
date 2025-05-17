@@ -28,6 +28,7 @@ import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
 import styles from './[list].module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx }) => {
@@ -61,9 +62,9 @@ export default function UserLists() {
         <ContainerGrid2.Col span={12}>
           <Group gap="xl">
             <Link legacyBehavior href={`/user/${username}`} passHref>
-              <ActionIcon component="a">
+              <LegacyActionIcon component="a">
                 <IconArrowLeft />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Link>
             <Title order={1}>{`@${username}`}</Title>
           </Group>

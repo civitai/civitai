@@ -27,6 +27,7 @@ import { useModelShowcaseCollection, UseQueryModelReturn } from '~/components/Mo
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function CollectionShowcase({ modelId, loading }: Props) {
   const {
@@ -99,7 +100,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
               <div className="flex size-full items-center justify-center">
                 <ImageGuard2.BlurToggle>
                   {(toggle) => (
-                    <ActionIcon
+                    <LegacyActionIcon
                       color="red"
                       radius="xl"
                       style={{
@@ -116,7 +117,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
                       ) : (
                         <IconEye size={14} strokeWidth={2.5} />
                       )}
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   )}
                 </ImageGuard2.BlurToggle>
                 <MediaHash {...image} />

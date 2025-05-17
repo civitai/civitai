@@ -57,6 +57,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getInitials } from '~/utils/string-helpers';
 import { ClubGetById } from '~/types/router';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -134,7 +135,7 @@ export function ClubUpsertForm({
                         radius="sm"
                       />
                       <Tooltip label="Remove image">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="sm"
                           variant="filled"
                           color="red"
@@ -149,7 +150,7 @@ export function ClubUpsertForm({
                           }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </div>
                   )}
@@ -173,7 +174,7 @@ export function ClubUpsertForm({
                         radius="sm"
                       />
                       <Tooltip label="Remove image">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="sm"
                           variant="filled"
                           color="red"
@@ -188,7 +189,7 @@ export function ClubUpsertForm({
                           }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </div>
                   )}
@@ -228,14 +229,14 @@ export function ClubUpsertForm({
                     <Group gap={4}>
                       <Text inline>Mature theme</Text>
 
-                      <ActionIcon
+                      <LegacyActionIcon
                         radius="xl"
                         size="xs"
                         color="gray"
                         onClick={openBrowsingLevelGuide}
                       >
                         <IconQuestionMark />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Group>
                     <Text size="xs" c="dimmed">
                       This club is intended to produce mature content. A badge will be added to the

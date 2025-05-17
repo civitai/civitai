@@ -109,6 +109,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 import styles from './TrainingImages.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const TrainingImagesCaptions = dynamic(() =>
   import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
@@ -1524,14 +1525,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     style={{ flexGrow: 1 }}
                     className={clsx({ [styles.badLabel]: triggerWordInvalid })}
                     rightSection={
-                      <ActionIcon
+                      <LegacyActionIcon
                         onClick={() => {
                           setTriggerWord(model.id, thisMediaType, '');
                         }}
                         disabled={!triggerWord.length}
                       >
                         <IconX size={16} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     }
                   />
                 </Group>
@@ -1601,7 +1602,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                           <div className={styles.imgOverlay}>
                             <Group gap={4} className={clsx(styles.trash, 'trashIcon')}>
                               <Tooltip label="Remove labels">
-                                <ActionIcon
+                                <LegacyActionIcon
                                   color="violet"
                                   variant="filled"
                                   size="md"
@@ -1614,10 +1615,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                   }}
                                 >
                                   <IconTagsOff />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Tooltip>
                               <Tooltip label="Remove file">
-                                <ActionIcon
+                                <LegacyActionIcon
                                   color="red"
                                   variant="filled"
                                   size="md"
@@ -1641,7 +1642,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                   }}
                                 >
                                   <IconTrash />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Tooltip>
                             </Group>
                             {imgData.source?.type && (

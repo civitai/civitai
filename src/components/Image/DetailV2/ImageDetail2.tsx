@@ -82,6 +82,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -206,7 +207,12 @@ export function ImageDetail2() {
           <Badge
             {...sharedBadgeProps}
             pr={12}
-            style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              lineHeight: 1.5,
+              color: theme.colors.accent[5],
+            }}
           >
             <IconBolt size={14} fill="currentColor" />
             Tip
@@ -263,7 +269,7 @@ export function ImageDetail2() {
                       </Badge> */}
                               <DownloadImage src={image.url} type={image.type} name={image.name}>
                                 {({ onClick, isLoading, progress }) => (
-                                  <ActionIcon
+                                  <LegacyActionIcon
                                     {...sharedActionIconProps}
                                     onClick={onClick}
                                     loading={isLoading && progress === 0}
@@ -276,7 +282,7 @@ export function ImageDetail2() {
                                       />
                                     )}
                                     {!isLoading && <IconDownload {...sharedIconProps} />}
-                                  </ActionIcon>
+                                  </LegacyActionIcon>
                                 )}
                               </DownloadImage>
                               <ShareButton
@@ -284,26 +290,32 @@ export function ImageDetail2() {
                                 title={`Image by ${image.user.username}`}
                                 collect={{ type: CollectionType.Image, imageId: image.id }}
                               >
-                                <ActionIcon {...sharedActionIconProps}>
+                                <LegacyActionIcon {...sharedActionIconProps}>
                                   <IconShare3 {...sharedIconProps} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </ShareButton>
                               <LoginRedirect reason={'report-content'}>
-                                <ActionIcon {...sharedActionIconProps} onClick={handleReportClick}>
+                                <LegacyActionIcon
+                                  {...sharedActionIconProps}
+                                  onClick={handleReportClick}
+                                >
                                   <IconFlag {...sharedIconProps} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </LoginRedirect>
                               <ImageContextMenu image={image}>
-                                <ActionIcon {...sharedActionIconProps}>
+                                <LegacyActionIcon {...sharedActionIconProps}>
                                   <IconDotsVertical {...sharedIconProps} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </ImageContextMenu>
                             </div>
                           </div>
                           <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>
-                            <ActionIcon {...sharedActionIconProps} onClick={handleSidebarToggle}>
+                            <LegacyActionIcon
+                              {...sharedActionIconProps}
+                              onClick={handleSidebarToggle}
+                            >
                               <IconLayoutSidebarRight {...sharedIconProps} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </div>
                         </div>
 
@@ -378,9 +390,9 @@ export function ImageDetail2() {
                 >
                   <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
                     <div className="flex gap-1">{LeftImageControls}</div>
-                    <ActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
+                    <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
                       <IconChevron {...sharedIconProps} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </div>
                   <ScrollArea className="flex-1 p-3 py-0">
                     <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>

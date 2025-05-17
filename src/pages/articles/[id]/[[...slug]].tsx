@@ -69,6 +69,7 @@ import { trpc } from '~/utils/trpc';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -194,9 +195,9 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         </ToggleArticleEngagement>
       </LoginRedirect>
       <ShareButton url={`/articles/${article.id}/${slugit(article.title)}`} title={article.title}>
-        <ActionIcon variant="subtle" color="gray">
+        <LegacyActionIcon variant="subtle" color="gray">
           <IconShare3 />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ShareButton>
     </Group>
   );

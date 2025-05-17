@@ -37,6 +37,7 @@ import { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import classes from './CreatorCard.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function CreatorCard({
   user,
@@ -128,7 +129,7 @@ export function CreatorCard({
         >
           <Group gap={4}>
             {sortDomainLinks(creator.links).map((link, index) => (
-              <ActionIcon
+              <LegacyActionIcon
                 key={index}
                 component="a"
                 href={link.url}
@@ -137,7 +138,7 @@ export function CreatorCard({
                 size={32}
               >
                 <DomainIcon domain={link.domain} size={20} />
-              </ActionIcon>
+              </LegacyActionIcon>
             ))}
           </Group>
         </Card.Section>
@@ -392,7 +393,7 @@ export const CreatorCardV2 = ({
         >
           <Group gap={4}>
             {sortDomainLinks(creator.links).map((link, index) => (
-              <ActionIcon
+              <LegacyActionIcon
                 key={index}
                 component="a"
                 href={link.url}
@@ -401,7 +402,7 @@ export const CreatorCardV2 = ({
                 size={32}
               >
                 <DomainIcon domain={link.domain} size={20} />
-              </ActionIcon>
+              </LegacyActionIcon>
             ))}
           </Group>
         </Card.Section>

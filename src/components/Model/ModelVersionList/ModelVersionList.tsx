@@ -24,6 +24,7 @@ import { ModelById } from '~/types/router';
 import { ModelVersionMenu } from '../ModelVersions/ModelVersionMenu';
 import classes from './ModelVersionList.module.scss';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type State = {
   scrollPosition: { x: number; y: number };
@@ -87,14 +88,14 @@ export function ModelVersionList({
       type="never"
     >
       <Box className={clsx(classes.leftArrow, state.atStart && classes.hidden)}>
-        <ActionIcon
+        <LegacyActionIcon
           className={classes.arrowButton}
           variant="transparent"
           radius="xl"
           onClick={scrollLeft}
         >
           <IconChevronLeft />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Box>
       <Group gap={4} wrap="nowrap">
         {versions.map((version) => {
@@ -158,7 +159,7 @@ export function ModelVersionList({
 
                 return onVersionClick(version);
               }}
-              leftIcon={
+              leftSection={
                 showExtraIcons && (hasProblem || scheduled) ? (
                   <ThemeIcon
                     color="yellow"
@@ -335,14 +336,14 @@ export function ModelVersionList({
           (state.atEnd || !state.largerThanViewport) && classes.hidden
         )}
       >
-        <ActionIcon
+        <LegacyActionIcon
           className={classes.arrowButton}
           variant="transparent"
           radius="xl"
           onClick={scrollRight}
         >
           <IconChevronRight />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Box>
     </ScrollArea>
   );

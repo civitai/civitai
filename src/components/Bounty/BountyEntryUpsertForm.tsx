@@ -50,6 +50,7 @@ import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureInt
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -252,7 +253,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   style={{ objectFit: 'cover', height: '100%' }}
                 />
                 <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                  <ActionIcon
+                  <LegacyActionIcon
                     variant="filled"
                     size="lg"
                     color="red"
@@ -263,14 +264,14 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     }}
                   >
                     <IconTrash size={26} strokeWidth={2.5} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </div>
                 {image.meta && (
                   <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                     <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                      <ActionIcon variant="light" color="dark" size="lg">
+                      <LegacyActionIcon variant="light" color="dark" size="lg">
                         <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </ImageMetaPopover2>
                   </div>
                 )}
@@ -296,21 +297,21 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                         style={{ objectFit: 'cover', height: '100%' }}
                       />
                       <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="filled"
                           size="lg"
                           color="red"
                           onClick={() => removeImage(file.url)}
                         >
                           <IconTrash size={26} strokeWidth={2.5} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </div>
                       {file.type === 'image' && (
                         <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                           <ImageMetaPopover meta={file.meta}>
-                            <ActionIcon variant="light" color="dark" size="lg">
+                            <LegacyActionIcon variant="light" color="dark" size="lg">
                               <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </ImageMetaPopover>
                         </div>
                       )}
@@ -391,7 +392,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                         </Text>
                       </Stack>
                       <Tooltip label="Remove">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="md"
                           color="red"
                           variant="light"
@@ -399,7 +400,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                           onClick={onRemove}
                         >
                           <IconTrash size="1rem" />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </Group>
                     {/* <NumberInputWrapper
@@ -537,7 +538,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                           </Tooltip>
                         )}
                         <Tooltip label="Remove">
-                          <ActionIcon
+                          <LegacyActionIcon
                             size="md"
                             color="red"
                             variant="light"
@@ -545,7 +546,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                             onClick={onRemove}
                           >
                             <IconTrash size="1rem" />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </Tooltip>
                       </Group>
                     </Group>

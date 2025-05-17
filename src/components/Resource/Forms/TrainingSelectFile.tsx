@@ -449,7 +449,7 @@ export default function TrainingSelectFile({
             <Button
               color="cyan"
               loading={downloading}
-              leftIcon={<IconFileDownload size={18} />}
+              leftSection={<IconFileDownload size={18} />}
               onClick={downloadAll}
             >
               Download All ({epochs.length})

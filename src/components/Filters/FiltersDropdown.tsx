@@ -1,5 +1,6 @@
 import { Popover, Indicator, ActionIcon } from '@mantine/core';
 import { IconFilter, IconChevronDown } from '@tabler/icons-react';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function FiltersDropdown({
   children,
@@ -19,10 +20,10 @@ export function FiltersDropdown({
           disabled={!count}
           inline
         >
-          <ActionIcon color="dark" variant="transparent" style={{ width: 40 }}>
+          <LegacyActionIcon color="dark" variant="transparent" style={{ width: 40 }}>
             <IconFilter size={20} stroke={2.5} />
             <IconChevronDown size={16} stroke={3} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Indicator>
       </Popover.Target>
       <Popover.Dropdown maw={350} w="100%">

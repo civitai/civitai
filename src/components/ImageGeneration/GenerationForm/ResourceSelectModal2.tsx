@@ -107,6 +107,7 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
@@ -482,9 +483,9 @@ function ResourceSelectModalContent() {
             {selectedTab !== 'featured' && <ResourceSelectSort />}
             <ResourceSelectFiltersDropdown />
             <GenerationSettingsPopover>
-              <ActionIcon>
+              <LegacyActionIcon>
                 <IconSettings />
-              </ActionIcon>
+              </LegacyActionIcon>
             </GenerationSettingsPopover>
           </div>
         </div>
@@ -606,9 +607,7 @@ function ResourceHitList({
         <Center>
           <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
-              <Text c="dimmed">
-                {hiddenCount} models have been hidden due to your settings.
-              </Text>
+              <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
             )}
             <ThemeIcon size={128} radius={100} style={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
@@ -781,20 +780,20 @@ const TopRightIcons = ({
   return (
     <>
       <div className="absolute right-9 top-2 flex flex-col gap-1">
-        <ActionIcon
+        <LegacyActionIcon
           variant="transparent"
           className="mix-blend-difference"
           size="md"
           onClick={() => setFlipped((f) => !f)}
         >
           <IconInfoCircle strokeWidth={2.5} size={24} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </div>
       <div className="absolute right-2 top-2 flex flex-col gap-1">
         {contextMenuItems.length > 0 && (
           <Menu position="left-start" withArrow offset={-5}>
             <Menu.Target>
-              <ActionIcon
+              <LegacyActionIcon
                 variant="transparent"
                 className="mix-blend-difference"
                 p={0}
@@ -804,7 +803,7 @@ const TopRightIcons = ({
                 }}
               >
                 <IconDotsVertical size={24} style={{ filter: `drop-shadow(0 0 2px #000)` }} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Menu.Target>
             <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
           </Menu>

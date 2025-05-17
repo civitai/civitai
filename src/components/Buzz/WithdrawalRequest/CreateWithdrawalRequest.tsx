@@ -31,6 +31,7 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const schema = createBuzzWithdrawalRequestSchema;
 
@@ -76,9 +77,9 @@ export const CreateWithdrawalRequest = () => {
         <Group gap="sm" wrap="nowrap">
           <AvailableBuzzBadge />
 
-          <ActionIcon onClick={handleClose}>
+          <LegacyActionIcon onClick={handleClose}>
             <IconX />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Group>
       </Group>
       <Divider mx="-lg" mb="md" />

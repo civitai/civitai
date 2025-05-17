@@ -65,6 +65,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { getBlockedNsfwWords, includesPoi } from '~/utils/metadata/audit';
 import classes from './AutocompleteSearch.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -470,14 +471,15 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           maxDropdownHeight={isMobile ? 'calc(90vh - var(--header-height))' : undefined}
           {...autocompleteProps}
         />
-        <ActionIcon
+        <LegacyActionIcon
           className={classes.searchButton}
+          color="gray"
           variant="filled"
           size={36}
           onMouseDown={handleSubmit}
         >
           <IconSearch size={18} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Group>
     </>
   );

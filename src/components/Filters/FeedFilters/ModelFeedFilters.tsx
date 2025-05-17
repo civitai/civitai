@@ -8,6 +8,7 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import { PeriodMode } from '~/server/schema/base.schema';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
   const currentUser = useCurrentUser();
@@ -21,9 +22,9 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
       {periodMode && (
         <Popover>
           <Popover.Target>
-            <ActionIcon variant="filled" color="blue" radius="xl" size={36} mr={4}>
+            <LegacyActionIcon variant="filled" color="blue" radius="xl" size={36} mr={4}>
               <IconExclamationMark size={20} strokeWidth={3} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Popover.Target>
           <Popover.Dropdown maw={300}>
             {`To ensure that you see all possible results, we've disabled the period filter.`}

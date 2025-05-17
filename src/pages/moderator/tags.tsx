@@ -36,6 +36,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { openConfirmModal } from '@mantine/modals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const tagColor: Record<TagsOnTagsType, MantineColor> = {
   Parent: 'gray',
@@ -213,13 +214,13 @@ export default function Tags() {
                 >
                   <Group gap={0}>
                     {t.name}
-                    <ActionIcon
+                    <LegacyActionIcon
                       size="sm"
                       variant="transparent"
                       onClick={() => handleDisableTagOnEntity(tag.id, t.id ?? t.name)}
                     >
                       <IconX strokeWidth={3} size=".75rem" />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </Group>
                 </Badge>
               ))}
@@ -359,9 +360,9 @@ export default function Tags() {
                       withArrow
                       withinPortal
                     >
-                      <ActionIcon variant="outline" color="red">
+                      <LegacyActionIcon variant="outline" color="red">
                         <IconTrash size="1.25rem" />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </PopConfirm>
                   </div>
                 </Tooltip>

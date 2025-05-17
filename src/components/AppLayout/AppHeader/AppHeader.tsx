@@ -19,6 +19,7 @@ import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserMenu } from '~/components/AppLayout/AppHeader/UserMenu';
 import { CreateMenu } from '~/components/AppLayout/AppHeader/CreateMenu';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const HEADER_HEIGHT = 60;
 
@@ -121,9 +122,9 @@ export function AppHeader({
         <Grid.Col span="auto" className="flex items-center justify-end @md:hidden">
           <div className="flex items-center gap-1">
             {!isMuted && <CreateMenu />}
-            <ActionIcon variant="subtle" color="gray" onClick={() => setShowSearch(true)}>
+            <LegacyActionIcon variant="subtle" color="gray" onClick={() => setShowSearch(true)}>
               <IconSearch />
-            </ActionIcon>
+            </LegacyActionIcon>
             {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             {currentUser && features.chat && <ChatButton />}

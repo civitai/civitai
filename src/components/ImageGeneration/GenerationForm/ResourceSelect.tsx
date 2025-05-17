@@ -77,7 +77,7 @@ export const ResourceSelect = ({
         <div>
           <Button
             variant="light"
-            leftIcon={<IconPlus size={18} />}
+            leftSection={<IconPlus size={18} />}
             fullWidth
             onClick={handleOpenResourceSearch}
             disabled={disabled}

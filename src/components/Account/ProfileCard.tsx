@@ -69,7 +69,7 @@ export function ProfileCard() {
           <Group justify="space-between">
             <Title order={2}>Account Info</Title>
             <Button
-              leftIcon={<IconPencilMinus size={16} />}
+              leftSection={<IconPencilMinus size={16} />}
               onClick={() => {
                 openUserProfileEditModal({});
               }}
