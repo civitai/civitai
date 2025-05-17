@@ -1,6 +1,6 @@
 import { Button, ButtonProps, Divider, Input, InputWrapperProps, Stack, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
-import React, { forwardRef, useEffect } from 'react';
+import React, { forwardRef, useEffect, useMemo } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
@@ -50,15 +50,19 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
     ];
 
     // _types used to set up groups
-    const _types = types ?? [...new Set(value?.map((x) => x.model.type))];
+    const _types = [...new Set(types ?? value?.map((x) => x.model.type) ?? [])];
     const _values =
-      (types
-        ? value?.filter(
-            (x) =>
-              types.includes(x.model.type) &&
-              (!!baseModels?.length ? baseModels.includes(x.baseModel) : true)
-          )
-        : value) ?? [];
+      (useMemo(
+      () =>
+        types
+            ? value?.filter(
+                (x) =>
+                  types.includes(x.model.type) &&
+                  (!!baseModels?.length ? baseModels.includes(x.baseModel) : true)
+              )
+            : value,
+      [value]
+    )) ?? [];
     const groups = _types
       .map((type) => ({
         type,

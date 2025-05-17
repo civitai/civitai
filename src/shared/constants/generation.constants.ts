@@ -210,61 +210,6 @@ export const samplersToComfySamplers: Record<
   undefined: { sampler: 'dpmpp_2m', scheduler: 'karras' },
 };
 
-// TODO - improve this
-// export const defaultCheckpoints: Record<
-//   string,
-//   {
-//     ecosystem: string;
-//     type: string;
-//     source: string;
-//     model: number;
-//     version: number;
-//   }
-// > = {
-//   SD1: {
-//     ecosystem: 'sd1',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 4384,
-//     version: 128713,
-//   },
-//   SD3: {
-//     ecosystem: 'sd3',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 878387,
-//     version: 983309,
-//   },
-//   SD3_5M: {
-//     ecosystem: 'sd3',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 896953,
-//     version: 1003708,
-//   },
-//   SDXL: {
-//     ecosystem: 'sdxl',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 101055,
-//     version: 128078,
-//   },
-//   Pony: {
-//     ecosystem: 'sdxl',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 257749,
-//     version: 290640,
-//   },
-//   Illustrious: {
-//     ecosystem: 'sdxl',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 795765,
-//     version: 889818,
-//   },
-// };
-
 // #region [utils]
 // some base models, such as SD1.5 can work with different base model set types
 
@@ -308,6 +253,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
 ) {
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
+  // image base models
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Pony')) return 'Pony';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SDXL')) return 'SDXL';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1')) return 'Flux1';
@@ -316,10 +262,20 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'NoobAI')) return 'NoobAI';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3')) return 'SD3';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3_5M')) return 'SD3_5M';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'HyV1')) return 'HyV1';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'OpenAI')) return 'OpenAI';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD1')) return 'SD1';
+  // video base models
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'HyV1')) return 'HyV1';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo'))
     return 'WanVideo';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo14B_I2V_480p'))
+    return 'WanVideo14B_I2V_480p';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo14B_I2V_720p'))
+    return 'WanVideo14B_I2V_720p';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo14B_T2V'))
+    return 'WanVideo14B_T2V';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo1_3B_T2V'))
+    return 'WanVideo1_3B_T2V';
   else return 'SD1';
 }
 const videoBaseModelSetTypes = ['HyV1', 'WanVideo'];
@@ -551,8 +507,18 @@ export const baseModelResourceTypes = {
     { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
   HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
-  WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
   OpenAI: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.OpenAI.baseModels }],
+  WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
+  WanVideo1_3B_T2V: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
+  ],
+  WanVideo14B_T2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_T2V.baseModels }],
+  WanVideo14B_I2V_480p: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_480p.baseModels },
+  ],
+  WanVideo14B_I2V_720p: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_720p.baseModels },
+  ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
