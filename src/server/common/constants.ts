@@ -1346,3 +1346,10 @@ export const newOrderConfig = {
     badgeIds: { acolyte: 858, knight: 859, templar: 860 },
   },
 };
+
+export const buzzBulkBonusMultipliers = [
+  // Order from bottom to top. This value SHOULD BE BASED OFF OF BUZZ.
+  [250000, 1.1],
+  [300000, 1.15],
+  [400000, 1.2],
+];
