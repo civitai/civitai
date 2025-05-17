@@ -8,9 +8,10 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Input,
 } from '@mantine/core';
-import { IconCloudOff, IconTrash } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { IconCloudOff, IconTrash, IconSearch } from '@tabler/icons-react';
+import { useMemo, useState } from 'react';
 import { DownloadList } from '~/components/Downloads/DownloadList';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -19,6 +20,7 @@ import { trpc } from '~/utils/trpc';
 export default function Downloads() {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
+  const [filterText, setFilterText] = useState('');
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.download.getAllByUser.useInfiniteQuery(
@@ -28,7 +30,15 @@ export default function Downloads() {
         cacheTime: 0,
       }
     );
+
   const downloads = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
+
+  const filteredDownloads = useMemo(() => {
+    if (!filterText) return downloads;
+    return downloads.filter((download) =>
+      download.modelVersion?.model?.name?.toLowerCase().includes(filterText.toLowerCase())
+    );
+  }, [downloads, filterText]);
 
   const hideDownloadMutation = trpc.download.hide.useMutation({
     async onMutate({ modelVersionId, all }) {
@@ -50,6 +60,7 @@ export default function Downloads() {
       });
     },
   });
+
   const handleHide = ({ modelVersion, all }: { modelVersion?: { id: number }; all?: boolean }) => {
     if (currentUser)
       hideDownloadMutation.mutate({
@@ -75,14 +86,44 @@ export default function Downloads() {
         </Group>
       </Group>
 
+      {/* Search Filter Input */}
+      <Input
+        icon={<IconSearch size={16} />}
+        placeholder="Filter by Model Name..."
+        value={filterText}
+        onChange={(event) => setFilterText(event.currentTarget.value)}
+        mt="md"
+      />
+
       {isLoading ? (
         <Center>
           <Loader />
         </Center>
-      ) : downloads.length > 0 ? (
-        <Stack>
+      ) : downloads.length === 0 ? (
+        // Case 1: No downloads at all
+        <Stack align="center" mt="md">
+          <ThemeIcon size={96} radius={100}>
+            <IconCloudOff size={60} />
+          </ThemeIcon>
+          <Text size={18} align="center">
+            No downloads in your history
+          </Text>
+        </Stack>
+      ) : filteredDownloads.length === 0 ? (
+        // Case 2: Downloads exist, but none match the filter
+        <Stack align="center" mt="md">
+          <ThemeIcon size={96} radius={100}>
+            <IconSearch size={60} />
+          </ThemeIcon>
+          <Text size={18} align="center">
+            No downloads match your current filter
+          </Text>
+        </Stack>
+      ) : (
+        // Case 3: Filtered downloads are displayed
+        <Stack mt="lg">
           <DownloadList
-            items={downloads}
+            items={filteredDownloads}
             onHideClick={(download) => handleHide(download)}
             textSize="md"
             withDivider
@@ -98,15 +139,6 @@ export default function Downloads() {
               </Center>
             </InViewLoader>
           )}
-        </Stack>
-      ) : (
-        <Stack align="center" mt="md">
-          <ThemeIcon size={96} radius={100}>
-            <IconCloudOff size={60} />
-          </ThemeIcon>
-          <Text size={18} align="center">
-            No downloads in your history
-          </Text>
         </Stack>
       )}
     </Container>
