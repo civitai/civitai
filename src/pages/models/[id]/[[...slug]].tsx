@@ -104,6 +104,7 @@ import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
@@ -285,6 +286,7 @@ export default function ModelDetailsV2({
       },
     }
   );
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
@@ -548,6 +550,14 @@ export default function ModelDetailsV2({
     );
 
   if (modelDoesntExist || ((modelDeleted || modelNotVisible || isBlocked) && !isModerator)) {
+    return <NotFound />;
+  }
+
+  if (model.poi && browsingSettingsAddons.disablePoi) {
+    return <NotFound />;
+  }
+
+  if (model.minor && browsingSettingsAddons.disableMinor) {
     return <NotFound />;
   }
 
