@@ -10,8 +10,8 @@ const BrowsingSettingsAddonsCtx = createContext<{
   settings: NonNullable<Omit<BrowsingSettingsAddon, 'type' | 'nsfwLevels'>>;
 }>({
   settings: {
-    disableMinor: false,
-    disablePoi: false,
+    disableMinor: true,
+    disablePoi: true,
     excludedTagIds: [],
     excludedFooterLinks: [],
     generationDefaultValues: {},
@@ -38,8 +38,8 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
     if (currentUser?.isModerator) {
       // Mods will always see the default values
       return {
-        disableMinor: false,
-        disablePoi: false,
+        disableMinor: true,
+        disablePoi: true,
         excludedTagIds: [],
         excludedFooterLinks: [],
         generationDefaultValues: {},
@@ -87,8 +87,8 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
         }
       },
       {
-        disableMinor: false,
-        disablePoi: false,
+        disableMinor: true,
+        disablePoi: true,
         excludedTagIds: [] as number[],
         excludedFooterLinks: [] as string[],
         generationDefaultValues: {} as Record<string, number>,
