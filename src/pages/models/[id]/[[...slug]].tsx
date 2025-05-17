@@ -553,11 +553,11 @@ export default function ModelDetailsV2({
     return <NotFound />;
   }
 
-  if (model.poi && browsingSettingsAddons.disablePoi) {
+  if (model.poi && browsingSettingsAddons.settings.disablePoi) {
     return <NotFound />;
   }
 
-  if (model.minor && browsingSettingsAddons.disableMinor) {
+  if (model.minor && browsingSettingsAddons.settings.disableMinor) {
     return <NotFound />;
   }
 
