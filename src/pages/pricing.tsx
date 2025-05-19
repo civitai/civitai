@@ -337,7 +337,11 @@ export default function Pricing() {
               </ContainerGrid.Col>
               {products.map((product) => (
                 <ContainerGrid.Col key={product.id} md={3} sm={6} xs={12}>
-                  <PlanCard product={product} subscription={subscription} />
+                  <PlanCard
+                    key={`${interval}-${product.id}`}
+                    product={product}
+                    subscription={subscription}
+                  />
                 </ContainerGrid.Col>
               ))}
             </ContainerGrid>
