@@ -89,14 +89,13 @@ export const constants = {
     'CogVideoX',
     'NoobAI',
     'Wan Video',
+    'Wan Video 1.3B t2v',
+    'Wan Video 14B t2v',
+    'Wan Video 14B i2v 480p',
+    'Wan Video 14B i2v 720p',
     'HiDream',
     'OpenAI',
     'Other',
-    // 'Wan Video 1.3B T2V',
-    // 'Wan Video 14B T2V',
-    // 'Wan Video 14B I2V',
-    // 'Wan Video 14B I2V 480p',
-    // 'Wan Video 14B I2V 720p',
   ],
   hiddenBaseModels: [
     'ODOR',
@@ -111,6 +110,7 @@ export const constants = {
     'Stable Cascade',
     'SDXL 1.0 LCM',
     'OpenAI',
+    'Wan Video',
   ] as string[],
   modelFileTypes: [
     'Model',
@@ -555,7 +555,28 @@ export const baseModelSets = {
   WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
   HiDream: new BaseModelSet({ name: 'HiDream', baseModels: ['HiDream'] }),
   OpenAI: new BaseModelSet({ name: 'OpenAI', baseModels: ['OpenAI'] }),
+  WanVideo1_3B_T2V: new BaseModelSet({
+    name: 'Wan Video 1.3B t2v',
+    baseModels: ['Wan Video 1.3B t2v'],
+  }),
+  WanVideo14B_T2V: new BaseModelSet({
+    name: 'Wan Video 14B t2v',
+    baseModels: ['Wan Video 14B t2v'],
+  }),
+  WanVideo14B_I2V_480p: new BaseModelSet({
+    name: 'Wan Video 14B i2v 480p',
+    baseModels: ['Wan Video 14B i2v 480p'],
+  }),
+  WanVideo14B_I2V_720p: new BaseModelSet({
+    name: 'Wan Video 14B i2v 720p',
+    baseModels: ['Wan Video 14B i2v 720p'],
+  }),
 };
+/*
+'Wan Video 1.3B T2V',
+'Wan Video 14B T2V',
+'Wan Video 14B I2V',
+*/
 
 // the ecosystem in the air just needs to start with a corresponding orchestrator controller ecosystem
 // const test = [
@@ -722,9 +743,13 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   LTXV: baseLicenses['ltxv license'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
-  'Wan Video': baseLicenses['apache 2.0'],
   HiDream: baseLicenses['mit'],
   OpenAI: baseLicenses['openai'],
+  'Wan Video': baseLicenses['apache 2.0'],
+  'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
+  'Wan Video 14B t2v': baseLicenses['apache 2.0'],
+  'Wan Video 14B i2v 480p': baseLicenses['apache 2.0'],
+  'Wan Video 14B i2v 720p': baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
