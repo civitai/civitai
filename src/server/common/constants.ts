@@ -1185,11 +1185,12 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
   {
     type: 'none',
     nsfwLevels: [NsfwLevel.X, NsfwLevel.XXX],
-    excludedFooterLinks: ['2257', 'content-removal'],
+    excludedFooterLinks: ['2257'],
   },
   {
     type: 'some',
     nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    excludedFooterLinks: ['wiki', 'newsroom'],
     disableMinor: true,
     disablePoi: true,
     excludedTagIds: [
