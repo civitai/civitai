@@ -446,9 +446,30 @@ export const getPlanDetails: (
       {
         content:
           !!metadata.badgeType && !!isAnnual ? (
-            <Text lh={1}>Exclusive cosmetics</Text>
+            <Text lh={1}>
+              <Text
+                variant="link"
+                td="underline"
+                component="a"
+                href="/articles/14950"
+                target="_blank"
+              >
+                Exclusive cosmetics
+              </Text>
+            </Text>
           ) : (
-            <Text lh={1}>No exclusive cosmetics</Text>
+            <Text lh={1}>
+              No{' '}
+              <Text
+                variant="link"
+                td="underline"
+                component="a"
+                href="/articles/14950"
+                target="_blank"
+              >
+                exclusive cosmetics
+              </Text>
+            </Text>
           ),
         icon: <IconHexagon3d size={benefitIconSize} />,
         iconColor:
