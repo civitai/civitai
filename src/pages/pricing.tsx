@@ -255,7 +255,7 @@ export default function Pricing() {
                       <Center>
                         <Box mr={6}>Annual Plans</Box>
                         <Badge p={5} color="green" variant="filled" radius="xl">
-                          Save 15%!
+                          1 month for free!
                         </Badge>
                       </Center>
                     ),
