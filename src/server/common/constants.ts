@@ -1189,6 +1189,13 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
   },
   {
     type: 'some',
+    nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    disableMinor: true,
+    disablePoi: true,
+    excludedTagIds: [415792, 426772],
+  },
+  {
+    type: 'some',
     nsfwLevels: [NsfwLevel.X, NsfwLevel.XXX],
     excludedFooterLinks: ['wiki', 'api', 'newsroom'],
     disablePoi: true,

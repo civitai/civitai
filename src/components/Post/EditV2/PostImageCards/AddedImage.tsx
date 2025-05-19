@@ -1051,6 +1051,8 @@ function EditDetail() {
                 updateImage(image.id, (img) => {
                   img.tags = tags.map((t) => ({ ...t, imageId: image.id }));
                 });
+
+                console.log('tags loaded', tags);
               }}
             />
           </>
@@ -1064,7 +1066,10 @@ function EditDetail() {
             classNames={{ message: 'flex items-center justify-center gap-2' }}
           >
             <Loader size="xs" />
-            <Text align="center">Analyzing image</Text>
+            <Text align="center">
+              Analyzing image. Image will not be visible to other people while analysis is in
+              progress.
+            </Text>
           </Alert>
         )}
         {isPendingManualAssignment && (
