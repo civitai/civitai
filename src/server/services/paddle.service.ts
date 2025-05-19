@@ -565,8 +565,8 @@ export const upsertSubscription = async (
 
       const keys = Object.keys(specialCosmeticRewards.annualRewards).filter((k) => {
         return (
-          constants.memberships.tierOrder.indexOf(productMeta.tier) <=
-          constants.memberships.tierOrder.indexOf(k as typeof productMeta.tier)
+          constants.memberships.tierOrder.indexOf(k as typeof productMeta.tier) <=
+          constants.memberships.tierOrder.indexOf(productMeta.tier)
         );
       });
 
