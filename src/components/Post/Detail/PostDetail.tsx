@@ -368,6 +368,22 @@ export function PostDetailContent({ postId }: Props) {
                 <Alert>Unable to load images</Alert>
               ) : (
                 <>
+                  {currentUser?.id === post.user.id &&
+                    hiddenExplained.hiddenByBrowsingSettings.length && (
+                      <>
+                        <Alert>
+                          Some of your images are hidden to other users due to our policies.
+                        </Alert>
+
+                        <Paper component={Center} p="xl" mih={300} withBorder>
+                          <ExplainHiddenImages
+                            {...hiddenExplained}
+                            hasHidden={true}
+                            hiddenByTags={hiddenExplained.hiddenByBrowsingSettings}
+                          />
+                        </Paper>
+                      </>
+                    )}
                   <PostImages
                     postId={post.id}
                     images={images}
