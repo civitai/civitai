@@ -242,6 +242,10 @@ export function getIsFlux(baseModel?: string) {
   return baseModelSetType === 'Flux1';
 }
 
+export function getIsFluxStandard(modelId: number) {
+  return modelId === fluxStandardModelId;
+}
+
 export function getIsSD3(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
   return baseModelSetType === 'SD3' || baseModelSetType === 'SD3_5M';
@@ -545,6 +549,7 @@ export const miscModelTypes: ModelType[] = [
   'Other',
 ] as const;
 
+const fluxStandardModelId = 618692;
 export const fluxStandardAir = 'urn:air:flux1:checkpoint:civitai:618692@691639';
 export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
 export const fluxUltraAirId = 1088507;

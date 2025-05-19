@@ -101,6 +101,7 @@ import {
   fluxUltraAspectRatios,
   getBaseModelResourceTypes,
   getIsFlux,
+  getIsFluxStandard,
   getIsFluxUltra,
   getIsSD3,
   getIsSdxl,
@@ -248,7 +249,8 @@ export function GenerationFormContent() {
     else params.engine = undefined;
 
     const isFlux = getIsFlux(params.baseModel);
-    if (isFlux) {
+    const isFluxStandard = getIsFluxStandard(model.model.id);
+    if (isFlux && isFluxStandard) {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
@@ -426,7 +428,8 @@ export function GenerationFormContent() {
         {({ baseModel, fluxMode, draft, model, workflow, sourceImage }) => {
           // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
           const isImg2Img = workflow?.startsWith('img') || (isOpenAI && sourceImage);
-          const isDraft = isFlux
+          const isFluxStandard = getIsFluxStandard(model.model.id);
+          const isDraft = isFluxStandard
             ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
             : isSD3
             ? model.id === 983611
@@ -553,7 +556,7 @@ export function GenerationFormContent() {
                                 baseModels: !!resources?.length || !!vae ? baseModels : undefined,
                               })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                           }}
-                          hideVersion={isFlux}
+                          hideVersion={isFluxStandard}
                           pb={
                             unstableResources.length ||
                             minorFlaggedResources.length ||
@@ -711,7 +714,7 @@ export function GenerationFormContent() {
                   </Alert>
                 )}
 
-                {isFlux && (
+                {isFluxStandard && (
                   <Watch {...form} fields={['resources']}>
                     {({ resources }) => (
                       <div className="flex flex-col gap-0.5">

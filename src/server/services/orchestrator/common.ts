@@ -48,6 +48,7 @@ import {
   getBaseModelSetType,
   getInjectablResources,
   getIsFlux,
+  getIsFluxStandard,
   getIsSD3,
   getRoundedWidthHeight,
   InjectableResource,
@@ -129,6 +130,7 @@ export async function parseGenerateImageInput({
 
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
+
   if (isFlux && originalParams.fluxMode) {
     // const { version } = parseAIR(originalParams.fluxMode);
     originalParams.sampler = 'undefined';
@@ -147,8 +149,6 @@ export async function parseGenerateImageInput({
       delete originalParams.negativePrompt;
       delete originalParams.clipSkip;
     }
-  } else {
-    originalParams.fluxMode = undefined;
   }
 
   const isSD3 = getIsSD3(originalParams.baseModel);
@@ -162,7 +162,6 @@ export async function parseGenerateImageInput({
     }
   }
 
-  let params = { ...originalParams };
   const status = await getGenerationStatus();
   const limits = status.limits[user.tier ?? 'free'];
   const resourceLimit = limits.resources;
@@ -211,6 +210,15 @@ export async function parseGenerateImageInput({
     (x) => x.model.type === ModelType.Checkpoint || x.model.type === ModelType.Upscaler
   );
   if (!model) throw throwBadRequestError('A checkpoint is required to make a generation request');
+  const isFluxStandard = getIsFluxStandard(model.model.id);
+  if (!isFluxStandard) {
+    originalParams.fluxMode = undefined;
+    originalParams.fluxUltraAspectRatio = undefined;
+    originalParams.fluxUltraRaw = undefined;
+  }
+
+  let params = { ...originalParams };
+
   if (params.baseModel !== getBaseModelSetType(model.baseModel))
     throw throwBadRequestError(
       `Invalid base model. Checkpoint with baseModel: ${model.baseModel} does not match the input baseModel: ${params.baseModel}`
