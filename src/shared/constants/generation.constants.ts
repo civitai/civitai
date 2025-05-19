@@ -10,7 +10,6 @@ import {
   minDownscaleSize,
   Sampler,
 } from '~/server/common/constants';
-import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
@@ -265,21 +264,29 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'OpenAI')) return 'OpenAI';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD1')) return 'SD1';
   // video base models
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'HyV1')) return 'HyV1';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo'))
-    return 'WanVideo';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo14B_I2V_480p'))
-    return 'WanVideo14B_I2V_480p';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo14B_I2V_720p'))
-    return 'WanVideo14B_I2V_720p';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo14B_T2V'))
-    return 'WanVideo14B_T2V';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo1_3B_T2V'))
-    return 'WanVideo1_3B_T2V';
-  else return 'SD1';
+  for (const baseModelSet of videoBaseModelSetTypes) {
+    if (resources.some((x) => getBaseModelSetType(x.baseModel) === baseModelSet))
+      return baseModelSet;
+  }
 }
-const videoBaseModelSetTypes = ['HyV1', 'WanVideo'];
-export function getResourceGenerationType(baseModel: ReturnType<typeof getBaseModelFromResources>) {
+
+export function getBaseModelFromResourcesWithDefault<
+  T extends { modelType: ModelType; baseModel: string }
+>(resources: T[]) {
+  return getBaseModelFromResources(resources) ?? 'SD1';
+}
+
+const videoBaseModelSetTypes: BaseModelSetType[] = [
+  'HyV1',
+  'WanVideo',
+  'WanVideo14B_I2V_480p',
+  'WanVideo14B_I2V_720p',
+  'WanVideo14B_T2V',
+  'WanVideo1_3B_T2V',
+];
+export function getResourceGenerationType(
+  baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>
+) {
   return videoBaseModelSetTypes.includes(baseModel) ? 'video' : ('image' as MediaType);
 }
 

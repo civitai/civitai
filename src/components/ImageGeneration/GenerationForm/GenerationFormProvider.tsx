@@ -20,7 +20,7 @@ import {
   fluxModeOptions,
   fluxModelId,
   fluxStandardAir,
-  getBaseModelFromResources,
+  getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getBaseModelSetTypes,
   getIsFluxUltra,
@@ -40,7 +40,6 @@ import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
-import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 
 // #region [schemas]
 
@@ -167,7 +166,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   let vae = data.resources.find((x) => x.model.type === 'VAE');
   const baseModel =
     params.baseModel ??
-    getBaseModelFromResources(
+    getBaseModelFromResourcesWithDefault(
       data.resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
     );
 

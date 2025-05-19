@@ -34,11 +34,7 @@ import {
   getGenerationResourceData,
 } from '~/server/services/generation/generation.service';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
-import {
-  GeneratedImageWorkflow,
-  GeneratedImageWorkflowStep,
-  WorkflowDefinition,
-} from '~/server/services/orchestrator/types';
+import { GeneratedImageWorkflow, WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -548,12 +544,12 @@ function formatVideoGenStep({
 }) {
   const { input, output, jobs } = step as VideoGenStep;
   const videoMetadata = step.metadata as { params?: VideoGenerationSchema2 };
-  const { params } = videoMetadata;
+  let { params } = videoMetadata;
+  if (!params) params = {};
 
   // handle legacy source image
-  let sourceImage = params && 'sourceImage' in params ? params.sourceImage : undefined;
+  let sourceImage = 'sourceImage' in params ? params.sourceImage : undefined;
   if (
-    params &&
     'width' in params &&
     'height' in params &&
     'sourceImage' in params &&
@@ -570,27 +566,25 @@ function formatVideoGenStep({
   let height: number | undefined;
   let aspectRatio = 1;
 
-  if (params) {
-    if (sourceImage) {
-      width = sourceImage?.width;
-      height = sourceImage?.height;
-      aspectRatio = width && height ? width / height : 16 / 9;
-    } else {
-      switch (params.engine) {
-        case 'minimax':
-          aspectRatio = 16 / 9;
-          break;
-        case 'mochi':
-          width = 848;
-          height = 480;
-          aspectRatio = width / height;
-          break;
-        default: {
-          if (!params.aspectRatio) params.aspectRatio = '16:9';
-          const [rw, rh] = params.aspectRatio.split(':').map(Number);
-          aspectRatio = rw / rh;
-          break;
-        }
+  if (sourceImage) {
+    width = sourceImage?.width;
+    height = sourceImage?.height;
+    aspectRatio = width && height ? width / height : 16 / 9;
+  } else {
+    switch (params.engine) {
+      case 'minimax':
+        aspectRatio = 16 / 9;
+        break;
+      case 'mochi':
+        width = 848;
+        height = 480;
+        aspectRatio = width / height;
+        break;
+      default: {
+        if (!params.aspectRatio) params.aspectRatio = '16:9';
+        const [rw, rh] = params.aspectRatio.split(':').map(Number);
+        aspectRatio = rw / rh;
+        break;
       }
     }
   }
@@ -634,11 +628,17 @@ function formatVideoGenStep({
 
   const combinedResources = combineResourcesWithInputResource(resources, stepResources);
 
-  const baseModel = combinedResources.length
+  let baseModel = combinedResources.length
     ? getBaseModelFromResources(
         combinedResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
       )
     : undefined;
+
+  if (params.type === 'txt2vid' || params.type === 'img2vid') params.process = params.type;
+  if (baseModel === 'WanVideo') {
+    if (params.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
+    else baseModel = 'WanVideo14B_I2V_720p';
+  }
 
   return {
     $type: 'videoGen' as const,

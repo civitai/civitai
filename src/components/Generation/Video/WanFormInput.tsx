@@ -11,8 +11,15 @@ import {
   InputSegmentedControl,
   InputTextArea,
 } from '~/libs/form';
-import { wanAspectRatios, wanDuration, wanModelMap } from '~/server/orchestrator/wan/wan.schema';
-import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
+import {
+  wanAspectRatios,
+  wanDuration,
+  wanBaseModelMap,
+} from '~/server/orchestrator/wan/wan.schema';
+import {
+  baseModelResourceTypes,
+  getBaseModelResourceTypes,
+} from '~/shared/constants/generation.constants';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { useEffect, useMemo } from 'react';
@@ -20,27 +27,32 @@ import { useEffect, useMemo } from 'react';
 export function WanFormInput() {
   const form = useFormContext();
   const process = form.watch('process');
-  const model = form.getValues('model');
+  const baseModel = form.getValues('baseModel');
   const isTxt2Img = process === 'txt2vid';
-  const availableModels = useMemo(
-    () => wanModelMap[process as keyof typeof wanModelMap] ?? [],
+
+  const availableBaseModels = useMemo(
+    () =>
+      Object.entries(wanBaseModelMap)
+        .filter(([key, value]) => value.process === process)
+        .map(([key, value]) => ({ value: key, label: value.label, default: value.default })),
     [process]
   );
-  const resources = availableModels.find((x) => x.value === model)?.resources;
 
   useEffect(() => {
-    const model = form.getValues('model');
-    if (!availableModels.find((x) => x.value === model)) {
-      const defaultModel = availableModels.find((x) => x.default) ?? availableModels[0];
-      form.setValue('model', defaultModel.value);
+    const baseModel = form.getValues('baseModel');
+    if (!availableBaseModels.find((x) => x.value === baseModel)) {
+      const defaultModel = availableBaseModels.find((x) => x.default) ?? availableBaseModels[0];
+      if (defaultModel) form.setValue('baseModel', defaultModel.value);
     }
-  }, [availableModels]);
+  }, [availableBaseModels]);
+
+  const resources = getBaseModelResourceTypes(baseModel) ?? [];
 
   return (
     <>
       <InputVideoProcess name="process" />
-      <InputRadioGroup label="Model" name="model">
-        {availableModels.map(({ label, value }) => (
+      <InputRadioGroup label="Model" name="baseModel">
+        {availableBaseModels.map(({ label, value }) => (
           <Radio key={value} label={label} value={value} />
         ))}
       </InputRadioGroup>

@@ -9,44 +9,42 @@ import {
   baseVideoGenerationSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const wanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
 export const wanDuration = [3, 5] as const;
 export const wanAspectRatioMap = AspectRatioMap([...wanAspectRatios], { multiplier: 16 });
 
-export const wanModelMap = {
-  txt2vid: [
-    {
-      label: 'Wan Video 1.3B t2v',
-      value: 'urn:air:wanvideo:checkpoint:civitai:1329096@1500646',
-      resources: baseModelResourceTypes.WanVideo1_3B_T2V,
-    },
-    {
-      label: 'Wan Video 14B t2v',
-      value: 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796',
-      resources: baseModelResourceTypes.WanVideo14B_T2V,
-      default: true,
-    },
-  ],
-  img2vid: [
-    {
-      label: 'Wan Video 14B i2v 480p',
-      value: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501125',
-      resources: baseModelResourceTypes.WanVideo14B_I2V_480p,
-    },
-    {
-      label: 'Wan Video 14B i2v 720p',
-      value: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
-      resources: baseModelResourceTypes.WanVideo14B_I2V_720p,
-      default: true,
-    },
-  ],
+export const wanBaseModelMap = {
+  WanVideo1_3B_T2V: {
+    process: 'txt2vid',
+    label: 'Wan Video 1.3B t2v',
+    model: 'urn:air:wanvideo:checkpoint:civitai:1329096@1500646',
+    default: false,
+  },
+  WanVideo14B_T2V: {
+    process: 'txt2vid',
+    label: 'Wan Video 14B t2v',
+    model: 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796',
+    default: true,
+  },
+  WanVideo14B_I2V_480p: {
+    process: 'img2vid',
+    label: 'Wan Video 14B i2v 480p',
+    model: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501125',
+    default: false,
+  },
+  WanVideo14B_I2V_720p: {
+    process: 'img2vid',
+    label: 'Wan Video 14B i2v 720p',
+    model: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
+    default: true,
+  },
 };
 
 const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('wan').catch('wan'),
+  baseModel: z.string().optional(),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
   aspectRatio: z.enum(wanAspectRatios).optional().catch('1:1'),
@@ -74,7 +72,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
   schema,
   defaultValues: {
     process: 'txt2vid',
-    model: wanModelMap['txt2vid'][1].value,
+    baseModel: 'WanVideo14B_T2V',
     aspectRatio: '1:1',
     duration: 5,
     cfgScale: 4,
@@ -101,11 +99,14 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       });
     }
   },
-  inputFn: ({ sourceImage, resources, ...args }): WanVdeoGenInput => {
+  inputFn: ({ sourceImage, resources, baseModel, ...args }): WanVdeoGenInput => {
     const ar = sourceImage
       ? AspectRatio.fromSize(sourceImage, { multiplier: 16 })
       : wanAspectRatioMap[args.aspectRatio ?? '1:1'];
     const { width, height } = ar.getSize2(480);
+    const model = baseModel
+      ? wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap].model
+      : undefined;
     return {
       ...args,
       width,
@@ -113,6 +114,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       sourceImage: sourceImage?.url,
       steps: 20,
       loras: resources?.map(({ air, strength }) => ({ air, strength })),
+      model,
       // model: !sourceImage ? 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796' : undefined,
     };
   },
