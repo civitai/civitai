@@ -1373,6 +1373,6 @@ export const specialCosmeticRewards = {
   },
   bulkBuzzRewards: [
     866, // bulk buzz buy - badge
-    871, // bulk buzz buy - background
+    872, // bulk buzz buy - background
   ],
 };
