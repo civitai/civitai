@@ -6,7 +6,7 @@ export const getBuzzBulkMultiplier = ({
 }: {
   buzzAmount: number;
   purchasesMultiplier: number;
-}): number => {
+}) => {
   const bulkBuzzMultiplier = buzzBulkBonusMultipliers.reduce((acc, [amount, multiplier]) => {
     if (buzzAmount >= amount) {
       return multiplier;

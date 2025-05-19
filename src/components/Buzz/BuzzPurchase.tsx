@@ -493,7 +493,7 @@ export const BuzzPurchase = ({
                               </td>
                               <td>
                                 <Text size="sm" color="dimmed">
-                                  {((multiplier - 1) * 100).toFixed(0)}%
+                                  {Math.round((multiplier - 1) * 100)}%
                                 </Text>
                               </td>
                               <td>

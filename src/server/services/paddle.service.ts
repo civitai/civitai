@@ -55,6 +55,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -186,7 +187,7 @@ export const processCompleteBuzzTransaction = async (
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
   const amount = meta.buzz_amount ?? meta.buzzAmount;
 
-  const { blueBuzzAdded, totalYellowBuzz } = getBuzzBulkMultiplier({
+  const { blueBuzzAdded, totalYellowBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
     buzzAmount: amount,
     purchasesMultiplier,
   });
@@ -200,7 +201,7 @@ export const processCompleteBuzzTransaction = async (
     type: TransactionType.Purchase,
     description: `Purchase of ${amount} Buzz. ${
       purchasesMultiplier && purchasesMultiplier > 1 ? 'Multiplier applied due to membership. ' : ''
-    }A total of ${totalYellowBuzz} Buzz was added to your account.`,
+    }A total of ${numberWithCommas(totalYellowBuzz)} Buzz was added to your account.`,
     details: {
       paddleTransactionId: transaction.id,
       ...buzzTransactionExtras,
@@ -215,12 +216,18 @@ export const processCompleteBuzzTransaction = async (
       toAccountType: 'generation',
       externalTransactionId: transaction.id,
       type: TransactionType.Purchase,
-      description: `A total of ${blueBuzzAdded} Blue Buzz was added to your account for Bulk purchase.`,
+      description: `A total of ${numberWithCommas(
+        blueBuzzAdded
+      )} Blue Buzz was added to your account for Bulk purchase.`,
       details: {
         paddleTransactionId: transaction.id,
         ...buzzTransactionExtras,
       },
     });
+  }
+
+  if (bulkBuzzMultiplier > 1) {
+    // TODO: Grant cosmetic :shrugh:
   }
 };
 

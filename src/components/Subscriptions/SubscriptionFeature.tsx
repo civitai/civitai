@@ -94,12 +94,9 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
       }
       subtitle={
         subscription
-          ? `As a ${capitalize(metadata.tier)} member you get ${(
-              (purchasesMultiplier - 1) *
-              100
-            ).toFixed(0)}% bonus Buzz on each purchase (${numberWithCommas(
-              yellowBuzzAdded
-            )} Yellow Buzz). ${
+          ? `As a ${capitalize(metadata.tier)} member you get ${Math.round(
+              (purchasesMultiplier - 1) * 100
+            )}% bonus Buzz on each purchase (${numberWithCommas(yellowBuzzAdded)} Yellow Buzz). ${
               blueBuzzAdded > 0
                 ? `Buying in Bulk will also add ${numberWithCommas(blueBuzzAdded)} Extra Blue Buzz!`
                 : ''
