@@ -29,7 +29,7 @@ import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import classes from './CommentSection.module.scss';
+import classes from './CommentSection.module.css';
 
 export function CommentSection({ comments, modelId, parent, highlights }: Props) {
   const currentUser = useCurrentUser();

@@ -74,7 +74,7 @@ import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { EmblaCarouselType } from 'embla-carousel';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
-import classes from './GeneratedImage.module.scss';
+import classes from './GeneratedImage.module.css';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

@@ -3,7 +3,6 @@ import {
   Badge,
   BadgeProps,
   Button,
-  rgba,
   Text,
   useComputedColorScheme,
   useMantineTheme,
@@ -27,7 +26,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { useImageStore } from '~/store/image.store';
-import classes from './ImageGuard.module.scss';
+import classes from './ImageGuard.module.css';
 
 type ImageProps = {
   id: number;
@@ -188,25 +187,7 @@ function ImageGuardContentInner({
               >
                 {browsingLevelLabels[browsingLevel as NsfwLevel]}
               </Badge>
-              <Button
-                className="pointer-events-auto"
-                onClick={toggle}
-                radius="xl"
-                style={(theme) => ({
-                  color: colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
-                  backgroundColor: rgba(
-                    colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-                    0.6
-                  ),
-                  boxShadow: theme.shadows.sm,
-                  '&:hover': {
-                    backgroundColor: rgba(
-                      colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-                      0.7
-                    ),
-                  },
-                })}
-              >
+              <Button className={classes.showButton} onClick={toggle} radius="xl">
                 Show
               </Button>
             </div>

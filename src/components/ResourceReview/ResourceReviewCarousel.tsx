@@ -1,4 +1,4 @@
-import { ActionIcon, Box, Button, Container, Text, Loader } from '@mantine/core';
+import { Button, Container, Text, Loader } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
@@ -14,9 +14,8 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ImageSort } from '~/server/common/enums';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
-import classes from './ResourceReviewCarousel.module.scss';
+import classes from './ResourceReviewCarousel.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ResourceReviewCarousel({

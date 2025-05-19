@@ -46,7 +46,7 @@ import { openReportModal } from '~/components/Dialog/dialog-registry';
 import type { Comment } from '~/server/services/commentsv2.service';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import classes from './Comment.module.scss';
+import classes from './Comment.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

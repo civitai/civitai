@@ -46,19 +46,19 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
       >
         <Tabs.List style={{ flexWrap: 'nowrap' }}>
           {allTabs.map((tab) => {
-            const countValue = count[tab.toLowerCase() as keyof typeof count];
+            const countValue = 10;
 
             return (
               <Tabs.Tab
                 key={tab}
                 value={tab}
-                style={{
-                  padding: '8px 12px',
-                }}
+                className="flex px-3 py-2"
                 rightSection={
                   !!countValue ? (
-                    <Badge color="red" variant="filled" size="xs" radius="xl" px={4}>
-                      <Text size="xs">{abbreviateNumber(countValue)}</Text>
+                    <Badge color="red" variant="filled" radius="xl" circle>
+                      <Text size="xs" span inherit>
+                        {abbreviateNumber(countValue)}
+                      </Text>
                     </Badge>
                   ) : undefined
                 }

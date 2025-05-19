@@ -1,7 +1,7 @@
 .title {
   font-size: 32px;
 
-  @container (max-width: 768px) {
+  @container (max-width: theme('screens.sm')) {
     font-size: 24px;
   }
 }
@@ -11,7 +11,7 @@
 }
 
 .header {
-  @container (max-width: 768px) {
+  @container (max-width: theme('screens.sm')) {
     display: block;
 
     .expandButton {
@@ -35,7 +35,7 @@
   gap: 0;
   margin: -8px;
 
-  @container (max-width: 992px) {
+  @container (max-width: theme('screens.md')) {
     grid-auto-flow: column;
     grid-template-columns: repeat(calc(var(--count) / 2), 296px);
     grid-template-rows: repeat(var(--rows), auto);
@@ -43,7 +43,7 @@
     overflow-x: auto;
   }
 
-  @container (max-width: 768px) {
+  @container (max-width: theme('screens.sm')) {
     grid-auto-flow: column;
     grid-template-columns: repeat(var(--count), 296px);
     grid-template-rows: auto;
@@ -62,7 +62,7 @@
 .meta {
   display: none;
 
-  @container (max-width: 992px) {
+  @container (max-width: theme('screens.md')) {
     display: block;
   }
 }
@@ -76,7 +76,7 @@
     flex: 1;
   }
 
-  @container (max-width: 992px) {
+  @container (max-width: theme('screens.md')) {
     display: none;
   }
 }

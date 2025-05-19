@@ -71,10 +71,10 @@
   }
 
   &.top10:hover {
-    background-color: --alpha(var(--mantine-color-yellow-5), 0.2);
+    background-color: alpha(var(--mantine-color-yellow-5), 0.2);
   }
 
   &.top100:hover {
-    background-color: --alpha(var(--mantine-color-blue-5), 0.2);
+    background-color: alpha(var(--mantine-color-blue-5), 0.2);
   }
 }

@@ -1,6 +1,5 @@
 .highlightedComment {
-  // background: var(--mantine-color-blue-5);
-  background: --alpha(var(--mantine-color-blue-5), 0.2);
+  background: alpha(var(--mantine-color-blue-5), 0.2);
   margin: calc(var(--mantine-spacing-xs, 8px) * -1);
   padding: var(--mantine-spacing-xs, 8px);
   border-radius: var(--mantine-radius-sm, 4px);
@@ -19,7 +18,7 @@
   left: calc(26px / 2 - 2px / 2);
 
   &:hover {
-    background: light-dark(rgba(255, 255, 255, 0.8), rgba(0, 0, 0, 0.7));
+    background-color: light-dark(rgba(255, 255, 255, 0.8), rgba(0, 0, 0, 0.7));
   }
 }
 

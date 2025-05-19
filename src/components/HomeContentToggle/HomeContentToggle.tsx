@@ -26,7 +26,7 @@ import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import classes from './HomeContentToggle.module.scss';
+import classes from './HomeContentToggle.module.css';
 
 type HomeOption = {
   key: string;

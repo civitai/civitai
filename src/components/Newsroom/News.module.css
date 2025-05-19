@@ -21,7 +21,7 @@
   }
 
   &:hover .action {
-    background-color: --alpha(var(--mantine-color-blue-7), light-dark(0.1, 0.05));
+    background-color: alpha(var(--mantine-color-blue-7), light-dark(0.1, 0.05));
   }
 }
 

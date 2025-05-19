@@ -1,16 +1,19 @@
 .label {
   padding: 6px 16px;
   text-transform: capitalize;
-  background-color: --alpha(var(--mantine-color-gray-9), 0.06);
+  background-color: alpha(var(--mantine-color-gray-9), 0.06);
 
   @mixin dark {
-    background-color: --alpha(var(--mantine-color-gray-3), 0.06);
+    background-color: alpha(var(--mantine-color-gray-3), 0.06);
   }
 }
 
 .labelActive {
   background-color: transparent;
-  color: var(--mantine-color-dark-9);
+  
+  &, &:hover {
+    color: var(--mantine-color-dark-9);
+  }
 }
 
 .labelActive:hover {
@@ -24,6 +27,7 @@
 .root {
   background-color: transparent;
   gap: 8px;
+  margin-left: -4px;
   
   @container (max-width: theme('screens.sm')) {
     overflow: auto hidden;
@@ -31,17 +35,6 @@
   }
 }
 
-
 .control {
   border: none !important;
-}
-
-.filtersWrapper {
-  @container (max-width: theme('screens.sm')) {
-    width: 100%;
-  }
-
-  > * {
-    flex-grow: 1;
-  }
 }

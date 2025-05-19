@@ -11,7 +11,7 @@ import {
   AspectRatio,
   Skeleton,
 } from '@mantine/core';
-import { Fragment, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import {
   IconArrowRight,
   IconCategory,
@@ -128,11 +128,11 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
                   {metadata.title ?? collection?.name ?? 'Collection'}
                 </Text>
                 {metadata.description && (
-                  <Text size="sm" mb="xs">
+                  <div className="mb-2 text-sm">
                     <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
                       {metadata.description}
                     </CustomMarkdown>
-                  </Text>
+                  </div>
                 )}
                 {metadata.link && (
                   <Link legacyBehavior href={metadata.link} passHref>
@@ -162,11 +162,11 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         )}
       </Group>
       {metadata.description && (metadata.descriptionAlwaysVisible || !currentUser) && (
-        <Text>
+        <div className="text-base">
           <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
           </CustomMarkdown>
-        </Text>
+        </div>
       )}
     </Stack>
   );
@@ -184,11 +184,11 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         </Title>
       </Group>
       {metadata.description && (
-        <Text maw={520}>
+        <div className="max-w-[520px]">
           <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
           </CustomMarkdown>
-        </Text>
+        </div>
       )}
       {metadata.link && (
         <div>
@@ -255,11 +255,11 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
 
       {metadata.footer && (
         <Stack mt="md">
-          <Text size="sm" mb="xs">
+          <div className="mb-2 text-sm">
             <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
               {metadata.footer}
             </CustomMarkdown>
-          </Text>
+          </div>
         </Stack>
       )}
     </>

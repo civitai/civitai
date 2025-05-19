@@ -20,7 +20,7 @@ import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { PostContestCollectionItem } from '~/types/router';
-import classes from './PostImages.module.scss';
+import classes from './PostImages.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

@@ -19,7 +19,7 @@ import { TrainingModelData } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import styles from './TrainingBasicInfo.module.scss';
+import styles from './TrainingBasicInfo.module.css';
 
 type tmTypes = TrainingDetailsObj['type'];
 type tMediaTypes = TrainingDetailsObj['mediaType'];

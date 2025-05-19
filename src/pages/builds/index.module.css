@@ -30,7 +30,7 @@
     &[data-checked] {
       &, &:hover {
         color: var(--mantine-color-blue-4);
-        background-color: --alpha(var(--mantine-color-blue-6), 0.2);
+        background-color: alpha(var(--mantine-color-blue-6), 0.2);
         padding: 0 var(--mantine-spacing-lg);
       }
     }

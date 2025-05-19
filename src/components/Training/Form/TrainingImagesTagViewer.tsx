@@ -43,7 +43,7 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import { titleCase } from '~/utils/string-helpers';
-import styles from './TrainingImagesTagViewer.module.scss';
+import styles from './TrainingImagesTagViewer.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const TrainingImagesLabelTypeSelect = ({

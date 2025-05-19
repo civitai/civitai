@@ -8,13 +8,13 @@
 }
 
 .selectedRow {
-  border: 2px solid --alpha(var(--mantine-color-green-5), 0.7);
+  border: 2px solid alpha(var(--mantine-color-green-5), 0.7);
 }
 
 .paperRow {
   cursor: pointer;
 
   &:hover {
-    background-color: --alpha(var(--mantine-color-blue-2), 0.1);
+    background-color: alpha(var(--mantine-color-blue-2), 0.1);
   }
 }
