@@ -214,7 +214,7 @@ export const processCompleteBuzzTransaction = async (
       fromAccountId: 0,
       toAccountId: userId,
       toAccountType: 'generation',
-      externalTransactionId: transaction.id,
+      externalTransactionId: `${transaction.id}-bulk-reward`,
       type: TransactionType.Purchase,
       description: `A total of ${numberWithCommas(
         blueBuzzAdded
