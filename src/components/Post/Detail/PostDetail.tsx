@@ -372,7 +372,9 @@ export function PostDetailContent({ postId }: Props) {
                     hiddenExplained.hiddenByBrowsingSettings.length && (
                       <>
                         <Alert>
-                          Some of your images are hidden to other users due to our policies.
+                          Some of your images are hidden due to our policies. These may be removed
+                          in the near future. if you believe this was a mistake, please contact
+                          support.
                         </Alert>
 
                         <Paper component={Center} p="xl" mih={300} withBorder>
