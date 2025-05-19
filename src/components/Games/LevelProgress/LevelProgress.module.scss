@@ -24,7 +24,7 @@
   }
 }
 
-:global(.dark) {
+:global([data-mantine-color-scheme="dark"]) {
   .raterBadge {
     background-color: theme('colors.dark.4');
   }

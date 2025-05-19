@@ -137,7 +137,7 @@ export function HomeTabs() {
   const options = filterHomeOptions(features);
 
   return (
-    <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden">
+    <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden text-black dark:text-white">
       {options.map(({ key, ...value }) => {
         return (
           <Button

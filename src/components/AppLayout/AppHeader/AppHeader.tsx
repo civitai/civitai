@@ -1,4 +1,4 @@
-import { ActionIcon, AppShell, Button, Divider, Grid } from '@mantine/core';
+import { Button, Divider, Grid } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { ReactElement, RefObject, useRef, useState } from 'react';
@@ -90,7 +90,7 @@ export function AppHeader({
         >
           {renderSearchComponent({ onSearchDone, isMobile: false })}
         </Grid.Col>
-        <Grid.Col span="auto" className="flex items-center justify-end gap-3 @max-md:hidden">
+        <Grid.Col span="auto" className="@max-md:hidden flex items-center justify-end gap-3">
           <div className="flex items-center gap-3">
             {!isMuted && <CreateMenu />}
             {currentUser && (

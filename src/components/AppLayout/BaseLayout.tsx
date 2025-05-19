@@ -4,8 +4,7 @@ import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvi
 import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
 import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
- import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Flags } from '~/shared/utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 const OnboardingWizard = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));

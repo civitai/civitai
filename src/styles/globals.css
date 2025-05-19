@@ -3,12 +3,16 @@
   --footer-height: 45px;
 }
 
-@layer tailwind {
+@layer base, mantine, tailwind, utilities;
+
+@layer base {
   @tailwind base;
 }
 
-@tailwind components;
-@tailwind utilities;
+@layer tailwind {
+  @tailwind components;
+  @tailwind utilities;
+}
 
 html,
 body {
@@ -381,7 +385,7 @@ ol {
     box-shadow: inset 0 2px theme('colors.gray.2');
   }
 
-  .dark .shadow-topper {
+  [data-mantine-color-scheme="dark"] .shadow-topper {
     box-shadow: inset 0 2px theme('colors.dark.4');
   }
 
@@ -393,7 +397,7 @@ ol {
     @apply absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2;
   }
 
-  .dark .card {
+  [data-mantine-color-scheme="dark"] .card {
     @apply bg-dark-6 shadow-dark-8 border-dark-4;
   }
 

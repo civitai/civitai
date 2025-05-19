@@ -77,7 +77,7 @@ export function UserMenu() {
           onClick={() => setOpen((o) => !o)}
         >
           <div
-            className={clsx('flex items-center gap-2 @max-md:hidden', {
+            className={clsx('@max-md:hidden flex items-center gap-2', {
               ['hidden']: !currentUser,
             })}
           >
@@ -87,7 +87,7 @@ export function UserMenu() {
           <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
         </UnstyledButton>
       </Popover.Target>
-      <Popover.Dropdown className="flex flex-col p-0 @max-md:mt-2 @max-md:h-[calc(100%-var(--header-height))]">
+      <Popover.Dropdown className="@max-md:mt-2 @max-md:h-[calc(100%-var(--header-height))] flex flex-col p-0">
         <UserMenuCtx.Provider value={{ handleClose: () => setOpen(false) }}>
           <PopoverContent />
         </UserMenuCtx.Provider>
@@ -186,19 +186,13 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
         )}
       </div>
       <div className="flex gap-3 border-t border-gray-3 px-3 py-2 dark:border-dark-4">
-        <Tooltip label="Color scheme">
+        <Tooltip label={colorScheme === 'dark' ? 'Light mode' : 'Dark mode'}>
           <LegacyActionIcon
             color="gray"
             variant="default"
             onClick={() => toggleColorScheme()}
             size="lg"
             className="flex-1"
-            style={{
-              backgroundColor:
-                colorScheme === 'dark'
-                  ? theme.colors.dark[getPrimaryShade(theme, colorScheme)]
-                  : theme.colors.gray[0],
-            }}
           >
             {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
           </LegacyActionIcon>

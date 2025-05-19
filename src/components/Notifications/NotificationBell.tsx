@@ -36,15 +36,11 @@ export function NotificationBell() {
           size={16}
           offset={4}
           className="flex items-center text-sm font-bold"
-          styles={{
-            indicator: {
-              height: '20px !important',
-              cursor: 'pointer',
-            },
+          classNames={{
+            indicator: 'cursor-pointer h-[20px]',
           }}
           disabled={count.all <= 0}
           withBorder
-          inline
         >
           <LegacyActionIcon variant="subtle" color="gray">
             <IconBell />

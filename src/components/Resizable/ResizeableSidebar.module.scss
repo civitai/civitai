@@ -45,7 +45,7 @@
   }
 }
 
-:global(.dark) {
+:global([data-mantine-color-scheme="dark"]) {
   .resizer {
     &:hover, &:active {
       background-color: theme('colors.blue.8');
