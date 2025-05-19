@@ -803,9 +803,9 @@ export const updateSubscriptionPlan = async ({
           discount: discount
             ? {
                 id: discount.id,
-                effectiveFrom: 'immediately',
+                effectiveFrom: 'next_billing_period',
               }
-            : null,
+            : undefined,
         });
       } catch (e) {
         logToAxiom({

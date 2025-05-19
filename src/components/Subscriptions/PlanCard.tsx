@@ -88,7 +88,9 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     ? subscription?.price.id ?? product.defaultPriceId
     : product.defaultPriceId;
   const [priceId, setPriceId] = useState<string | null>(
-    product.prices.find((p) => p.id === defaultPriceId)?.id ?? product.prices[0].id
+    product.prices.find((p) => p.id === defaultPriceId)?.id ??
+      product.prices.find((p) => p.currency.toLowerCase() === 'usd')?.id ??
+      product.prices[0].id
   );
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
   const isSameInterval = _isActivePlan && subscription?.price.interval === price.interval;
