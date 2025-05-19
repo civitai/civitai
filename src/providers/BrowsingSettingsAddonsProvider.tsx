@@ -35,17 +35,17 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
   const browsingLevel = useBrowsingLevelDebounced();
 
   const settings = useMemo(() => {
-    if (currentUser?.isModerator) {
-      // Mods will always see the default values
-      return {
-        disableMinor: true,
-        disablePoi: true,
-        excludedTagIds: [],
-        excludedFooterLinks: [],
-        generationDefaultValues: {},
-        generationMinValues: {},
-      };
-    }
+    // if (currentUser?.isModerator) {
+    //   // Mods will always see the default values
+    //   return {
+    //     disableMinor: true,
+    //     disablePoi: true,
+    //     excludedTagIds: [],
+    //     excludedFooterLinks: [],
+    //     generationDefaultValues: {},
+    //     generationMinValues: {},
+    //   };
+    // }
 
     return data.reduce(
       (acc, elem) => {
