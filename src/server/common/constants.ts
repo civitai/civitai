@@ -1353,3 +1353,26 @@ export const buzzBulkBonusMultipliers = [
   [300000, 1.15],
   [400000, 1.2],
 ];
+
+export const specialCosmeticRewards = {
+  annualRewards: {
+    gold: [
+      870, // gold annual badge
+      864, // cyan contentframe - gold annual
+      865, // danger yellow contentframe - gold annual
+    ],
+    silver: [
+      869, // silver annual badge
+      863, // sword avatar - silver annual
+      862, // robot background - silver annual
+    ],
+    bronze: [
+      868, // bronze annual badge
+      867, // poiny avatarframe - bronze annual
+    ],
+  },
+  bulkBuzzRewards: [
+    866, // bulk buzz buy - badge
+    871, // bulk buzz buy - background
+  ],
+};
