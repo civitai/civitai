@@ -5,6 +5,7 @@ import { booleanString } from '~/utils/zod-helpers';
 export type GetPlansSchema = z.infer<typeof getPlansSchema>;
 export const getPlansSchema = z.object({
   paymentProvider: z.nativeEnum(PaymentProvider).optional(),
+  interval: z.enum(['month', 'year']).optional(),
 });
 
 export type GetUserSubscriptionInput = z.infer<typeof getUserSubscriptionSchema>;
