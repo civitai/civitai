@@ -87,8 +87,8 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   },
   {
     key: 'contact-us',
-    href: '/content/contact-us',
-    children: 'Contact Us',
+    href: '/content/complaints',
+    children: 'Complaints',
   },
   {
     key: 'careers',
