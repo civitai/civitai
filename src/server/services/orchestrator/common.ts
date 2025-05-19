@@ -543,9 +543,8 @@ function formatVideoGenStep({
   resources: GenerationResource[];
 }) {
   const { input, output, jobs } = step as VideoGenStep;
-  const videoMetadata = step.metadata as { params?: VideoGenerationSchema2 };
-  let { params } = videoMetadata;
-  if (!params) params = {};
+  const videoMetadata = step.metadata as { params: VideoGenerationSchema2 };
+  const params = videoMetadata.params ?? {};
 
   // handle legacy source image
   let sourceImage = 'sourceImage' in params ? params.sourceImage : undefined;
@@ -634,7 +633,9 @@ function formatVideoGenStep({
       )
     : undefined;
 
-  if (params.type === 'txt2vid' || params.type === 'img2vid') params.process = params.type;
+  // TODO - come up with a better way to handle jsonb data type mismatches
+  if ('type' in params && (params.type === 'txt2vid' || params.type === 'img2vid'))
+    params.process = params.type;
   if (baseModel === 'WanVideo') {
     if (params.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
     else baseModel = 'WanVideo14B_I2V_720p';
