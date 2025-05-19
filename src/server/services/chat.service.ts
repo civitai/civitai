@@ -1,21 +1,19 @@
-import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { find as findLinks } from 'linkifyjs';
 import { unfurl } from 'unfurl.js';
-// I don't think the server should rely on FE code, but it's a bit too much to refactor right now.
-import { linkifyOptions } from '~/components/Chat/util';
+import { chatBlocklist, linkifyOptions } from '~/components/Chat/util';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
+import type { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getChatHash } from '~/server/utils/chat';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-// We should not be using /types/router here, but it's a bit too much to refactor right now.
-import { ChatAllMessages, ChatCreateChat } from '~/types/router';
+import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
+import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 
 export const maxChats = 1000;
 export const maxChatsPerDay = 10;
@@ -221,6 +219,13 @@ export const createMessage = async ({
       const blockedByAll = otherMembers.every((cm) => blockedUserIds.includes(cm.userId));
       if (blockedByAll) {
         throw throwBadRequestError(`Unable to post in this chat`);
+      }
+    }
+
+    for (const blockRegex of chatBlocklist) {
+      if (blockRegex.test(content)) {
+        console.log(blockRegex, content);
+        throw throwBadRequestError(`Blocked words found.`);
       }
     }
   }

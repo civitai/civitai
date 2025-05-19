@@ -1,8 +1,10 @@
 import { Anchor, Text } from '@mantine/core';
 import type { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
+import pluralize from 'pluralize';
 import React, { ReactElement } from 'react';
-import { constants } from '~/server/common/constants';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { constants } from '~/server/common/constants';
+import blockedWords from '~/utils/metadata/lists/blocklist-dms.json';
 
 export const getLinkHref = (href: string | undefined) => {
   if (!href) return;
@@ -65,5 +67,22 @@ export const linkifyOptions: Opts = {
   render: renderLink,
   validate: validateLink,
 };
+
+const wordReplace = (word: string) => {
+  return word
+    .replace(/i/g, '[i|l|1]')
+    .replace(/o/g, '[o|0]')
+    .replace(/s/g, '[s|z]')
+    .replace(/e/g, '[e|3]');
+};
+
+export const chatBlocklist = (blockedWords as [string, boolean][])
+  .map(([word, isUrl]) => {
+    if (isUrl) return [new RegExp(`.*${word}.*`, 'i')];
+    const modWord = wordReplace(word);
+    const pluralWord = wordReplace(pluralize(word));
+    return [new RegExp(`\\b${modWord}\\b`, 'i'), new RegExp(`\\b${pluralWord}\\b`, 'i')];
+  })
+  .flat();
 
 export const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);
