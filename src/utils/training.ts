@@ -35,6 +35,7 @@ export const trainingModelInfo: {
     air: string;
     baseModel: BaseModel;
     isNew: boolean;
+    disabled?: boolean;
   };
 } = {
   sd_1_5: {
@@ -132,8 +133,8 @@ export const trainingModelInfo: {
   },
   //
   hy_720_fp8: {
-    label: '720p fp8',
-    pretty: 'Hunyuan 720p fp8',
+    label: '720p [fp8]',
+    pretty: 'Hunyuan 720p [fp8]',
     type: 'hunyuan',
     description: 'Performant video generation.',
     // air: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512',
@@ -141,15 +142,24 @@ export const trainingModelInfo: {
     baseModel: 'Hunyuan Video',
     isNew: false,
   },
-  wan_2_1_720p: {
-    label: '2.1 720p',
-    pretty: 'Wan 2.1 720p',
+  wan_2_1_t2v_14b: {
+    label: '2.1 T2V [14B]',
+    pretty: 'Wan 2.1 T2V [14B]',
     type: 'wan',
-    description: 'Performant and high quality video generation.',
-    // air: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
-    air: 'urn:air:wanvideo:vae:huggingface:Wan-AI/Wan2.1-I2V-14B-720P@main/Wan2.1_VAE.pth',
+    description: 'Performant and high quality video generation (for T2V).',
+    air: 'urn:air:wanvideo:vae:huggingface:Wan-AI/Wan2.1-I2V-14B-720P@main/Wan2.1_VAE.pth', // actually t2v, uses HF
     baseModel: 'Wan Video',
     isNew: false,
+  },
+  wan_2_1_i2v_14b_720p: {
+    label: '2.1 I2V [14B, 720p]',
+    pretty: 'Wan 2.1 I2V [14B, 720p]',
+    type: 'wan',
+    description: 'Performant and high quality video generation (for I2V).',
+    air: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
+    baseModel: 'Wan Video',
+    isNew: true,
+    disabled: true, // TODO remove
   },
 };
 

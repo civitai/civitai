@@ -1,10 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
-
-import { env } from '~/env/server';
 import { getGenerationConfig } from '~/server/common/constants';
-
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { baseModelEngineMap } from '~/server/orchestrator/generation/generation.config';
@@ -17,7 +14,6 @@ import {
   GetGenerationDataSchema,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
-
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
@@ -40,6 +36,7 @@ import {
   baseModelResourceTypes,
   fluxUltraAir,
   getBaseModelFromResources,
+  getBaseModelFromResourcesWithDefault,
   getBaseModelSet,
   getBaseModelSetType,
   getResourceGenerationType,
@@ -318,7 +315,7 @@ async function getMediaGenerationData({
       };
     })
   );
-  const baseModel = getBaseModelFromResources(
+  let baseModel = getBaseModelFromResources(
     resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
 
@@ -383,15 +380,21 @@ async function getMediaGenerationData({
       };
     case 'video':
       const meta = media.meta as Record<string, any>;
-      meta.engine = meta.engine ?? baseModelEngineMap[baseModel];
+      meta.engine = meta.engine ?? (baseModel ? baseModelEngineMap[baseModel] : undefined);
+      if (meta.type === 'txt2vid' || meta.type === 'img2vid') meta.process = meta.type;
+      if (baseModel === 'WanVideo') {
+        if (meta.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
+        else baseModel = 'WanVideo14B_I2V_720p';
+      }
       return {
         type: 'video',
         remixOfId: media.id, // TODO - remove,
         remixOf,
         resources,
         params: {
-          ...(media.meta as Record<string, any>),
+          ...meta,
           ...common,
+          baseModel,
           width,
           height,
         },
@@ -422,7 +425,7 @@ const getModelVersionGenerationData = async ({
   }
 
   const deduped = uniqBy(resources, 'id');
-  const baseModel = getBaseModelFromResources(
+  const baseModel = getBaseModelFromResourcesWithDefault(
     deduped.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
 
