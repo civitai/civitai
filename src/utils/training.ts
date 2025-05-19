@@ -35,6 +35,7 @@ export const trainingModelInfo: {
     air: string;
     baseModel: BaseModel;
     isNew: boolean;
+    disabled?: boolean;
   };
 } = {
   sd_1_5: {
@@ -158,6 +159,7 @@ export const trainingModelInfo: {
     air: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
     baseModel: 'Wan Video',
     isNew: true,
+    disabled: true, // TODO remove
   },
 };
 
