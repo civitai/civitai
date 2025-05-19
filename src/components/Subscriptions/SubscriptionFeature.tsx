@@ -8,6 +8,7 @@ import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 const useStyles = createStyles((theme) => ({
@@ -43,11 +44,13 @@ export const SubscriptionFeature = ({
   const featureFlags = useFeatureFlags();
   const { subscription } = useActiveSubscription();
 
-  if (!currentUser || !subscription || !featureFlags.membershipsV2) {
+  if (!currentUser || !featureFlags.membershipsV2) {
     return null;
   }
 
-  const { image } = getPlanDetails(subscription.product, featureFlags);
+  const { image } = !subscription
+    ? { image: null }
+    : getPlanDetails(subscription.product, featureFlags);
 
   return (
     <Paper className={classes.card} py="xs">
@@ -65,16 +68,19 @@ export const SubscriptionFeature = ({
 };
 
 export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: number }) => {
-  const currentUser = useCurrentUser();
   const { subscription } = useActiveSubscription();
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const purchasesMultiplier = multipliers.purchasesMultiplier ?? 1;
+  const { yellowBuzzAdded, blueBuzzAdded } = getBuzzBulkMultiplier({
+    buzzAmount,
+    purchasesMultiplier,
+  });
 
-  if (multipliersLoading || !subscription || purchasesMultiplier == 1) {
+  if (multipliersLoading || ((!subscription || yellowBuzzAdded === 0) && blueBuzzAdded === 0)) {
     return null;
   }
 
-  const metadata = subscription.product.metadata as SubscriptionProductMetadata;
+  const metadata = subscription?.product.metadata as SubscriptionProductMetadata;
 
   return (
     <SubscriptionFeature
@@ -82,15 +88,21 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
         <Group noWrap spacing={2}>
           <CurrencyIcon size={20} />
           <span>
-            {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier - buzzAmount))} Bonus Buzz
-            Free!
+            {numberWithCommas(Math.floor(yellowBuzzAdded + blueBuzzAdded))} Bonus Buzz Free!
           </span>
         </Group>
       }
-      subtitle={`As a ${capitalize(metadata.tier)} member you get ${(
-        (purchasesMultiplier - 1) *
-        100
-      ).toFixed(0)}% bonus Buzz on each purchase.`}
+      subtitle={
+        subscription
+          ? `As a ${capitalize(metadata.tier)} member you get ${Math.round(
+              (purchasesMultiplier - 1) * 100
+            )}% bonus Buzz on each purchase (${numberWithCommas(yellowBuzzAdded)} Yellow Buzz). ${
+              blueBuzzAdded > 0
+                ? `Buying in Bulk will also add ${numberWithCommas(blueBuzzAdded)} Extra Blue Buzz!`
+                : ''
+            } `
+          : `Buying in Bulk will also add ${numberWithCommas(blueBuzzAdded)} Extra Blue Buzz!`
+      }
     />
   );
 };

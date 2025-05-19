@@ -43,6 +43,7 @@ import {
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { getPlans } from '~/server/services/subscriptions.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
+import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import {
   handleLogError,
   sleep,
@@ -54,6 +55,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -184,23 +186,49 @@ export const processCompleteBuzzTransaction = async (
   const userId = meta.user_id ?? meta.userId;
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
   const amount = meta.buzz_amount ?? meta.buzzAmount;
-  const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
+
+  const { blueBuzzAdded, totalYellowBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
+    buzzAmount: amount,
+    purchasesMultiplier,
+  });
 
   // Pay the user:
-  const buzzTransaction = await createBuzzTransaction({
-    amount: buzzAmount,
+  await createBuzzTransaction({
+    amount: totalYellowBuzz,
     fromAccountId: 0,
     toAccountId: userId,
     externalTransactionId: transaction.id,
     type: TransactionType.Purchase,
     description: `Purchase of ${amount} Buzz. ${
       purchasesMultiplier && purchasesMultiplier > 1 ? 'Multiplier applied due to membership. ' : ''
-    }A total of ${buzzAmount} Buzz was added to your account.`,
+    }A total of ${numberWithCommas(totalYellowBuzz)} Buzz was added to your account.`,
     details: {
       paddleTransactionId: transaction.id,
       ...buzzTransactionExtras,
     },
   });
+
+  if (blueBuzzAdded > 0) {
+    await createBuzzTransaction({
+      amount: blueBuzzAdded,
+      fromAccountId: 0,
+      toAccountId: userId,
+      toAccountType: 'generation',
+      externalTransactionId: `${transaction.id}-bulk-reward`,
+      type: TransactionType.Purchase,
+      description: `A total of ${numberWithCommas(
+        blueBuzzAdded
+      )} Blue Buzz was added to your account for Bulk purchase.`,
+      details: {
+        paddleTransactionId: transaction.id,
+        ...buzzTransactionExtras,
+      },
+    });
+  }
+
+  if (bulkBuzzMultiplier > 1) {
+    // TODO: Grant cosmetic :shrugh:
+  }
 };
 
 export const purchaseBuzzWithSubscription = async ({
