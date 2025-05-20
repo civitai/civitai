@@ -7,6 +7,7 @@ import { withController } from '~/libs/form/hoc/withController';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
 import { GenerationResource } from '~/server/services/generation/generation.service';
+import { ResourceSelectHandler } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
 export type ResourceSelectMultipleProps = {
   limit?: number;
@@ -40,29 +41,11 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
     },
     ref
   ) => {
-    // const { types } = options;
-    const types = options.resources?.map((x) => x.type);
-    const baseModels = [
-      ...new Set(
-        options.resources?.flatMap((x) => [...(x.baseModels ?? []), ...(x.partialSupport ?? [])]) ??
-          []
-      ),
-    ];
+    const { types, select, getValues } = ResourceSelectHandler(options);
 
     // _types used to set up groups
-    const _types = [...new Set(types ?? value?.map((x) => x.model.type) ?? [])];
-    const _values =
-      useMemo(
-        () =>
-          types
-            ? value?.filter(
-                (x) =>
-                  types.includes(x.model.type) &&
-                  (!!baseModels?.length ? baseModels.includes(x.baseModel) : true)
-              )
-            : value,
-        [value]
-      ) ?? [];
+    const _types = [...new Set(!!types.length ? types : value?.map((x) => x.model.type))];
+    const _values = useMemo(() => getValues(value), [value]) ?? [];
     const groups = _types
       .map((type) => ({
         type,
@@ -72,20 +55,20 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
       .filter((x) => !!x.resources.length);
     const canAdd = !limit || _values.length < limit;
 
-    const handleAdd = (resource: GenerationResource) => {
-      if (!canAdd) return;
-      if (
-        selectSource === 'generation' &&
-        resource &&
-        !resource.canGenerate &&
-        resource.substitute?.canGenerate
-      ) {
-        onChange?.([..._values, { ...resource, ...resource.substitute }]);
-      } else {
-        onChange?.([..._values, resource]);
-      }
-      onCloseModal?.();
-    };
+    // const handleAdd = (resource: GenerationResource) => {
+    //   if (!canAdd) return;
+    //   if (
+    //     selectSource === 'generation' &&
+    //     resource &&
+    //     !resource.canGenerate &&
+    //     resource.substitute?.canGenerate
+    //   ) {
+    //     onChange?.([..._values, { ...resource, ...resource.substitute }]);
+    //   } else {
+    //     onChange?.([..._values, resource]);
+    //   }
+    //   onCloseModal?.();
+    // };
 
     const handleRemove = (id: number) => {
       const filtered = [..._values.filter((x) => x.id !== id)];
@@ -108,12 +91,13 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
     }, [value]); //eslint-disable-line
 
     const handleOpenModal = () => {
-      openResourceSelectModal({
+      select({
         title: modalTitle ?? buttonLabel,
-        onSelect: handleAdd,
-        options,
-        onClose: onCloseModal,
         selectSource,
+        excludedIds: _values.map((x) => x.id),
+      }).then((resource) => {
+        if (!resource) return;
+        onChange?.([..._values, resource]);
       });
     };
 
