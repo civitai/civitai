@@ -17,6 +17,8 @@ import { GenerationReactType } from '~/server/common/enums';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { titleCase } from '~/utils/string-helpers';
 
+const tagGroups = {};
+
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state.generation,

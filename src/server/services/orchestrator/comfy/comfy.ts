@@ -21,6 +21,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -33,6 +34,7 @@ export async function createComfyStep(
     inputParams.seed ?? getRandomInt(inputParams.quantity, maxRandomSeed) - inputParams.quantity;
 
   const workflowDefinition = await getWorkflowDefinition(inputParams.workflow);
+  if (workflowDefinition.type === 'txt2img') input.params.sourceImage = null;
   const { resources, params } = await parseGenerateImageInput({
     ...input,
     workflowDefinition,
@@ -110,14 +112,23 @@ export async function createComfy(
     experimental?: boolean;
   }
 ) {
-  const { user, tips, params, experimental } = args;
   const step = await createComfyStep(args);
+  const { user, tips, params, experimental } = args;
   // console.log(JSON.stringify(step.input.comfyWorkflow));
   // throw new Error('stop');
+  const baseModel = 'baseModel' in params ? params.baseModel : undefined;
+  const process = !!params.sourceImage ? 'img2img' : 'txt2img';
   const workflow = (await submitWorkflow({
     token: args.token,
     body: {
-      tags: [WORKFLOW_TAGS.GENERATION, WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
+      tags: [
+        WORKFLOW_TAGS.GENERATION,
+        WORKFLOW_TAGS.IMAGE,
+        params.workflow,
+        baseModel,
+        process,
+        ...args.tags,
+      ].filter(isDefined),
       steps: [step],
       tips,
       experimental,

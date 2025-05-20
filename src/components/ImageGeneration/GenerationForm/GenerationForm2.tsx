@@ -263,6 +263,8 @@ export function GenerationFormContent() {
       }
     }
 
+    if (workflowDefinition?.type === 'txt2img') params.sourceImage = null;
+
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
       .filter((x) => x.canGenerate !== false)
