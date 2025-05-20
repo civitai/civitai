@@ -642,6 +642,18 @@ function GeneratedImageWorkflowMenuItems({
     });
   }
 
+  async function handleImg2Vid() {
+    generationStore.setData({
+      resources: [],
+      params: {
+        ...(step.params as any),
+        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+      },
+      type: 'video',
+      engine: useGenerationFormStore.getState().engine,
+    });
+  }
+
   async function handleSelectWorkflow(workflow: string) {
     handleGenerate({ workflow, sourceImage: image.url as any }); // TODO - see if there is a good way to handle this type mismatch. We're converting a string to a sourceImage object after we pass the data to the generation store
   }
@@ -776,19 +788,7 @@ function GeneratedImageWorkflowMenuItems({
       {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
       {!isBlocked && !!img2vidConfigs.length && (
         <>
-          <Menu.Item
-            onClick={async () =>
-              handleGenerate(
-                { sourceImage: await getSourceImageFromUrl({ url: image.url }) },
-                {
-                  type: 'video',
-                  engine: useGenerationFormStore.getState().engine,
-                }
-              )
-            }
-          >
-            Image To Video
-          </Menu.Item>
+          <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
       {/* {!isBlocked && image.type === 'video' && (
