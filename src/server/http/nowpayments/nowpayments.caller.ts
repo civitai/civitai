@@ -25,8 +25,12 @@ class NOWPaymentsCaller extends HttpCaller {
     });
   }
 
-  static async getInstance(): Promise<NOWPaymentsCaller> {
-    return new NOWPaymentsCaller(undefined);
+  static getInstance(): NOWPaymentsCaller {
+    if (!this.instance) {
+      this.instance = new NOWPaymentsCaller();
+    }
+
+    return this.instance;
   }
   async isAPIHealthy(): Promise<boolean | null> {
     const response = await this.getRaw(`/status`);
@@ -47,6 +51,8 @@ class NOWPaymentsCaller extends HttpCaller {
       return null;
     }
     const data = await response.json();
+
+    // console.log('Currencies', data);
     return NOWPayments.currenciesResponseSchema.parse(data);
   }
 
@@ -178,4 +184,4 @@ class NOWPaymentsCaller extends HttpCaller {
   }
 }
 
-export default NOWPaymentsCaller.getInstance;
+export default NOWPaymentsCaller.getInstance();

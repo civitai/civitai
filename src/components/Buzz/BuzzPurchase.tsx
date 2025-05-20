@@ -42,10 +42,11 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
+import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
-type Props = {
+export type BuzzPurchaseProps = {
   message?: string;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   onPurchaseSuccess?: () => void;
@@ -61,7 +62,7 @@ const BuzzPurchasePaymentButton = ({
   onPurchaseSuccess,
   purchaseSuccessMessage,
   disabled,
-}: Pick<Props, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
+}: Pick<BuzzPurchaseProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
@@ -202,7 +203,7 @@ export const BuzzPurchase = ({
   onCancel,
   purchaseSuccessMessage,
   ...props
-}: Props) => {
+}: BuzzPurchaseProps) => {
   const { classes, cx, theme } = useBuzzButtonStyles();
   const canUpgradeMembership = useCanUpgrade();
   const currentUser = useCurrentUser();
@@ -536,6 +537,14 @@ export const BuzzPurchase = ({
                   onValidate={onValidate}
                 />
               )} */}
+
+              <BuzzNowPaymentsButton
+                unitAmount={unitAmount}
+                buzzAmount={buzzAmount}
+                onPurchaseSuccess={onPurchaseSuccess}
+                disabled={!ctaEnabled}
+                purchaseSuccessMessage={purchaseSuccessMessage}
+              />
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">
                   Cancel

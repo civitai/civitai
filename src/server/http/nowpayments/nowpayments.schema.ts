@@ -126,7 +126,13 @@ export namespace NOWPayments {
   // Currencies
   export type CurrenciesResponse = z.infer<typeof currenciesResponseSchema>;
   export const currenciesResponseSchema = z.object({
-    currencies: z.array(z.string()),
+    currencies: z.array(
+      z.object({
+        min_amount: z.number(),
+        max_amount: z.number(),
+        currency: z.string(),
+      })
+    ),
   });
 
   // Balance
