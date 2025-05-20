@@ -619,17 +619,6 @@ export function getUpscaleFactor(original: GetUpscaleFactorProps, upscale: GetUp
   return Math.round((s2 / s1) * 10) / 10;
 }
 
-export const isMadeOnSite = (meta: ImageMetaProps | null) => {
-  if (!meta) return false;
-  return (
-    'civitaiResources' in meta ||
-    (!!meta.workflow &&
-      generationFormWorkflowConfigurations
-        .map((x) => x.key)
-        .some((v) => v === (meta.workflow as string)))
-  );
-};
-
 export function getScaledWidthHeight(width: number, height: number, factor: number) {
   const originRatio = width / height;
   const wf = width * factor;

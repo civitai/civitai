@@ -50,10 +50,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
-  generationFormWorkflowConfigurations,
-  isMadeOnSite,
-} from '~/shared/constants/generation.constants';
-import {
   getVideoGenerationConfig,
   videoGenerationConfig2,
 } from '~/server/orchestrator/generation/generation.config';
@@ -86,6 +82,7 @@ import {
   UpdatePostImageInput,
 } from './../schema/post.schema';
 import { isValidAIGeneration } from '~/utils/image-utils';
+import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
 type GetAllPostsRaw = {
   id: number;
