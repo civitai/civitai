@@ -207,7 +207,7 @@ export default Page(
                             width={700}
                             contain
                           />
-                          {playerData.rankType !== NewOrderRankType.Acolyte && (
+                          {currentUser?.isModerator && (
                             <ActionIcon
                               component={Link}
                               href={`/images/${currentImage.id}`}
@@ -249,7 +249,6 @@ export default Page(
                       <NewOrderImageRatings
                         imageId={currentImage.id}
                         imageNsfwLevel={currentImage.nsfwLevel}
-                        ratings={currentImage.ratings}
                       />
                     )}
                   </div>

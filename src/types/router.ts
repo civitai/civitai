@@ -162,3 +162,4 @@ export type GetJudgmentHistoryItem = NewOrderRouter['getHistory']['items'][numbe
 export type GetPlayer = NewOrderRouter['getPlayer'];
 export type GetPlayersItem = NewOrderRouter['getPlayers']['items'][number];
 export type GetImagesQueueItem = NewOrderRouter['getImagesQueue'][number];
+export type GetImageRaters = NewOrderRouter['getImageRaters'];

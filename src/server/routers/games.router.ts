@@ -7,6 +7,7 @@ import {
   addImageRatingSchema,
   cleanseSmiteSchema,
   getHistorySchema,
+  getImageRatersSchema,
   getImagesQueueSchema,
   getPlayersInfiniteSchema,
   resetPlayerByIdSchema,
@@ -16,6 +17,7 @@ import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz
 import {
   addImageRating,
   cleanseSmite,
+  getImageRaters,
   getImagesQueue,
   getPlayerById,
   getPlayerHistory,
@@ -31,6 +33,7 @@ import {
   protectedProcedure,
   router,
 } from '~/server/trpc';
+import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 
 const newGameSchema = z.object({
@@ -137,5 +140,15 @@ export const gamesRouter = router({
       .use(isFlagProtected('newOrderGame'))
       .use(isFlagProtected('newOrderReset'))
       .mutation(({ input }) => resetPlayer({ ...input, withNotification: true })),
+    getImageRaters: moderatorProcedure
+      .input(getImageRatersSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .query(async ({ input }) => {
+        const ratings = await getImageRaters({ imageIds: [input.imageId] });
+        if (!ratings || !ratings[input.imageId])
+          return { [NewOrderRankType.Knight]: [], [NewOrderRankType.Templar]: [] };
+
+        return ratings[input.imageId];
+      }),
   }),
 });
