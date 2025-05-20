@@ -37,14 +37,14 @@ export const SubscriptionFeature = ({
     >
       <Group wrap="nowrap">
         {image && <EdgeMedia src={image} style={{ width: 50 }} />}
-        <Stack spacing={2}>
+        <Stack gap={2}>
           <Text className="text-base font-semibold text-black dark:text-white">{title}</Text>
           {typeof subtitle === 'string' ? (
             <Text className="text-sm" lh={1.2}>
               {subtitle}
             </Text>
           ) : (
-            subtitle(classes.subtitle)
+            subtitle('text-sm')
           )}
         </Stack>
       </Group>
@@ -78,7 +78,7 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
         </Group>
       }
       subtitle={(className: string) => (
-        <Stack spacing="sm">
+        <Stack gap="sm">
           <Text className={className}>
             {subscription
               ? `As a ${capitalize(metadata.tier)} member you get ${Math.round(

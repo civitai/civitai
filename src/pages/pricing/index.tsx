@@ -287,7 +287,7 @@ export default function Pricing() {
               maw="calc(50% - 8px)"
               mx="auto"
             >
-              <Group spacing="xs" noWrap align="flex-start">
+              <Group gap="xs" wrap="nowrap" align="flex-start">
                 <Text size="md">
                   You&rsquo;re currently on an annual plan. You can upgrade to a different annual
                   plan or cancel your current one at any time. However, switching to a monthly plan

@@ -464,7 +464,7 @@ export const BuzzPurchase = ({
             >
               <Accordion.Item value="buyBulk">
                 <Accordion.Control px="md" py={8}>
-                  <Group spacing={8}>
+                  <Group gap={8}>
                     <Text>Buy In Bulk!</Text>
                   </Group>
                 </Accordion.Control>
@@ -484,30 +484,30 @@ export const BuzzPurchase = ({
                           return (
                             <tr key={min}>
                               <td>
-                                <Group noWrap spacing={0}>
+                                <Group wrap="nowrap" gap={0}>
                                   <CurrencyIcon size={16} currency={Currency.BUZZ} />
-                                  <Text size="sm" color="dimmed">
+                                  <Text size="sm" c="dimmed">
                                     {numberWithCommas(min)}
                                   </Text>
                                 </Group>
                               </td>
                               <td>
-                                <Group noWrap spacing={0}>
+                                <Group wrap="nowrap" gap={0}>
                                   <CurrencyIcon size={16} currency={Currency.BUZZ} />
-                                  <Text size="sm" color="dimmed">
+                                  <Text size="sm" c="dimmed">
                                     {numberWithCommas(min * multiplier)}
                                   </Text>
                                 </Group>
                               </td>
                               <td>
-                                <Text size="sm" color="dimmed">
+                                <Text size="sm" c="dimmed">
                                   {Math.round((multiplier - 1) * 100)}%
                                 </Text>
                               </td>
                               <td>
-                                <Group noWrap spacing={0}>
+                                <Group wrap="nowrap" gap={0}>
                                   <CurrencyIcon size={16} currency={Currency.BUZZ} />
-                                  <Text size="sm" color="dimmed">
+                                  <Text size="sm" c="dimmed">
                                     {numberWithCommas(Math.floor(1000 * multiplier))}
                                   </Text>
                                 </Group>
@@ -517,7 +517,7 @@ export const BuzzPurchase = ({
                         })}
                       </tbody>
                     </Table>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       * Bulk bonus is Blue Buzz. It is not transferable to other users.
                     </Text>
                   </Stack>

@@ -43,7 +43,7 @@ function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: Props) {
           disabled={disabled}
         />
         <NumberInputWrapper
-          value={value}
+          value={value ?? undefined}
           onChange={onChange ? (v) => onChange(v ? Number(v) : undefined) : undefined}
           placeholder="Random"
           clearable
