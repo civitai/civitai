@@ -1,13 +1,6 @@
 import { z } from 'zod';
 
 export namespace NOWPayments {
-  export type EstimatePriceInput = z.infer<typeof estimatePriceInputSchema>;
-  export const estimatePriceInputSchema = z.object({
-    amount: z.number(),
-    currency_from: z.string().optional(),
-    currency_to: z.string().optional(),
-  });
-
   export type CreatePaymentInvoiceInput = z.infer<typeof createPaymentInvoiceInputSchema>;
   export const createPaymentInvoiceInputSchema = z.object({
     price_amount: z.number(),
@@ -86,5 +79,74 @@ export namespace NOWPayments {
     time_limit: z.number().nullable(),
     burning_percent: z.number().nullable(),
     expiration_estimate_date: z.string(),
+  });
+
+  // Estimate Price
+  export type EstimatePriceInput = z.infer<typeof estimatePriceInputSchema>;
+  export const estimatePriceInputSchema = z.object({
+    amount: z.number(),
+    currency_from: z.string().optional(),
+    currency_to: z.string().optional(),
+  });
+
+  export type EstimatePriceResponse = z.infer<typeof estimatePriceResponseSchema>;
+  export const estimatePriceResponseSchema = z.object({
+    currency_from: z.string(),
+    currency_to: z.string(),
+    amount_from: z.number(),
+    estimated_amount: z.number(),
+  });
+
+  // Minimum Payment Amount
+  export type MinAmountInput = z.infer<typeof minAmountInputSchema>;
+  export const minAmountInputSchema = z.object({
+    currency_from: z.string(),
+    currency_to: z.string(),
+  });
+
+  export type MinAmountResponse = z.infer<typeof minAmountResponseSchema>;
+  export const minAmountResponseSchema = z.object({
+    min_amount: z.number(),
+  });
+
+  // Exchange Rate
+  export type ExchangeRateInput = z.infer<typeof exchangeRateInputSchema>;
+  export const exchangeRateInputSchema = z.object({
+    currency_from: z.string(),
+    currency_to: z.string(),
+  });
+
+  export type ExchangeRateResponse = z.infer<typeof exchangeRateResponseSchema>;
+  export const exchangeRateResponseSchema = z.object({
+    currency_from: z.string(),
+    currency_to: z.string(),
+    rate: z.number(),
+  });
+
+  // Currencies
+  export type CurrenciesResponse = z.infer<typeof currenciesResponseSchema>;
+  export const currenciesResponseSchema = z.object({
+    currencies: z.array(z.string()),
+  });
+
+  // Balance
+  export type BalanceResponse = z.infer<typeof balanceResponseSchema>;
+  export const balanceResponseSchema = z.array(
+    z.object({
+      currency: z.string(),
+      balance: z.string(),
+    })
+  );
+
+  // Payout Currencies
+  export type PayoutCurrenciesResponse = z.infer<typeof payoutCurrenciesResponseSchema>;
+  export const payoutCurrenciesResponseSchema = z.object({
+    currencies: z.array(z.string()),
+  });
+
+  // Payments List
+  export type PaymentsListResponse = z.infer<typeof paymentsListResponseSchema>;
+  export const paymentsListResponseSchema = z.object({
+    payments: z.array(z.lazy(() => createPaymentResponseSchema)),
   });
 }
