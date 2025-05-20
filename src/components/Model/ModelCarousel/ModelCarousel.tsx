@@ -20,7 +20,7 @@ import { generationPanel } from '~/store/generation.store';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import classes from './ModelCarousel.module.scss';
+import classes from './ModelCarousel.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ModelCarousel(props: Props) {

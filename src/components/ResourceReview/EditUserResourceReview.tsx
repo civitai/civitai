@@ -16,7 +16,7 @@ import {
   ResourceReviewModel,
   ResourceReviewSimpleModel,
 } from '~/server/selectors/resourceReview.selector';
-import classes from './ResourceReview.module.scss';
+import classes from './EditUserResourceReview.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
