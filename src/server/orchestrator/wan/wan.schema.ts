@@ -53,7 +53,6 @@ const schema = baseVideoGenerationSchema.extend({
   duration: numberEnum(wanDuration).optional().catch(5),
   seed: seedSchema,
   resources: z.array(resourceSchema.passthrough()).nullable().default(null),
-  model: z.string().optional(),
 });
 
 export const wanGenerationConfig = VideoGenerationConfig2({
