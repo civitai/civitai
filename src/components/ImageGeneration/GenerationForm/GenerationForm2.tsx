@@ -1188,15 +1188,21 @@ export function GenerationFormContent() {
                                             : [
                                                 {
                                                   label: 'Fast',
-                                                  value: Number(10 + samplerCfgOffset).toString(),
+                                                  value: Math.round(
+                                                    Number(10 + samplerCfgOffset)
+                                                  ).toString(),
                                                 },
                                                 {
                                                   label: 'Balanced',
-                                                  value: Number(20 + samplerCfgOffset).toString(),
+                                                  value: Math.round(
+                                                    Number(20 + samplerCfgOffset)
+                                                  ).toString(),
                                                 },
                                                 {
                                                   label: 'High',
-                                                  value: Number(30 + samplerCfgOffset).toString(),
+                                                  value: Math.round(
+                                                    Number(30 + samplerCfgOffset)
+                                                  ).toString(),
                                                 },
                                               ]
                                         }
