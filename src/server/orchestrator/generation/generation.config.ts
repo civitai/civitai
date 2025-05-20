@@ -11,6 +11,10 @@ import { wanGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
 
 export const baseModelEngineMap: Partial<Record<BaseModelSetType, OrchestratorEngine2>> = {
   WanVideo: 'wan',
+  WanVideo14B_I2V_480p: 'wan',
+  WanVideo14B_I2V_720p: 'wan',
+  WanVideo14B_T2V: 'wan',
+  WanVideo1_3B_T2V: 'wan',
   HyV1: 'hunyuan',
 };
 

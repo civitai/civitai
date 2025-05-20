@@ -8,6 +8,7 @@ import {
   Input,
   Loader,
   Stack,
+  Table,
   Text,
   ThemeIcon,
   useComputedColorScheme,
@@ -26,11 +27,15 @@ import { BuzzPurchaseMultiplierFeature } from '~/components/Subscriptions/Subscr
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
-import { constants } from '~/server/common/constants';
+import { buzzBulkBonusMultipliers, constants } from '~/server/common/constants';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { Price } from '~/shared/utils/prisma/models';
-import { formatCurrencyForDisplay, formatPriceForDisplay } from '~/utils/number-helpers';
+import {
+  formatCurrencyForDisplay,
+  formatPriceForDisplay,
+  numberWithCommas,
+} from '~/utils/number-helpers';
 
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
@@ -433,6 +438,7 @@ export const BuzzPurchase = ({
                             setCustomAmount(Number(value ?? 0));
                           }}
                           w="80%"
+                          mt={-24}
                         />
                       </Group>
                       <Text size="xs" c="dimmed" mt="xs">
@@ -450,6 +456,75 @@ export const BuzzPurchase = ({
           )}
           <Stack gap="md" mt="md">
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
+
+            <Accordion
+              variant="contained"
+              classNames={{ item: classes.accordionItem }}
+              defaultValue="buyBulk"
+            >
+              <Accordion.Item value="buyBulk">
+                <Accordion.Control px="md" py={8}>
+                  <Group spacing={8}>
+                    <Text>Buy In Bulk!</Text>
+                  </Group>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <Stack>
+                    <Table>
+                      <thead>
+                        <tr>
+                          <th>Purchase</th>
+                          <th>Get</th>
+                          <th>Bonus %</th>
+                          <th>Buzz / $</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {buzzBulkBonusMultipliers.map(([min, multiplier]) => {
+                          return (
+                            <tr key={min}>
+                              <td>
+                                <Group noWrap spacing={0}>
+                                  <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                  <Text size="sm" color="dimmed">
+                                    {numberWithCommas(min)}
+                                  </Text>
+                                </Group>
+                              </td>
+                              <td>
+                                <Group noWrap spacing={0}>
+                                  <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                  <Text size="sm" color="dimmed">
+                                    {numberWithCommas(min * multiplier)}
+                                  </Text>
+                                </Group>
+                              </td>
+                              <td>
+                                <Text size="sm" color="dimmed">
+                                  {Math.round((multiplier - 1) * 100)}%
+                                </Text>
+                              </td>
+                              <td>
+                                <Group noWrap spacing={0}>
+                                  <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                  <Text size="sm" color="dimmed">
+                                    {numberWithCommas(Math.floor(1000 * multiplier))}
+                                  </Text>
+                                </Group>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </Table>
+                    <Text size="xs" color="dimmed">
+                      * Bulk bonus is Blue Buzz. It is not transferable to other users.
+                    </Text>
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
+
             <Group gap="xs" mt="md" wrap="nowrap">
               <BuzzPurchasePaymentButton
                 unitAmount={unitAmount}

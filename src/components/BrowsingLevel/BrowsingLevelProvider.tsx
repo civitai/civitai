@@ -1,13 +1,13 @@
+import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useState } from 'react';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { useDebouncedValue } from '@mantine/hooks';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { Flags } from '~/shared/utils';
-import { NsfwLevel } from '~/server/common/enums';
 
 type BrowsingModeProviderState = {
   forcedBrowsingLevel?: number;

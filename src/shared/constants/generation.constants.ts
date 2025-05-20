@@ -10,7 +10,6 @@ import {
   minDownscaleSize,
   Sampler,
 } from '~/server/common/constants';
-import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
@@ -138,8 +137,8 @@ export function getInjectablResources(baseModelSetType: BaseModelSetType) {
 
 export const whatIfQueryOverrides = {
   prompt: '',
-  negativePrompt: undefined,
-  seed: undefined,
+  negativePrompt: '',
+  seed: null,
   // image: undefined,
   nsfw: false,
   cfgScale: generation.defaultValues.cfgScale,
@@ -210,61 +209,6 @@ export const samplersToComfySamplers: Record<
   undefined: { sampler: 'dpmpp_2m', scheduler: 'karras' },
 };
 
-// TODO - improve this
-// export const defaultCheckpoints: Record<
-//   string,
-//   {
-//     ecosystem: string;
-//     type: string;
-//     source: string;
-//     model: number;
-//     version: number;
-//   }
-// > = {
-//   SD1: {
-//     ecosystem: 'sd1',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 4384,
-//     version: 128713,
-//   },
-//   SD3: {
-//     ecosystem: 'sd3',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 878387,
-//     version: 983309,
-//   },
-//   SD3_5M: {
-//     ecosystem: 'sd3',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 896953,
-//     version: 1003708,
-//   },
-//   SDXL: {
-//     ecosystem: 'sdxl',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 101055,
-//     version: 128078,
-//   },
-//   Pony: {
-//     ecosystem: 'sdxl',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 257749,
-//     version: 290640,
-//   },
-//   Illustrious: {
-//     ecosystem: 'sdxl',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 795765,
-//     version: 889818,
-//   },
-// };
-
 // #region [utils]
 // some base models, such as SD1.5 can work with different base model set types
 
@@ -308,6 +252,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
 ) {
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
+  // image base models
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Pony')) return 'Pony';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SDXL')) return 'SDXL';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1')) return 'Flux1';
@@ -316,14 +261,32 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'NoobAI')) return 'NoobAI';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3')) return 'SD3';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3_5M')) return 'SD3_5M';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'HyV1')) return 'HyV1';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'OpenAI')) return 'OpenAI';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo'))
-    return 'WanVideo';
-  else return 'SD1';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD1')) return 'SD1';
+  // video base models
+  for (const baseModelSet of videoBaseModelSetTypes) {
+    if (resources.some((x) => getBaseModelSetType(x.baseModel) === baseModelSet))
+      return baseModelSet;
+  }
 }
-const videoBaseModelSetTypes = ['HyV1', 'WanVideo'];
-export function getResourceGenerationType(baseModel: ReturnType<typeof getBaseModelFromResources>) {
+
+export function getBaseModelFromResourcesWithDefault<
+  T extends { modelType: ModelType; baseModel: string }
+>(resources: T[]) {
+  return getBaseModelFromResources(resources) ?? 'SD1';
+}
+
+const videoBaseModelSetTypes: BaseModelSetType[] = [
+  'HyV1',
+  'WanVideo',
+  'WanVideo14B_I2V_480p',
+  'WanVideo14B_I2V_720p',
+  'WanVideo14B_T2V',
+  'WanVideo1_3B_T2V',
+];
+export function getResourceGenerationType(
+  baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>
+) {
   return videoBaseModelSetTypes.includes(baseModel) ? 'video' : ('image' as MediaType);
 }
 
@@ -551,8 +514,18 @@ export const baseModelResourceTypes = {
     { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
   HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
-  WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
   OpenAI: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.OpenAI.baseModels }],
+  WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
+  WanVideo1_3B_T2V: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
+  ],
+  WanVideo14B_T2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_T2V.baseModels }],
+  WanVideo14B_I2V_480p: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_480p.baseModels },
+  ],
+  WanVideo14B_I2V_720p: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_720p.baseModels },
+  ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)

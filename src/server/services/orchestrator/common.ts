@@ -34,11 +34,7 @@ import {
   getGenerationResourceData,
 } from '~/server/services/generation/generation.service';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
-import {
-  GeneratedImageWorkflow,
-  GeneratedImageWorkflowStep,
-  WorkflowDefinition,
-} from '~/server/services/orchestrator/types';
+import { GeneratedImageWorkflow, WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -47,6 +43,7 @@ import {
   fluxModeOptions,
   fluxUltraAir,
   fluxUltraAirId,
+  getBaseModelFromResources,
   getBaseModelResourceTypes,
   getBaseModelSetType,
   getInjectablResources,
@@ -367,39 +364,11 @@ export async function parseGenerateImageInput({
 }
 
 function getResources(step: WorkflowStep) {
-  if (step.$type === 'textToImage') {
-    const inputResources = getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
-      id: x.version,
-      strength: x.networkParams.strength ?? 1,
-      epochNumber: undefined,
-    }));
+  const metadata = step.metadata as Record<string, any>;
+  const resources: { id: number; strength?: number | null; epochNumber?: number | undefined }[] =
+    metadata.resources ?? metadata.params.resources ?? [];
 
-    const metadataResources = (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
-
-    return uniqBy([...inputResources, ...metadataResources], 'id').map((ir) => {
-      const metadataResource = metadataResources.find((x) => x.id === ir.id);
-      // If removed, we re-add the epochInformation
-      if (metadataResource)
-        return {
-          ...ir,
-          epochNumber: metadataResource.epochNumber,
-        };
-
-      return ir;
-    });
-  }
-  return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
-}
-
-function getTextToImageAirs(inputs: TextToImageInput[]) {
-  return Object.entries(
-    inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
-      if (input.model) acc[input.model] = {};
-      const additionalNetworks = input.additionalNetworks ?? {};
-      for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
-      return acc;
-    }, {})
-  ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
+  return resources;
 }
 
 function combineResourcesWithInputResource(
@@ -564,15 +533,22 @@ function formatImageGenStep({
   };
 }
 
-function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
+function formatVideoGenStep({
+  step,
+  workflowId,
+  resources,
+}: {
+  step: WorkflowStep;
+  workflowId: string;
+  resources: GenerationResource[];
+}) {
   const { input, output, jobs } = step as VideoGenStep;
-  const videoMetadata = step.metadata as { params?: VideoGenerationSchema2 };
-  const { params } = videoMetadata;
+  const videoMetadata = step.metadata as { params: VideoGenerationSchema2 };
+  const params = videoMetadata.params ?? {};
 
   // handle legacy source image
-  let sourceImage = params && 'sourceImage' in params ? params.sourceImage : undefined;
+  let sourceImage = 'sourceImage' in params ? params.sourceImage : undefined;
   if (
-    params &&
     'width' in params &&
     'height' in params &&
     'sourceImage' in params &&
@@ -589,27 +565,25 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   let height: number | undefined;
   let aspectRatio = 1;
 
-  if (params) {
-    if (sourceImage) {
-      width = sourceImage?.width;
-      height = sourceImage?.height;
-      aspectRatio = width && height ? width / height : 16 / 9;
-    } else {
-      switch (params.engine) {
-        case 'minimax':
-          aspectRatio = 16 / 9;
-          break;
-        case 'mochi':
-          width = 848;
-          height = 480;
-          aspectRatio = width / height;
-          break;
-        default: {
-          if (!params.aspectRatio) params.aspectRatio = '16:9';
-          const [rw, rh] = params.aspectRatio.split(':').map(Number);
-          aspectRatio = rw / rh;
-          break;
-        }
+  if (sourceImage) {
+    width = sourceImage?.width;
+    height = sourceImage?.height;
+    aspectRatio = width && height ? width / height : 16 / 9;
+  } else {
+    switch (params.engine) {
+      case 'minimax':
+        aspectRatio = 16 / 9;
+        break;
+      case 'mochi':
+        width = 848;
+        height = 480;
+        aspectRatio = width / height;
+        break;
+      default: {
+        if (!params.aspectRatio) params.aspectRatio = '16:9';
+        const [rw, rh] = params.aspectRatio.split(':').map(Number);
+        aspectRatio = rw / rh;
+        break;
       }
     }
   }
@@ -644,7 +618,28 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   );
   const videos = Object.values(grouped).flat();
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
-  const resources = params && 'resources' in params ? params.resources : [];
+  const stepResources = (params && 'resources' in params ? params.resources ?? [] : [])?.map(
+    ({ air, strength }) => {
+      const { version } = parseAIR(air);
+      return { id: version, strength };
+    }
+  );
+
+  const combinedResources = combineResourcesWithInputResource(resources, stepResources);
+
+  let baseModel = combinedResources.length
+    ? getBaseModelFromResources(
+        combinedResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+      )
+    : undefined;
+
+  // TODO - come up with a better way to handle jsonb data type mismatches
+  if ('type' in params && (params.type === 'txt2vid' || params.type === 'img2vid'))
+    params.process = params.type;
+  if (baseModel === 'WanVideo') {
+    if (params.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
+    else baseModel = 'WanVideo14B_I2V_720p';
+  }
 
   return {
     $type: 'videoGen' as const,
@@ -653,6 +648,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     // workflow and quantity are only here because they are required for other components to function
     params: {
       ...params!,
+      baseModel,
       sourceImage: sourceImage,
       // workflow: videoMetadata.params?.workflow,
       quantity: 1,
@@ -660,15 +656,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     images: videos,
     status: step.status,
     metadata,
-    resources: resources.map((item: any) => ({
-      ...item,
-      air: stringifyAIR({
-        baseModel: item.baseModel,
-        type: item.model.type,
-        modelId: item.model.id,
-        id: item.id,
-      }),
-    })),
+    resources: combineResourcesWithInputResource(resources, stepResources),
   };
 }
 

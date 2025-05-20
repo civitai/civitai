@@ -1,12 +1,15 @@
 import {
   Alert,
   Anchor,
+  Badge,
+  Box,
   Button,
   Card,
   Center,
   Container,
   Group,
   Loader,
+  SegmentedControl,
   Stack,
   Text,
   ThemeIcon,
@@ -16,6 +19,7 @@ import { IconExclamationMark, IconInfoCircle, IconInfoTriangleFilled } from '@ta
 import clsx from 'clsx';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
+import { useState, useEffect } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -67,23 +71,27 @@ export default function Pricing() {
   const redirectReason = joinRedirectReasons[reason];
   const paymentProvider = usePaymentProvider();
 
-  const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({});
+  const [interval, setInterval] = useState<'month' | 'year'>('month');
   const { subscription, subscriptionLoading, subscriptionPaymentProvider, isFreeTier } =
     useActiveSubscription({
       checkWhenInBadState: true,
     });
+  const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
+    interval,
+  });
 
   const refreshingSubscription = usePaddleSubscriptionRefresh();
 
   const isLoading = productsLoading || subscriptionLoading || refreshingSubscription;
 
   const currentMembershipUnavailable =
-    !!subscription &&
-    !productsLoading &&
-    !isFreeTier &&
-    !(products ?? []).find((p) => p.id === subscription.product.id) &&
-    // Ensures we have products from the current provider.
-    (products ?? []).some((p) => p.provider === subscription.product.provider);
+    (subscription && !subscription?.product?.active) ||
+    (!!subscription &&
+      !productsLoading &&
+      !isFreeTier &&
+      !(products ?? []).find((p) => p.id === subscription.product.id) &&
+      // Ensures we have products from the current provider.
+      !(products ?? []).some((p) => p.provider === subscription.product.provider));
 
   const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
   const metadata = (subscription?.product?.metadata ?? {
@@ -94,6 +102,10 @@ export default function Pricing() {
     subscription && subscriptionPaymentProvider !== paymentProvider;
 
   const isHolidays = isHolidaysTime();
+
+  useEffect(() => {
+    setInterval(subscription?.price?.interval ?? 'month');
+  }, [subscription?.price?.interval]);
 
   return (
     <>
@@ -240,7 +252,51 @@ export default function Pricing() {
               </Alert>
             )}
           </Group>
+          {(features.annualMemberships || interval === 'year') && (
+            <Center>
+              <SegmentedControl
+                radius="md"
+                value={interval}
+                onChange={(value) => setInterval(value as 'month' | 'year')}
+                size="md"
+                data={[
+                  { value: 'month', label: 'Monthly Plans' },
+                  {
+                    value: 'year',
+                    label: (
+                      <Center>
+                        <Box mr={6}>Annual Plans</Box>
+                        <Badge p={5} color="green" variant="filled" radius="xl">
+                          1 month for free!
+                        </Badge>
+                      </Center>
+                    ),
+                  },
+                ]}
+              />
+            </Center>
+          )}
 
+          {subscription?.price?.interval === 'year' && interval === 'month' && (
+            <AlertWithIcon
+              color="yellow"
+              iconColor="yellow"
+              icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+              iconSize={28}
+              py={11}
+              maw="calc(50% - 8px)"
+              mx="auto"
+            >
+              <Group spacing="xs" noWrap align="flex-start">
+                <Text size="md">
+                  You&rsquo;re currently on an annual plan. You can upgrade to a different annual
+                  plan or cancel your current one at any time. However, switching to a monthly plan
+                  requires canceling your membership first and waiting for it to expire before
+                  signing up again.
+                </Text>
+              </Group>
+            </AlertWithIcon>
+          )}
           {isLoading ? (
             <Center p="xl">
               <Loader />
@@ -293,7 +349,11 @@ export default function Pricing() {
               </ContainerGrid2.Col>
               {products.map((product) => (
                 <ContainerGrid2.Col key={product.id} span={{ base: 12, sm: 6, md: 3 }}>
-                  <PlanCard product={product} subscription={subscription} />
+                  <PlanCard
+                    key={`${interval}-${product.id}`}
+                    product={product}
+                    subscription={subscription}
+                  />
                 </ContainerGrid2.Col>
               ))}
             </ContainerGrid2>

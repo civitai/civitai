@@ -16,16 +16,18 @@ export const getPlans = async ({
   paymentProvider = PaymentProvider.Stripe,
   includeFree = false,
   includeInactive = false,
+  interval = 'month',
 }: {
   paymentProvider?: PaymentProvider;
   includeFree?: boolean;
   includeInactive?: boolean;
+  interval?: 'month' | 'year';
 }) => {
   const products = await dbWrite.product.findMany({
     where: {
       provider: paymentProvider,
       active: includeInactive ? undefined : true,
-      prices: { some: { type: 'recurring', active: true } },
+      prices: { some: { type: 'recurring', active: true, interval } },
     },
     select: {
       id: true,
@@ -46,6 +48,7 @@ export const getPlans = async ({
         },
         where: {
           active: true,
+          interval: interval,
         },
       },
     },
@@ -95,6 +98,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
           description: true,
           metadata: true,
           provider: true,
+          active: true,
         },
       },
       price: {
@@ -122,7 +126,11 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
 
   return {
     ...subscription,
-    price: { ...subscription.price, unitAmount: subscription.price.unitAmount ?? 0 },
+    price: {
+      ...subscription.price,
+      unitAmount: subscription.price.unitAmount ?? 0,
+      interval: subscription.price.interval as 'month' | 'year',
+    },
     isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
       subscription.status
     ),

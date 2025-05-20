@@ -6,8 +6,8 @@ import { withController } from '~/libs/form/hoc/withController';
 import { generation, maxRandomSeed } from '~/server/common/constants';
 
 type Props = {
-  value?: number;
-  onChange?: (value?: number) => void;
+  value?: number | null;
+  onChange?: (value?: number | null) => void;
 
   disabled?: boolean;
 } & Omit<InputWrapperProps, 'children'>;
@@ -15,16 +15,19 @@ type Props = {
 function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: Props) {
   const [control, setControl] = useState(value ? 'custom' : 'random');
 
+  function handleChange(value?: number) {
+    onChange?.(value ?? null);
+  }
+
   const previousControl = usePrevious(control);
   useEffect(() => {
-    if (value === undefined && previousControl !== 'random') setControl('random');
-    else if (value !== undefined && previousControl !== 'custom') setControl('custom');
+    if (!value && previousControl !== 'random') setControl('random');
+    else if (!!value && previousControl !== 'custom') setControl('custom');
   }, [value]); //eslint-disable-line
 
   useEffect(() => {
-    if (value !== undefined && control === 'random') onChange?.(undefined);
-    else if (value === undefined && control === 'custom')
-      onChange?.(Math.floor(Math.random() * maxRandomSeed));
+    if (!!value && control === 'random') onChange?.(null);
+    else if (!value && control === 'custom') onChange?.(Math.floor(Math.random() * maxRandomSeed));
   }, [control]); //eslint-disable-line
 
   return (
@@ -50,6 +53,7 @@ function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: Props) {
           hideControls
           format="default"
           disabled={disabled}
+          className="flex-1"
         />
       </Group>
     </Input.Wrapper>

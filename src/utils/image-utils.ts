@@ -124,6 +124,7 @@ type ImageForAiVerification = {
 
 export function isValidAIGeneration(image: ImageForAiVerification) {
   if (image.meta?.prompt) return true;
+  if (image.meta?.civitaiResources) return true;
   // Updated to only allow prompt.
   // if (image.meta?.comfy) return true;
   // if (image.meta?.extra) return true;

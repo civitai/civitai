@@ -276,7 +276,14 @@ export const orchestratorRouter = router({
           name: 'generate-image-what-if',
           type: 'error',
           payload: input,
-          error: e,
+          error:
+            e instanceof TRPCError
+              ? {
+                  code: e.code,
+                  name: e.name,
+                  message: e.message,
+                }
+              : e,
         }).catch();
         throw e;
       }

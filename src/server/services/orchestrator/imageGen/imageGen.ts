@@ -20,7 +20,7 @@ import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
-import { getRandomInt } from '~/utils/number-helpers';
+import { findClosest, getRandomInt } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -98,11 +98,16 @@ function getImageGenInput(params: InputParams) {
         operation: !params.sourceImage ? 'createImage' : 'editImage',
         images: params.sourceImage ? [params.sourceImage.url] : undefined,
         prompt: params.prompt,
-        size: !params.sourceImage ? `${params.width}x${params.height}` : undefined,
         // quality: params.openAIQuality,
         background: params.openAITransparentBackground ? 'transparent' : 'opaque',
         quality: params.openAIQuality,
         quantity: Math.min(params.quantity, 10),
+        size: Object.values(
+          getClosestOpenAISize(
+            params.sourceImage?.width ?? params.width,
+            params.sourceImage?.height ?? params.height
+          )
+        ).join('x'),
       };
     default:
       throw new Error('imageGen step type not implemented');
@@ -115,8 +120,6 @@ function getImageGenMetadataParams(params: InputParams) {
       return removeEmpty({
         engine: 'openai',
         prompt: params.prompt,
-        width: params.width,
-        height: params.height,
         // quality: params.openAIQuality,
         background: params.openAITransparentBackground ? 'transparent' : 'opaque',
         quality: params.openAIQuality,
@@ -124,8 +127,36 @@ function getImageGenMetadataParams(params: InputParams) {
         workflow: params.workflow,
         sourceImage: params.sourceImage,
         process: !params.sourceImage ? 'txt2img' : 'img2img',
+        ...getClosestOpenAISize(
+          params.sourceImage?.width ?? params.width,
+          params.sourceImage?.height ?? params.height
+        ),
       });
     default:
       throw new Error('imageGen step type not implemented');
   }
 }
+
+const openAISizes = [
+  { width: 1024, height: 1024 },
+  { width: 1536, height: 1024 },
+  { width: 1024, height: 1536 },
+];
+function getClosestOpenAISize(w: number, h: number) {
+  const ratios = openAISizes.map(({ width, height }) => width / height);
+  const closest = findClosest(ratios, w / h);
+  const index = ratios.indexOf(closest);
+  const { width, height } = openAISizes[index] ?? openAISizes[0];
+  return { width, height };
+}
+
+// const openAISizes = ['1024x1024', '1536x1024', '1024x1536'];
+// function getClosestOpenAISize(width: number, height: number) {
+//   const ratios = openAISizes.map((size) => {
+//     const [width, height] = size.split('x').map(Number);
+//     return width / height;
+//   });
+//   const closest = findClosest(ratios, width / height);
+//   const index = ratios.indexOf(closest);
+//   return openAISizes[index] ?? openAISizes[0];
+// }

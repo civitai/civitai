@@ -561,14 +561,25 @@ function GeneratedImageWorkflowMenuItems({
     (!!step.params.workflow && !(step.params.workflow in notSelectableMap)) ||
     !!(step.params as any).engine;
 
+  async function handleRemix(seed?: number) {
+    handleCloseImageLightbox();
+    generationStore.setData({
+      resources: step.resources as any,
+      params: { ...(step.params as any), seed: seed ?? null },
+      remixOfId: step.metadata?.remixOfId,
+      type: image.type,
+      workflow: step.params.workflow,
+      engine: (step.params as any).engine,
+    });
+  }
+
   async function handleGenerate(
-    { seed, ...rest }: Partial<TextToImageParams> = {},
+    { ...rest }: Partial<TextToImageParams> = {},
     {
       type,
       workflow: workflow,
-      sourceImage,
       engine,
-    }: { type: MediaType; workflow?: string; sourceImage?: string; engine?: string } = {
+    }: { type: MediaType; workflow?: string; engine?: string } = {
       type: image.type,
       workflow: step.params.workflow,
     }
@@ -576,12 +587,27 @@ function GeneratedImageWorkflowMenuItems({
     handleCloseImageLightbox();
     generationStore.setData({
       resources: step.resources as any,
-      params: { ...(step.params as any), seed, ...rest },
+      params: {
+        ...(step.params as any),
+        ...rest,
+        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+      },
       remixOfId: step.metadata?.remixOfId,
       type,
       workflow: workflow ?? step.params.workflow,
-      sourceImage: sourceImage ?? (step.params as any).sourceImage,
       engine: engine ?? (step.params as any).engine,
+    });
+  }
+
+  async function handleImg2Vid() {
+    generationStore.setData({
+      resources: [],
+      params: {
+        ...(step.params as any),
+        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+      },
+      type: 'video',
+      engine: useGenerationFormStore.getState().engine,
     });
   }
 
@@ -670,14 +696,14 @@ function GeneratedImageWorkflowMenuItems({
       {canRemix && !workflowsOnly && (
         <>
           <Menu.Item
-            onClick={() => handleGenerate()}
+            onClick={() => handleRemix()}
             icon={<IconArrowsShuffle size={14} stroke={1.5} />}
           >
             Remix
           </Menu.Item>
-          {!isBlocked && (
+          {!isBlocked && image.seed && (
             <Menu.Item
-              onClick={() => handleGenerate({ seed: image.seed })}
+              onClick={() => handleRemix(image.seed)}
               icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
             >
               Remix (with seed)
@@ -719,19 +745,7 @@ function GeneratedImageWorkflowMenuItems({
       {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
       {!isBlocked && !!img2vidConfigs.length && (
         <>
-          <Menu.Item
-            onClick={async () =>
-              handleGenerate(
-                { sourceImage: await getSourceImageFromUrl({ url: image.url }) },
-                {
-                  type: 'video',
-                  engine: useGenerationFormStore.getState().engine,
-                }
-              )
-            }
-          >
-            Image To Video
-          </Menu.Item>
+          <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
       {/* {!isBlocked && image.type === 'video' && (

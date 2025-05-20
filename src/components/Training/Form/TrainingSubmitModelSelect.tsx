@@ -65,7 +65,9 @@ const ModelSelector = ({
   isCustom?: boolean;
   isVideo?: boolean;
 }) => {
-  const versions = Object.entries(trainingModelInfo).filter(([, v]) => v.type === baseType);
+  const versions = Object.entries(trainingModelInfo).filter(
+    ([, v]) => v.type === baseType && v.disabled !== true
+  );
   if (!versions.length) return null;
 
   return (

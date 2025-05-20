@@ -241,8 +241,8 @@ export const AdvancedSettings = ({
               <Text>Sample Media Prompts</Text>
               {openedSections.includes('custom-prompts') && (
                 <Text size="xs" c="dimmed">
-                  Set your own prompts for any of the 3 sample {isVideo ? 'videos' : 'images'} we
-                  generate for each epoch.
+                  Set your own prompts for any of the {isVideo ? '2' : '3'} sample{' '}
+                  {isVideo ? 'videos' : 'images'} we generate for each epoch.
                 </Text>
               )}
             </Stack>
@@ -277,20 +277,22 @@ export const AdvancedSettings = ({
                   });
                 }}
               />
-              <TextInputWrapper
-                label={`${isVideo ? 'Video' : 'Image'} #3`}
-                placeholder="Automatically set"
-                value={selectedRun.samplePrompts[2]}
-                onChange={(event) => {
-                  doUpdate({
-                    samplePrompts: [
-                      selectedRun.samplePrompts[0],
-                      selectedRun.samplePrompts[1],
-                      event.currentTarget.value,
-                    ],
-                  });
-                }}
-              />
+              {!isVideo && (
+                <TextInputWrapper
+                  label={`${isVideo ? 'Video' : 'Image'} #3`}
+                  placeholder="Automatically set"
+                  value={selectedRun.samplePrompts[2]}
+                  onChange={(event) => {
+                    doUpdate({
+                      samplePrompts: [
+                        selectedRun.samplePrompts[0],
+                        selectedRun.samplePrompts[1],
+                        event.currentTarget.value,
+                      ],
+                    });
+                  }}
+                />
+              )}
             </Stack>
           </Accordion.Panel>
         </Accordion.Item>

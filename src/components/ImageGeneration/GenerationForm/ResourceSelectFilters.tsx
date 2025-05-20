@@ -57,9 +57,11 @@ export function ResourceSelectFiltersDropdown() {
   });
 
   let resourceTypesList = sortByModelTypes(
-    (resources?.length ? resources.map((r) => r.type) : Object.values(ModelType)).map((rt) => ({
-      modelType: rt as ModelType,
-    }))
+    [...new Set(resources?.length ? resources.map((r) => r.type) : Object.values(ModelType))].map(
+      (rt) => ({
+        modelType: rt as ModelType,
+      })
+    )
   );
   let baseModelsList = resources?.length
     ? uniq(resources.flatMap((r) => (r.baseModels ?? []) as BaseModel[]))

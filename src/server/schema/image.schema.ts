@@ -102,7 +102,8 @@ export const imageGenerationSchema = z.object({
     .object({
       remixOfId: z.number().optional(),
     })
-    .optional(),
+    .optional()
+    .catch(undefined),
 });
 
 export type CivitaiResource = z.infer<typeof civitaiResourceSchema>;

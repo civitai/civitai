@@ -6,6 +6,7 @@ import {
   Group,
   GroupProps,
   Highlight,
+  HighlightProps,
   Skeleton,
   Stack,
   Text,
@@ -30,9 +31,10 @@ import clsx from 'clsx';
 import produce from 'immer';
 import React, { useEffect, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { hasNSFWWords } from '~/components/Auction/auction.utils';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { usePurchaseBid } from '~/components/Auction/AuctionUtils';
-import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import cardClasses from '~/components/Cards/Cards.module.scss';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
@@ -47,6 +49,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import type {
   GetAuctionBySlugReturn,
   GetMyBidsReturn,
@@ -54,7 +57,7 @@ import type {
 } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
-import { Flags } from '~/shared/utils';
+import { getHasExplicitBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -203,6 +206,44 @@ const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefine
   );
 };
 
+const useHideNsfwText = () => {
+  const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
+  const browsingLevel = useBrowsingLevelDebounced();
+  const hasExplicit = getHasExplicitBrowsingLevel(browsingLevel);
+  return !hasExplicit || blurNsfw;
+};
+
+const OverflowTooltip = ({
+  label,
+  searchText,
+  ...highlightProps
+}: { label: string; searchText: string } & Omit<HighlightProps, 'highlight' | 'children'>) => {
+  const textElementRef = useRef<HTMLDivElement>(null);
+  const [isOverflown, setIsOverflown] = useState(false);
+
+  // TODO this doesnt appear to listen for changes when resizing
+  useEffect(() => {
+    const element = textElementRef.current;
+    const compare = element
+      ? element.offsetWidth < element.scrollWidth || element.offsetHeight < element.scrollHeight
+      : false;
+    setIsOverflown(compare);
+  }, []);
+
+  return (
+    <Tooltip label={label} disabled={!isOverflown} withinPortal>
+      <Highlight
+        ref={textElementRef}
+        className="min-w-0 max-w-[min(400px,80vw)] truncate"
+        highlight={searchText}
+        {...highlightProps}
+      >
+        {label}
+      </Highlight>
+    </Tooltip>
+  );
+};
+
 const SectionModelInfo = ({
   entityData,
   searchText,
@@ -210,8 +251,9 @@ const SectionModelInfo = ({
   entityData: ModelData['entityData'];
   searchText: string;
 }) => {
-  const { blurLevels } = useBrowsingLevelContext();
-  const blurNsfw = !!entityData ? Flags.intersects(blurLevels, entityData.nsfwLevel) : false;
+  const shouldHide = useHideNsfwText();
+  const blurNsfw =
+    shouldHide && (hasNSFWWords(entityData?.name) || hasNSFWWords(entityData?.model?.name));
   const [hideText, setHideText] = useState(blurNsfw);
 
   // state isn't being updated if entityData is initially undefined or the blurLevels change
@@ -224,34 +266,18 @@ const SectionModelInfo = ({
       <Stack gap={0}>
         {!hideText ? (
           <>
-            <Highlight
+            <OverflowTooltip
+              label={entityData?.model?.name ?? '(Unknown Model)'}
+              searchText={searchText}
               size="lg"
               fw={500}
-              style={{
-                textOverflow: 'ellipsis',
-                maxWidth: 'min(400px, 80vw)',
-                overflow: 'hidden',
-                whiteSpace: 'nowrap',
-                minWidth: 0,
-              }}
-              highlight={searchText}
-            >
-              {entityData?.model?.name ?? '(Unknown Model)'}
-            </Highlight>
-            <Highlight
+            />
+            <OverflowTooltip
+              label={entityData?.name ?? '(Unknown Version)'}
+              searchText={searchText}
               size="sm"
-              c="dimmed"
-              style={{
-                textOverflow: 'ellipsis',
-                maxWidth: 'min(400px, 80vw)',
-                overflow: 'hidden',
-                whiteSpace: 'nowrap',
-                minWidth: 0,
-              }}
-              highlight={searchText}
-            >
-              {entityData?.name ?? '(Unknown Version)'}
-            </Highlight>
+              color="dimmed"
+            />
           </>
         ) : (
           <div className="flex">

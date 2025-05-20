@@ -232,7 +232,7 @@ export function GenerationFormContent() {
 
     const {
       model,
-      resources: additionalResources = [],
+      resources: formResources,
       vae,
       remixOfId,
       remixSimilarity,
@@ -242,6 +242,7 @@ export function GenerationFormContent() {
       fluxUltraRaw,
       ...params
     } = data;
+    const additionalResources = formResources ?? [];
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
@@ -336,10 +337,11 @@ export function GenerationFormContent() {
   const [hasMinorResources, setHasMinorResources] = useState(false);
 
   useEffect(() => {
-    const subscription = form.watch(({ model, resources = [], vae, fluxMode }, { name }) => {
+    const subscription = form.watch(({ model, resources, vae, fluxMode }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
         setHasMinorResources(
-          [model, ...resources, vae].filter((x) => x?.model?.sfwOnly || x?.model?.minor).length > 0
+          [model, ...(resources ?? []), vae].filter((x) => x?.model?.sfwOnly || x?.model?.minor)
+            .length > 0
         );
       }
 
@@ -521,7 +523,8 @@ export function GenerationFormContent() {
                 </div>
 
                 <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
-                  {({ model, resources = [], vae, fluxMode }) => {
+                  {({ model, resources: formResources, vae, fluxMode }) => {
+                    const resources = formResources ?? [];
                     const selectedResources = [...resources, vae, model].filter(isDefined);
                     const minorFlaggedResources = selectedResources.filter((x) => x.model.minor);
                     const sfwFlaggedResources = selectedResources.filter((x) => x.model.sfwOnly);
@@ -814,10 +817,12 @@ export function GenerationFormContent() {
                                             color="red"
                                             size="xs"
                                             onClick={() => {
-                                              form.setValue('remixOfId', undefined);
-                                              form.setValue('remixSimilarity', undefined);
-                                              form.setValue('remixPrompt', undefined);
-                                              form.setValue('remixNegativePrompt', undefined);
+                                              form.setValues({
+                                                remixOfId: undefined,
+                                                remixSimilarity: undefined,
+                                                remixPrompt: undefined,
+                                                remixNegativePrompt: undefined,
+                                              });
                                             }}
                                             fullWidth
                                             h={30}
@@ -865,10 +870,9 @@ export function GenerationFormContent() {
                     error={errors.prompt?.message}
                   >
                     <Watch {...form} fields={['resources']}>
-                      {({ resources = [] }) => {
-                        const trainedWords = resources
-                          .flatMap((x) => x.trainedWords)
-                          .filter(isDefined);
+                      {({ resources }) => {
+                        const trainedWords =
+                          resources?.flatMap((x) => x.trainedWords).filter(isDefined) ?? [];
 
                         return (
                           <Paper
@@ -1438,13 +1442,13 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const form = useGenerationForm();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
-  const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
+  const [baseModel, resources, vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
   const isOpenAI = baseModel === 'OpenAI';
   const hasCreatorTip =
     (!isFlux && !isSD3 && !isOpenAI) ||
-    [...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
+    [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();
   if (!features.creatorComp) {

@@ -11,6 +11,7 @@ import {
   Radio,
   Stack,
   Text,
+  Badge,
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import Router from 'next/router';
@@ -28,6 +29,7 @@ import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
+import { Price } from '~/shared/utils/prisma/models';
 import { showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -416,7 +418,15 @@ export const VaultStorageDowngrade = ({
   );
 };
 
-export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; meta: PlanMeta }) => {
+export const MembershipUpgradeModal = ({
+  priceId,
+  meta,
+  price,
+}: {
+  priceId: string;
+  price: Partial<Price>;
+  meta: PlanMeta;
+}) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { name, image, benefits } = meta;
@@ -436,6 +446,15 @@ export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; met
             </Box>
           </Center>
         )}
+
+        {price?.interval === 'year' && (
+          <Center>
+            <Badge variant="filled" color="green">
+              Annual Plan
+            </Badge>
+          </Center>
+        )}
+
         {benefits && (
           <Paper className="h-full rounded-md bg-gray-0 p-5 dark:bg-dark-8" withBorder>
             <PlanBenefitList benefits={benefits} />
@@ -452,8 +471,19 @@ export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; met
               delay from when you upgrade to when you receive your Buzz &amp; get charged. All other
               membership perks will be immediate.
             </Text>
+            {price.interval === 'year' && (
+              <Text>
+                <Text className="font-bold" component="span">
+                  Important:
+                </Text>{' '}
+                For yearly plans, Buzz will still be distributed monthly. If you have an active
+                yearly subscription, the remainder of your subscription will be applied as a
+                discount.
+              </Text>
+            )}
           </Stack>
         </Alert>
+
         <Group grow>
           <SubscribeButton priceId={priceId} onSuccess={handleClose}>
             {({ onClick, ...props }) => (

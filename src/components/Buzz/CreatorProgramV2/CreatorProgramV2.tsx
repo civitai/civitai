@@ -494,7 +494,7 @@ const EstimatedEarningsCard = () => {
   const { phase } = useCreatorProgramPhase();
   const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
   const isLoading = isLoadingCompensationPool || isLoadingBanked;
-  const cap = banked?.cap.cap;
+  const cap = banked?.cap?.cap;
   const currentBanked = banked?.total ?? 0;
   const isCapped = cap && cap <= currentBanked;
 

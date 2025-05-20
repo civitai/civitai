@@ -20,7 +20,7 @@ import {
   fluxModeOptions,
   fluxModelId,
   fluxStandardAir,
-  getBaseModelFromResources,
+  getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getBaseModelSetTypes,
   getIsFluxUltra,
@@ -40,7 +40,6 @@ import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
-import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 
 // #region [schemas]
 
@@ -51,8 +50,8 @@ const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
     model: generationResourceSchema,
-    resources: generationResourceSchema.array().min(0).default([]),
-    vae: generationResourceSchema.optional(),
+    resources: generationResourceSchema.array().min(0).nullable().default(null),
+    vae: generationResourceSchema.nullable().default(null),
     prompt: z.string().default(''),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
@@ -167,7 +166,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   let vae = data.resources.find((x) => x.model.type === 'VAE');
   const baseModel =
     params.baseModel ??
-    getBaseModelFromResources(
+    getBaseModelFromResourcesWithDefault(
       data.resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
     );
 
@@ -263,20 +262,22 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     version: 1.3,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
-    values: getValues,
+    defaultValues: getValues,
+    // values: getValues,
     exclude: ['remixSimilarity', 'remixPrompt', 'remixNegativePrompt'],
     storage: localStorage,
   });
 
   function checkSimilarity(id: number, prompt?: string) {
     fetchGenerationData({ type: 'image', id }).then((data) => {
-      if (data.params.prompt && prompt !== undefined) {
-        const similarity = calculateAdjustedCosineSimilarities(data.params.prompt, prompt);
-        form.setValue('remixSimilarity', similarity);
-      }
-
-      form.setValue('remixPrompt', data.params.prompt);
-      form.setValue('remixNegativePrompt', data.params.negativePrompt);
+      setValues({
+        remixSimilarity:
+          !!data.params.prompt && !!prompt
+            ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
+            : undefined,
+        remixPrompt: data.params.prompt,
+        remixNegativePrompt: data.params.negativePrompt,
+      });
     });
   }
 
@@ -396,9 +397,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     // don't overwrite quantity
     const { quantity, ...params } = data;
     const limited = sanitizeTextToImageParams(params, status.limits);
-    for (const [key, value] of Object.entries(limited)) {
-      form.setValue(key as keyof PartialFormData, value);
-    }
+    const formData = form.getValues();
+    form.reset({ ...formData, ...limited }, { keepDefaultValues: true });
+    // for (const [key, value] of Object.entries(limited)) {
+    //   form.setValue(key as keyof PartialFormData, value);
+    // }
   }
 
   function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
@@ -418,7 +421,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }
 
   function reset() {
-    form.reset(getDefaultValues(form.getValues()));
+    form.reset(getDefaultValues(form.getValues()), { keepDefaultValues: false });
   }
   // #endregion
 

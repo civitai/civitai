@@ -1428,7 +1428,8 @@ export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesI
            JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
            JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
            JOIN "Model" m ON mv."modelId" = m.id
-    WHERE LOWER(mfh."hash") IN (${Prisma.join(hashes.map((h) => h.toLowerCase()))});
+    WHERE LOWER(mfh."hash") IN (${Prisma.join(hashes.map((h) => h.toLowerCase()))})
+      AND m."deletedAt" IS NULL;
   `;
 
   return modelsByHashes;

@@ -72,6 +72,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
+import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -139,6 +140,7 @@ export const jobs: Job[] = [
   handleAuctions,
   ...newOrderJobs,
   updateModelVersionNsfwLevelsJob,
+  deliverAnnualSubscriptionBuzz,
 ];
 
 const log = createLogger('jobs', 'green');

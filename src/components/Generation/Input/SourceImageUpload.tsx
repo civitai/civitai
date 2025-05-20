@@ -145,7 +145,10 @@ export function SourceImageUpload({
                 alt="image to refine"
                 className="max-h-full shadow-sm shadow-black"
                 onLoad={() => setLoaded(true)}
-                onError={() => removeFromHistory(_value.url)}
+                onError={() => {
+                  removeFromHistory(_value.url);
+                  onChange?.(null);
+                }}
               />
               {loaded && removable && (
                 <CloseButton
