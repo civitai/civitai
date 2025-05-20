@@ -1,12 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
-
-import { env } from '~/env/server';
 import { getGenerationConfig } from '~/server/common/constants';
-
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import { baseModelEngineMap } from '~/server/orchestrator/generation/generation.config';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -16,7 +14,6 @@ import {
   GetGenerationDataSchema,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
-
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
@@ -39,8 +36,10 @@ import {
   baseModelResourceTypes,
   fluxUltraAir,
   getBaseModelFromResources,
+  getBaseModelFromResourcesWithDefault,
   getBaseModelSet,
   getBaseModelSetType,
+  getResourceGenerationType,
   SupportedBaseModel,
 } from '~/shared/constants/generation.constants';
 import { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -50,7 +49,7 @@ import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
 import { removeNulls } from '~/utils/object-helpers';
-import { parseAIR } from '~/utils/string-helpers';
+import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 type GenerationResourceSimple = {
@@ -65,6 +64,7 @@ type GenerationResourceSimple = {
   minStrength: number;
   maxStrength: number;
   minor: boolean;
+  sfwOnly: boolean;
   fileSizeKB: number;
   available: boolean;
 };
@@ -225,6 +225,7 @@ export type RemixOfProps = {
   createdAt: Date;
 };
 export type GenerationData = {
+  type: MediaType;
   remixOfId?: number;
   resources: GenerationResource[];
   params: Partial<TextToImageParams>;
@@ -260,7 +261,6 @@ export const getGenerationData = async ({
   }
 };
 
-type ResourceType = 'generation' | 'all';
 async function getMediaGenerationData({
   id,
   user,
@@ -300,29 +300,27 @@ async function getMediaGenerationData({
     negativePrompt,
   };
 
+  const imageResources = await dbRead.imageResourceNew.findMany({
+    where: { imageId: id },
+    select: { imageId: true, modelVersionId: true, strength: true },
+  });
+  const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
+  const fn = generation ? getGenerationResourceData : getResourceData;
+  const resources = await fn({ ids: versionIds, user }).then((data) =>
+    data.map((item) => {
+      const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
+      return {
+        ...item,
+        strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
+      };
+    })
+  );
+  let baseModel = getBaseModelFromResources(
+    resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+  );
+
   switch (media.type) {
     case 'image':
-      const imageResources = await dbRead.imageResourceNew.findMany({
-        where: { imageId: id },
-        select: { imageId: true, modelVersionId: true, strength: true },
-      });
-      const versionIds = [
-        ...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined)),
-      ];
-      const fn = generation ? getGenerationResourceData : getResourceData;
-      const resources = await fn({ ids: versionIds, user }).then((data) =>
-        data.map((item) => {
-          const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
-          return {
-            ...item,
-            strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
-          };
-        })
-      );
-      const baseModel = getBaseModelFromResources(
-        resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
-      );
-
       let aspectRatio = '0';
       try {
         if (width && height) {
@@ -336,9 +334,13 @@ async function getMediaGenerationData({
       const {
         'Clip skip': legacyClipSkip,
         clipSkip = legacyClipSkip,
-        comfy, // don't return to client
-        external, // don't return to client
-        ...meta
+        cfgScale,
+        steps,
+        seed,
+        sampler,
+        // comfy, // don't return to client
+        // external, // don't return to client
+        // ...meta
       } = imageGenerationSchema.parse(media.meta);
 
       // if (meta.hashes && meta.prompt) {
@@ -359,15 +361,16 @@ async function getMediaGenerationData({
       // }
 
       return {
+        type: 'image',
         remixOfId: media.id, // TODO - remove
         remixOf,
         resources,
         params: {
           ...common,
-          cfgScale: meta.cfgScale !== 0 ? meta.cfgScale : undefined,
-          steps: meta.steps !== 0 ? meta.steps : undefined,
-          seed: meta.seed !== 0 ? meta.seed : undefined,
-          sampler: meta.sampler,
+          cfgScale: cfgScale !== 0 ? cfgScale : undefined,
+          steps: steps !== 0 ? steps : undefined,
+          seed: seed !== 0 ? seed : undefined,
+          sampler: sampler,
           width,
           height,
           aspectRatio,
@@ -376,13 +379,22 @@ async function getMediaGenerationData({
         },
       };
     case 'video':
+      const meta = media.meta as Record<string, any>;
+      meta.engine = meta.engine ?? (baseModel ? baseModelEngineMap[baseModel] : undefined);
+      if (meta.type === 'txt2vid' || meta.type === 'img2vid') meta.process = meta.type;
+      if (baseModel === 'WanVideo') {
+        if (meta.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
+        else baseModel = 'WanVideo14B_I2V_720p';
+      }
       return {
+        type: 'video',
         remixOfId: media.id, // TODO - remove,
         remixOf,
-        resources: [] as GenerationResource[],
+        resources,
         params: {
-          ...(media.meta as Record<string, any>),
+          ...meta,
           ...common,
+          baseModel,
           width,
           height,
         },
@@ -413,14 +425,21 @@ const getModelVersionGenerationData = async ({
   }
 
   const deduped = uniqBy(resources, 'id');
+  const baseModel = getBaseModelFromResourcesWithDefault(
+    deduped.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+  );
+
+  const engine = baseModelEngineMap[baseModel];
+
+  // TODO - refactor this elsewhere
 
   return {
+    type: getResourceGenerationType(baseModel),
     resources: deduped,
     params: {
-      baseModel: getBaseModelFromResources(
-        deduped.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
-      ),
+      baseModel,
       clipSkip: checkpoint?.clipSkip ?? undefined,
+      engine,
     },
   };
 };
@@ -527,6 +546,7 @@ export type GenerationResource = GenerationResourceBase & {
     nsfw?: boolean;
     poi?: boolean;
     minor?: boolean;
+    sfwOnly?: boolean;
     // userId: number;
   };
   epochDetails?: {
@@ -562,6 +582,12 @@ export async function getResourceData({
 
     return {
       ...item,
+      air: stringifyAIR({
+        baseModel: item.baseModel,
+        type: item.model.type,
+        modelId: item.model.id,
+        id: item.id,
+      }),
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
       strength: settings?.strength ?? 1,
@@ -664,7 +690,7 @@ export async function getResourceData({
       );
       const fileSizeKB = primaryFile?.sizeKB;
       let additionalResourceCost = false;
-      if (env.ORCHESTRATOR_EXPERIMENTAL && fileSizeKB) {
+      if (fileSizeKB) {
         additionalResourceCost =
           !FREE_RESOURCE_TYPES.includes(item.model.type) &&
           !featuredModels.map((fm) => fm.modelId).includes(item.model.id) &&
@@ -711,7 +737,17 @@ export async function getResourceData({
         epochs are used to generate images from a trained model before the model is finished training. It allows the user to determine the best trained model from the available epochs.
       */
       return (epochsDetails?.length ?? 0) > 0
-        ? epochsDetails.map((epochDetails) => ({ ...payload, epochDetails }))
+        ? epochsDetails.map((epochDetails) => ({
+            ...payload,
+            epochDetails,
+            air: stringifyAIR({
+              baseModel: item.baseModel,
+              type: item.model.type,
+              modelId: epochDetails.jobId,
+              id: epochDetails.fileName,
+              source: 'orchestrator',
+            }),
+          }))
         : payload;
     });
   });

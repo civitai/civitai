@@ -75,12 +75,12 @@ export function usePersistForm<
 
   const form = useForm<TypeOf<TSchema>>({
     resolver: schema ? zodResolver(schema) : undefined,
-    defaultValues: _defaultValues.current as any,
-    values: Object.keys(values).length
-      ? typeof values === 'function'
-        ? values(getParsedStorage())
-        : values
-      : undefined,
+    defaultValues: { ..._defaultValues.current, ...getParsedStorage() } as any,
+    // values: Object.keys(values).length
+    //   ? typeof values === 'function'
+    //     ? values(getParsedStorage())
+    //     : values
+    //   : undefined,
     ...rest,
   });
 
@@ -117,6 +117,7 @@ export function usePersistForm<
   }
 
   function getParsedStorage() {
+    if (typeof window === 'undefined') return {};
     const str = getStorage().getItem(storageKey);
     return parseStorage(str ?? '{}').state;
   }
@@ -138,12 +139,13 @@ export function usePersistForm<
   //   if (_defaultValues.current) updateStorage(_defaultValues.current);
   // }, []);
 
-  useEffect(() => {
-    const storage = getParsedStorage();
-    for (const [key, value] of Object.entries(storage)) {
-      form.setValue(key as any, value as any);
-    }
-  }, []);
+  // useEffect(() => {
+  //   const storage = getParsedStorage();
+  //   form.reset(storage, { keepDefaultValues: true });
+  //   // for (const [key, value] of Object.entries(storage)) {
+  //   //   form.setValue(key as any, value as any);
+  //   // }
+  // }, []);
 
   // update storage values on form input update
   useEffect(() => {

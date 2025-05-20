@@ -31,6 +31,8 @@ import {
 import { signalClient } from '~/utils/signal-client';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { createNotification } from '~/server/services/notification.service';
+import { logToAxiom } from '~/server/logging/client';
+import { Prisma } from '@prisma/client';
 
 export const creatorsProgramDistribute = createJob(
   'creators-program-distribute',
@@ -119,7 +121,7 @@ export const creatorsProgramInviteTipalti = createJob(
         AND date > subtractDays(now(), 1)
       )
       SELECT
-        toAccountId as userId,
+        toAccountId as "userId",
         SUM(if(toAccountType = 'cash-pending' OR (toAccountType = 'cash-settled' AND fromAccountType != 'cash-pending'), amount, 0)) as balance
       FROM buzzTransactions
       WHERE toAccountType IN ('cash-pending', 'cash-settled')
@@ -133,7 +135,7 @@ export const creatorsProgramInviteTipalti = createJob(
         "userId"
       FROM "UserPaymentConfiguration" uc
       WHERE "tipaltiAccountId" IS NOT NULL
-      AND "userId" IN (${userIdsOverThreshold});
+      AND "userId" IN (${Prisma.join(userIdsOverThreshold)});
     `;
     const usersWithoutTipalti = userIdsOverThreshold.filter(
       (userId) => !usersWithTipalti.some((u) => u.userId === userId)
@@ -175,47 +177,92 @@ export const creatorsProgramSettleCash = createJob(
 
     const pendingCash = await clickhouse.$query<{ userId: number; amount: number }>`
       SELECT
-        toAccountId as userId,
-        SUM(if(toAccountType = 'cash-settled', amount, -amount)) as amount
+        toAccountId as "userId",
+        SUM(if(toAccountType = 'cash-settled', -amount, amount)) as amount
       FROM buzzTransactions
-      WHERE (
-        -- Settlements
-        fromAccountType = 'cash-settled'
-        AND toAccountType = 'cash-settled'
-      ) OR (
-        -- Deposits
-        fromAccountId = 0
-        AND toAccountType = 'cash-settled'
+      -- Ensure we only check compensation as we don't care for refunds.
+      WHERE type = 'compensation' AND (
+        (
+          -- To Settlements
+          fromAccountId = 0
+          AND toAccountType = 'cash-settled'
+        ) OR (
+          -- Deposits
+          fromAccountId = 0
+          AND toAccountType = 'cash-pending'
+        )
       )
-      GROUP BY userId
-      HAVING amount > 0;
+      GROUP BY "userId"
+      HAVING amount > 0
     `;
 
     // Settle pending cash transactions from bank with retry
     const monthStr = dayjs().format('YYYY-MM');
     await withRetries(async () => {
-      createBuzzTransactionMany(
-        pendingCash.map(({ userId, amount }) => ({
-          type: TransactionType.Compensation,
-          toAccountType: 'cashsettled',
-          toAccountId: userId,
-          fromAccountType: 'cashpending',
-          fromAccountId: userId,
-          amount,
-          description: `Cash settlement for ${monthStr}`,
-          externalTransactionId: `settlement-${monthStr}-${userId}`,
-        }))
-      );
+      try {
+        await createBuzzTransactionMany(
+          pendingCash.flatMap(({ userId, amount }) => [
+            {
+              type: TransactionType.Compensation,
+              fromAccountType: 'cashpending',
+              fromAccountId: userId,
+              toAccountType: 'cashsettled',
+              toAccountId: 0,
+              amount,
+              description: `Move from pending ${monthStr}`,
+              externalTransactionId: `settlement-bank-${monthStr}-${userId}`,
+            },
+            {
+              type: TransactionType.Compensation,
+              fromAccountType: 'cashsettled',
+              fromAccountId: 0,
+              toAccountType: 'cashsettled',
+              toAccountId: userId,
+              amount,
+              description: `Cash settlement for ${monthStr}`,
+              externalTransactionId: `settlement-${monthStr}-${userId}`,
+            },
+          ])
+        );
+
+        await logToAxiom({
+          name: 'creator-program-settle-cash',
+          type: 'creator-program-settle-cash',
+          pendingCash,
+          status: 'success',
+          message: 'Settled cash transactions successfully',
+        });
+      } catch (e) {
+        await logToAxiom({
+          name: 'creator-program-settle-cash',
+          type: 'creator-program-settle-cash',
+          error: e,
+          pendingCash,
+        });
+
+        throw e;
+      }
+    });
+    const affectedUsers = pendingCash.map((p) => p.userId);
+
+    // Notify users of cash settlement
+    await createNotification({
+      type: 'creator-program-funds-settled',
+      category: NotificationCategory.Creator,
+      key: `creator-program-funds-settled:${monthStr}`,
+      userIds: affectedUsers,
+      details: {},
     });
 
     // Bust user caches
-    const affectedUsers = pendingCash.map((p) => p.userId);
-    userCashCache.bust(affectedUsers);
-    signalClient.topicSend({
+    await userCashCache.bust(affectedUsers);
+    await signalClient.topicSend({
       topic: SignalTopic.CreatorProgram,
       target: SignalMessages.CashInvalidator,
       data: {},
     });
+
+    return pendingCash;
   }
 );
 

@@ -46,6 +46,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   description: true,
   poi: true,
   minor: true,
+  sfwOnly: true,
   nsfwLevel: true,
   nsfw: true,
   type: true,
@@ -139,6 +140,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           rating: true,
           thumbsUpCount: true,
           thumbsDownCount: true,
+          earnedAmount: true,
         },
       },
       files: {
@@ -201,6 +203,7 @@ export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   nsfwLevel: true,
   meta: true,
   minor: true,
+  sfwOnly: true,
   status: true,
   createdAt: true,
   lastVersionAt: true,
@@ -214,6 +217,7 @@ export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   allowCommercialUse: true,
   allowDerivatives: true,
   allowDifferentLicense: true,
+  poi: true,
   // Joins:
   user: {
     select: userWithCosmeticsSelect,

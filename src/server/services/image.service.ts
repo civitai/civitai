@@ -2,13 +2,13 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
 import dayjs, { ManipulateType } from 'dayjs';
-import { chunk, lowerFirst, truncate } from 'lodash-es';
-import { SearchParams, SearchResponse } from 'meilisearch';
+import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
+import type { SearchParams, SearchResponse } from 'meilisearch';
 import { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
-import { VotableTagModel } from '~/libs/tags';
+import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL, constants, METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
@@ -22,11 +22,7 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
-  combineSqlWithParams,
-  getDbWithoutLag,
-  preventReplicationLag,
-} from '~/server/db/db-helpers';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -44,41 +40,49 @@ import {
   userContentOverviewCache,
 } from '~/server/redis/caches';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
   GetEntitiesCoverImage,
+  GetImageInput,
   GetInfiniteImagesOutput,
+  GetMyImagesInput,
   ImageEntityType,
   imageMetaOutput,
+  ImageMetaProps,
+  ImageModerationSchema,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
   ImageSchema,
   ImageUploadProps,
+  IngestImageInput,
+  ingestImageSchema,
+  RemoveImageResourceSchema,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
-  UpdateImageMinorInput,
+  ToggleImageFlagInput,
+  UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import {
   articlesSearchIndex,
   imagesMetricsSearchIndex,
   imagesSearchIndex,
 } from '~/server/search-index';
-import {
+import type {
   ImageMetricsSearchIndexRecord,
   MetricsImageFilterableAttribute,
   MetricsImageSortableAttribute,
 } from '~/server/search-index/metrics-images.search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
-import { ImageV2Model } from '~/server/selectors/imagev2.selector';
+import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -86,36 +90,40 @@ import { upsertImageFlag } from '~/server/services/image-flag.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
-import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
+import { bulkSetReportStatus } from '~/server/services/report.service';
 import {
   getBlockedTags,
   getModeratedTags,
   getTagsNeedingReview,
 } from '~/server/services/system-cache';
 import { getVotableTags2 } from '~/server/services/tag.service';
+import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   getBasicDataForUsers,
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { getPeriods } from '~/server/utils/enum-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import {
+  getVideoGenerationConfig,
+  videoGenerationConfig2,
+} from '~/server/orchestrator/generation/generation.config';
 import { Flags } from '~/shared/utils';
 import {
-  AppealStatus,
   Availability,
   BlockImageReason,
   CollectionMode,
@@ -129,7 +137,7 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import { ImageResourceNew } from '~/shared/utils/prisma/models';
+import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { promptWordReplace } from '~/utils/metadata/audit';
@@ -137,19 +145,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import {
-  GetImageInput,
-  ImageMetaProps,
-  ImageModerationSchema,
-  IngestImageInput,
-  ingestImageSchema,
-  RemoveImageResourceSchema,
-} from './../schema/image.schema';
-import { uniqBy } from 'lodash-es';
-import { withRetries } from '~/utils/errorHandling';
-import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
-import { RuleDefinition } from '~/server/utils/mod-rules';
 import { ImageQueue } from '~/server/event-queue/image.queue';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -330,10 +325,16 @@ export const moderateImages = async ({
     // Remove needsReview status
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
-      data: { needsReview: null, ingestion: 'Scanned' },
+      data: {
+        needsReview: null,
+        ingestion: 'Scanned',
+        poi: reviewType === 'poi' ? false : undefined,
+        minor: reviewType === 'minor' ? false : undefined,
+      },
     });
     await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   } else {
+    const isMinor = reviewType === 'minor';
     // Approve
     await dbWrite.$queryRaw`
         UPDATE "Image" SET
@@ -342,11 +343,17 @@ export const moderateImages = async ({
           -- Remove ruleId and ruleReason from metadata
           "metadata" = "metadata" - 'ruleId' - 'ruleReason',
           "ingestion" = 'Scanned',
+
+          ${
+            isMinor
+              ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
+              : Prisma.sql``
+          }
           -- if image was created within 72 hrs, set scannedAt to now
           "scannedAt" = CASE
-            WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
-            ELSE "scannedAt"
-          END
+              WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
+              ELSE "scannedAt"
+            END
         WHERE id IN (${Prisma.join(ids)});
       `;
 
@@ -373,14 +380,20 @@ export const moderateImages = async ({
         WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
       `;
 
-    await upsertTagsOnImageNew(
-      toUpdate.map(({ imageId, tagId }) => ({
-        imageId,
-        tagId,
-        disabled: true,
-        needsReview: false,
-      }))
-    );
+    if (toUpdate.length) {
+      await upsertTagsOnImageNew(
+        toUpdate.map(({ imageId, tagId }) => ({
+          imageId,
+          tagId,
+          disabled: true,
+          needsReview: false,
+        }))
+      );
+    } else {
+      await dbWrite.$executeRawUnsafe(
+        `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
+      );
+    }
 
     await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   }
@@ -467,18 +480,11 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   return await ingestImage({ image: images[0] });
 };
 
-const defaultScanTypes = [
-  ...(env.EXTERNAL_IMAGE_SCANNER === 'hive'
-    ? [ImageScanType.Hive]
-    : [ImageScanType.Moderation, ImageScanType.Label]),
-  ImageScanType.WD14,
-  ImageScanType.Hash,
-  ...(env.MINOR_SCANNER === 'custom'
-    ? [ImageScanType.MinorDetection]
-    : env.MINOR_SCANNER === 'hive'
-    ? [ImageScanType.HiveDemographics]
-    : []),
-];
+const scanner = env.EXTERNAL_IMAGE_SCANNER;
+const clavataScan = env.CLAVATA_SCAN;
+const scanTypes: ImageScanType[] = [ImageScanType.WD14, ImageScanType.Hash];
+if (clavataScan !== 'off' || scanner === 'clavata') scanTypes.push(ImageScanType.Clavata);
+if (scanner === 'hive') scanTypes.push(ImageScanType.Hive);
 
 export const ingestImage = async ({
   image,
@@ -536,7 +542,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: defaultScanTypes,
+      scans: scanTypes,
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -618,7 +624,7 @@ export const ingestImageBulk = async ({
           width: image.width,
           height: image.height,
           prompt: image.prompt,
-          scans: scans ?? defaultScanTypes,
+          scans: scans ?? scanTypes,
           callbackUrl,
         }))
       ),
@@ -717,6 +723,8 @@ type GetAllImagesRaw = {
   baseModel?: string;
   availability: Availability;
   minor: boolean;
+  acceptableMinor: boolean;
+  poi?: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
 };
@@ -768,6 +776,8 @@ export const getAllImages = async (
     baseModels,
     collectionTagId,
     excludedUserIds,
+    disablePoi,
+    disableMinor,
   } = input;
   let { browsingLevel, userId: targetUserId } = input;
 
@@ -836,7 +846,16 @@ export const getAllImages = async (
   } else if (!pending) AND.push(Prisma.sql`(p."publishedAt" < now())`);
 
   if (!isModerator) {
-    AND.push(Prisma.sql`(p."availability" != ${Availability.Private} OR p."userId" = ${userId})`);
+    AND.push(
+      Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
+    );
+  }
+
+  if (disablePoi) {
+    AND.push(Prisma.sql`(i."poi" != TRUE)`);
+  }
+  if (disableMinor) {
+    AND.push(Prisma.sql`(i."minor" != TRUE)`);
   }
 
   let from = 'FROM "Image" i';
@@ -1124,7 +1143,7 @@ export const getAllImages = async (
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
     // Acceptable in collections, need to check for contest collection only
-    if (!collectionId) AND.push(Prisma.sql`i.minor = FALSE`);
+    if (!collectionId) AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     AND.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
@@ -1142,12 +1161,12 @@ export const getAllImages = async (
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
-  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
+  const engines = Object.keys(videoGenerationConfig2);
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const query = Prisma.sql`
     ${queryWith}
     SELECT
-      i.id,
+      ${(reactions?.length ?? 0) > 0 ? Prisma.sql`DISTINCT ` : Prisma.sql``} i.id,
       i.name,
       i.url,
       i."nsfwLevel",
@@ -1173,8 +1192,8 @@ export const getAllImages = async (
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
-            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
-              ${Prisma.join(workflows)}
+            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
+              ${Prisma.join(engines)}
             ]::text[])
           THEN TRUE
           ELSE FALSE
@@ -1202,6 +1221,8 @@ export const getAllImages = async (
       u."deletedAt",
       p."availability",
       i.minor,
+      i.poi,
+      i."acceptableMinor",
       ${Prisma.raw(
         include.includes('metaSelect')
           ? '(CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta",'
@@ -1343,6 +1364,8 @@ export const getAllImages = async (
       thumbnailUrl?: string;
       remixOfId?: number | null;
       hasPositivePrompt?: boolean;
+      poi?: boolean;
+      minor?: boolean;
     }
   > = filtered.map(
     ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
@@ -1650,6 +1673,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     remixOfId,
     remixesOnly,
     nonRemixesOnly,
+    excludedTagIds,
+    disablePoi,
+    disableMinor,
+    requiringMeta,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1662,10 +1689,22 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       // Avoids exposing private resources to the public
       `((NOT availability = ${Availability.Private}) OR "userId" = ${currentUserId})`
     );
+
+    filters.push(
+      // Avoids blocked resources to the public
+      `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS) OR "userId" = ${currentUserId})`
+    );
   }
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];
+  }
+
+  if (disablePoi) {
+    filters.push(`(NOT poi = true)`);
+  }
+  if (disableMinor) {
+    filters.push(`(NOT minor = true)`);
   }
 
   // Filter
@@ -1762,6 +1801,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
   }
 
+  if (excludedTagIds?.length) {
+    // Needed support for this in order to properly support multiple domains.
+    filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
+  }
+
   /*
   // TODO this won't work, can't do custom sort
   if (prioritizedUserIds?.length) {
@@ -1783,6 +1827,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   */
 
   if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
+  if (requiringMeta) {
+    filters.push(`("blockedFor" = ${BlockedReason.AiNotVerified})`);
+  }
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
   if (isModerator) {
@@ -1903,10 +1950,14 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
     const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
     const filteredHits = results.hits.filter((hit) => {
-      // check for good data
-      if (!hit.url) return false;
+      if (hit.id === 17383305) {
+        console.log('hit', hit);
+      }
+      if (!hit.url)
+        // check for good data
+        return false;
       // filter out items flagged with minor unless it's the owner or moderator
-      if (hit.minor) return hit.userId === currentUserId || isModerator;
+      if (hit.acceptableMinor) return hit.userId === currentUserId || isModerator;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
 
@@ -2025,6 +2076,7 @@ const getImageMetrics = async (ids: number[]) => {
   if (missing.length > 0) {
     if (clickhouse) {
       // - find the missing IDs' data in clickhouse
+      // TODO put retries
       clickData = await clickhouse.$query<DeepNonNullable<PgDataType>>(`
           SELECT entityId                                              as "imageId",
                  SUM(if(metricType = 'ReactionLike', metricValue, 0))  as "reactionLike",
@@ -2194,7 +2246,7 @@ export const getImage = async ({
     }
   }
 
-  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
+  const engines = Object.keys(videoGenerationConfig2);
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
       i.id,
@@ -2217,6 +2269,8 @@ export const getImage = async ({
       i.metadata,
       i."nsfwLevel",
       i.minor,
+      i.poi,
+      i."acceptableMinor",
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -2234,8 +2288,8 @@ export const getImage = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
-            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
-              ${Prisma.join(workflows)}
+            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
+              ${Prisma.join(engines)}
             ]::text[])
           THEN TRUE
           ELSE FALSE
@@ -2330,7 +2384,6 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
       irh."reviewDetails",
       irh."reviewCreatedAt",
       irh."name",
-      irh."hash",
       irh."modelVersionId",
       irh."modelVersionName",
       irh."modelVersionCreatedAt",
@@ -2348,7 +2401,7 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
     JOIN "Model" m ON m.id = irh."modelId" AND m."status" = 'Published'
     WHERE
       irh."imageId" = ${Prisma.sql`${id}`}
-    AND (irh."hash" IS NOT NULL OR irh."modelVersionId" IS NOT NULL)
+    AND irh."modelVersionId" IS NOT NULL
   `;
 
   return resources;
@@ -2374,6 +2427,8 @@ export type ImagesForModelVersions = {
   hasMeta: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
+  poi?: boolean;
+  minor?: boolean;
 };
 
 export const getImagesForModelVersion = async ({
@@ -2438,7 +2493,7 @@ export const getImagesForModelVersion = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i.minor = FALSE`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -2446,7 +2501,7 @@ export const getImagesForModelVersion = async ({
     );
   }
 
-  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
+  const engines = Object.keys(videoGenerationConfig2);
   const query = Prisma.sql`
     -- getImagesForModelVersion
     WITH targets AS (
@@ -2480,6 +2535,8 @@ export const getImagesForModelVersion = async ({
       i.hash,
       i.type,
       i.metadata,
+      i.minor,
+      i.poi,
       t."modelVersionId",
       ${Prisma.raw(include.includes('meta') ? 'i.meta,' : '')}
       p."availability",
@@ -2500,8 +2557,8 @@ export const getImagesForModelVersion = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
-            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
-              ${Prisma.join(workflows)}
+            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
+              ${Prisma.join(engines)}
             ]::text[])
           THEN TRUE
           ELSE FALSE
@@ -2600,6 +2657,8 @@ export const getImagesForPosts = async ({
   browsingLevel,
   user,
   pending,
+  disablePoi,
+  disableMinor,
 }: {
   postIds: number | number[];
   // excludedIds?: number[];
@@ -2607,6 +2666,8 @@ export const getImagesForPosts = async ({
   browsingLevel?: number;
   user?: SessionUser;
   pending?: boolean;
+  disablePoi?: boolean;
+  disableMinor?: boolean;
 }) => {
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
@@ -2632,7 +2693,7 @@ export const getImagesForPosts = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i.minor = FALSE`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -2640,7 +2701,15 @@ export const getImagesForPosts = async ({
     );
   }
 
-  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
+  if (disablePoi) {
+    imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL)`);
+  }
+
+  if (disableMinor) {
+    imageWhere.push(Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`);
+  }
+
+  const engines = Object.keys(videoGenerationConfig2);
   const images = await dbRead.$queryRaw<
     {
       id: number;
@@ -2659,6 +2728,8 @@ export const getImagesForPosts = async ({
       onSite: boolean;
       remixOfId?: number | null;
       hasPositivePrompt?: boolean;
+      poi?: boolean;
+      minor?: boolean;
     }[]
   >`
     SELECT
@@ -2691,14 +2762,16 @@ export const getImagesForPosts = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
-            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
-                ${Prisma.join(workflows)}
+            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
+                ${Prisma.join(engines)}
               ]::text[])
           THEN TRUE
           ELSE FALSE
         END
       ) as "onSite",
-      i.metadata->>'remixOfId' as "remixOfId"
+      i.metadata->>'remixOfId' as "remixOfId",
+      i.minor,
+      i.poi
     FROM "Image" i
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC
@@ -2870,6 +2943,8 @@ type GetImageConnectionRaw = {
   entityId: number;
   hasMeta: boolean;
   hasPositivePrompt?: boolean;
+  poi?: boolean;
+  minor?: boolean;
 };
 
 export const getImagesByEntity = async ({
@@ -2949,6 +3024,8 @@ export const getImagesByEntity = async ({
       i."needsReview",
       i."userId",
       i."index",
+      i.poi,
+      i.minor,
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -3506,6 +3583,8 @@ type GetImageModerationReviewQueueRaw = {
   moderatorUsername?: string;
   removedAt?: Date;
   minor: boolean;
+  acceptableMinor: boolean;
+  poi?: boolean;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -3514,8 +3593,11 @@ export const getImageModerationReviewQueue = async ({
   tagReview,
   reportReview,
   tagIds,
+  browsingLevel,
 }: ImageReviewQueueInput) => {
   const AND: Prisma.Sql[] = [];
+
+  AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
 
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
@@ -3536,7 +3618,7 @@ export const getImageModerationReviewQueue = async ({
   let cursorDirection = 'DESC';
 
   if (tagReview) {
-    AND.push(Prisma.sql`i.id IN (SELECT DISTINCT "imageId" FROM tags_review)`);
+    AND.push(Prisma.sql`i.id IN (SELECT DISTINCT "imageId" FROM tags_review LIMIT ${limit + 1})`);
     AND.push(Prisma.sql`
       i."nsfwLevel" < ${NsfwLevel.Blocked}
     `);
@@ -3565,15 +3647,17 @@ export const getImageModerationReviewQueue = async ({
   const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`
     ${Prisma.raw(
       tagReview
-        ? `
-            WITH tags_review AS (
-              SELECT "imageId"
-              FROM "TagsOnImageDetails" WHERE "needsReview"
-              AND NOT "disabled"
-              ${cursor ? `AND "imageId" <= ${cursor}` : ''}
-              ORDER BY ("imageId", "tagId") DESC
-              LIMIT ${limit + 1}
-            )`
+        ? `WITH tags_review AS (
+            SELECT
+              toi."imageId"
+            FROM "TagsOnImageNew" toi  JOIN "Image" i ON toi."imageId" = i.id
+            WHERE
+            (toi."attributes" >> 9) & 1 = 1
+            AND (toi."attributes" >> 10) & 1 != 1
+            AND i."nsfwLevel" < 32
+            ${cursor ? `AND "imageId" <= ${cursor}` : ''}
+            ORDER BY (toi."imageId", toi."tagId") DESC
+          )`
         : ''
     )}
     -- Image moderation queue
@@ -3601,6 +3685,8 @@ export const getImageModerationReviewQueue = async ({
       p."title" "postTitle",
       i."index",
       i.minor,
+      i.poi,
+      i."acceptableMinor",
       p."publishedAt",
       p."modelVersionId",
       u.username,
@@ -3625,11 +3711,6 @@ export const getImageModerationReviewQueue = async ({
   if (rawImages.length > limit) {
     const nextItem = rawImages.pop();
     nextCursor = nextItem?.cursorId;
-  }
-
-  if (tagReview) {
-    const nextItem = rawImages.pop();
-    if (rawImages.length > 0) nextCursor = nextItem?.cursorId;
   }
 
   const imageIds = rawImages.map((i) => i.id);
@@ -3728,6 +3809,7 @@ export const getImageModerationReviewQueue = async ({
       removedAt?: Date | null;
       tosReason?: string | null;
       minor: boolean;
+      acceptableMinor: boolean;
     }
   > = rawImages.map(
     ({
@@ -3958,11 +4040,12 @@ export async function ingestArticleCoverImages(array: { imageId: number; article
 export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
-  user,
+  userId,
   status,
-}: UpdateImageNsfwLevelOutput & { user: SessionUser }) {
+  isModerator,
+}: UpdateImageNsfwLevelOutput & { userId: number; isModerator?: boolean }) {
   if (!nsfwLevel) throw throwBadRequestError();
-  if (user.isModerator) {
+  if (isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
@@ -3973,7 +4056,7 @@ export async function updateImageNsfwLevel({
         data: { status },
       });
     }
-    await trackModActivity(user.id, {
+    await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,
       activity: 'setNsfwLevel',
@@ -3989,18 +4072,18 @@ export async function updateImageNsfwLevel({
     if (
       current?.nsfwLevel === NsfwLevel.PG &&
       nsfwLevel >= NsfwLevel.R &&
-      current?.userId !== user.id
+      current?.userId !== userId
     ) {
       leakingContentCounter.inc();
     }
 
     await dbWrite.imageRatingRequest.upsert({
-      where: { imageId_userId: { imageId: id, userId: user.id } },
+      where: { imageId_userId: { imageId: id, userId: userId } },
       create: {
         nsfwLevel,
         imageId: id,
-        userId: user.id,
-        weight: current.userId === user.id ? 3 : 1,
+        userId: userId,
+        weight: current.userId === userId ? 3 : 1,
       },
       update: { nsfwLevel },
     });
@@ -4209,6 +4292,27 @@ export async function addImageTools({
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
+  // Update these images if blocked:
+  const updated = await dbWrite.image.updateManyAndReturn({
+    where: { id: { in: data.map((x) => x.imageId) }, blockedFor: BlockedReason.AiNotVerified },
+    data: {
+      blockedFor: null,
+      // Ensures we do another run:
+      ingestion: 'Pending',
+    },
+    select: {
+      id: true,
+      url: true,
+    },
+  });
+
+  if (updated.length > 0) {
+    await ingestImageBulk({
+      images: updated,
+      lowPriority: true,
+    });
+  }
+
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }
@@ -4439,15 +4543,15 @@ export async function getImageGenerationData({ id }: { id: number }) {
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 
   let onSite = false;
-  let process: string | null = null;
+  let process: string | undefined | null = undefined;
   let hasControlNet = false;
   if (meta) {
     if ('civitaiResources' in meta) onSite = true;
-    else if ('workflow' in meta) {
-      const workflow = generationFormWorkflowConfigurations.find((x) => x.key === meta.workflow);
-      if (workflow) {
+    else if ('engine' in meta && meta.engine === 'openai') onSite = true;
+    else if ('engine' in meta) {
+      process = meta.process ?? meta.type;
+      if (process) {
         onSite = true;
-        process = workflow.subType;
       }
     }
 
@@ -4685,16 +4789,21 @@ export async function setVideoThumbnail({
   return updated;
 }
 
-export async function updateImageMinor({ id, minor }: UpdateImageMinorInput) {
+export async function updateImageAcceptableMinor({
+  id,
+  acceptableMinor,
+}: UpdateImageAcceptableMinorInput) {
   const image = await dbWrite.image.update({
     where: { id },
-    data: { minor },
+    data: { acceptableMinor },
   });
 
   // Remove it from search index if minor is true
   await queueImageSearchIndexUpdate({
     ids: [id],
-    action: minor ? SearchIndexUpdateQueueAction.Delete : SearchIndexUpdateQueueAction.Update,
+    action: acceptableMinor
+      ? SearchIndexUpdateQueueAction.Delete
+      : SearchIndexUpdateQueueAction.Update,
   });
 
   return image;
@@ -4761,16 +4870,21 @@ export async function createImageResources({
 }
 
 export const getMyImages = async ({
+  mediaTypes,
   userId,
   limit,
   cursor = 0,
-}: InfiniteQueryInput & { userId: number }) => {
+}: GetMyImagesInput & { userId: number }) => {
+  const allowedMediaTypes = mediaTypes.filter((x) => x !== MediaType.audio);
+
   try {
-    const images = await dbRead.image.findMany({
-      select: { id: true, url: true, meta: true, createdAt: true },
+    const media = await dbRead.image.findMany({
+      select: { id: true, url: true, meta: true, createdAt: true, type: true },
       where: {
         userId,
-        type: MediaType.image,
+        type: {
+          in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
+        },
         postId: { not: null },
         ingestion: ImageIngestionStatus.Scanned,
       },
@@ -4780,13 +4894,13 @@ export const getMyImages = async ({
     });
 
     let nextCursor: number | undefined;
-    if (images.length > limit) {
-      const nextItem = images.pop();
+    if (media.length > limit) {
+      const nextItem = media.pop();
       nextCursor = nextItem?.id;
     }
 
     return {
-      items: images,
+      items: media,
       nextCursor,
     };
   } catch (error) {
@@ -4812,13 +4926,24 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
 
   const data = await upload.done();
   const meta = await getMetadata(imageUrl);
+  // Attempt to guess if this is a video or image based off of the sample image url.
+  // This is no accurate science for all scenarios, but should give out a decent result at least.
+  const isVideo = imageUrl.includes('.mp4') || imageUrl.includes('.mov');
 
   const response = {
+    type: (isVideo ? 'video' : 'image') as MediaType,
     meta: meta,
     metadata: {
       size: blob.size,
-      width: 512, //  This is mostly a safeguard to default.
-      height: 512, //  This is mostly a safeguard to default.
+      // We need a better way to determine the size of the content here. However, due to the fact that we can't
+      // present these images in the server size, we have no exact measurements. We can only assume the size.
+      // The front-end has an easier time determining the size of the content because they can render it.
+      ...(isVideo
+        ? {
+            width: 640,
+            height: 480,
+          }
+        : { width: 512, height: 512 }),
     },
     url: data.Key,
   };
@@ -4850,3 +4975,42 @@ export async function getImagesModRules() {
 export async function bustImageModRulesCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
 }
+
+export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: { [flag]: true },
+  });
+
+  if (!image) throw throwNotFoundError();
+
+  await dbWrite.image.update({
+    where: { id },
+    data: { [flag]: !image[flag] },
+  });
+
+  // Ensure we update the search index:
+  await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return true;
+};
+
+export const updateImagesFlag = async ({
+  ids,
+  flag,
+  value,
+}: Pick<ToggleImageFlagInput, 'flag'> & { ids: number[]; value: boolean }) => {
+  if (ids.length === 0) return false;
+
+  await dbWrite.image.updateMany({
+    where: { id: { in: ids } },
+    data: { [flag]: value },
+  });
+
+  // Ensure we update the search index:
+  await imagesMetricsSearchIndex.queueUpdate(
+    ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+
+  return true;
+};

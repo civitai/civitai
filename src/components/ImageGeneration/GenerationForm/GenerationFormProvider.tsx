@@ -10,6 +10,7 @@ import {
   BaseModelSetType,
   constants,
   generation,
+  generationConfig,
   getGenerationConfig,
 } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
@@ -19,7 +20,7 @@ import {
   fluxModeOptions,
   fluxModelId,
   fluxStandardAir,
-  getBaseModelFromResources,
+  getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getBaseModelSetTypes,
   getIsFluxUltra,
@@ -49,8 +50,8 @@ const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
     model: generationResourceSchema,
-    resources: generationResourceSchema.array().min(0).default([]),
-    vae: generationResourceSchema.optional(),
+    resources: generationResourceSchema.array().min(0).nullable().default(null),
+    vae: generationResourceSchema.nullable().default(null),
     prompt: z.string().default(''),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
@@ -62,15 +63,13 @@ const baseSchema = textToImageParamsSchema
   });
 const partialSchema = baseSchema.partial();
 const formSchema = baseSchema
-  .transform(({ fluxUltraRaw, ...data }) => {
+  .transform(({ ...data }) => {
     const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
     const { height, width } = isFluxUltra
       ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
       : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
     if (data.model.id === fluxModelId && data.fluxMode !== fluxStandardAir) data.priority = 'low';
-    if (fluxUltraRaw) data.engine = 'flux-pro-raw';
-    else data.engine = undefined;
 
     return removeEmpty({
       ...data,
@@ -98,7 +97,7 @@ const formSchema = baseSchema
     }
 
     if (data.prompt.length > 0) {
-      const { blockedFor, success } = auditPrompt(data.prompt);
+      const { blockedFor, success } = auditPrompt(data.prompt, data.negativePrompt);
       if (!success) {
         let message = `Blocked for: ${blockedFor.join(', ')}`;
         const count = blockedRequest.increment();
@@ -160,14 +159,14 @@ export const blockedRequest = (() => {
 
 // #region [data formatter]
 const defaultValues = generation.defaultValues;
-function formatGenerationData(data: GenerationData): PartialFormData {
+function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormData {
   const { quantity, ...params } = data.params;
   // check for new model in resources, otherwise use stored model
   let checkpoint = data.resources.find((x) => x.model.type === 'Checkpoint');
   let vae = data.resources.find((x) => x.model.type === 'VAE');
   const baseModel =
     params.baseModel ??
-    getBaseModelFromResources(
+    getBaseModelFromResourcesWithDefault(
       data.resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
     );
 
@@ -237,10 +236,10 @@ export function useGenerationForm() {
 
 export function GenerationFormProvider({ children }: { children: React.ReactNode }) {
   const storeData = useGenerationStore((state) => state.data);
-
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const type = useGenerationFormStore((state) => state.type);
+  // const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const getValues = useCallback(
     (storageValues: any): any => {
@@ -263,20 +262,22 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     version: 1.3,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
-    values: getValues,
+    defaultValues: getValues,
+    // values: getValues,
     exclude: ['remixSimilarity', 'remixPrompt', 'remixNegativePrompt'],
     storage: localStorage,
   });
 
   function checkSimilarity(id: number, prompt?: string) {
     fetchGenerationData({ type: 'image', id }).then((data) => {
-      if (data.params.prompt && prompt !== undefined) {
-        const similarity = calculateAdjustedCosineSimilarities(data.params.prompt, prompt);
-        form.setValue('remixSimilarity', similarity);
-      }
-
-      form.setValue('remixPrompt', data.params.prompt);
-      form.setValue('remixNegativePrompt', data.params.negativePrompt);
+      setValues({
+        remixSimilarity:
+          !!data.params.prompt && !!prompt
+            ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
+            : undefined,
+        remixPrompt: data.params.prompt,
+        remixNegativePrompt: data.params.negativePrompt,
+      });
     });
   }
 
@@ -376,6 +377,19 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       subscription.unsubscribe();
     };
   }, []);
+
+  // useEffect(() => {
+  //   if (browsingSettingsAddons.settings.generationDefaultValues) {
+  //     const { generationDefaultValues } = browsingSettingsAddons.settings;
+  //     Object.keys(generationDefaultValues ?? {}).forEach((key) => {
+  //       // @ts-ignore
+  //       const value = generationDefaultValues[key as keyof generationDefaultValues];
+  //       if (value !== undefined) {
+  //         form.setValue(key as keyof PartialFormData, value);
+  //       }
+  //     });
+  //   }
+  // }, [browsingSettingsAddons, form]);
   // #endregion
 
   // #region [handlers]
@@ -383,9 +397,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     // don't overwrite quantity
     const { quantity, ...params } = data;
     const limited = sanitizeTextToImageParams(params, status.limits);
-    for (const [key, value] of Object.entries(limited)) {
-      form.setValue(key as keyof PartialFormData, value);
-    }
+    const formData = form.getValues();
+    form.reset({ ...formData, ...limited }, { keepDefaultValues: true });
+    // for (const [key, value] of Object.entries(limited)) {
+    //   form.setValue(key as keyof PartialFormData, value);
+    // }
   }
 
   function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
@@ -393,6 +409,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     return sanitizeTextToImageParams(
       {
         ...defaultValues,
+        // ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
         fluxMode: fluxModeOptions[1].value,
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
@@ -404,7 +421,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }
 
   function reset() {
-    form.reset(getDefaultValues(form.getValues()));
+    form.reset(getDefaultValues(form.getValues()), { keepDefaultValues: false });
   }
   // #endregion
 

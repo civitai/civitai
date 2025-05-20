@@ -10,7 +10,8 @@ import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
-const CREATOR_COMP = 0.25;
+const IMAGE_CREATOR_COMP = 0.25;
+const VIDEO_CREATOR_COMP = 0.1;
 const BASE_MODEL_COMP = 0.25;
 export const updateCreatorResourceCompensation = createJob(
   'update-creator-resource-compensation',
@@ -31,7 +32,7 @@ export const updateCreatorResourceCompensation = createJob(
         SELECT
         modelVersionId,
         createdAt,
-        max(jobCost) * ${CREATOR_COMP} as creator_comp,
+        max(jobCost) * (if(isVideo, ${VIDEO_CREATOR_COMP}, ${IMAGE_CREATOR_COMP})) as creator_comp,
         max(creatorsTip) as full_tip,
         max(resource_count) as resource_count,
         creator_comp * if(max(isBaseModel) = 1, ${BASE_MODEL_COMP}, 0) as base_model_comp,
@@ -47,7 +48,8 @@ export const updateCreatorResourceCompensation = createJob(
             rj.jobCost as jobCost,
             rj.jobId as jobId,
             rj.creatorsTip as creatorsTip,
-            m.type = 'Checkpoint' as isBaseModel
+            m.type = 'Checkpoint' as isBaseModel,
+            rj.isVideo as isVideo
           FROM (
             SELECT
               arrayJoin(resourcesUsed) AS modelVersionId,
@@ -55,16 +57,17 @@ export const updateCreatorResourceCompensation = createJob(
               createdAt,
               cost as jobCost,
               jobId,
-              creatorsTip
+              creatorsTip,
+              jobType = 'comfyVideoGen' as isVideo
             FROM orchestration.jobs
-            WHERE jobType IN ('TextToImageV2')
+            WHERE jobType IN ('TextToImageV2', 'comfyVideoGen')
               AND createdAt BETWEEN toStartOfDay(subtractDays(now(), 1)) AND toStartOfDay(now())
               AND modelVersionId NOT IN (250708, 250712, 106916)
           ) rj
           JOIN civitai_pg.ModelVersion mv ON mv.id = rj.modelVersionId
           JOIN civitai_pg.Model m ON m.id = mv.modelId
         ) resource_job_details
-        GROUP BY modelVersionId, jobId, createdAt
+        GROUP BY modelVersionId, jobId, createdAt, isVideo
       ) resource_job_values
       GROUP BY date, modelVersionId
       HAVING total >= 1

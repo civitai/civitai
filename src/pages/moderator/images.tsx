@@ -37,6 +37,8 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
@@ -126,6 +128,7 @@ export default function Images() {
   const [type, setType] = useState<ImageReviewType>('minor');
   const [activeTag, setActiveNameTag] = useState<number | null>(null);
   const { csamReports, appealReports } = useFeatureFlags();
+  const browsingLevel = useBrowsingLevelDebounced();
 
   const viewingReported = type === 'reported';
 
@@ -134,8 +137,9 @@ export default function Images() {
       needsReview: !viewingReported ? type : undefined,
       reportReview: viewingReported ? true : undefined,
       tagIds: activeTag ? [activeTag] : undefined,
+      browsingLevel,
     }),
-    [type, viewingReported, activeTag]
+    [type, viewingReported, activeTag, browsingLevel]
   );
   const { data: nameTags } = trpc.image.getModeratorPOITags.useQuery(undefined, {
     enabled: type === 'poi',
@@ -186,7 +190,7 @@ export default function Images() {
             <ModerationControls images={images} filters={filters} view={type} />
           </Paper>
 
-          <Stack spacing={0} mb="lg">
+          <div className="mb-4 flex flex-col items-start">
             <Group>
               <Title order={1}>Images Needing Review</Title>
               <SegmentedControl
@@ -201,7 +205,7 @@ export default function Images() {
               {viewingReported ? 'reported by users' : 'marked by our AI'} which needs further
               attention from the mods
             </Text>
-          </Stack>
+          </div>
 
           {type === 'poi' && nameTags && (
             <Collection
@@ -403,7 +407,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
               </Stack>
             </Group>
-            {image.minor && (
+            {image.acceptableMinor && (
               <Badge variant="light" color="pink">
                 Acceptable Minor
               </Badge>
@@ -424,7 +428,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         )}
         {image.needsReview === 'minor' && (
           <Stack>
-            {image.minor && (
+            {image.acceptableMinor && (
               <Badge variant="light" color="pink">
                 Acceptable Minor
               </Badge>
@@ -726,100 +730,103 @@ function ModerationControls({
   };
 
   return (
-    <Group noWrap spacing="xs">
-      <ButtonTooltip label="Select all" {...tooltipProps}>
-        <ActionIcon
-          variant="outline"
-          onClick={handleSelectAll}
-          disabled={selected.length === images.length}
-        >
-          <IconSquareCheck size="1.25rem" />
-        </ActionIcon>
-      </ButtonTooltip>
-      <ButtonTooltip label="Clear selection" {...tooltipProps}>
-        <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
-          <IconSquareOff size="1.25rem" />
-        </ActionIcon>
-      </ButtonTooltip>
-      {view === 'appeal' ? (
-        <AppealActions selected={selected} filters={filters} />
-      ) : (
-        <PopConfirm
-          message={`Are you sure you want to approve ${selected.length} image(s)?`}
-          position="bottom-end"
-          onConfirm={handleApproveSelected}
-          withArrow
-          withinPortal
-        >
-          <ButtonTooltip label="Accept" {...tooltipProps}>
-            <ActionIcon variant="outline" disabled={!selected.length} color="green">
-              <IconCheck size="1.25rem" />
-            </ActionIcon>
-          </ButtonTooltip>
-        </PopConfirm>
-      )}
-      {view === 'poi' && (
-        <PopConfirm
-          message={`Are you sure these ${selected.length} image(s) are not real people?`}
-          position="bottom-end"
-          onConfirm={handleNotPOI}
-          withArrow
-          withinPortal
-        >
-          <ButtonTooltip label="Not POI" {...tooltipProps}>
-            <ActionIcon variant="outline" disabled={!selected.length} color="green">
-              <IconUserOff size="1.25rem" />
-            </ActionIcon>
-          </ButtonTooltip>
-        </PopConfirm>
-      )}
-      {view === 'poi' && (
-        <PopConfirm
-          message={`Are you sure you want to remove the name on ${selected.length} image(s)?`}
-          position="bottom-end"
-          onConfirm={handleRemoveNames}
-          withArrow
-          withinPortal
-        >
-          <ButtonTooltip label="Remove Name" {...tooltipProps}>
-            <ActionIcon variant="outline" disabled={!selected.length} color="yellow">
-              <IconUserMinus size="1.25rem" />
-            </ActionIcon>
-          </ButtonTooltip>
-        </PopConfirm>
-      )}
-      {view !== 'appeal' && (
-        <PopConfirm
-          message={`Are you sure you want to delete ${selected.length} image(s)?`}
-          position="bottom-end"
-          onConfirm={handleDeleteSelected}
-          withArrow
-          withinPortal
-        >
-          <ButtonTooltip label="Delete" {...tooltipProps}>
-            <ActionIcon variant="outline" disabled={!selected.length} color="red">
-              <IconTrash size="1.25rem" />
-            </ActionIcon>
-          </ButtonTooltip>
-        </PopConfirm>
-      )}
+    <div className="flex flex-col items-center gap-2">
+      <Group noWrap spacing="xs">
+        <ButtonTooltip label="Select all" {...tooltipProps}>
+          <ActionIcon
+            variant="outline"
+            onClick={handleSelectAll}
+            disabled={selected.length === images.length}
+          >
+            <IconSquareCheck size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+        <ButtonTooltip label="Clear selection" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+            <IconSquareOff size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+        {view === 'appeal' ? (
+          <AppealActions selected={selected} filters={filters} />
+        ) : (
+          <PopConfirm
+            message={`Are you sure you want to approve ${selected.length} image(s)?`}
+            position="bottom-end"
+            onConfirm={handleApproveSelected}
+            withArrow
+            withinPortal
+          >
+            <ButtonTooltip label="Accept" {...tooltipProps}>
+              <ActionIcon variant="outline" disabled={!selected.length} color="green">
+                <IconCheck size="1.25rem" />
+              </ActionIcon>
+            </ButtonTooltip>
+          </PopConfirm>
+        )}
+        {view === 'poi' && (
+          <PopConfirm
+            message={`Are you sure these ${selected.length} image(s) are not real people?`}
+            position="bottom-end"
+            onConfirm={handleNotPOI}
+            withArrow
+            withinPortal
+          >
+            <ButtonTooltip label="Not POI" {...tooltipProps}>
+              <ActionIcon variant="outline" disabled={!selected.length} color="green">
+                <IconUserOff size="1.25rem" />
+              </ActionIcon>
+            </ButtonTooltip>
+          </PopConfirm>
+        )}
+        {view === 'poi' && (
+          <PopConfirm
+            message={`Are you sure you want to remove the name on ${selected.length} image(s)?`}
+            position="bottom-end"
+            onConfirm={handleRemoveNames}
+            withArrow
+            withinPortal
+          >
+            <ButtonTooltip label="Remove Name" {...tooltipProps}>
+              <ActionIcon variant="outline" disabled={!selected.length} color="yellow">
+                <IconUserMinus size="1.25rem" />
+              </ActionIcon>
+            </ButtonTooltip>
+          </PopConfirm>
+        )}
+        {view !== 'appeal' && (
+          <PopConfirm
+            message={`Are you sure you want to delete ${selected.length} image(s)?`}
+            position="bottom-end"
+            onConfirm={handleDeleteSelected}
+            withArrow
+            withinPortal
+          >
+            <ButtonTooltip label="Delete" {...tooltipProps}>
+              <ActionIcon variant="outline" disabled={!selected.length} color="red">
+                <IconTrash size="1.25rem" />
+              </ActionIcon>
+            </ButtonTooltip>
+          </PopConfirm>
+        )}
 
-      <ButtonTooltip {...tooltipProps} label="Report CSAM">
-        <ActionIcon
-          variant="outline"
-          disabled={!selected.length}
-          onClick={handleReportCsam}
-          color="orange"
-        >
-          <IconAlertTriangle size="1.25rem" />
-        </ActionIcon>
-      </ButtonTooltip>
-      <ButtonTooltip label="Refresh" {...tooltipProps}>
-        <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
-          <IconReload size="1.25rem" />
-        </ActionIcon>
-      </ButtonTooltip>
-    </Group>
+        <ButtonTooltip {...tooltipProps} label="Report CSAM">
+          <ActionIcon
+            variant="outline"
+            disabled={!selected.length}
+            onClick={handleReportCsam}
+            color="orange"
+          >
+            <IconAlertTriangle size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+        <ButtonTooltip label="Refresh" {...tooltipProps}>
+          <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+            <IconReload size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </Group>
+      <BrowsingLevelsGrouped spacing={4} size="xs" />
+    </div>
   );
 }
 
@@ -859,8 +866,6 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
   });
 
   const handleResolveAppeal = (status: AppealStatus) => {
-    if (!resolvedMessage) return;
-
     deselectAll();
     resolveAppealMutation.mutate({
       ids: selected,

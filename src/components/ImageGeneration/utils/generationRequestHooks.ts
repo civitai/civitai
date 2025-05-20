@@ -5,11 +5,13 @@ import produce from 'immer';
 import { cloneDeep } from 'lodash-es';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GenerationReactType, SignalMessages } from '~/server/common/enums';
-import {
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { GenerationReactType, GenerationSort, SignalMessages } from '~/server/common/enums';
+import type {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
 } from '~/server/schema/orchestrator/textToImage.schema';
@@ -19,19 +21,21 @@ import {
   TagsPatchSchema,
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
+import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
 import {
   queryGeneratedImageWorkflows,
   WorkflowStepFormatted,
 } from '~/server/services/orchestrator/common';
-import { IWorkflow, IWorkflowsInfinite } from '~/server/services/orchestrator/orchestrator.schema';
+import type {
+  IWorkflow,
+  IWorkflowsInfinite,
+} from '~/server/services/orchestrator/orchestrator.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
-import { GenerationSort } from '~/server/common/enums';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 
 type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
@@ -193,17 +197,17 @@ export function useSubmitCreateImage() {
       });
       updateFromEvents();
     },
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Failed to generate',
-        error: new Error(error.message),
-        reason: error.message ?? 'An unexpected error occurred. Please try again later.',
-      });
-    },
+    // onError: (error) => {
+    //   showErrorNotification({
+    //     title: 'Failed to generate',
+    //     error: new Error(error.message),
+    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+    //   });
+    // },
   });
 }
 
-export function useGenerate() {
+export function useGenerate(args?: { onError?: (e: any) => void }) {
   return trpc.orchestrator.generate.useMutation({
     onSuccess: (data) => {
       updateTextToImageRequests({
@@ -223,7 +227,37 @@ export function useGenerate() {
       });
       updateFromEvents();
     },
+    ...args,
   });
+}
+
+export function useGenerateWithCost(cost = 0) {
+  const { conditionalPerformTransaction } = useBuzzTransaction({
+    message: (requiredBalance) =>
+      `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
+        requiredBalance
+      )}. Buy or earn more Buzz to perform this action.`,
+    performTransactionOnPurchase: true,
+    type: 'Generation',
+  });
+
+  const generate = useGenerate();
+
+  return useMemo(() => {
+    async function mutateAsync(...args: Parameters<typeof generate.mutate>) {
+      conditionalPerformTransaction(cost, async () => {
+        return await generate.mutateAsync(...args);
+      });
+    }
+
+    function mutate(...args: Parameters<typeof generate.mutate>) {
+      conditionalPerformTransaction(cost, () => {
+        generate.mutate(...args);
+      });
+    }
+
+    return { ...generate, mutateAsync, mutate };
+  }, [cost, generate]);
 }
 
 export function useDeleteTextToImageRequest() {
@@ -445,7 +479,6 @@ export function usePatchTags() {
 type CustomJobEvent = Omit<WorkflowStepJobEvent, '$type'> & {
   $type: 'job';
   completed?: Date;
-  reason?: string;
 };
 type CustomWorkflowEvent = Omit<WorkflowEvent, '$type'> & { $type: 'workflow' };
 const debouncer = createDebouncer(100);
@@ -502,6 +535,7 @@ function updateFromEvents() {
               for (const image of images) {
                 image.status = signalEvent.status!;
                 image.completed = signalEvent.completed;
+                image.blockedReason = image.blockedReason ?? signalEvent.blockedReason;
                 if (image.type === 'video') {
                   image.progress = signalEvent.progress ?? 0;
                   image.reason = image.reason ?? signalEvent.reason;

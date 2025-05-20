@@ -282,7 +282,8 @@ export const completeOnboardingHandler = async ({
     const changed = onboarding !== ctx.user.onboarding;
 
     switch (input.step) {
-      case OnboardingSteps.TOS: {
+      case OnboardingSteps.TOS:
+      case OnboardingSteps.RedTOS: {
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         break;
       }
@@ -1355,6 +1356,11 @@ export const setUserSettingHandler = async ({
   try {
     const { id } = ctx.user;
     const { tourSettings: tour, ...restInput } = input;
+
+    if (restInput.assistantPersonality && !ctx.features.assistantPersonality) {
+      throw throwAuthorizationError('You do not have permission to perform this action');
+    }
+
     const { tourSettings, ...restSettings } = await getUserSettings(id);
     const newSettings = {
       ...restSettings,

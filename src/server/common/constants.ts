@@ -2,9 +2,9 @@ import type { MantineTheme } from '@mantine/core';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
-import { BanReasonCode, ModelSort } from '~/server/common/enums';
+import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
 import {
   BountyType,
   Currency,
@@ -89,6 +89,12 @@ export const constants = {
     'CogVideoX',
     'NoobAI',
     'Wan Video',
+    'Wan Video 1.3B t2v',
+    'Wan Video 14B t2v',
+    'Wan Video 14B i2v 480p',
+    'Wan Video 14B i2v 720p',
+    'HiDream',
+    'OpenAI',
     'Other',
   ],
   hiddenBaseModels: [
@@ -103,6 +109,8 @@ export const constants = {
     'Playground v2',
     'Stable Cascade',
     'SDXL 1.0 LCM',
+    'OpenAI',
+    'Wan Video',
   ] as string[],
   modelFileTypes: [
     'Model',
@@ -114,7 +122,8 @@ export const constants = {
     'Config',
     'Archive',
   ],
-  trainingModelTypes: ['Character', 'Style', 'Concept'],
+  trainingMediaTypes: ['image', 'video'],
+  trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],
@@ -306,6 +315,7 @@ export const constants = {
           return 5;
       }
     },
+    maxLength: 50000, // 50k characters
   },
   altTruncateLength: 125,
   system: {
@@ -445,6 +455,7 @@ export const maxVideoDurationSeconds = 245;
 export const orchestratorUrls = [
   'https://orchestration.civitai.com',
   'https://orchestration-dev.civitai.com',
+  'https://orchestration-stage.civitai.com',
 ];
 export function isOrchestratorUrl(url: string) {
   return orchestratorUrls.some((orchestratorUrl) => url.startsWith(orchestratorUrl));
@@ -461,7 +472,6 @@ export const MAX_ANIMATION_DURATION_SECONDS = 30;
 export const MAX_POST_IMAGES_WIDTH = 800;
 
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
-
 export type BaseModel = (typeof constants.baseModels)[number];
 
 class BaseModelSet<TBaseModel> {
@@ -543,7 +553,42 @@ export const baseModelSets = {
   CogVideoX: new BaseModelSet({ name: 'CogVideoX', baseModels: ['CogVideoX'] }),
   NoobAI: new BaseModelSet({ name: 'NoobAI', baseModels: ['NoobAI'] }),
   WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
+  HiDream: new BaseModelSet({ name: 'HiDream', baseModels: ['HiDream'] }),
+  OpenAI: new BaseModelSet({ name: 'OpenAI', baseModels: ['OpenAI'] }),
+  WanVideo1_3B_T2V: new BaseModelSet({
+    name: 'Wan Video 1.3B t2v',
+    baseModels: ['Wan Video 1.3B t2v'],
+  }),
+  WanVideo14B_T2V: new BaseModelSet({
+    name: 'Wan Video 14B t2v',
+    baseModels: ['Wan Video 14B t2v'],
+  }),
+  WanVideo14B_I2V_480p: new BaseModelSet({
+    name: 'Wan Video 14B i2v 480p',
+    baseModels: ['Wan Video 14B i2v 480p'],
+  }),
+  WanVideo14B_I2V_720p: new BaseModelSet({
+    name: 'Wan Video 14B i2v 720p',
+    baseModels: ['Wan Video 14B i2v 720p'],
+  }),
 };
+/*
+'Wan Video 1.3B T2V',
+'Wan Video 14B T2V',
+'Wan Video 14B I2V',
+*/
+
+// the ecosystem in the air just needs to start with a corresponding orchestrator controller ecosystem
+// const test = [
+//   //1.3b
+//   'urn:air:wanvideo-1.3bt2v:lora:civitai:1132089@1315010',
+//   // 14b Text to video
+//   'urn:air:wanvideo-14bt2v:lora:civitai:1132089@1315010',
+
+//   // 14b Image to video
+//   'urn:air:wanvideo-14bi2v480:lora:civitai:1132089@1315010',
+//   'urn:air:wanvideo-14bi2v720:lora:civitai:1132089@1315010',
+// ];
 
 type BaseModelSets = typeof baseModelSets;
 export type BaseModelSetType = keyof BaseModelSets;
@@ -645,6 +690,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/Laxhar/noobai-XL-1.0/blob/main/README.md#model-license',
     name: 'NoobAI License',
   },
+  mit: {
+    url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/mit.md',
+    name: 'MIT',
+  },
+  openai: {
+    url: 'https://openai.com/policies/',
+    name: 'OpenAI',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -690,7 +743,13 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   LTXV: baseLicenses['ltxv license'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
+  HiDream: baseLicenses['mit'],
+  OpenAI: baseLicenses['openai'],
   'Wan Video': baseLicenses['apache 2.0'],
+  'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
+  'Wan Video 14B t2v': baseLicenses['apache 2.0'],
+  'Wan Video 14B i2v 480p': baseLicenses['apache 2.0'],
+  'Wan Video 14B i2v 720p': baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -933,6 +992,31 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  OpenAI: {
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1536, height: 1024 },
+      { label: 'Portrait', width: 1024, height: 1536 },
+    ],
+    checkpoint: {
+      id: 1733399,
+      name: '4o Image Gen 1',
+      trainedWords: [],
+      baseModel: 'OpenAI',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      covered: true,
+      model: {
+        id: 1532032,
+        name: `OpenAI's GPT-image-1`,
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+
   Other: {
     aspectRatios: [] as { label: string; width: number; height: number }[],
     checkpoint: {
@@ -964,7 +1048,7 @@ export const generation = {
     cfgScale: 3.5,
     steps: 25,
     sampler: 'DPM++ 2M Karras',
-    seed: undefined,
+    seed: null,
     clipSkip: 2,
     quantity: 2,
     aspectRatio: '0',
@@ -981,6 +1065,9 @@ export const generation = {
     model: generationConfig.Flux1.checkpoint,
     priority: 'low',
     sourceImage: null,
+    openAIQuality: 'medium',
+    vae: null,
+    resources: null,
   },
   maxValues: {
     seed: 4294967295,
@@ -989,6 +1076,7 @@ export const generation = {
 } as const;
 export const maxRandomSeed = 2147483647;
 export const maxUpscaleSize = 3840;
+export const minDownscaleSize = 320;
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
 
@@ -1107,6 +1195,99 @@ export const colorDomains = {
 };
 export type ColorDomain = keyof typeof colorDomains;
 
+export type BrowsingSettingsAddon = {
+  type: 'all' | 'some' | 'none';
+  nsfwLevels: NsfwLevel[];
+  disablePoi?: boolean;
+  disableMinor?: boolean;
+  excludedTagIds?: number[];
+  generationDefaultValues?: { denoise?: number };
+  generationMinValues?: { denoise?: number };
+  excludedFooterLinks?: string[];
+};
+
+export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
+  {
+    type: 'none',
+    nsfwLevels: [NsfwLevel.X, NsfwLevel.XXX],
+    excludedFooterLinks: ['2257', 'content-removal'],
+  },
+  {
+    type: 'some',
+    nsfwLevels: [NsfwLevel.X, NsfwLevel.XXX],
+    excludedFooterLinks: ['wiki', 'api', 'newsroom'],
+    disablePoi: true,
+    disableMinor: true,
+    excludedTagIds: [
+      792, //marijuana
+      793, //weed
+      970, //gun
+      3163, //weapons
+      4036, //mind control
+      4037, //hypnosis
+      5161, //actor
+      5162, //actress
+      5188, //celebrity
+      5249, //real person
+      5351, //child
+      6941, //hypno
+      110376, //guns
+      111782, //weapon
+      112175, //firearm
+      112383, //drug products
+      112384, //drugs
+      112675, //weapon violence
+      113966, //drug use
+      113968, //drug paraphernalia
+      117875, //gunslinger
+      117934, //vomiting
+      121273, //children
+      122432, //hypnotic
+      124724, //molestation
+      124890, //sleep molestation
+      130818, //porn actress
+      130820, //adult actress
+      133182, //porn star
+      133935, //hypnotized
+      146968, //celebrity,
+      151615, //molester
+      153296, //vomit
+      154326, //toddler
+      161829, //male child
+      161864, //holding weapon
+      163032, //female child
+      164020, //incest
+      164047, //mother and daughter
+      164776, //father and daughter
+      164978, //antique firearm
+      165960, //mother and son
+      171899, //mindcontrol
+      174202, //cocaine
+      174809, //twincest
+      195393, //drug addict
+      201446, //firearms
+      210913, //drugged
+      215141, //gunshot
+      219093, //hypnotizing
+      223439, //molesting
+      224818, //drugs & tobacco
+      229694, //hypnotism
+      242816, //drug
+      249303, //hypnotist
+      259592, //molested
+      306619, //child present
+      368038, //wincest
+      370273, //recreational drugs
+    ],
+    generationDefaultValues: {
+      denoise: 0.65,
+    },
+    generationMinValues: {
+      denoise: 0.5,
+    },
+  },
+] as const;
+
 export function getRequestDomainColor(req: { headers: { host?: string } }) {
   const { host } = req.headers;
   if (!host) return undefined;
@@ -1185,3 +1366,43 @@ export const MY_BIDS = 'my-bids';
 
 export const MIN_DONATION_GOAL = 1000;
 export const MAX_DONATION_GOAL = 1000000000;
+
+export const newOrderConfig = {
+  baseExp: 100,
+  blessedBuzzConversionRatio: 0.001,
+  smiteSize: 10,
+  welcomeImageUrl: 'f2a97014-c0e2-48ba-bb7d-99435922850b',
+  cosmetics: {
+    badgeIds: { acolyte: 858, knight: 859, templar: 860 },
+  },
+};
+
+export const buzzBulkBonusMultipliers = [
+  // Order from bottom to top. This value SHOULD BE BASED OFF OF BUZZ.
+  [250000, 1.1],
+  [300000, 1.15],
+  [400000, 1.2],
+];
+
+export const specialCosmeticRewards = {
+  annualRewards: {
+    gold: [
+      870, // gold annual badge
+      864, // cyan contentframe - gold annual
+      865, // danger yellow contentframe - gold annual
+    ],
+    silver: [
+      869, // silver annual badge
+      863, // sword avatar - silver annual
+      862, // robot background - silver annual
+    ],
+    bronze: [
+      868, // bronze annual badge
+      867, // poiny avatarframe - bronze annual
+    ],
+  },
+  bulkBuzzRewards: [
+    866, // bulk buzz buy - badge
+    872, // bulk buzz buy - background
+  ],
+};

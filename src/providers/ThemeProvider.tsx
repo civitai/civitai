@@ -104,6 +104,11 @@ export function ThemeProvider({
                 itemLabel: { display: 'flex' },
               },
             },
+            SegmentedControl: {
+              defaultProps: {
+                transitionDuration: 0,
+              },
+            },
             // InputWrapper: {
             //   classNames: { label: 'w-full' },
             // },

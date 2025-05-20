@@ -132,3 +132,11 @@ CREATE INDEX "UserNotification_viewed_idx" ON public."UserNotification" USING bt
 
 ALTER TABLE ONLY public."UserNotification"
     ADD CONSTRAINT "UserNotification_notificationId_fkey" FOREIGN KEY ("notificationId") REFERENCES public."Notification"(id) ON DELETE CASCADE;
+
+CREATE INDEX CONCURRENTLY "UserNotification_userId_createdAt_idx" ON "UserNotification" ("userId", "createdAt" DESC) INCLUDE ("viewed", "notificationId");
+CREATE INDEX CONCURRENTLY "Notification_id_with_category_idx" ON "Notification" (id) INCLUDE (category);
+
+DROP INDEX "UserNotification_viewed_idx";
+DROP INDEX "UserNotification_userId_idx";
+DROP INDEX "UserNotification_createdAt_idx";
+DROP INDEX "UserNotification_userId_viewed_createdAt_idx";

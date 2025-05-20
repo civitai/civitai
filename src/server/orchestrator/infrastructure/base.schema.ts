@@ -1,7 +1,5 @@
 import { Priority } from '@civitai/client';
 import z from 'zod';
-import { maxUpscaleSize } from '~/server/common/constants';
-import { GenerationType } from '~/server/orchestrator/infrastructure/base.enums';
 
 export const promptSchema = z
   .string()
@@ -15,26 +13,32 @@ export const negativePromptSchema = z
 
 export type SourceImageProps = z.input<typeof sourceImageSchema>;
 export const sourceImageSchema = z.object({
-  url: z.string().startsWith('https://orchestration').includes('.civitai.com'),
+  url: z
+    .string()
+    .startsWith('https://orchestration')
+    .includes('.civitai.com')
+    .or(z.string().includes('image.civitai.com')),
   width: z.number(),
   height: z.number(),
   upscaleWidth: z.number().optional(),
   upscaleHeight: z.number().optional(),
 });
 
-export const seedSchema = z.number().optional();
+export const seedSchema = z.number().nullish();
 const prioritySchema = z.nativeEnum(Priority).default('low').catch('low');
 
-const baseSchema = z.object({
+const baseGenerationSchema = z.object({
   priority: prioritySchema,
+  /** temporary property to satisfy type constraints */
+  workflow: z.string().optional(),
 });
 
-export const textEnhancementSchema = baseSchema.extend({
-  type: z.literal(GenerationType.txt2vid).catch(GenerationType.txt2vid),
-  prompt: promptSchema,
+export const baseVideoGenerationSchema = baseGenerationSchema.extend({
+  process: z.enum(['txt2vid', 'img2vid']).default('txt2vid'),
 });
 
-export const imageEnhancementSchema = baseSchema.extend({
-  type: z.literal(GenerationType.img2vid).catch(GenerationType.img2vid),
-  sourceImage: sourceImageSchema,
+export type ResourceInput = z.input<typeof resourceSchema>;
+export const resourceSchema = z.object({
+  air: z.string(),
+  strength: z.number().default(1),
 });

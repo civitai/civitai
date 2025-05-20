@@ -310,10 +310,12 @@ export default function UserMembership() {
                             Upgrade
                           </Button>
                         )}
-                        <CancelMembershipAction
-                          variant="button"
-                          buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
-                        />
+                        {!subscription.cancelAt && (
+                          <CancelMembershipAction
+                            variant="button"
+                            buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
+                          />
+                        )}
                       </Group>
                       {!subscription.cancelAt && isPaddle && managementUrls && (
                         <Anchor

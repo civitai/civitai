@@ -5,11 +5,12 @@ import {
   useHiddenPreferencesContext,
 } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
-import { hasNsfwWords } from '~/utils/metadata/audit';
+import { getBlockedNsfwWords, hasNsfwWords } from '~/utils/metadata/audit';
 import { isDefined, paired } from '~/utils/type-guards';
 import type { CurrentUser } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 
@@ -45,6 +46,7 @@ export function useApplyHiddenPreferences<
   const [previous, setPrevious] = useState<any[]>([]);
   const systemBrowsingLevel = useBrowsingLevelDebounced();
   const browsingLevel = browsingLevelOverride ?? systemBrowsingLevel;
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const { canViewNsfw } = useFeatureFlags();
 
   const hiddenPreferences = useHiddenPreferencesContext();
@@ -69,6 +71,18 @@ export function useApplyHiddenPreferences<
         ...hiddenTags.map((id): [number, boolean] => [id, true]),
       ]);
     }
+
+    // Handle domain specific hidden tags
+    if ((browsingSettingsAddons.settings.excludedTagIds ?? []).length > 0) {
+      preferences.hiddenTags = new Map([
+        ...preferences.hiddenTags,
+        ...(browsingSettingsAddons.settings.excludedTagIds ?? []).map((id): [number, boolean] => [
+          id,
+          true,
+        ]),
+      ]);
+    }
+
     const { items, hidden } = filterPreferences({
       type,
       data,
@@ -80,6 +94,8 @@ export function useApplyHiddenPreferences<
       currentUser,
       allowLowerLevels,
       canViewNsfw,
+      poiDisabled: browsingSettingsAddons.settings.disablePoi,
+      minorDisabled: browsingSettingsAddons.settings.disableMinor,
     });
 
     return {
@@ -113,6 +129,8 @@ type FilterPreferencesProps<TKey, TData> = {
   currentUser: CurrentUser | null;
   allowLowerLevels?: boolean;
   canViewNsfw: boolean;
+  poiDisabled?: boolean;
+  minorDisabled?: boolean;
 };
 
 function filterPreferences<
@@ -129,6 +147,8 @@ function filterPreferences<
   currentUser,
   allowLowerLevels,
   canViewNsfw,
+  poiDisabled,
+  minorDisabled,
 }: FilterPreferencesProps<TKey, TData>) {
   const hidden = {
     unprocessed: 0,
@@ -138,6 +158,8 @@ function filterPreferences<
     tags: 0,
     users: 0,
     noImages: 0,
+    poi: 0,
+    minor: 0,
   };
 
   if (!data || hiddenPreferences.hiddenLoading)
@@ -200,6 +222,16 @@ function filterPreferences<
               } else if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
               for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
+              if (i.poi && poiDisabled) {
+                hidden.poi++;
+                return false;
+              }
+
+              if (i.minor && minorDisabled) {
+                hidden.minor++;
+                return false;
+              }
+
               return true;
             }) ?? [];
 
@@ -238,6 +270,17 @@ function filterPreferences<
           hidden.browsingLevel++;
           return false;
         }
+
+        if (image.poi && poiDisabled) {
+          hidden.poi++;
+          return false;
+        }
+
+        if (image.minor && minorDisabled) {
+          hidden.minor++;
+          return false;
+        }
+
         if (userId && hiddenUsers.get(userId)) {
           hidden.users++;
           return false;
@@ -251,6 +294,9 @@ function filterPreferences<
             hidden.tags++;
             return false;
           }
+
+        if (!currentUser?.isModerator && !!getBlockedNsfwWords(image.prompt).length) return false;
+
         return true;
       });
 
@@ -283,6 +329,17 @@ function filterPreferences<
             hidden.images++;
             return false;
           }
+
+          if (article.coverImage.poi && poiDisabled) {
+            hidden.poi++;
+            return false;
+          }
+
+          if (article.coverImage.minor && minorDisabled) {
+            hidden.minor++;
+            return false;
+          }
+
           for (const tag of article.coverImage.tags)
             if (hiddenTags.get(tag)) {
               hidden.tags++;
@@ -330,6 +387,16 @@ function filterPreferences<
               if (hiddenTags.get(tag)) {
                 hidden.images++;
               }
+
+            if (collection.image.poi && poiDisabled) {
+              hidden.poi++;
+              return false;
+            }
+
+            if (collection.image.minor && minorDisabled) {
+              hidden.minor++;
+              return false;
+            }
           }
           return true;
         })
@@ -343,6 +410,14 @@ function filterPreferences<
               if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
               for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+              if (i.poi && poiDisabled) {
+                hidden.poi++;
+                return false;
+              }
+              if (i.minor && minorDisabled) {
+                hidden.minor++;
+                return false;
+              }
               return true;
             }) ?? [];
 
@@ -395,6 +470,14 @@ function filterPreferences<
             if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
             if (hiddenImages.get(i.id)) return false;
             for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+            if (i.poi && poiDisabled) {
+              hidden.poi++;
+              return false;
+            }
+            if (i.minor && minorDisabled) {
+              hidden.minor++;
+              return false;
+            }
             return true;
           });
 
@@ -439,6 +522,14 @@ function filterPreferences<
             if (!Flags.intersects(image.nsfwLevel, browsingLevel)) return false;
             if (hiddenImages.get(image.id)) return false;
             for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+            if (image.poi && poiDisabled) {
+              hidden.poi++;
+              return false;
+            }
+            if (image.minor && minorDisabled) {
+              hidden.minor++;
+              return false;
+            }
             return true;
           });
 
@@ -493,12 +584,22 @@ type BaseImage = {
   user?: { id: number };
   tagIds?: number[];
   nsfwLevel: number;
+  poi?: boolean;
+  minor?: boolean;
+  prompt?: string;
 };
 
 type BaseModel = {
   id: number;
   user: { id: number };
-  images: { id: number; tags?: number[]; nsfwLevel: number; userId?: number }[];
+  images: {
+    id: number;
+    tags?: number[];
+    nsfwLevel: number;
+    userId?: number;
+    poi?: boolean;
+    minor?: boolean;
+  }[];
   tags?: number[];
   nsfwLevel: number;
   nsfw?: boolean;
@@ -518,6 +619,8 @@ type BaseArticle = {
     id: number;
     tags: number[];
     nsfwLevel: number;
+    poi?: boolean;
+    minor?: boolean;
   };
 };
 
@@ -535,12 +638,16 @@ type BaseCollection = {
     tagIds?: number[];
     nsfwLevel: number;
     userId: number;
+    poi?: boolean;
+    minor?: boolean;
   } | null;
   images: {
     id: number;
     tagIds?: number[];
     nsfwLevel: number;
     userId: number;
+    poi?: boolean;
+    minor?: boolean;
   }[];
 };
 
@@ -556,6 +663,8 @@ type BaseBounty = {
     tagIds?: number[];
     nsfwLevel: number;
     userId: number;
+    poi?: boolean;
+    minor?: boolean;
   }[];
 };
 
@@ -571,6 +680,8 @@ type BasePost = {
     nsfwLevel: number;
     userId?: number;
     user?: { id: number };
+    poi?: boolean;
+    minor?: boolean;
   }[];
 };
 

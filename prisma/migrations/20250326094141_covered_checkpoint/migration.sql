@@ -28,7 +28,35 @@ alter table "CoveredCheckpoint"
       on update cascade;
 
 -- driveby
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "ChatMember_chatId_idx" ON "ChatMember" ("chatId");
+CREATE INDEX IF NOT EXISTS "ChatMember_chatId_idx" ON "ChatMember" ("chatId");
+
+-- make ecosystem checkpoints separate
+CREATE TABLE "EcosystemCheckpoints" (
+  id INT PRIMARY KEY,
+  name TEXT NOT NULL
+);
+
+INSERT INTO "EcosystemCheckpoints" (id, name) VALUES
+  (1475084, 'BiRefNet Background Removal'),
+  (164821, 'Remacri'),
+  (128713, 'DreamShaper'),
+  (128078, 'SDXL'),
+  (391999, 'SDXL Lightning LoRAs'),
+  (424706, 'LCM-LoRA Weights'),
+  (106916, 'Civitai Safe Helper'),
+  (250712, 'safe_neg'),
+  (250708, 'safe_pos'),
+  (691639, 'FLUX Dev'),
+  (699279, 'FLUX Schnell'),
+  (699332, 'FLUX Pro'),
+  (922358, 'FLUX Pro 1.1'),
+  (1088507, 'FLUX Pro 1.1 Ultra'),
+  (1003708, 'SD 3.5 Medium'),
+  (983309, 'SD 3.5 Large'),
+  (983611, 'SD 3.5 Large Turbo'),
+  (1190596, 'NoobAI-XL'),
+  (290640, 'Pony'),
+  (889818, 'Illustrious');
 
 create or replace view "GenerationCoverage"("modelId", "modelVersionId", covered) as
 SELECT
@@ -38,29 +66,7 @@ SELECT
 FROM "ModelVersion" mv
      JOIN "Model" m ON m.id = mv."modelId"
 WHERE
-   (mv.id = ANY
-    (ARRAY [
-      1475084, -- BiRefNet Background Removal
-      164821, -- Remacri
-      128713, -- DreamShaper
-      128078, -- SDXL
-      391999, -- SDXL Lightning LoRAs
-      424706, -- LCM-LoRA Weights
-      106916, -- Civitai Safe Helper
-      250712, -- safe_neg
-      250708, -- safe_pos
-      691639, -- FLUX Dev
-      699279, -- FLUX Schnell
-      699332, -- FLUX Pro
-      922358, -- FLUX Pro 1.1
-      1088507, -- FLUX Pro 1.1 Ultra
-      1003708, -- SD 3.5 Medium
-      983309, -- SD 3.5 Large
-      983611, -- SD 3.5 Large Turbo
-      1190596, -- NoobAI-XL
-      290640, -- Pony
-      889818 -- Illustrious
-      ]))
+   (mv.id IN (SELECT id FROM "EcosystemCheckpoints"))
 OR (mv."baseModel" = ANY
     (ARRAY ['SD 1.5'::text, 'SD 1.4'::text, 'SD 1.5 LCM'::text, 'SDXL 0.9'::text, 'SDXL 1.0'::text, 'SDXL 1.0 LCM'::text, 'Pony'::text, 'Flux.1 D'::text, 'Illustrious'::text, 'SD 3.5'::text, 'SD 3.5 Medium'::text, 'SD 3.5 Large'::text, 'SD 3.5 Large Turbo'::text, 'NoobAI'::text])) AND
    NOT m.poi AND

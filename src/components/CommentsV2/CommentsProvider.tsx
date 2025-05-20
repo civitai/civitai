@@ -13,6 +13,7 @@ import { ThreadSort } from '../../server/common/enums';
 import { CommentThread } from '~/server/services/commentsv2.service';
 import { isDefined } from '~/utils/type-guards';
 import { constants } from '~/server/common/constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -35,6 +36,7 @@ type ChildProps = {
   isLoading: boolean;
   isLocked: boolean;
   isMuted: boolean;
+  isReadonly: boolean;
   created: CommentV2Model[];
   badges?: CommentV2BadgeProps[];
   limit?: number;
@@ -210,6 +212,7 @@ export function CommentsProvider({
 }: Props) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { sort, setSort, activeComment } = useRootThreadContext();
   const storeKey = getKey(entityType, entityId);
   const created = useNewCommentStore(
@@ -262,7 +265,8 @@ export function CommentsProvider({
     [created, comments]
   );
 
-  const isLocked = thread?.locked ?? false;
+  const isLocked = (thread?.locked ?? false);
+  const isReadonly = !features.canWrite;
   const isMuted = currentUser?.muted ?? false;
   let remaining = initialComments.length - limit;
   remaining = remaining > 0 ? remaining : 0;
@@ -276,6 +280,7 @@ export function CommentsProvider({
         entityType,
         isLocked,
         isMuted,
+        isReadonly,
         created,
         badges,
         limit,
@@ -296,6 +301,7 @@ export function CommentsProvider({
         isLoading,
         isLocked,
         isMuted,
+        isReadonly,
         created: createdComments,
         badges,
         limit,

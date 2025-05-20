@@ -171,11 +171,6 @@ export default defineNextConfig(
           permanent: true,
         },
         {
-          source: '/appeal',
-          destination: 'https://forms.clickup.com/8459928/f/825mr-5844/5NXSA2EIT3YOS2JSF7',
-          permanent: true,
-        },
-        {
           source: '/canny/feedback',
           destination: 'https://feedback.civitai.com/?b=feature-request',
           permanent: true,
@@ -214,33 +209,8 @@ export default defineNextConfig(
           permanent: true,
         },
         {
-          source: '/forms/press-inquiry',
-          destination: 'https://forms.clickup.com/8459928/f/825mr-9351/RZXWRNLV9Q1D32ACNP',
-          permanent: true,
-        },
-        {
-          source: '/forms/matching-partner',
-          destination: 'https://forms.clickup.com/8459928/f/825mr-9431/IQOAS1RXWHI1E2I1S3',
-          permanent: true,
-        },
-        {
-          source: '/holiday2023',
-          destination: '/events/holiday2023',
-          permanent: true,
-        },
-        {
           source: '/air/confirm',
           destination: '/studio/confirm',
-          permanent: true,
-        },
-        {
-          source: '/blocked-by-octoml',
-          destination: '/articles/3307',
-          permanent: true,
-        },
-        {
-          source: '/blocked-by-provider',
-          destination: '/articles/3307',
           permanent: true,
         },
         {
@@ -251,16 +221,6 @@ export default defineNextConfig(
         {
           source: '/education',
           destination: 'https://education.civitai.com',
-          permanent: true,
-        },
-        {
-          source: '/advertise-with-us',
-          destination: 'https://forms.clickup.com/8459928/f/825mr-10211/MIN35AIDXBZ7BTD5MG',
-          permanent: true,
-        },
-        {
-          source: '/ad-feedback',
-          destination: 'https://forms.clickup.com/8459928/f/825mr-9711/WIMNO6V738T4ZBTPXP',
           permanent: true,
         },
         {

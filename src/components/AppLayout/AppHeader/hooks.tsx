@@ -1,6 +1,7 @@
 import { useMantineTheme } from '@mantine/core';
 import {
   type Icon,
+  type IconProps,
   IconBarbell,
   IconBookmark,
   IconBookmarkEdit,
@@ -15,7 +16,7 @@ import {
   IconPhotoUp,
   IconPlayerPlayFilled,
   IconProgressBolt,
-  type IconProps,
+  IconSword,
   IconThumbUp,
   IconUpload,
   IconUser,
@@ -155,6 +156,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2025-04-07'),
         },
         {
+          href: '/games/knights-of-new-order',
+          visible: features.newOrderGame,
+          icon: IconSword,
+          color: theme.colors.yellow[theme.fn.primaryShade()],
+          label: 'Knights of New',
+          newUntil: new Date('2025-05-18'),
+        },
+        {
           href: '/product/link',
           icon: IconLink,
           label: 'Download Link App',
@@ -222,6 +231,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
   const isMuted = currentUser?.muted ?? false;
+  const canCreate = features.canWrite;
 
   return [
     {
@@ -234,7 +244,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     },
     {
       href: '/posts/create',
-      visible: !isMuted,
+      visible: !isMuted && canCreate,
       redirectReason: 'post-images',
       rel: 'nofollow',
       icon: IconPhotoUp,
@@ -243,7 +253,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     },
     {
       href: '/posts/create?video=true',
-      visible: !isMuted,
+      visible: !isMuted && canCreate,
       redirectReason: 'post-images',
       rel: 'nofollow',
       icon: IconVideoPlus,
@@ -252,7 +262,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     },
     {
       href: '/models/create',
-      visible: !isMuted,
+      visible: !isMuted && canCreate,
       redirectReason: 'upload-model',
       rel: 'nofollow',
       icon: IconUpload,
@@ -271,7 +281,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     },
     {
       href: '/articles/create',
-      visible: !isMuted && features.articles,
+      visible: !isMuted && canCreate && features.articles,
       redirectReason: 'create-article',
       rel: 'nofollow',
       icon: IconWriting,
@@ -280,7 +290,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     },
     {
       href: '/bounties/create',
-      visible: !isMuted && features.bounties,
+      visible: !isMuted && canCreate && features.bounties,
       redirectReason: 'create-bounty',
       rel: 'nofollow',
       icon: IconMoneybag,
@@ -290,7 +300,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     },
     {
       href: '/clubs/create',
-      visible: !isMuted && features.clubs,
+      visible: !isMuted && canCreate && features.clubs,
       redirectReason: 'create-club',
       rel: 'nofollow',
       icon: IconClubs,

@@ -94,6 +94,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
       baseModels = undefined,
       tools = [],
       techniques = [],
+      requiringMeta = false,
       ...query
     },
   } = useImageQueryParams();
@@ -174,6 +175,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                     baseModels,
                     tools,
                     techniques,
+                    requiringMeta,
                   }}
                   filterType={isVideo ? 'videos' : 'images'}
                   onChange={(filters) => replace(filters)}
@@ -208,6 +210,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   baseModels,
                   tools,
                   techniques,
+                  requiringMeta,
                   // pending: true,
                 }}
                 showEmptyCta={isSameUser}

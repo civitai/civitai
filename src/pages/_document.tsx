@@ -14,7 +14,12 @@ export default class _Document extends Document {
       <Html>
         {/* <InlineStylesHead /> */}
         <Head />
-        <body className={clsx(pageProps.colorScheme, { ['green']: pageProps.flags.isGreen })}>
+        <body
+          className={clsx(pageProps.colorScheme, {
+            ['green']: pageProps.flags.isGreen,
+            ['red']: pageProps.flags.isRed,
+          })}
+        >
           <Main />
           <NextScript />
         </body>

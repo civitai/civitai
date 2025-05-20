@@ -400,6 +400,7 @@ export const TagSource = {
   Hive: 'Hive',
   MinorDetection: 'MinorDetection',
   HiveDemographics: 'HiveDemographics',
+  Clavata: 'Clavata',
 } as const;
 
 export type TagSource = (typeof TagSource)[keyof typeof TagSource];
@@ -757,6 +758,24 @@ export const ModerationRuleAction = {
 } as const;
 
 export type ModerationRuleAction = (typeof ModerationRuleAction)[keyof typeof ModerationRuleAction];
+
+export const ChangelogType = {
+  Feature: 'Feature',
+  Bugfix: 'Bugfix',
+  Policy: 'Policy',
+  Update: 'Update',
+  Incident: 'Incident',
+} as const;
+
+export type ChangelogType = (typeof ChangelogType)[keyof typeof ChangelogType];
+
+export const NewOrderRankType = {
+  Acolyte: 'Acolyte',
+  Knight: 'Knight',
+  Templar: 'Templar',
+} as const;
+
+export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];
 
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',

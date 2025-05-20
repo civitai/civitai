@@ -173,7 +173,7 @@ export async function createBuzzTransaction({
   if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
 
   if (entityType && entityId && toAccountId === undefined) {
-    const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
+    const [{ userId } = { userId: undefined }] = await dbWrite.$queryRawUnsafe<
       [{ userId?: number }]
     >(`
         SELECT i."userId"
@@ -267,7 +267,7 @@ export async function upsertBuzzTip({
   fromAccountId: number;
 }) {
   // Store this action in the DB:
-  const existingRecord = await dbRead.buzzTip.findUnique({
+  const existingRecord = await dbWrite.buzzTip.findUnique({
     where: {
       entityType_entityId_fromUserId: {
         entityId,
@@ -307,7 +307,7 @@ export async function upsertBuzzTip({
   }
 
   if (toAccountId !== 0) {
-    const fromUser = await dbRead.user.findUnique({
+    const fromUser = await dbWrite.user.findUnique({
       where: { id: fromAccountId },
       select: { username: true },
     });
@@ -337,13 +337,17 @@ export async function createBuzzTransactionMany(
   transactions: (CreateBuzzTransactionInput & {
     fromAccountId: number;
     externalTransactionId: string;
+    fromAccountType?: BuzzAccountType;
   })[]
 ) {
   if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
   const validTransactions = transactions.filter(
-    (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId && t.amount > 0
+    (t) =>
+      t.toAccountId !== undefined &&
+      (t.fromAccountId !== t.toAccountId || t.fromAccountType === 'cashpending') &&
+      t.amount > 0
   );
   const body = JSON.stringify(validTransactions);
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions`, {
@@ -658,7 +662,7 @@ export type BuzzClaimResult =
   | { status: 'claimed'; details: BuzzClaimDetails; claimedAt: Date };
 
 export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
-  const claimable = await dbRead.buzzClaim.findUnique({
+  const claimable = await dbWrite.buzzClaim.findUnique({
     where: { key: id },
   });
 
@@ -689,7 +693,7 @@ export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
   const query = claimable.transactionIdQuery.replace('${userId}', userId.toString());
   let transactionId: string | undefined;
   try {
-    const transactionIdRows = await dbRead.$queryRawUnsafe<{ transactionId: string }[]>(query);
+    const transactionIdRows = await dbWrite.$queryRawUnsafe<{ transactionId: string }[]>(query);
     if (transactionIdRows.length === 0) return unavailable('You are not eligible for this reward');
     transactionId = transactionIdRows[0].transactionId;
     if (transactionId === undefined) throw new Error('No transaction id');

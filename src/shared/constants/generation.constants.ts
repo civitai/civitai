@@ -6,15 +6,15 @@ import {
   generation,
   generationConfig,
   getGenerationConfig,
-  Sampler,
   maxUpscaleSize,
+  minDownscaleSize,
+  Sampler,
 } from '~/server/common/constants';
-import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { getImageData } from '~/utils/media-preprocessors';
 import { findClosest } from '~/utils/number-helpers';
 
@@ -138,8 +138,8 @@ export function getInjectablResources(baseModelSetType: BaseModelSetType) {
 
 export const whatIfQueryOverrides = {
   prompt: '',
-  negativePrompt: undefined,
-  seed: undefined,
+  negativePrompt: '',
+  seed: null,
   // image: undefined,
   nsfw: false,
   cfgScale: generation.defaultValues.cfgScale,
@@ -210,61 +210,6 @@ export const samplersToComfySamplers: Record<
   undefined: { sampler: 'dpmpp_2m', scheduler: 'karras' },
 };
 
-// TODO - improve this
-// export const defaultCheckpoints: Record<
-//   string,
-//   {
-//     ecosystem: string;
-//     type: string;
-//     source: string;
-//     model: number;
-//     version: number;
-//   }
-// > = {
-//   SD1: {
-//     ecosystem: 'sd1',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 4384,
-//     version: 128713,
-//   },
-//   SD3: {
-//     ecosystem: 'sd3',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 878387,
-//     version: 983309,
-//   },
-//   SD3_5M: {
-//     ecosystem: 'sd3',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 896953,
-//     version: 1003708,
-//   },
-//   SDXL: {
-//     ecosystem: 'sdxl',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 101055,
-//     version: 128078,
-//   },
-//   Pony: {
-//     ecosystem: 'sdxl',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 257749,
-//     version: 290640,
-//   },
-//   Illustrious: {
-//     ecosystem: 'sdxl',
-//     type: 'model',
-//     source: 'civitai',
-//     model: 795765,
-//     version: 889818,
-//   },
-// };
-
 // #region [utils]
 // some base models, such as SD1.5 can work with different base model set types
 
@@ -308,6 +253,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
 ) {
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
+  // image base models
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Pony')) return 'Pony';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SDXL')) return 'SDXL';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1')) return 'Flux1';
@@ -316,7 +262,33 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'NoobAI')) return 'NoobAI';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3')) return 'SD3';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3_5M')) return 'SD3_5M';
-  else return 'SD1';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'OpenAI')) return 'OpenAI';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD1')) return 'SD1';
+  // video base models
+  for (const baseModelSet of videoBaseModelSetTypes) {
+    if (resources.some((x) => getBaseModelSetType(x.baseModel) === baseModelSet))
+      return baseModelSet;
+  }
+}
+
+export function getBaseModelFromResourcesWithDefault<
+  T extends { modelType: ModelType; baseModel: string }
+>(resources: T[]) {
+  return getBaseModelFromResources(resources) ?? 'SD1';
+}
+
+const videoBaseModelSetTypes: BaseModelSetType[] = [
+  'HyV1',
+  'WanVideo',
+  'WanVideo14B_I2V_480p',
+  'WanVideo14B_I2V_720p',
+  'WanVideo14B_T2V',
+  'WanVideo1_3B_T2V',
+];
+export function getResourceGenerationType(
+  baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>
+) {
+  return videoBaseModelSetTypes.includes(baseModel) ? 'video' : ('image' as MediaType);
 }
 
 export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
@@ -542,11 +514,37 @@ export const baseModelResourceTypes = {
     { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3_5M.baseModels },
     { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
+  HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
+  OpenAI: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.OpenAI.baseModels }],
+  WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
+  WanVideo1_3B_T2V: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
+  ],
+  WanVideo14B_T2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_T2V.baseModels }],
+  WanVideo14B_I2V_480p: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_480p.baseModels },
+  ],
+  WanVideo14B_I2V_720p: [
+    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_720p.baseModels },
+  ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
     return baseModelResourceTypes[baseModel as SupportedBaseModel];
 }
+
+export const miscModelTypes: ModelType[] = [
+  'AestheticGradient',
+  'Hypernetwork',
+  'Controlnet',
+  'Upscaler',
+  'MotionModule',
+  'Poses',
+  'Wildcards',
+  'Workflows',
+  'Detection',
+  'Other',
+] as const;
 
 export const fluxStandardAir = 'urn:air:flux1:checkpoint:civitai:618692@691639';
 export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
@@ -583,45 +581,6 @@ export function getBaseModelSetTypes({
 // #endregion
 
 // #region [workflows]
-type EnginesDictionary = Record<
-  string,
-  {
-    label: string;
-    description: string | (() => React.ReactNode);
-    whatIf?: string[];
-    memberOnly?: boolean;
-  }
->;
-
-export const engineDefinitions: EnginesDictionary = {
-  minimax: {
-    label: 'Hailuo by MiniMax',
-    description: '',
-    whatIf: [],
-  },
-  kling: {
-    label: 'Kling',
-    description: ``,
-    whatIf: ['mode', 'duration'],
-  },
-  lightricks: {
-    label: 'Lightricks',
-    description: '',
-    whatIf: ['duration', 'cfgScale', 'steps'],
-    // memberOnly: true,
-  },
-  haiper: {
-    label: 'Haiper',
-    description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
-    whatIf: ['duration'],
-  },
-  mochi: {
-    label: 'Mochi',
-    description: `Mochi 1 preview, by creators [https://www.genmo.ai](https://www.genmo.ai) is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation`,
-  },
-};
-
-export const generationFormWorkflowConfigurations = videoGenerationConfig;
 
 export const fluxUltraAspectRatios = [
   { label: 'Landscape - 21:9', width: 3136, height: 1344 },
@@ -670,3 +629,44 @@ export const isMadeOnSite = (meta: ImageMetaProps | null) => {
         .some((v) => v === (meta.workflow as string)))
   );
 };
+
+export function getScaledWidthHeight(width: number, height: number, factor: number) {
+  const originRatio = width / height;
+  const wf = width * factor;
+  const hf = height * factor;
+
+  const wLimits = getUpperLowerLimits(wf);
+  const hLimits = getUpperLowerLimits(hf);
+
+  const options: { ratio: number; width: number; height: number }[] = [];
+
+  for (const wl of wLimits) {
+    for (const hl of hLimits) {
+      options.push({ ratio: wl / hl, width: wl, height: hl });
+    }
+  }
+
+  const closestRatio = findClosest(
+    options.map(({ ratio }) => ratio),
+    originRatio
+  );
+  const closest = options.find(({ ratio }) => ratio === closestRatio)!;
+  return { width: closest.width, height: closest.height };
+}
+
+function getUpperLowerLimits(value: number) {
+  // return [...new Set([Math.floor, Math.ceil].map((fn) => fn(value / 64) * 64))];
+  return [
+    ...new Set(
+      [Math.floor, Math.ceil].flatMap((fn) => {
+        const val = fn(value / 64) * 64;
+        const arr = [val];
+        const lower = val - 64;
+        const upper = val + 64;
+        if (lower >= minDownscaleSize) arr.push(lower);
+        if (upper <= maxUpscaleSize) arr.push(upper);
+        return arr;
+      })
+    ),
+  ];
+}

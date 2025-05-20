@@ -53,12 +53,14 @@ import {
   reverseSearchIndexMap,
   searchIndexMap,
 } from '~/components/Search/search.types';
-import { paired } from '~/utils/type-guards';
+import { isDefined, paired } from '~/utils/type-guards';
 import { ApplyCustomFilter, BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { QS } from '~/utils/qs';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { getBlockedNsfwWords, includesPoi } from '~/utils/metadata/audit';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -189,6 +191,7 @@ const targetData = [
 ] as const;
 
 export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>('models');
   const handleTargetChange = (value: SearchIndexKey) => {
     setTargetIndex(value);
@@ -209,6 +212,15 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   );
 
   const isModels = targetIndex === 'models';
+  const supportsPoi = ['models', 'images'].includes(targetIndex);
+  const supportsMinor = ['models', 'images'].includes(targetIndex);
+  const filters = [
+    supportsPoi && browsingSettingsAddons.settings.disablePoi ? 'poi != true' : null,
+    supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
+    isModels && !currentUser?.isModerator
+      ? `availability != ${Availability.Private} OR user.id = ${currentUser?.id}`
+      : null,
+  ].filter(isDefined);
 
   return (
     <InstantSearch
@@ -216,14 +228,14 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
-      {isModels && !currentUser?.isModerator && (
-        <ApplyCustomFilter
-          filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}
+      {indexSupportsNsfwLevel ? (
+        <BrowsingLevelFilter
+          attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''}
+          filters={filters}
         />
-      )}
-      {indexSupportsNsfwLevel && (
-        <BrowsingLevelFilter attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''} />
-      )}
+      ) : filters.length > 0 ? (
+        <ApplyCustomFilter filters={filters} />
+      ) : null}
       <AutocompleteSearchContent
         {...props}
         indexName={targetIndex}
@@ -254,6 +266,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   ref: React.ForwardedRef<{ focus: () => void }>
 ) {
   // const currentUser = useCurrentUser();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const { classes } = useStyles();
   const router = useRouter();
   const isMobile = useIsMobile();
@@ -394,6 +407,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     }
   };
 
+  const canPerformQuery = debouncedSearch
+    ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
+    : true;
+
+  const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
+
   return (
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
@@ -428,7 +447,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           placeholder="Search Civitai"
           type="search"
           nothingFound={
-            searchErrorState ? (
+            !canPerformQuery ? (
+              <Stack spacing={0} align="center">
+                <Text>
+                  Due to your current browsing settings, searching for people of interest has been
+                  disabled.
+                </Text>
+                <Text size="xs">
+                  You may remove X and XXX browsing settings to search for these.
+                </Text>
+              </Stack>
+            ) : searchErrorState ? (
               <Stack spacing={0} align="center">
                 <Text>There was an error while performing your request&hellip;</Text>
                 <Text size="xs">Please try again later</Text>
@@ -446,7 +475,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           }
           defaultValue={query}
           value={search}
-          data={items}
+          data={canPerformQuery && !hasBlockedWords ? items : []}
           onChange={setSearch}
           onBlur={handleClear}
           onClear={handleClear}

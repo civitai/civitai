@@ -31,12 +31,15 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function Home() {
-  const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
+  const { data: homeBlocks = [], isLoading: isLoadingHomeBlocks } =
+    trpc.homeBlock.getHomeBlocks.useQuery({});
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });
 
   const [displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed] = useState(false);
   const { ref, inView } = useInView();
+
+  const isLoading = isLoadingHomeBlocks;
 
   useEffect(() => {
     if (inView && !displayModelsInfiniteFeed) {

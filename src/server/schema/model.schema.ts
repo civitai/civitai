@@ -106,6 +106,8 @@ export const getAllModelsSchema = baseQuerySchema
     pending: z.boolean().optional(),
     collectionTagId: z.number().optional(),
     availability: z.nativeEnum(Availability).optional(),
+    disablePoi: z.boolean().optional(),
+    disableMinor: z.boolean().optional(),
     isFeatured: z.boolean().optional(),
   });
 
@@ -187,9 +189,11 @@ export const modelUpsertSchema = licensingSchema.extend({
   nsfw: z.boolean().optional(),
   lockedProperties: z.string().array().optional(),
   minor: z.boolean().default(false).optional(),
+  sfwOnly: z.boolean().default(false).optional(),
   meta: z
     .object({
       showcaseCollectionId: z.number().nullish(),
+      commentsLocked: z.boolean().default(false),
     })
     .passthrough()
     .transform((val) => val as ModelMeta | null)
@@ -250,6 +254,7 @@ export type ModelMeta = Partial<{
   declinedAt: string;
   showcaseCollectionId: number;
   cannotPromote: boolean;
+  commentsLocked: boolean;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;
@@ -360,6 +365,7 @@ export const ingestModelSchema = z.object({
   poi: z.coerce.boolean(),
   nsfw: z.coerce.boolean(),
   minor: z.coerce.boolean(),
+  sfwOnly: z.coerce.boolean(),
 });
 
 export type LimitOnly = z.input<typeof limitOnly>;

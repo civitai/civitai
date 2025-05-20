@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { constants } from '~/server/common/constants';
+import { ColorDomain, colorDomains, constants } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
@@ -205,6 +205,9 @@ const generationSettingsSchema = z.object({
   advancedMode: z.boolean().optional(),
 });
 
+export const userAssistantPersonality = z.enum(['civbot', 'civchan']);
+export type UserAssistantPersonality = z.infer<typeof userAssistantPersonality>;
+
 export type UserSettingsInput = z.input<typeof userSettingsSchema>;
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
@@ -213,6 +216,7 @@ export const userSettingsSchema = z.object({
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
+  assistantPersonality: userAssistantPersonality.optional(),
   airEmail: z.string().email().optional(),
   creatorsProgramCodeOfConductAccepted: z.union([z.boolean().optional(), z.date().optional()]),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
@@ -225,6 +229,7 @@ export const userSettingsSchema = z.object({
     .optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
+  redBrowsingLevel: z.number().optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -243,6 +248,7 @@ export const setUserSettingsInput = z.object({
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
+  assistantPersonality: userAssistantPersonality.optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });
@@ -250,6 +256,7 @@ export const dismissAlertSchema = z.object({ alertId: z.string() });
 export type UserOnboardingSchema = z.infer<typeof userOnboardingSchema>;
 export const userOnboardingSchema = z.discriminatedUnion('step', [
   z.object({ step: z.literal(OnboardingSteps.TOS) }),
+  z.object({ step: z.literal(OnboardingSteps.RedTOS) }),
   z.object({
     step: z.literal(OnboardingSteps.Profile),
     username: usernameInputSchema,
@@ -312,6 +319,7 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
+  domain: z.enum(['green', 'blue', 'red']).optional(),
 });
 
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;

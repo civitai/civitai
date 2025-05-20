@@ -23,6 +23,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { CivitaiResource } from '~/server/schema/image.schema';
+import { parseAIR } from '~/utils/string-helpers';
+import { getStepMeta } from './GenerationForm/generation.utils';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -99,9 +102,7 @@ export function GeneratedImageActions({
         const workflow = data?.find((x) => x.id === image.workflowId);
         if (workflow) {
           const step = workflow.steps.find((x) => x.name === image.stepName);
-          // TODO - handle resources
-          const resources = step?.resources?.map(({ id, strength }) => ({ id, strength }));
-          return { url: image.url, meta: step?.params };
+          return { url: image.url, meta: getStepMeta(step) };
         }
       })
       .filter(isDefined);

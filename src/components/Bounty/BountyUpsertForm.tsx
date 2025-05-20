@@ -81,6 +81,8 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
+import { ReadOnlyAlert }  from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -194,6 +196,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const { classes } = useStyles();
+  const features = useFeatureFlags();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
   const [bountyImages, setBountyImages] = useState<BountyGetById['images']>(bounty?.images ?? []);
@@ -370,6 +373,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
+      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this bounty."} />
       <Stack spacing={32}>
         <Group spacing="md" noWrap>
           <BackButton url="/bounties" />
@@ -926,13 +930,13 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
             <BuzzTransactionButton
               loading={upserting}
               type="submit"
-              disabled={poi || hasPoiInNsfw}
+              disabled={poi || hasPoiInNsfw || !features.canWrite}
               label="Save"
               buzzAmount={unitAmount}
               color="yellow.7"
             />
           ) : (
-            <Button loading={upserting} type="submit" disabled={poi || hasPoiInNsfw}>
+            <Button loading={upserting} type="submit" disabled={poi || hasPoiInNsfw || !features.canWrite}>
               Save
             </Button>
           )}

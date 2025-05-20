@@ -16,6 +16,7 @@ import {
   SliderProps,
   Stack,
   Text,
+  Notification,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -35,6 +36,7 @@ import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewar
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { GenForm } from '~/components/Generation/Form/GenForm';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageById } from '~/components/Image/ById/ImageById';
@@ -81,9 +83,15 @@ import {
   InputSwitch,
 } from '~/libs/form';
 import { Watch } from '~/libs/form/components/Watch';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
+import {
+  generation,
+  generationConfig,
+  getGenerationConfig,
+  samplerOffsets,
+} from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
@@ -102,7 +110,8 @@ import {
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
-import { parsePromptMetadata } from '~/utils/metadata';
+import { fetchBlobAsFile } from '~/utils/file-utils';
+import { getParsedExifData, parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
@@ -121,6 +130,7 @@ export function GenerationFormContent() {
   const featureFlags = useFeatureFlags();
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const messageHash = useMemo(
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
@@ -150,6 +160,8 @@ export function GenerationFormContent() {
     trpc.generation.getWorkflowDefinitions.useQuery();
 
   const [workflow] = form.watch(['workflow']) ?? 'txt2img';
+  const baseModel = form.watch('baseModel');
+  const [sourceImage] = form.watch(['sourceImage']);
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -180,6 +192,7 @@ export function GenerationFormContent() {
 
   // #region [handle parse prompt]
   const [showFillForm, setShowFillForm] = useState(false);
+  const [submitError, setSubmitError] = useState<string>();
 
   async function handleParsePrompt() {
     const prompt = form.getValues('prompt');
@@ -216,17 +229,23 @@ export function GenerationFormContent() {
 
     const {
       model,
-      resources: additionalResources = [],
+      resources: formResources,
       vae,
       remixOfId,
       remixSimilarity,
       aspectRatio,
       upscaleHeight,
       upscaleWidth,
+      fluxUltraRaw,
       ...params
     } = data;
+    const additionalResources = formResources ?? [];
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
+
+    if (fluxUltraRaw) params.engine = 'flux-pro-raw';
+    else if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+    else params.engine = undefined;
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
@@ -238,11 +257,13 @@ export function GenerationFormContent() {
         if (params.engine) delete params.engine;
       }
     } else {
-      const keys = ['fluxMode', 'engine', 'fluxUltraAspectRatio'];
+      const keys = ['fluxMode', 'fluxUltraAspectRatio'];
       for (const key in params) {
         if (keys.includes(key)) delete params[key as keyof typeof params];
       }
     }
+
+    if (workflowDefinition?.type === 'txt2img') params.sourceImage = null;
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
@@ -256,15 +277,20 @@ export function GenerationFormContent() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
         const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
+        setSubmitError(undefined);
         await mutateAsync({
           resources,
           params: {
             ...params,
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
+            disablePoi: browsingSettingsAddons.settings.disablePoi,
           },
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
+        }).catch((error: any) => {
+          setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
         });
+
         if (hasEarlyAccess) {
           invalidateWhatIf();
         }
@@ -272,6 +298,11 @@ export function GenerationFormContent() {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {
           setPromptWarning(error.message + '. Continued attempts will result in an automated ban.');
+          currentUser?.refresh();
+        }
+
+        if (error.message.includes('POI')) {
+          setPromptWarning(error.message);
           currentUser?.refresh();
         }
       }
@@ -285,7 +316,8 @@ export function GenerationFormContent() {
     }
   }
 
-  const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
+  const { mutateAsync: reportProhibitedRequest } =
+    trpc.orchestrator.reportProhibitedRequest.useMutation();
   const handleError = async (e: unknown) => {
     const promptError = (e as any)?.prompt as any;
     if (promptError?.type === 'custom' && promptError.message.startsWith('Blocked for')) {
@@ -304,9 +336,12 @@ export function GenerationFormContent() {
   const [hasMinorResources, setHasMinorResources] = useState(false);
 
   useEffect(() => {
-    const subscription = form.watch(({ model, resources = [], vae, fluxMode }, { name }) => {
+    const subscription = form.watch(({ model, resources, vae, fluxMode }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
-        setHasMinorResources([model, ...resources, vae].filter((x) => x?.model?.minor).length > 0);
+        setHasMinorResources(
+          [model, ...(resources ?? []), vae].filter((x) => x?.model?.sfwOnly || x?.model?.minor)
+            .length > 0
+        );
       }
 
       setRunsOnFalAI(model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir);
@@ -358,24 +393,52 @@ export function GenerationFormContent() {
     loadingGeneratorData,
   ]); // These are the dependencies that make it work, please only update if you know what you're doing
 
+  const [minDenoise, setMinDenoise] = useState(0);
+  useEffect(() => {
+    if (sourceImage)
+      fetchBlobAsFile(sourceImage.url).then((file) => {
+        if (file)
+          getParsedExifData(file).then((data) => {
+            const min = data ? 0 : 0.5;
+            const denoise = form.getValues('denoise') ?? 0.4;
+            if (min > denoise) form.setValue('denoise', 0.65);
+            setMinDenoise(min);
+          });
+      });
+    else setMinDenoise(0);
+  }, [sourceImage, form]);
+
+  const isOpenAI = baseModel === 'OpenAI';
+  const isSDXL = getIsSdxl(baseModel);
+  const isFlux = getIsFlux(baseModel);
+  const isSD3 = getIsSD3(baseModel);
+  const disablePriority = runsOnFalAI || isOpenAI;
+
   return (
-    <Form
+    <GenForm
       form={form}
       onSubmit={handleSubmit}
       onError={handleError}
       className="relative flex flex-1 flex-col justify-between gap-2"
     >
-      <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model', 'workflow']}>
-        {({ baseModel, fluxMode, draft, model, workflow }) => {
-          const isTxt2Img = workflow.startsWith('txt');
-          const isSDXL = getIsSdxl(baseModel);
-          const isFlux = getIsFlux(baseModel);
-          const isSD3 = getIsSD3(baseModel);
+      <Watch
+        {...form}
+        fields={['baseModel', 'fluxMode', 'draft', 'model', 'workflow', 'sourceImage']}
+      >
+        {({ baseModel, fluxMode, draft, model, workflow, sourceImage }) => {
+          // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
+          const isImg2Img = workflow?.startsWith('img') || (isOpenAI && sourceImage);
           const isDraft = isFlux
             ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
             : isSD3
             ? model.id === 983611
-            : features.draft && !!draft;
+            : features.draft && !!draft && !isOpenAI;
+          const minQuantity = !!isDraft ? 4 : 1;
+          const maxQuantity = isOpenAI
+            ? 10
+            : !!isDraft
+            ? Math.floor(status.limits.quantity / 4) * 4
+            : status.limits.quantity;
           const cfgDisabled = isDraft;
           const samplerDisabled = isDraft;
           const stepsDisabled = isDraft;
@@ -392,6 +455,12 @@ export function GenerationFormContent() {
             cfgScaleMax = isDraft ? 1 : 20;
           }
           const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
+          const disableAdditionalResources = runsOnFalAI || isOpenAI;
+          const disableAdvanced = isFluxUltra || isOpenAI;
+          const disableNegativePrompt = isFlux || isOpenAI;
+          const disableWorkflowSelect = isFlux || isSD3 || isOpenAI;
+          const disableDraft = !features.draft || isOpenAI || isFlux || isSD3;
+          const enableImageInput = (features.image && !isFlux && !isSD3) || isOpenAI;
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
           if (!resourceTypes) return <></>;
@@ -399,41 +468,44 @@ export function GenerationFormContent() {
           return (
             <>
               <div className="flex flex-col gap-2 px-3">
-                {!isFlux && !isSD3 && (
-                  <>
-                    <div className="flex items-start justify-start gap-3">
-                      <div className="flex-1">
-                        <InputSelect
-                          label={
-                            <div className="flex items-center gap-1">
-                              <Input.Label>Workflow</Input.Label>
-                              <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                                Go beyond text-to-image with different workflows. Currently we have
-                                limited workflows that cover some of the most important use cases.
-                                Community workflows coming soon.
-                              </InfoPopover>
-                              <Badge color="yellow" size="xs">
-                                New
-                              </Badge>
-                            </div>
-                          }
-                          className="flex-1"
-                          name="workflow"
-                          data={[
-                            ...workflowOptions.filter((x) => x.value.startsWith('txt')),
-                            ...workflowOptions.filter((x) => x.value.startsWith('img')),
-                          ]}
-                          loading={loadingWorkflows}
-                        />
-                        {workflowDefinition?.description && (
-                          <Text size="xs" lh={1.2} color="dimmed" className="my-2">
-                            {workflowDefinition.description}
-                          </Text>
-                        )}
-                      </div>
+                {!disableWorkflowSelect && (
+                  <div className="flex items-start justify-start gap-3">
+                    <div className="flex-1">
+                      <InputSelect
+                        label={
+                          <div className="flex items-center gap-1">
+                            <Input.Label>Workflow</Input.Label>
+                            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                              Go beyond text-to-image with different workflows. Currently we have
+                              limited workflows that cover some of the most important use cases.
+                              Community workflows coming soon.
+                            </InfoPopover>
+                            <Badge color="yellow" size="xs">
+                              New
+                            </Badge>
+                          </div>
+                        }
+                        className="flex-1"
+                        name="workflow"
+                        data={[
+                          ...workflowOptions.filter((x) => x.value.startsWith('txt')),
+                          ...workflowOptions.filter((x) => x.value.startsWith('img')),
+                        ]}
+                        loading={loadingWorkflows}
+                      />
+                      {workflowDefinition?.description && (
+                        <Text size="xs" lh={1.2} color="dimmed" className="my-2">
+                          {workflowDefinition.description}
+                        </Text>
+                      )}
                     </div>
-                    {features.image && <InputSourceImageUpload name="sourceImage" />}
-                  </>
+                  </div>
+                )}
+                {enableImageInput && (
+                  <InputSourceImageUpload
+                    name="sourceImage"
+                    label={isOpenAI ? 'Image (optional)' : undefined}
+                  />
                 )}
 
                 <div className="-mb-1 flex items-center gap-1">
@@ -450,9 +522,11 @@ export function GenerationFormContent() {
                 </div>
 
                 <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
-                  {({ model, resources = [], vae, fluxMode }) => {
+                  {({ model, resources: formResources, vae, fluxMode }) => {
+                    const resources = formResources ?? [];
                     const selectedResources = [...resources, vae, model].filter(isDefined);
                     const minorFlaggedResources = selectedResources.filter((x) => x.model.minor);
+                    const sfwFlaggedResources = selectedResources.filter((x) => x.model.sfwOnly);
                     const unstableResources = selectedResources.filter((x) =>
                       allUnstableResources.includes(x.id)
                     );
@@ -483,12 +557,14 @@ export function GenerationFormContent() {
                           }}
                           hideVersion={isFlux}
                           pb={
-                            unstableResources.length || minorFlaggedResources.length
+                            unstableResources.length ||
+                            minorFlaggedResources.length ||
+                            sfwFlaggedResources.length
                               ? 'sm'
                               : undefined
                           }
                         />
-                        {!runsOnFalAI && (
+                        {!disableAdditionalResources && (
                           <Card.Section
                             className={cx(
                               { [classes.formError]: form.formState.errors.resources },
@@ -503,6 +579,7 @@ export function GenerationFormContent() {
                                 control: classes.accordionControl,
                                 content: classes.accordionContent,
                               }}
+                              transitionDuration={0}
                             >
                               <Accordion.Item value="resources" className="border-b-0">
                                 <Accordion.Control
@@ -601,13 +678,14 @@ export function GenerationFormContent() {
                             </Alert>
                           </Card.Section>
                         )}
-                        {minorFlaggedResources.length > 0 && (
+                        {(!!minorFlaggedResources.length || !!sfwFlaggedResources.length) && (
                           <Card.Section>
-                            <Alert color="yellow" title="Mature Content Restricted" radius={0}>
+                            <Alert color="yellow" title="Content Restricted" radius={0}>
                               <Text size="xs">
-                                {`A resource you selected does not allow the generation of Mature Content.
-                    If you attempt to generate mature content with this resource,
-                    the image will not be returned but you `}
+                                {!!minorFlaggedResources.length
+                                  ? `A resource you selected does not allow the generation of non-PG level content. If you attempt to generate non-PG`
+                                  : `A resource you selected does not allow the generation of sexualized content (X, XXX). If you attempt to generate sexualized `}
+                                content with this resource the image will not be returned, but you
                                 <Text span italic inherit>
                                   will
                                 </Text>
@@ -738,10 +816,12 @@ export function GenerationFormContent() {
                                             color="red"
                                             size="xs"
                                             onClick={() => {
-                                              form.setValue('remixOfId', undefined);
-                                              form.setValue('remixSimilarity', undefined);
-                                              form.setValue('remixPrompt', undefined);
-                                              form.setValue('remixNegativePrompt', undefined);
+                                              form.setValues({
+                                                remixOfId: undefined,
+                                                remixSimilarity: undefined,
+                                                remixPrompt: undefined,
+                                                remixNegativePrompt: undefined,
+                                              });
                                             }}
                                             fullWidth
                                             h={30}
@@ -789,10 +869,9 @@ export function GenerationFormContent() {
                     error={errors.prompt?.message}
                   >
                     <Watch {...form} fields={['resources']}>
-                      {({ resources = [] }) => {
-                        const trainedWords = resources
-                          .flatMap((x) => x.trainedWords)
-                          .filter(isDefined);
+                      {({ resources }) => {
+                        const trainedWords =
+                          resources?.flatMap((x) => x.trainedWords).filter(isDefined) ?? [];
 
                         return (
                           <Paper
@@ -891,7 +970,9 @@ export function GenerationFormContent() {
                   )}
                 </div>
 
-                {!isFlux && <InputPrompt name="negativePrompt" label="Negative Prompt" autosize />}
+                {!disableNegativePrompt && (
+                  <InputPrompt name="negativePrompt" label="Negative Prompt" autosize />
+                )}
                 {isFluxUltra && (
                   <InputSwitch
                     name="fluxUltraRaw"
@@ -909,7 +990,7 @@ export function GenerationFormContent() {
                   />
                 )}
 
-                {!isFluxUltra && isTxt2Img && (
+                {!isFluxUltra && !isImg2Img && (
                   <div className="flex flex-col gap-0.5">
                     <Input.Label>Aspect Ratio</Input.Label>
                     <InputSegmentedControl
@@ -930,41 +1011,42 @@ export function GenerationFormContent() {
                   />
                 )}
 
-                {!isFlux && !isSD3 && featureFlags.canViewNsfw && (
-                  <div className="my-2 flex flex-wrap justify-between gap-3">
-                    {/* <InputSwitch
-                      name="nsfw"
-                      label="Mature content"
-                      labelPosition="left"
-                      disabled={hasMinorResources}
-                      checked={hasMinorResources ? false : undefined}
-                    /> */}
-                    {features.draft && (
-                      <InputSwitch
-                        name="draft"
-                        labelPosition="left"
-                        label={
-                          <div className="relative flex items-center gap-1">
-                            <Input.Label>Draft Mode</Input.Label>
-                            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                              Draft Mode will generate images faster, cheaper, and with slightly
-                              less quality. Use this for exploring concepts quickly.
-                              <Text size="xs" color="dimmed" mt={4}>
-                                Requires generating in batches of 4
-                              </Text>
-                            </InfoPopover>
-                          </div>
-                        }
-                      />
-                    )}
-                    {/* {featureFlags.experimentalGen && (
-                      <InputSwitch name="experimental" label="Experimental" labelPosition="left" />
-                    )} */}
-                  </div>
+                {!disableDraft && (
+                  <InputSwitch
+                    className="my-2"
+                    name="draft"
+                    labelPosition="left"
+                    label={
+                      <div className="relative flex items-center gap-1">
+                        <Input.Label>Draft Mode</Input.Label>
+                        <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                          Draft Mode will generate images faster, cheaper, and with slightly less
+                          quality. Use this for exploring concepts quickly.
+                          <Text size="xs" color="dimmed" mt={4}>
+                            Requires generating in batches of 4
+                          </Text>
+                        </InfoPopover>
+                      </div>
+                    }
+                  />
+                )}
+
+                {isOpenAI && (
+                  <>
+                    <InputSwitch
+                      name="openAITransparentBackground"
+                      label="Transparent Background"
+                    />
+                    <InputSelect
+                      name="openAIQuality"
+                      label="Quality"
+                      data={['high', 'medium', 'low']}
+                    />
+                  </>
                 )}
 
                 {isFluxUltra && <InputSeed name="seed" label="Seed" />}
-                {!isFluxUltra && (
+                {!disableAdvanced && (
                   <PersistentAccordion
                     storeKey="generation-form-advanced"
                     variant="contained"
@@ -973,6 +1055,7 @@ export function GenerationFormContent() {
                       control: classes.accordionControl,
                       content: classes.accordionContent,
                     }}
+                    transitionDuration={0}
                   >
                     <Accordion.Item value="advanced">
                       <Accordion.Control>
@@ -1143,8 +1226,8 @@ export function GenerationFormContent() {
                             <InputNumberSlider
                               name="denoise"
                               label="Denoise"
-                              min={0}
-                              max={isTxt2Img ? 0.75 : 1}
+                              min={minDenoise}
+                              max={!isImg2Img ? 0.75 : 1}
                               step={0.05}
                             />
                           )}
@@ -1185,7 +1268,9 @@ export function GenerationFormContent() {
                     </Accordion.Item>
                   </PersistentAccordion>
                 )}
-                {!runsOnFalAI && <InputRequestPriority name="priority" label="Request Priority" />}
+                {!disablePriority && (
+                  <InputRequestPriority name="priority" label="Request Priority" />
+                )}
               </div>
               <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
@@ -1272,7 +1357,18 @@ export function GenerationFormContent() {
                     )}
                     {reviewed && (
                       <>
-                        <QueueSnackbar />
+                        {!submitError ? (
+                          <QueueSnackbar />
+                        ) : (
+                          <Notification
+                            icon={<IconX size={18} />}
+                            color="red"
+                            onClose={() => setSubmitError(undefined)}
+                            className="rounded-md bg-red-8/20"
+                          >
+                            {submitError}
+                          </Notification>
+                        )}
                         <WhatIfAlert />
                         <div className="flex gap-2">
                           <Card withBorder className="flex max-w-24 flex-1 flex-col p-0">
@@ -1282,13 +1378,9 @@ export function GenerationFormContent() {
                             <InputQuantity
                               name="quantity"
                               className={classes.generateButtonQuantityInput}
-                              min={!!isDraft ? 4 : 1}
-                              max={
-                                !!isDraft
-                                  ? Math.floor(status.limits.quantity / 4) * 4
-                                  : status.limits.quantity
-                              }
-                              step={!!isDraft ? 4 : 1}
+                              min={minQuantity}
+                              max={maxQuantity}
+                              step={minQuantity}
                             />
                           </Card>
 
@@ -1317,7 +1409,7 @@ export function GenerationFormContent() {
           );
         }}
       </Watch>
-    </Form>
+    </GenForm>
   );
 }
 
@@ -1357,12 +1449,13 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const form = useGenerationForm();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
-  const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
+  const [baseModel, resources, vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
+  const isOpenAI = baseModel === 'OpenAI';
   const hasCreatorTip =
-    (!isFlux && !isSD3) ||
-    [...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
+    (!isFlux && !isSD3 && !isOpenAI) ||
+    [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();
   if (!features.creatorComp) {

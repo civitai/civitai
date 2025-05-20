@@ -5,11 +5,12 @@ import { z } from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { GetAllModelsInput } from '~/server/schema/model.schema';
+import { GetAllModelsInput, ToggleCheckpointCoverageInput } from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
 import {
   Availability,
@@ -66,6 +67,8 @@ const modelQueryParamSchema = z
       .optional(),
     fromPlatform: booleanString().optional(),
     availability: z.nativeEnum(Availability).optional(),
+    disablePoi: z.boolean().optional(),
+    disableMinor: z.boolean().optional(),
     isFeatured: booleanString().optional(),
   })
   .partial();
@@ -121,10 +124,27 @@ export const useQueryModels = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const _filters = filters ?? {};
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const excludedTagIds = [
+    ...(_filters.excludedTagIds ?? []),
+    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+  ];
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(
-    { ..._filters, browsingLevel },
+    {
+      ..._filters,
+      browsingLevel,
+      excludedTagIds,
+      disablePoi: browsingSettingsAddons.settings.disablePoi
+        ? // Ensures we pass true explicitly
+          true
+        : undefined,
+      disableMinor: browsingSettingsAddons.settings.disableMinor
+        ? // Ensures we pass true explicitly
+          true
+        : undefined,
+    },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
@@ -151,10 +171,41 @@ export const useQueryModels = (
     showHidden: !!_filters.hidden,
     showImageless: (_filters.status ?? []).includes(ModelStatus.Draft) || _filters.pending,
     isRefetching: rest.isRefetching,
-    hiddenTags: _filters.excludedTagIds,
+    hiddenTags: excludedTagIds,
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };
+};
+
+export const useToggleCheckpointCoverageMutation = () => {
+  const queryUtils = trpc.useUtils();
+
+  const toggleMutation = trpc.model.toggleCheckpointCoverage.useMutation({
+    onSuccess: (_, { id, versionId }) => {
+      queryUtils.model.getById.setData({ id }, (old) => {
+        if (!old) return old;
+
+        return {
+          ...old,
+          modelVersions: old.modelVersions.map((v) =>
+            v.id === versionId ? { ...v, canGenerate: !v.canGenerate } : v
+          ),
+        };
+      });
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to toggle checkpoint coverage',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const handleToggle = (data: ToggleCheckpointCoverageInput) => {
+    return toggleMutation.mutateAsync(data);
+  };
+
+  return { ...toggleMutation, toggle: handleToggle };
 };
 
 export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => {

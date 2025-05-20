@@ -73,13 +73,16 @@ import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSearchParams } from 'next/navigation';
+import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 
 type Props = { postId: number };
 
 export function PostDetail(props: Props) {
   return (
     <BrowsingLevelProvider>
-      <PostDetailContent {...props} />
+      <BrowsingSettingsAddonsProvider>
+        <PostDetailContent {...props} />
+      </BrowsingSettingsAddonsProvider>
     </BrowsingLevelProvider>
   );
 }
@@ -99,7 +102,7 @@ export function PostDetailContent({ postId }: Props) {
   } = usePostContestCollectionDetails({ id: postId }, { enabled: !!post?.collectionId });
 
   const collectionMetadata = (collection?.metadata ?? {}) as CollectionMetadataSchema;
-  const requiresCollectionJudgement =
+  const requiresCollectionJudgment =
     collectionMetadata?.judgesApplyBrowsingLevel && permissions?.manage;
   const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel ?? undefined;
 
@@ -117,7 +120,7 @@ export function PostDetailContent({ postId }: Props) {
   } = useQueryImages(
     { postId, pending: !!currentUser, browsingLevel: forcedBrowsingLevel },
     {
-      applyHiddenPreferences: !requiresCollectionJudgement && !forcedBrowsingLevel,
+      applyHiddenPreferences: !requiresCollectionJudgment && !forcedBrowsingLevel,
       enabled: !!post && (!post.collectionId || !isLoadingPostCollection),
     }
   );

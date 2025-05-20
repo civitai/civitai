@@ -1,6 +1,6 @@
 import { Button, ButtonProps, Divider, Input, InputWrapperProps, Stack, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
-import React, { forwardRef, useEffect } from 'react';
+import React, { forwardRef, useEffect, useMemo } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
@@ -8,10 +8,10 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
 import { GenerationResource } from '~/server/services/generation/generation.service';
 
-type ResourceSelectMultipleProps = {
+export type ResourceSelectMultipleProps = {
   limit?: number;
-  value?: GenerationResource[];
-  onChange?: (value?: GenerationResource[]) => void;
+  value?: GenerationResource[] | null;
+  onChange?: (value: GenerationResource[] | null) => void;
   buttonLabel: React.ReactNode;
   modalTitle?: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
@@ -42,10 +42,27 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
   ) => {
     // const { types } = options;
     const types = options.resources?.map((x) => x.type);
+    const baseModels = [
+      ...new Set(
+        options.resources?.flatMap((x) => [...(x.baseModels ?? []), ...(x.partialSupport ?? [])]) ??
+          []
+      ),
+    ];
 
     // _types used to set up groups
-    const _types = types ?? [...new Set(value?.map((x) => x.model.type))];
-    const _values = types ? [...value].filter((x) => types.includes(x.model.type)) : value;
+    const _types = [...new Set(types ?? value?.map((x) => x.model.type) ?? [])];
+    const _values =
+      useMemo(
+        () =>
+          types
+            ? value?.filter(
+                (x) =>
+                  types.includes(x.model.type) &&
+                  (!!baseModels?.length ? baseModels.includes(x.baseModel) : true)
+              )
+            : value,
+        [value]
+      ) ?? [];
     const groups = _types
       .map((type) => ({
         type,
@@ -87,7 +104,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     // removes resources that have unsupported types
     useEffect(() => {
-      if (_values.length !== value.length) onChange?.(_values.length ? _values : undefined);
+      if (_values.length !== value?.length) onChange?.(_values.length ? _values : null);
     }, [value]); //eslint-disable-line
 
     const handleOpenModal = () => {

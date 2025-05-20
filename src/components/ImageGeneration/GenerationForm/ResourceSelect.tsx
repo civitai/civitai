@@ -25,8 +25,8 @@ export const ResourceSelect = ({
   showAsCheckpoint,
   ...inputWrapperProps
 }: {
-  value?: GenerationResource;
-  onChange?: (value?: GenerationResource) => void;
+  value?: GenerationResource | null;
+  onChange?: (value: GenerationResource | null) => void;
   buttonLabel: React.ReactNode;
   modalTitle?: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
@@ -40,7 +40,7 @@ export const ResourceSelect = ({
   const types = options.resources?.map((x) => x.type);
   const _value = types && value && !types.includes(value.model.type) ? undefined : value;
 
-  function handleChange(resource?: GenerationResource) {
+  function handleChange(resource?: GenerationResource | null) {
     if (
       selectSource === 'generation' &&
       resource &&
@@ -49,7 +49,7 @@ export const ResourceSelect = ({
     ) {
       onChange?.({ ...resource, ...resource.substitute });
     } else {
-      onChange?.(resource);
+      onChange?.(resource ?? null);
     }
   }
 
@@ -68,7 +68,7 @@ export const ResourceSelect = ({
 
   // removes resources that have unsupported types
   useEffect(() => {
-    if (!_value && !!value) onChange?.(_value);
+    if (!_value && !!value) onChange?.(_value ?? null);
   }, [value]); //eslint-disable-line
 
   return (

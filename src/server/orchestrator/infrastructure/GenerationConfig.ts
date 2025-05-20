@@ -1,39 +1,75 @@
-import { z } from 'zod';
-import {
-  GenerationType,
-  OrchestratorEngine,
-} from '~/server/orchestrator/infrastructure/base.enums';
+import { VideoGenInput } from '@civitai/client';
+import { RefinementCtx, z } from 'zod';
+import { maxRandomSeed } from '~/server/common/constants';
 
-interface IVideoGenerationConfig<TSchema extends z.AnyZodObject> {
-  subType: GenerationType;
-  engine: OrchestratorEngine;
-  metadataDisplayProps: Array<keyof z.output<TSchema>>;
+type VideoGenProcesses = 'txt2vid' | 'img2vid';
+export function VideoGenerationConfig2<
+  TSchema extends z.AnyZodObject = z.AnyZodObject,
+  TOutput extends VideoGenInput = VideoGenInput,
+  TDefaults extends z.input<TSchema> = z.input<TSchema>,
+  SchemaOutput = z.infer<TSchema>,
+  RefinementOutput = SchemaOutput & TDefaults
+>({
+  defaultValues,
+  superRefine,
+  schema,
+  transformFn,
+  whatIfFn = (args) => args,
+  ...args
+}: {
+  label: string;
+  description?: string;
+  whatIfProps: string[];
+  metadataDisplayProps: string[];
+  processes: VideoGenProcesses[];
   schema: TSchema;
-}
+  defaultValues?: TDefaults;
+  whatIfFn?: (arg: SchemaOutput) => SchemaOutput;
+  superRefine?: (arg: RefinementOutput, ctx: RefinementCtx) => void;
+  transformFn: (args: SchemaOutput) => RefinementOutput;
+  inputFn: (args: RefinementOutput & { seed: number }) => TOutput;
+}) {
+  const validationSchema = superRefine ? schema.superRefine(superRefine as any) : schema;
+  const _defaultValues = { ...defaultValues, seed: null };
 
-export class VideoGenerationConfig<TSchema extends z.AnyZodObject = z.AnyZodObject>
-  implements IVideoGenerationConfig<TSchema>
-{
-  constructor(args: IVideoGenerationConfig<TSchema>) {
-    this.subType = args.subType;
-    this.engine = args.engine;
-    this.metadataDisplayProps = args.metadataDisplayProps;
-    this.schema = args.schema;
-    this.key = `${args.engine}-${args.subType}`;
+  function softValidate(data: any) {
+    const values = { ..._defaultValues, ...data };
+    return schema.parse(values);
   }
 
-  type = 'video';
-  subType: GenerationType;
-  engine: OrchestratorEngine;
-  metadataDisplayProps: Array<keyof z.output<TSchema>>;
-  schema: TSchema;
-  key: string;
-}
+  function validate(data: any) {
+    const values = { ..._defaultValues, ...data };
+    return validationSchema.parse(values);
+  }
 
-// export class ImageGenerationConfig<TSchema extends z.AnyZodObject = z.AnyZodObject> {
-//   constructor() {}
-//   type = 'image';
-//   subType: GenerationType;
-//   schema: TSchema;
-//   key: string;
-// }
+  function getDefaultValues() {
+    return schema.parse({ ..._defaultValues });
+  }
+
+  function getWhatIfValues(data: any) {
+    const whatIfDefaults = { ..._defaultValues, ...data };
+    const parsed = schema.parse(whatIfDefaults) as SchemaOutput;
+    return whatIfFn(parsed);
+  }
+
+  function inputFn(data: SchemaOutput): TOutput {
+    const softValidated = schema.parse(data) as SchemaOutput;
+    const transformed = transformFn?.(softValidated) ?? softValidated;
+    const result = args.inputFn(transformed as any);
+    const seed =
+      !('seed' in result) || !result.seed ? Math.floor(Math.random() * maxRandomSeed) : result.seed;
+    return { ...result, seed };
+  }
+
+  return {
+    ...args,
+    schema,
+    validationSchema,
+    getDefaultValues,
+    validate,
+    softValidate,
+    getWhatIfValues,
+    inputFn,
+    transformFn,
+  };
+}

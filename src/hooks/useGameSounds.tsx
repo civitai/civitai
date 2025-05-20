@@ -8,11 +8,12 @@ type GameSound =
   | 'levelUp'
   | 'point'
   | 'undo';
-export function useGameSounds() {
+export function useGameSounds(opts?: { volume?: number }) {
   // return (id: GameSound, playbackRate = 1) => {};
+  const { volume = 0.5 } = opts || {};
 
   const [playSound] = useSound('/sounds/game.mp3', {
-    volume: 0.5,
+    volume,
     sprite: {
       buzz: [0, 89.88662131519274],
       challengeFail: [2000, 1075.8956916099773],
@@ -23,7 +24,7 @@ export function useGameSounds() {
       undo: [19000, 403.21995464852733],
     },
   });
-  const [playPoint] = useSound('/sounds/point.mp3', { volume: 0.5 });
+  const [playPoint] = useSound('/sounds/point.mp3', { volume });
 
   return (id: GameSound, playbackRate = 1) => {
     if (id === 'point' && playbackRate !== 1) return playPoint({ playbackRate });

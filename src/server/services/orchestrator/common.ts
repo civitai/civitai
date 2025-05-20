@@ -2,6 +2,7 @@ import {
   ComfyStep,
   createCivitaiClient,
   HaiperVideoGenOutput,
+  ImageGenStep,
   ImageJobNetworkParams,
   Priority,
   TextToImageInput,
@@ -19,7 +20,7 @@ import { env } from '~/env/server';
 import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
+import { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
 import {
@@ -33,11 +34,7 @@ import {
   getGenerationResourceData,
 } from '~/server/services/generation/generation.service';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
-import {
-  GeneratedImageWorkflow,
-  GeneratedImageWorkflowStep,
-  WorkflowDefinition,
-} from '~/server/services/orchestrator/types';
+import { GeneratedImageWorkflow, WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -46,6 +43,7 @@ import {
   fluxModeOptions,
   fluxUltraAir,
   fluxUltraAirId,
+  getBaseModelFromResources,
   getBaseModelResourceTypes,
   getBaseModelSetType,
   getInjectablResources,
@@ -60,7 +58,7 @@ import {
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { parseAIR } from '~/utils/string-helpers';
+import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export function createOrchestratorClient(token: string) {
@@ -117,6 +115,8 @@ export async function parseGenerateImageInput({
   workflowDefinition: WorkflowDefinition;
   whatIf?: boolean;
 }) {
+  delete originalParams.openAITransparentBackground;
+  delete originalParams.openAIQuality;
   if (originalParams.workflow.startsWith('txt2img')) originalParams.sourceImage = null;
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
@@ -259,11 +259,18 @@ export async function parseGenerateImageInput({
     }
   }
 
-  const hasMinorResource = availableResources.some((resource) => resource.model.minor);
+  const hasMinorResource = availableResources.some(
+    (resource) => resource.model.minor || resource.model.sfwOnly
+  );
   if (hasMinorResource) params.nsfw = false;
 
   // Disable nsfw if the prompt contains poi/minor words
   const hasPoi = includesPoi(params.prompt) || availableResources.some((x) => x.model.poi);
+  if (hasPoi && originalParams.disablePoi) {
+    throw throwBadRequestError(
+      'Your request contains or attempts to use the likeness of a real person. Generating these type of content while viewing X-XXX ratings is not allowed.'
+    );
+  }
   if (hasPoi || includesMinor(params.prompt)) params.nsfw = false;
 
   // Set nsfw to true if the prompt contains nsfw words
@@ -357,39 +364,11 @@ export async function parseGenerateImageInput({
 }
 
 function getResources(step: WorkflowStep) {
-  if (step.$type === 'textToImage') {
-    const inputResources = getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
-      id: x.version,
-      strength: x.networkParams.strength ?? 1,
-      epochNumber: undefined,
-    }));
+  const metadata = step.metadata as Record<string, any>;
+  const resources: { id: number; strength?: number | null; epochNumber?: number | undefined }[] =
+    metadata.resources ?? metadata.params.resources ?? [];
 
-    const metadataResources = (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
-
-    return uniqBy([...inputResources, ...metadataResources], 'id').map((ir) => {
-      const metadataResource = metadataResources.find((x) => x.id === ir.id);
-      // If removed, we re-add the epochInformation
-      if (metadataResource)
-        return {
-          ...ir,
-          epochNumber: metadataResource.epochNumber,
-        };
-
-      return ir;
-    });
-  }
-  return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
-}
-
-function getTextToImageAirs(inputs: TextToImageInput[]) {
-  return Object.entries(
-    inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
-      if (input.model) acc[input.model] = {};
-      const additionalNetworks = input.additionalNetworks ?? {};
-      for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
-      return acc;
-    }, {})
-  ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
+  return resources;
 }
 
 function combineResourcesWithInputResource(
@@ -433,6 +412,13 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
         }, 0) ?? 0,
       cost: workflow.cost,
       tags: workflow.tags ?? [],
+      duration:
+        workflow.startedAt && workflow.completedAt
+          ? Math.round(
+              new Date(workflow.completedAt).getTime() / 1000 -
+                new Date(workflow.startedAt).getTime() / 1000
+            )
+          : undefined,
       steps: (workflow.steps ?? [])?.map((step) =>
         formatWorkflowStep({
           workflowId: workflow.id as string,
@@ -481,22 +467,88 @@ function formatWorkflowStep(args: {
       return formatTextToImageStep(args);
     case 'comfy':
       return formatComfyStep(args);
+    case 'imageGen':
+      return formatImageGenStep(args);
     case 'videoGen':
+    case 'videoEnhancement':
       return formatVideoGenStep(args);
     default:
-      throw new Error('failed to extract generation resources: unsupported workflow type');
+      throw new Error(
+        `failed to extract generation resources: unsupported workflow type ${step.$type}`
+      );
   }
 }
 
-function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
+function formatImageGenStep({
+  step,
+  resources = [],
+  workflowId,
+}: {
+  step: WorkflowStep;
+  resources?: GenerationResource[];
+  workflowId: string;
+}) {
+  const { input, output, jobs } = step as ImageGenStep;
+  const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
+  const { params, resources: stepResources = [] } = metadata;
+
+  const { width = 1024, height = 1024 } =
+    params?.sourceImage ?? (params as { width?: number; height?: number });
+
+  const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
+    (acc, job, i) => ({
+      ...acc,
+      [job.id]:
+        output?.images
+          ?.filter((x) => (x.jobId ? x.jobId === job.id : true))
+          .map((image) => ({
+            type: 'image',
+            workflowId,
+            stepName: step.name,
+            jobId: job.id,
+            id: image.id,
+            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
+            seed: params?.seed ? params.seed + i : undefined,
+            completed: job.completedAt ? new Date(job.completedAt) : undefined,
+            url: image.url as string,
+            width: image.width ?? width,
+            height: image.height ?? height,
+            blockedReason: image.blockedReason,
+          })) ?? [],
+    }),
+    {}
+  );
+
+  const images = Object.values(groupedImages).flat();
+
+  return {
+    $type: 'imageGen' as const,
+    timeout: step.timeout,
+    name: step.name,
+    params: params!,
+    images,
+    status: step.status,
+    metadata: metadata as GeneratedImageStepMetadata,
+    resources: combineResourcesWithInputResource(resources, stepResources),
+  };
+}
+
+function formatVideoGenStep({
+  step,
+  workflowId,
+  resources,
+}: {
+  step: WorkflowStep;
+  workflowId: string;
+  resources: GenerationResource[];
+}) {
   const { input, output, jobs } = step as VideoGenStep;
-  const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
-  const { params } = videoMetadata;
+  const videoMetadata = step.metadata as { params: VideoGenerationSchema2 };
+  const params = videoMetadata.params ?? {};
 
   // handle legacy source image
-  let sourceImage = params && 'sourceImage' in params ? params.sourceImage : undefined;
+  let sourceImage = 'sourceImage' in params ? params.sourceImage : undefined;
   if (
-    params &&
     'width' in params &&
     'height' in params &&
     'sourceImage' in params &&
@@ -513,30 +565,25 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   let height: number | undefined;
   let aspectRatio = 1;
 
-  if (params) {
-    if (params.type === 'img2vid') {
-      width = sourceImage?.width;
-      height = sourceImage?.height;
-      aspectRatio = width && height ? width / height : 16 / 9;
-    } else if (params.type === 'txt2vid') {
-      switch (params.engine) {
-        case 'lightricks':
-        case 'kling':
-        case 'haiper': {
-          if (params.aspectRatio) {
-            const [rw, rh] = params.aspectRatio.split(':').map(Number);
-            aspectRatio = rw / rh;
-          }
-          break;
-        }
-        case 'minimax':
-          aspectRatio = 16 / 9;
-          break;
-        case 'mochi':
-          width = 848;
-          height = 480;
-          aspectRatio = width / height;
-          break;
+  if (sourceImage) {
+    width = sourceImage?.width;
+    height = sourceImage?.height;
+    aspectRatio = width && height ? width / height : 16 / 9;
+  } else {
+    switch (params.engine) {
+      case 'minimax':
+        aspectRatio = 16 / 9;
+        break;
+      case 'mochi':
+        width = 848;
+        height = 480;
+        aspectRatio = width / height;
+        break;
+      default: {
+        if (!params.aspectRatio) params.aspectRatio = '16:9';
+        const [rw, rh] = params.aspectRatio.split(':').map(Number);
+        aspectRatio = rw / rh;
+        break;
       }
     }
   }
@@ -560,16 +607,39 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url + '.mp4',
-            width: width ?? 1080,
-            height: height ?? 1080,
+            width: output?.video?.width ?? width ?? 1080,
+            height: output?.video?.height ?? height ?? 1080,
             queuePosition: job.queuePosition,
             aspectRatio,
+            blockedReason: image.blockedReason,
           })) ?? [],
     }),
     {}
   );
   const videos = Object.values(grouped).flat();
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
+  const stepResources = (params && 'resources' in params ? params.resources ?? [] : [])?.map(
+    ({ air, strength }) => {
+      const { version } = parseAIR(air);
+      return { id: version, strength };
+    }
+  );
+
+  const combinedResources = combineResourcesWithInputResource(resources, stepResources);
+
+  let baseModel = combinedResources.length
+    ? getBaseModelFromResources(
+        combinedResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+      )
+    : undefined;
+
+  // TODO - come up with a better way to handle jsonb data type mismatches
+  if ('type' in params && (params.type === 'txt2vid' || params.type === 'img2vid'))
+    params.process = params.type;
+  if (baseModel === 'WanVideo') {
+    if (params.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
+    else baseModel = 'WanVideo14B_I2V_720p';
+  }
 
   return {
     $type: 'videoGen' as const,
@@ -577,15 +647,16 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     name: step.name,
     // workflow and quantity are only here because they are required for other components to function
     params: {
-      ...input,
+      ...params!,
+      baseModel,
       sourceImage: sourceImage,
-      workflow: videoMetadata.params?.workflow,
+      // workflow: videoMetadata.params?.workflow,
       quantity: 1,
     },
     images: videos,
     status: step.status,
     metadata,
-    resources: [],
+    resources: combineResourcesWithInputResource(resources, stepResources),
   };
 }
 
@@ -661,8 +732,9 @@ function formatTextToImageStep({
             seed: input.seed ? input.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            width: input.width,
-            height: input.height,
+            width: image.width ?? input.width,
+            height: image.height ?? input.height,
+            blockedReason: image.blockedReason,
           })) ?? [],
     }),
     {}
@@ -750,7 +822,9 @@ export function formatComfyStep({
   //   params.height = size.height;
   // }
 
-  const { width = 512, height = 512 } = params?.sourceImage ?? params ?? {};
+  const { width = 512, height = 512 } =
+    (params?.sourceImage && typeof params.sourceImage !== 'string' ? params.sourceImage : params) ??
+    {};
 
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
@@ -769,8 +843,9 @@ export function formatComfyStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            width,
-            height,
+            width: width,
+            height: height,
+            blockedReason: image.blockedReason,
           })) ?? [],
     }),
     {}

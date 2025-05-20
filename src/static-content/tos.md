@@ -3,7 +3,7 @@ title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
 ---
 
-Last Updated: 01/30/2025
+Last Updated: 04/24/2025
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](https://www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
 
@@ -29,6 +29,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 - 5.3 **Purchase of Creator Content.** If you purchase any offerings of Creators through the Service, you agree to pay on a one-time or subscription basis as specified by the Creators. You agree that Creators have the right to determine pricing and/or subscription tiers for their offerings and may adjust such from time to time at their discretion. You are solely responsible for ensuring that you have sufficient Buzz in your Account for your purchase(s) and agree that your purchase(s) may be denied or canceled in the event that your Account balance is insufficient. If any User Content or channels are offered on a subscription basis, they will be subject to Section 5.7 below.
 
 - 5.4 **Refund**. As a customer, you are eligible for a refund in the following situations:
+
   - Recurring Technical Problems: If ongoing technical difficulties hinder your use of the platform.
   - Failure to Receive Buzz: If Buzz you've purchased isn't received or added to your account due to technical issues.
   - Flawed Resource: If digital products you've trained are substantially flawed beyond what could be reasonably attributed to user error.
@@ -36,6 +37,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
   Refunds for expenditures on 3rd party services hosted via API on Civitai will only be granted if Civitai can secure a refund from the respective service provider. Please note that not all API services permit refunds, and Civitai's ability to issue a refund is contingent on this limitation.
 
   Civitai retains the right to refuse a refund in the following cases:
+
   - You were muted or removed from the platform for breaking content guidelines.
   - You are unable to achieve desired results through no technical fault of the platform.
   - You have changed your mind.
@@ -50,7 +52,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 5.8 **Delinquent Accounts.** Civitai may suspend or terminate access to the Service, including fee-based portions of the Service, for any account for which any amount is due but unpaid. In addition to the amount due for the Service, a delinquent account will be charged with fees or charges that are incidental to any chargeback or collection of any the unpaid amount, including collection fees. If your payment method is no longer valid at the time a renewal Subscription Fee is due, then Civitai reserves the right to delete your account and any information or User Content (defined below) associated with your Account without any liability to you.
 
-1. **Licenses**
+6. **Licenses**
 
 - 6.1 **Limited License.** Subject to your complete and ongoing compliance with these Terms, Civitai grants you, solely for your personal, non-commercial use, a limited, non-exclusive, non-transferable, non-sublicensable, revocable license to: (a) install and use one object code copy of any mobile or other downloadable application associated with the Service (whether installed by you or pre-installed on your mobile device by the device manufacturer or a wireless telephone provider) on a mobile device that you own or control; and (b) access and use the Service.
 
@@ -86,27 +88,70 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
   **The following User Content is expressly prohibited and may be flagged by or for our moderators:**
 
-- (a) Content depicting or intended to depict real individuals or minors (under 18) in a mature context. For a more detailed explanation, please [review our safety center for guidelines on depicting the likeness of real people and depicting minors](https://civitai.com/safety);
-- (b) Content depicting or intended to depict photorealistic minors, regardless of context;
-- (c) Content promoting illegal or violent activities, including, but not limited to:
-  - child abuse and exploitation
-  - rape and domestic abuse
-  - illegal substances or product sales requiring permits/licenses (e.g., pharmaceuticals, narcotics, firearms)
-  - fraud, deception, or false impersonation
-  - brutal fights, graphic injuries, or human death
-  - graphic violence or bestiality
-- (d) "Loli", "lolicon", "shota", "shotacon" content;
-- (e) Content depicting scat, fecal matter, gaseous emission, object or lifeform being ejected from an anus, or coprophagia (the ingestion of fecal matter);
-- (f) Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the Service.
-- (g) Bounties requesting the creation of a real-life person, deceased or living, are prohibited.
-- (h) AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" individuals.
-  For additional information about how content is moderated, please review our Content Moderation Policy.
+  Prohibited Content Includes (but is not limited to):
 
-  Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
+- (a) Content involving real individuals or minors (under 18) in any sexualized context or context that insinuates, or portrays sexual intent, including but not limited to:
+
+  - All stylized, anime, or cartoon content depicting children in inappropriate or sexualized situations. For a more detailed explanation, please [review our safety center for guidelines on depicting the likeness of real people and depicting minors](https://civitai.com/safety).
+  - "Loli", "Lolicon", "Shota", or "Shotacon" content.
+  - Photorealistic minors in any context.
+
+- (b) Illegal or violent activities, including:
+
+  - Depictions of incest, including sexual activity between immediate or close biological family members.
+  - Child abuse, exploitation, or endangerment.
+  - Rape, sexual violence, or domestic abuse.
+  - Depictions of human death, brutal violence, or graphic injuries.
+  - Bestiality.
+
+- (c) The following content depicting sexual activity or context that insinuates, or portrays sexual intent;
+
+  - Weapons aimed at or pointed toward individuals.
+  - Promotion or depiction of illegal substances or regulated products (e.g., narcotics, pharmaceuticals).
+  - Vomit.
+
+- (d) Content depicting sexual activity while in a mind-altered state, including;
+
+  - Being drunk, drugged, under hypnosis, or mind control.
+
+- (e) The depiction of the following bodily excretions and related content, regardless of context;
+
+  - Urine.
+  - Feces (scat, coprophagia, gaseous emission, object or lifeform being ejected from an anus, etc.)
+  - Menstruation.
+  - Smegma.
+  - Diapers.
+
+- (f) Self-harm, body image disorders, or promotion of dangerous behavior:
+
+  - Cutting, mutilation, or suicide themes.
+  - Depictions of anorexia, bulimia, or other disordered eating.
+
+- (g) Content that promotes hate, harm, or extremist ideologies, including:
+
+  - Hate speech or imagery targeting groups or individuals.
+  - Extremist propaganda or incitement to violence.
+
+- (h) Misleading or impersonated content:
+
+  - Falsely labeled content claiming to be from another creator.
+  - Impersonation of real individuals or creators.
+  - Bounties requesting likenesses of real people, living or deceased.
+
+- (i) Nudity-manipulating tools or AI workflows:
+  - AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" real individuals.
+
+Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
+
+In addition to the categories of explicitly prohibited content above, certain types of content are subject to additional requirements to ensure community safety, legal compliance, and content authenticity.
+
+- (j) Metadata Requirement for sexualized content, or content that insinuates, or portrays sexual intent:
+
+  - Such content must be accompanied by AI generation metadata. At a minimum, this must include the prompt used. Where possible, additional metadata such as model name, sampler, seed, and any other available generation parameters should also be provided.
 
 - 9.7 **Reporting and Appeals.** You are encouraged to report any inappropriate User Content that violate these Terms or our published policies. Reports can be submitted through our standard reporting mechanism, and should include relevant information to assist in the investigation. We reserve the right to suspend or terminate the accounts of Users who are found to be repeatedly violating these Terms or our published policies. Users can request an explanation or appeal a moderation decision by submitting an appeal through our Appeal Form for further review.
 
-1.   **Communications**
+10. **Communications**
 
 - 10.1 **Push Notifications.** When you install our app on your mobile device, you agree to receive push notifications, which are messages an app sends you on your mobile device when you are not in the app. You can turn off notifications by visiting your mobile device’s “settings” page.
 
@@ -128,7 +173,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 11.7 perform any fraudulent activity including impersonating any person or entity, claiming a false affiliation or identity, accessing any other Service account without permission;
 
-- 11.8  Creating or using multiple accounts for the primary purpose of accumulating Buzz, manipulating statistics, or otherwise gaining an unfair advantage.
+- 11.8 Creating or using multiple accounts for the primary purpose of accumulating Buzz, manipulating statistics, or otherwise gaining an unfair advantage.
 
 - 11.9 Using bots, scripts, or any form of automation to manipulate the system or statistics
 
@@ -140,7 +185,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 12.1 **Respect of Third Party Rights.** Civitai respects the intellectual property rights of others, takes the protection of intellectual property rights very seriously, and asks Users to do the same. Infringing activity will not be tolerated on or through the Service.
 
-- 12.2 **DMCA Notification.** We comply with the provisions of the Digital Millennium Copyright Act applicable to Internet service providers (17 U.S.C. § 512, as amended). If you have an intellectual property rights-related complaint about any material on the Service, you may complete our [DMCA Report Form](https://forms.clickup.com/8459928/f/825mr-5904/HX69YZMDH2N3JJA1R4) or contact our Designated Agent at the following address:
+- 12.2 **DMCA Notification.** We comply with the provisions of the Digital Millennium Copyright Act applicable to Internet service providers (17 U.S.C. § 512, as amended). If you have an intellectual property rights-related complaint about any material on the Service, you may complete our [DMCA Report Form](/content/dmca-notice) or contact our Designated Agent at the following address:
 
   ```
   Civit AI, Inc.
@@ -177,9 +222,9 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 12.7 **False Notifications of Claimed Infringement or Counter Notifications.** The Copyright Act provides at 17 U.S.C. § 512(f) that: “[a]ny person who knowingly materially misrepresents under [Section 512 of the Copyright Act (17 U.S.C. § 512)] (1) that material or activity is infringing, or (2) that material or activity was removed or disabled by mistake or misidentification, will be liable for any damages, including costs and attorneys’ fees, incurred by the alleged infringer, by any copyright owner or copyright owner’s authorized licensee, or by a service provider, who is injured by such misrepresentation, as the result of [Civitai] relying upon such misrepresentation in removing or disabling access to the material or activity claimed to be infringing, or in replacing the removed material or ceasing to disable access to it.” Civitai reserves the right to seek damages from any party that submits a Notification of Claimed Infringement or Counter Notification in violation of the law.
 
-1.  **Modification of Terms.** We may, from time to time, change these Terms. Please check these Terms periodically for changes. Revisions will be effective immediately except that, for existing Users, material revisions will be effective 30 days after posting or notice to you of the revisions unless otherwise stated. We may require that you accept modified Terms in order to continue to use the Service. If you do not agree to the modified Terms, then you should remove your User Content and discontinue your use of the Service. Except as expressly permitted in this Section 13 (Modification of Terms), these Terms may be amended only by a written agreement signed by authorized representatives of the parties to these Terms.
+13.  **Modification of Terms.** We may, from time to time, change these Terms. Please check these Terms periodically for changes. Revisions will be effective immediately except that, for existing Users, material revisions will be effective 30 days after posting or notice to you of the revisions unless otherwise stated. We may require that you accept modified Terms in order to continue to use the Service. If you do not agree to the modified Terms, then you should remove your User Content and discontinue your use of the Service. Except as expressly permitted in this Section 13 (Modification of Terms), these Terms may be amended only by a written agreement signed by authorized representatives of the parties to these Terms.
 
-2.  **Term, Termination, and Modification of the Service**
+14. **Term, Termination, and Modification of the Service**
 
 - 14.1 **Term.** These Terms are effective beginning when you accept the Terms or first download, install, access, or use the Service, and ending when terminated as described in Section 14.2 (Termination).
 

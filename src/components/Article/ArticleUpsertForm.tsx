@@ -49,6 +49,8 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider'
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -85,6 +87,7 @@ export function ArticleUpsertForm({ article }: Props) {
   const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
   const router = useRouter();
+  const features = useFeatureFlags();
   const result = querySchema.safeParse(router.query);
 
   const defaultCategory = result.success ? result.data.category : -1;
@@ -157,6 +160,7 @@ export function ArticleUpsertForm({ article }: Props) {
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
+
     upsertArticleMutation.mutate(
       {
         ...rest,
@@ -190,6 +194,7 @@ export function ArticleUpsertForm({ article }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
+      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this article."} />
       <ContainerGrid gutter="xl">
         <ContainerGrid.Col xs={12} md={8}>
           <Stack spacing="xl">
@@ -231,12 +236,12 @@ export function ArticleUpsertForm({ article }: Props) {
               article={article}
               saveButtonProps={{
                 loading: upsertArticleMutation.isLoading && !publishing,
-                disabled: upsertArticleMutation.isLoading,
+                disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(false),
               }}
               publishButtonProps={{
                 loading: upsertArticleMutation.isLoading && publishing,
-                disabled: upsertArticleMutation.isLoading,
+                disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
               sx={hideMobile}
@@ -353,12 +358,12 @@ export function ArticleUpsertForm({ article }: Props) {
               article={article}
               saveButtonProps={{
                 loading: upsertArticleMutation.isLoading && !publishing,
-                disabled: upsertArticleMutation.isLoading,
+                disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(false),
               }}
               publishButtonProps={{
                 loading: upsertArticleMutation.isLoading && publishing,
-                disabled: upsertArticleMutation.isLoading,
+                disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
               sx={showMobile}
@@ -382,7 +387,11 @@ function ActionButtons({
   return (
     <Stack spacing={8} {...stackProps}>
       {article?.publishedAt ? (
-        <Button {...publishButtonProps} type="submit" fullWidth>
+        <Button
+          {...(article.status !== ArticleStatus.Published ? publishButtonProps : saveButtonProps)}
+          type="submit"
+          fullWidth
+        >
           {article.status !== ArticleStatus.Published ? 'Publish' : 'Save'}
         </Button>
       ) : (

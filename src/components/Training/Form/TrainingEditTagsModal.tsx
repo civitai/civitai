@@ -3,19 +3,26 @@ import { IconArrowNarrowRight } from '@tabler/icons-react';
 import React, { Fragment, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { ImageDataType } from '~/store/training.store';
 
 export const TrainingEditTagsModal = ({
   selectedTags,
   imageList,
   modelId,
+  mediaType,
   setImageList,
   setSelectedTags,
 }: {
   selectedTags: string[];
   imageList: ImageDataType[];
   modelId: number;
-  setImageList: (modelId: number, imgData: ImageDataType[]) => void;
+  mediaType: TrainingDetailsObj['mediaType'];
+  setImageList: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    imgData: ImageDataType[]
+  ) => void;
   setSelectedTags: (value: string[]) => void;
 }) => {
   const dialog = useDialogContext();
@@ -33,7 +40,7 @@ export const TrainingEditTagsModal = ({
       });
       return { ...i, label: capts.join(', ') };
     });
-    setImageList(modelId, newImageList);
+    setImageList(modelId, mediaType, newImageList);
     setSelectedTags([]);
     handleClose();
   };

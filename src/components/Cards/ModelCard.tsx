@@ -58,7 +58,8 @@ export function ModelCard({ data }: Props) {
   const isArchived = data.mode === ModelModifier.Archived;
 
   const isPOI = data.poi;
-  const isSFWOnly = data.minor;
+  // Ensures we don't show both flags for the most part. But it makes sense something can be both.
+  const isMinor = data.minor;
   const isNSFW = data.nsfw;
   const isPrivate = data.availability === Availability.Private;
 
@@ -94,14 +95,14 @@ export function ModelCard({ data }: Props) {
                 </Text>
               </Badge>
             )}
-            {currentUser?.isModerator && isSFWOnly && (
+            {currentUser?.isModerator && isMinor && (
               <Badge
                 className={cx(classes.infoChip, classes.chip, classes.forMod)}
                 variant="light"
                 radius="xl"
               >
                 <Text color="white" size="xs" transform="capitalize">
-                  SFW
+                  Minor
                 </Text>
               </Badge>
             )}
@@ -203,18 +204,20 @@ export function ModelCard({ data }: Props) {
                     <IconMessageCircle2 size={14} strokeWidth={2.5} />
                     <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
                   </Group>
-                  <InteractiveTipBuzzButton
-                    toUserId={data.user.id}
-                    entityType={'Model'}
-                    entityId={data.id}
-                  >
-                    <Group spacing={2}>
-                      <IconBolt size={14} strokeWidth={2.5} />
-                      <Text size="xs" tt="uppercase">
-                        {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
-                      </Text>
-                    </Group>
-                  </InteractiveTipBuzzButton>
+                  {!isPOI && (
+                    <InteractiveTipBuzzButton
+                      toUserId={data.user.id}
+                      entityType={'Model'}
+                      entityId={data.id}
+                    >
+                      <Group spacing={2}>
+                        <IconBolt size={14} strokeWidth={2.5} />
+                        <Text size="xs" tt="uppercase">
+                          {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                        </Text>
+                      </Group>
+                    </InteractiveTipBuzzButton>
+                  )}
                 </Badge>
               )}
               {!data.locked && !!data.rank.thumbsUpCount && (

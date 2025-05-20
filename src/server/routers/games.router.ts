@@ -3,8 +3,34 @@ import { ComputeCost, GAME_TOKEN_LENGTH } from '~/components/Chopped/chopped.uti
 import { env as clientEnv } from '~/env/client';
 import { env } from '~/env/server';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import {
+  addImageRatingSchema,
+  cleanseSmiteSchema,
+  getHistorySchema,
+  getImagesQueueSchema,
+  getPlayersInfiniteSchema,
+  resetPlayerByIdSchema,
+  smitePlayerSchema,
+} from '~/server/schema/games/new-order.schema';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { protectedProcedure, router } from '~/server/trpc';
+import {
+  addImageRating,
+  cleanseSmite,
+  getImagesQueue,
+  getPlayerById,
+  getPlayerHistory,
+  getPlayersInfinite,
+  joinGame,
+  resetPlayer,
+  smitePlayer,
+} from '~/server/services/games/new-order.service';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  moderatorProcedure,
+  protectedProcedure,
+  router,
+} from '~/server/trpc';
 import { generateToken } from '~/utils/string-helpers';
 
 const newGameSchema = z.object({
@@ -36,29 +62,80 @@ async function createGameInstance(code: string) {
 }
 
 export const gamesRouter = router({
-  startChoppedGame: protectedProcedure.input(newGameSchema).mutation(async ({ ctx, input }) => {
-    const code = generateToken(GAME_TOKEN_LENGTH).toUpperCase();
-    const cost = ComputeCost(input);
-    const { transactionId } = await createBuzzTransaction({
-      fromAccountId: ctx.user.id,
-      toAccountId: 0,
-      amount: cost,
-      type: TransactionType.Purchase,
-      description: `Chopped game (${code}): ${input.themeIds.length} rounds + ${
-        input.includeAudio ? 'audio' : 'no audio'
-      }`,
-      externalTransactionId: 'chopped-' + code,
-    });
-    if (!transactionId) {
-      throw new Error('Failed to create transaction');
-    }
+  chopped: router({
+    start: protectedProcedure.input(newGameSchema).mutation(async ({ ctx, input }) => {
+      const code = generateToken(GAME_TOKEN_LENGTH).toUpperCase();
+      const cost = ComputeCost(input);
+      const { transactionId } = await createBuzzTransaction({
+        fromAccountId: ctx.user.id,
+        toAccountId: 0,
+        amount: cost,
+        type: TransactionType.Purchase,
+        description: `Chopped game (${code}): ${input.themeIds.length} rounds + ${
+          input.includeAudio ? 'audio' : 'no audio'
+        }`,
+        externalTransactionId: 'chopped-' + code,
+      });
+      if (!transactionId) {
+        throw new Error('Failed to create transaction');
+      }
 
-    try {
-      await createGameInstance(code);
-    } catch (error) {
-      await refundTransaction(transactionId, 'Failed to create game instance');
-    }
+      try {
+        await createGameInstance(code);
+      } catch (error) {
+        await refundTransaction(transactionId, 'Failed to create game instance');
+      }
 
-    return { code };
+      return { code };
+    }),
+  }),
+  newOrder: router({
+    join: guardedProcedure
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ ctx }) => joinGame({ userId: ctx.user.id })),
+    getPlayer: guardedProcedure
+      .use(isFlagProtected('newOrderGame'))
+      .query(({ ctx }) => getPlayerById({ playerId: ctx.user.id })),
+    getPlayers: moderatorProcedure
+      .input(getPlayersInfiniteSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .query(({ input }) => getPlayersInfinite({ ...input })),
+    getImagesQueue: guardedProcedure
+      .use(isFlagProtected('newOrderGame'))
+      .input(getImagesQueueSchema.optional())
+      .query(({ input, ctx }) =>
+        getImagesQueue({ ...input, playerId: ctx.user.id, isModerator: ctx.user.isModerator })
+      ),
+    getHistory: guardedProcedure
+      .input(getHistorySchema)
+      .use(isFlagProtected('newOrderGame'))
+      .query(({ input, ctx }) => getPlayerHistory({ ...input, playerId: ctx.user.id })),
+    smitePlayer: moderatorProcedure
+      .input(smitePlayerSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ input, ctx }) => smitePlayer({ ...input, modId: ctx.user.id })),
+    cleanseSmite: moderatorProcedure
+      .input(cleanseSmiteSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ input }) => cleanseSmite({ ...input })),
+    addRating: guardedProcedure
+      .input(addImageRatingSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ input, ctx }) =>
+        addImageRating({
+          ...input,
+          playerId: ctx.user.id,
+          chTracker: ctx.track,
+          isModerator: ctx.user.isModerator,
+        })
+      ),
+    resetCareer: guardedProcedure
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ ctx }) => resetPlayer({ playerId: ctx.user.id })),
+    resetPlayerById: moderatorProcedure
+      .input(resetPlayerByIdSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .use(isFlagProtected('newOrderReset'))
+      .mutation(({ input }) => resetPlayer({ ...input, withNotification: true })),
   }),
 });

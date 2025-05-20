@@ -232,3 +232,29 @@ export const updatePaddleCustomerEmail = async ({
     email,
   });
 };
+
+export const createAnnualSubscriptionDiscount = async ({
+  amount,
+  currency,
+  userId,
+}: {
+  amount: string;
+  currency?: string;
+  userId: number | string;
+}) => {
+  const paddle = getPaddle();
+  try {
+    return paddle.discounts.create({
+      amount,
+      type: 'flat',
+      currencyCode: (currency as CurrencyCode) ?? 'USD',
+      recur: true,
+      maximumRecurringIntervals: 1,
+      usageLimit: 1,
+      description: 'Discount for Annual subscription upgrade UserId: ' + userId,
+    });
+  } catch (e) {
+    console.error('Error creating discount', e);
+    throw e;
+  }
+};

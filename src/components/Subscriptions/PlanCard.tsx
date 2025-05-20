@@ -20,6 +20,7 @@ import {
   IconCloud,
   IconHeartHandshake,
   IconHexagon,
+  IconHexagon3d,
   IconHexagonPlus,
   IconList,
   IconPhotoAi,
@@ -78,25 +79,36 @@ const subscribeBtnProps: Record<string, Partial<ButtonProps>> = {
 export function PlanCard({ product, subscription }: PlanCardProps) {
   const features = useFeatureFlags();
   const hasActiveSubscription = subscription?.status === 'active';
-  const isActivePlan = hasActiveSubscription && subscription?.product?.id === product.id;
+  const _isActivePlan = hasActiveSubscription && subscription?.product?.id === product.id;
   const { classes } = useStyles();
   const meta = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const subscriptionMeta = (subscription?.product.metadata ?? {}) as SubscriptionProductMetadata;
-  const isUpgrade =
-    hasActiveSubscription &&
-    constants.memberships.tierOrder.indexOf(meta.tier) >
-      constants.memberships.tierOrder.indexOf(subscriptionMeta.tier ?? '');
-  const isDowngrade =
-    hasActiveSubscription &&
-    constants.memberships.tierOrder.indexOf(meta.tier) <
-      constants.memberships.tierOrder.indexOf(subscriptionMeta.tier ?? '');
-  const planDetails = getPlanDetails(product, features) ?? {};
-  const { benefits, image } = planDetails;
-  const defaultPriceId = isActivePlan
+  const defaultPriceId = _isActivePlan
     ? subscription?.price.id ?? product.defaultPriceId
     : product.defaultPriceId;
-  const [priceId, setPriceId] = useState<string | null>(defaultPriceId);
+  const [priceId, setPriceId] = useState<string | null>(
+    product.prices.find((p) => p.id === defaultPriceId)?.id ??
+      product.prices.find((p) => p.currency.toLowerCase() === 'usd')?.id ??
+      product.prices[0].id
+  );
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
+  const planDetails = getPlanDetails(product, features, price.interval === 'year') ?? {};
+  const { benefits, image } = planDetails;
+  const isSameInterval = _isActivePlan && subscription?.price.interval === price.interval;
+  const isUpgrade =
+    hasActiveSubscription &&
+    (constants.memberships.tierOrder.indexOf(meta.tier) >
+      constants.memberships.tierOrder.indexOf(subscriptionMeta.tier ?? '') ||
+      (subscription?.price.interval === 'month' && price.interval === 'year'));
+  const isDowngrade =
+    hasActiveSubscription &&
+    (constants.memberships.tierOrder.indexOf(meta.tier) <
+      constants.memberships.tierOrder.indexOf(subscriptionMeta.tier ?? '') ||
+      (subscription?.price.interval === 'year' && price.interval === 'month'));
+
+  const isActivePlanDiffInterval = _isActivePlan && !isSameInterval;
+  const isActivePlan = _isActivePlan && isSameInterval;
+
   const btnProps = isActivePlan
     ? subscribeBtnProps.active
     : isUpgrade
@@ -107,6 +119,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
 
   const disabledDueToProvider =
     !!subscription && subscription.product.provider !== product.provider;
+  const disabledDueToYearlyPlan =
+    !!subscription && subscription.price.interval === 'year' && price.interval === 'month';
 
   const metadata = (subscription?.product?.metadata ?? {
     tier: 'free',
@@ -124,7 +138,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
             </Title>
             {image && (
               <Center>
-                <Box w={128}>
+                <Box w={128} h={128}>
                   <EdgeMedia src={image} className={classes.image} />
                 </Box>
               </Center>
@@ -199,7 +213,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   <Button
                     radius="xl"
                     {...btnProps}
-                    disabled={disabledDueToProvider}
+                    disabled={disabledDueToProvider || disabledDueToYearlyPlan}
                     onClick={() => {
                       dialogStore.trigger({
                         component: DowngradeFeedbackModal,
@@ -212,27 +226,31 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                       });
                     }}
                   >
-                    Downgrade to {meta?.tier}
+                    Downgrade to {meta?.tier} {isActivePlanDiffInterval ? ' (Monthly)' : ''}
                   </Button>
                 ) : isUpgrade ? (
                   <Button
                     radius="xl"
                     {...btnProps}
-                    disabled={disabledDueToProvider}
+                    disabled={disabledDueToProvider || disabledDueToYearlyPlan}
                     onClick={() => {
                       dialogStore.trigger({
                         component: MembershipUpgradeModal,
                         props: {
                           priceId,
                           meta: planDetails,
+                          price,
                         },
                       });
                     }}
                   >
-                    Upgrade to {meta?.tier}
+                    Upgrade to {meta?.tier} {isActivePlanDiffInterval ? ' (Annual)' : ''}
                   </Button>
                 ) : (
-                  <SubscribeButton priceId={priceId} disabled={disabledDueToProvider}>
+                  <SubscribeButton
+                    priceId={priceId}
+                    disabled={disabledDueToProvider || disabledDueToYearlyPlan}
+                  >
                     <Button radius="xl" {...btnProps}>
                       {isActivePlan ? `You are ${meta?.tier}` : `Subscribe to ${meta?.tier}`}
                     </Button>
@@ -250,8 +268,13 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
 
 export const getPlanDetails: (
   product: Pick<SubscriptionPlan, 'metadata' | 'name'>,
-  features: FeatureAccess
-) => PlanMeta = (product: Pick<SubscriptionPlan, 'metadata' | 'name'>, features: FeatureAccess) => {
+  features: FeatureAccess,
+  isAnnual?: boolean
+) => PlanMeta = (
+  product: Pick<SubscriptionPlan, 'metadata' | 'name'>,
+  features: FeatureAccess,
+  isAnnual
+) => {
   const metadata = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',
@@ -418,6 +441,39 @@ export const getPlanDetails: (
             <IconHexagon size={benefitIconSize} />
           ),
         iconColor: !metadata.badgeType || metadata.badgeType === 'none' ? 'gray' : 'blue',
+        iconVariant: 'light' as ThemeIconVariant,
+      },
+      {
+        content:
+          !!metadata.badgeType && !!isAnnual ? (
+            <Text lh={1}>
+              <Text
+                variant="link"
+                td="underline"
+                component="a"
+                href="/articles/14950"
+                target="_blank"
+              >
+                Exclusive cosmetics
+              </Text>
+            </Text>
+          ) : (
+            <Text lh={1}>
+              No{' '}
+              <Text
+                variant="link"
+                td="underline"
+                component="a"
+                href="/articles/14950"
+                target="_blank"
+              >
+                exclusive cosmetics
+              </Text>
+            </Text>
+          ),
+        icon: <IconHexagon3d size={benefitIconSize} />,
+        iconColor:
+          !metadata.badgeType || metadata.badgeType === 'none' || !isAnnual ? 'gray' : 'blue',
         iconVariant: 'light' as ThemeIconVariant,
       },
     ].filter(isDefined),

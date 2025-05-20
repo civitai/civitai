@@ -45,6 +45,7 @@ const useStyles = createStyles((theme) => ({
       flexDirection: 'column',
       gap: theme.spacing.md,
     },
+    flexWrap: 'nowrap',
   },
   selectedRow: {
     border: `2px solid ${theme.fn.rgba(theme.colors.green[5], 0.7)}`,
@@ -69,6 +70,7 @@ const EpochRow = ({
   incomplete,
   modelVersionId,
   canGenerate,
+  isVideo,
 }: {
   epoch: TrainingResultsV2['epochs'][number];
   prompts: TrainingResultsV2['sampleImagesPrompts'];
@@ -79,6 +81,7 @@ const EpochRow = ({
   incomplete?: boolean;
   modelVersionId: number;
   canGenerate?: boolean;
+  isVideo: boolean;
 }) => {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
@@ -145,20 +148,36 @@ const EpochRow = ({
           {epoch.sampleImages && epoch.sampleImages.length > 0 ? (
             epoch.sampleImages.map((url, index) => (
               <Stack key={index} style={{ justifyContent: 'flex-start' }}>
-                <Image
-                  alt={`Sample image #${index}`}
-                  src={url}
-                  withPlaceholder
-                  imageProps={{
-                    style: {
-                      height: '200px',
-                      // if we want to show full image, change objectFit to contain
-                      objectFit: 'cover',
-                      // object-position: top;
-                      width: '100%',
-                    },
-                  }}
-                />
+                {isVideo ? (
+                  <video
+                    loop
+                    playsInline
+                    disablePictureInPicture
+                    muted
+                    autoPlay
+                    controls={false}
+                    height={200}
+                    // width={180}
+                    className="w-full object-cover"
+                  >
+                    <source src={url} type="video/mp4" />
+                  </video>
+                ) : (
+                  <Image
+                    alt={`Sample image #${index}`}
+                    src={url}
+                    withPlaceholder
+                    imageProps={{
+                      style: {
+                        height: '200px',
+                        // if we want to show full image, change objectFit to contain
+                        objectFit: 'cover',
+                        // object-position: top;
+                        width: '100%',
+                      },
+                    }}
+                  />
+                )}
                 <Textarea
                   autosize
                   minRows={1}
@@ -197,6 +216,7 @@ export default function TrainingSelectFile({
   const modelFile = modelVersion.files.find((f) => f.type === 'Training Data');
   const existingModelFile = modelVersion.files.find((f) => f.type === 'Model');
   const trainingResults = modelFile?.metadata?.trainingResults;
+  const isVideo = modelVersion.trainingDetails?.mediaType === 'video';
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
@@ -467,6 +487,7 @@ export default function TrainingSelectFile({
             incomplete={resultsLoading}
             modelVersionId={modelVersion.id}
             canGenerate={features.privateModels && !!modelVersion.id && canGenerateWithEpochBool}
+            isVideo={isVideo}
           />
           {epochs.length > 1 && (
             <>
@@ -489,6 +510,7 @@ export default function TrainingSelectFile({
                   canGenerate={
                     features.privateModels && !!modelVersion.id && canGenerateWithEpochBool
                   }
+                  isVideo={isVideo}
                 />
               ))}
             </>

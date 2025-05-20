@@ -46,6 +46,10 @@ export const createSelectStore = <T extends Key = Key>(name?: string) => {
     return mapSelected(selected);
   };
 
+  const useIsSelecting = () => {
+    return useStore((state) => Object.keys(state.selected).length > 0);
+  };
+
   const useIsSelected = (key: T) => {
     const selected = useStore(useCallback((state) => state.selected[key] ?? false, [key]));
     return !!selected;
@@ -62,5 +66,6 @@ export const createSelectStore = <T extends Key = Key>(name?: string) => {
     setSelected: useStore.getState().setSelected,
     toggle: useStore.getState().toggle,
     getSelected,
+    useIsSelecting,
   };
 };

@@ -347,6 +347,7 @@ model User {
   bids                       Bid[]
   recurringBids              BidRecurring[]
   moderationRules            ModerationRule[]
+  playerInfo                 NewOrderPlayer?
 
   @@index([deletedAt])
 }
@@ -629,6 +630,7 @@ model Model {
   nsfwLevel           Int             @default(0)
   lockedProperties    String[]        @default([])
   scannedAt           DateTime?
+  sfwOnly             Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -673,6 +675,7 @@ model ModelFlag {
   model        Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
   poi          Boolean         @default(false)
   minor        Boolean         @default(false)
+  sfwOnly      Boolean         @default(false)
   nsfw         Boolean         @default(false)
   triggerWords Boolean         @default(false)
   poiName      Boolean         @default(false)
@@ -934,6 +937,7 @@ model ModelMetric {
   generationCount   Int             @default(0)
   thumbsUpCount     Int             @default(0)
   thumbsDownCount   Int             @default(0)
+  earnedAmount      Int             @default(0)
   updatedAt         DateTime        @default(now())
 
   @@id([modelId, timeframe])
@@ -955,6 +959,7 @@ model ModelVersionMetric {
   generationCount   Int             @default(0)
   thumbsUpCount     Int             @default(0)
   thumbsDownCount   Int             @default(0)
+  earnedAmount      Int             @default(0)
   updatedAt         DateTime        @default(now())
 
   @@id([modelVersionId, timeframe])
@@ -1354,6 +1359,8 @@ model Image {
   assignedUser      User?                   @relation("profilePicture")
   sortAt            DateTime                @default(now())
   minor             Boolean                 @default(false)
+  poi               Boolean                 @default(false)
+  acceptableMinor   Boolean                 @default(false)
 
   reports             ImageReport[]
   reactions           ImageReaction[]
@@ -1645,6 +1652,7 @@ enum TagSource {
   Hive
   MinorDetection
   HiveDemographics
+  Clavata
 }
 
 model TagsOnImageNew {
@@ -1652,6 +1660,15 @@ model TagsOnImageNew {
   image      Image @relation(fields: [imageId], references: [id])
   tagId      Int
   attributes Int   @db.SmallInt()
+
+  @@id([imageId, tagId])
+  @@index([tagId])
+}
+
+model ShadowTagsOnImage {
+  imageId    Int
+  tagId      Int
+  confidence Int
 
   @@id([imageId, tagId])
   @@index([tagId])
@@ -2855,6 +2872,15 @@ model EntityCollaborator {
   @@index([userId, entityType, entityId]) // Include status in the migration.
 }
 
+model EcosystemCheckpoints {
+  id   Int    @id
+  name String
+}
+
+model GenerationBaseModel {
+  baseModel String @id
+}
+
 model Club {
   id            Int     @id @default(autoincrement())
   userId        Int
@@ -3397,6 +3423,7 @@ model AuctionBase {
   active       Boolean     @default(true)
   runForDays   Int         @default(1)
   validForDays Int         @default(1)
+  description  String?
 
   auctions      Auction[]
   recurringBids BidRecurring[]
@@ -3495,6 +3522,72 @@ model ModerationRule {
 
   createdById Int
   createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+}
+
+enum ChangelogType {
+  Feature
+  Bugfix
+  Policy
+  Update
+  Incident
+}
+
+model Changelog {
+  id          Int           @id @default(autoincrement())
+  title       String
+  content     String
+  link        String? // commit or article URL
+  cta         String? // if feature, link to it
+  effectiveAt DateTime
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  type        ChangelogType
+  tags        String[]      @default([])
+  disabled    Boolean       @default(false)
+  titleColor  String?
+  sticky      Boolean       @default(false)
+}
+
+model NewOrderPlayer {
+  userId        Int              @id @unique
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rankType      NewOrderRankType
+  rank          NewOrderRank     @relation(fields: [rankType], references: [type], onDelete: Cascade)
+  startAt       DateTime         @default(now())
+  exp           Int              @default(0)
+  fervor        Int              @default(0)
+  smiteReceived NewOrderSmite[]  @relation("smiteReceived")
+  smiteGiven    NewOrderSmite[]  @relation("smiteGiven")
+}
+
+enum NewOrderRankType {
+  Acolyte
+  Knight
+  Templar
+}
+
+model NewOrderRank {
+  type      NewOrderRankType @id
+  name      String
+  minExp    Int
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  iconUrl   String?
+  players   NewOrderPlayer[]
+}
+
+model NewOrderSmite {
+  id             Int            @id @default(autoincrement())
+  targetPlayerId Int
+  targetPlayer   NewOrderPlayer @relation("smiteReceived", fields: [targetPlayerId], references: [userId], onDelete: Cascade)
+  givenById      Int
+  givenBy        NewOrderPlayer @relation("smiteGiven", fields: [givenById], references: [userId], onDelete: Cascade)
+  size           Int
+  remaining      Int
+  reason         String?
+  createdAt      DateTime       @default(now())
+  cleansedAt     DateTime?
+  cleansedReason String?
 }
 
 /// @view

@@ -3,6 +3,7 @@ import { z } from 'zod';
 export type GetAuctionBySlugInput = z.infer<typeof getAuctionBySlugInput>;
 export const getAuctionBySlugInput = z.object({
   slug: z.string(),
+  d: z.number().max(0).optional(),
 });
 
 export type CreateBidInput = z.infer<typeof createBidInput>;

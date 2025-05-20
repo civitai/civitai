@@ -700,7 +700,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         select: {
           id: true,
           url: true,
-          nsfw: true,
+          // nsfw: true,
           hash: true,
           userId: true,
         },
@@ -774,6 +774,10 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         : tier != null
         ? false
         : true,
+    redBrowsingLevel:
+      userSettings.success && userSettings.data.redBrowsingLevel != null
+        ? userSettings.data.redBrowsingLevel
+        : undefined,
     // feedbackToken,
   };
   await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
@@ -1227,7 +1231,7 @@ export const toggleBookmarked = async ({
   userId: number;
   setTo?: boolean;
 }) => {
-  let collection = await dbRead.collection.findFirst({
+  let collection = await dbWrite.collection.findFirst({
     where: { userId, type, mode: CollectionMode.Bookmark },
   });
   if (!collection) {
@@ -1243,7 +1247,7 @@ export const toggleBookmarked = async ({
   }
 
   const entityProp = collectionEntityProps[type];
-  const collectionItem = await dbRead.collectionItem.findFirst({
+  const collectionItem = await dbWrite.collectionItem.findFirst({
     where: {
       [entityProp]: entityId,
       collectionId: collection.id,
@@ -1467,11 +1471,12 @@ export const createUserReferral = async ({
 
 export const claimCosmetic = async ({ id, userId }: { id: number; userId: number }) => {
   const cosmetic = await dbRead.cosmetic.findUnique({
-    where: { id, source: CosmeticSource.Claim },
-    select: { id: true, availableStart: true, availableEnd: true },
+    where: { id, source: { in: [CosmeticSource.Claim, CosmeticSource.Trophy] } },
+    select: { id: true, availableStart: true, availableEnd: true, source: true },
   });
   if (!cosmetic) return null;
-  if (!(await isCosmeticAvailable(cosmetic.id, userId))) return null;
+  if (cosmetic.source === CosmeticSource.Claim && !(await isCosmeticAvailable(cosmetic.id, userId)))
+    return null;
 
   const userCosmetic = await dbRead.userCosmetic.findFirst({
     where: { userId, cosmeticId: cosmetic.id },
@@ -1663,12 +1668,14 @@ export async function updateContentSettings({
   showNsfw,
   browsingLevel,
   autoplayGifs,
+  domain,
   ...data
 }: UpdateContentSettingsInput & { userId: number }) {
   if (
     blurNsfw !== undefined ||
     showNsfw !== undefined ||
-    browsingLevel !== undefined ||
+    // Red domain we'll store in the settings.
+    (browsingLevel !== undefined && domain !== 'red') ||
     autoplayGifs !== undefined
   ) {
     await dbWrite.user.update({
@@ -1676,8 +1683,12 @@ export async function updateContentSettings({
       data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
     });
   }
-  if (Object.keys(data).length > 0) {
+  if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
     const settings = await getUserSettings(userId);
+    if (domain === 'red' && browsingLevel !== undefined) {
+      settings.redBrowsingLevel = browsingLevel;
+    }
+
     await setUserSetting(userId, { ...settings, ...removeEmpty(data) });
   }
   await invalidateSession(userId);

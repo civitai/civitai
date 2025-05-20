@@ -121,6 +121,8 @@ export async function submitWorkflow({
         throw throwAuthorizationError(message);
       case 403:
         throw throwInsufficientFundsError(message);
+      case 500:
+        throw throwInternalServerError(message);
       default:
         if (message?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');

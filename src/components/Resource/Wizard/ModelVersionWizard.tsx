@@ -17,6 +17,7 @@ import { ModelById, ModelVersionById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
 const MAX_STEPS = 3;
 
@@ -300,6 +301,7 @@ export function ModelVersionWizard({ data }: Props) {
 
   return (
     <FilesProvider model={modelData} version={modelVersion}>
+      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to edit your model version. Please try again later."} />
       <div className="container max-w-sm pb-4">
         <Link legacyBehavior href={`/models/${modelData?.id}`} passHref>
           <Anchor size="xs">

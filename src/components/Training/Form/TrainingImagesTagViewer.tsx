@@ -30,12 +30,14 @@ import {
 } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
 import { TrainingEditTagsModal } from '~/components/Training/Form/TrainingEditTagsModal';
 import { blankTagStr, labelDescriptions } from '~/components/Training/Form/TrainingImages';
-import { getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
 import { constants } from '~/server/common/constants';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
   defaultTrainingState,
+  defaultTrainingStateVideo,
   getShortNameFromUrl,
   ImageDataType,
   LabelTypes,
@@ -71,12 +73,17 @@ const useStyles = createStyles((theme) => ({
 
 export const TrainingImagesLabelTypeSelect = ({
   modelId,
+  mediaType,
   ...controlProps
 }: {
   modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
 } & Omit<SegmentedControlProps, 'data' | 'onChange' | 'value'>) => {
   const { labelType, autoLabeling } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
   const { setLabelType } = trainingStore;
 
@@ -97,7 +104,7 @@ export const TrainingImagesLabelTypeSelect = ({
         ),
         value: l,
       }))}
-      onChange={(v) => setLabelType(modelId, v as LabelTypes)}
+      onChange={(v) => setLabelType(modelId, mediaType, v as LabelTypes)}
       radius="sm"
       fullWidth
       disabled={autoLabeling.isRunning}
@@ -106,7 +113,13 @@ export const TrainingImagesLabelTypeSelect = ({
   );
 };
 
-export const TrainingImagesSwitchLabel = ({ modelId }: { modelId: number }) => {
+export const TrainingImagesSwitchLabel = ({
+  modelId,
+  mediaType,
+}: {
+  modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
+}) => {
   const theme = useMantineTheme();
 
   return (
@@ -122,7 +135,11 @@ export const TrainingImagesSwitchLabel = ({ modelId }: { modelId: number }) => {
     >
       <Group>
         <Text>Label Type</Text>
-        <TrainingImagesLabelTypeSelect modelId={modelId} sx={{ flexGrow: 1 }} />
+        <TrainingImagesLabelTypeSelect
+          modelId={modelId}
+          mediaType={mediaType}
+          sx={{ flexGrow: 1 }}
+        />
       </Group>
     </Paper>
   );
@@ -131,10 +148,12 @@ export const TrainingImagesSwitchLabel = ({ modelId }: { modelId: number }) => {
 export const TrainingImagesTags = ({
   imgData,
   modelId,
+  mediaType,
   selectedTags,
 }: {
   imgData: ImageDataType;
   modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
   selectedTags: string[];
 }) => {
   const theme = useMantineTheme();
@@ -142,7 +161,10 @@ export const TrainingImagesTags = ({
   const [addTagTxt, setAddTagTxt] = useState('');
 
   const { autoLabeling } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
   const { updateImage } = trainingStore;
 
@@ -152,14 +174,14 @@ export const TrainingImagesTags = ({
     // TODO this removes dupes too
     const newTags = tags.filter((c) => c !== tagToRemove);
 
-    updateImage(modelId, {
+    updateImage(modelId, mediaType, {
       matcher: getShortNameFromUrl(imgData),
       label: newTags.join(', '),
     });
   };
 
   const addTags = () => {
-    updateImage(modelId, {
+    updateImage(modelId, mediaType, {
       matcher: getShortNameFromUrl(imgData),
       label: addTagTxt,
       appendLabel: true,
@@ -264,17 +286,22 @@ export const TrainingImagesTagViewer = ({
   selectedTags,
   setSelectedTags,
   modelId,
+  mediaType,
   numImages,
 }: {
   selectedTags: string[];
   setSelectedTags: React.Dispatch<React.SetStateAction<string[]>>;
   modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
   numImages: number;
 }) => {
   const { setImageList } = trainingStore;
 
   const { imageList } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
 
   const [tagSearchInput, setTagSearchInput] = useState<string>('');
@@ -285,7 +312,7 @@ export const TrainingImagesTagViewer = ({
       const capts = getTextTagsAsList(i.label).filter((c) => !tags.includes(c));
       return { ...i, label: capts.join(', ') };
     });
-    setImageList(modelId, newImageList);
+    setImageList(modelId, mediaType, newImageList);
   };
 
   useEffect(() => {
@@ -372,7 +399,7 @@ export const TrainingImagesTagViewer = ({
                         title: 'Remove these tags?',
                         children: (
                           <Stack>
-                            <Text>The following tags will be removed from all images:</Text>
+                            <Text>The following tags will be removed from all files:</Text>
                             <Group>
                               {selectedTagsNonBlank.map((st) => (
                                 <Badge key={st}>{st}</Badge>
@@ -398,7 +425,8 @@ export const TrainingImagesTagViewer = ({
                         props: {
                           selectedTags: selectedTagsNonBlank,
                           imageList,
-                          modelId: modelId,
+                          modelId,
+                          mediaType,
                           setImageList,
                           setSelectedTags,
                         },

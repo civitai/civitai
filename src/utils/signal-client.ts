@@ -39,7 +39,7 @@ class SignalClient {
     target,
     data,
   }: {
-    topic: `${SignalTopic}${'' | `:${number}`}`;
+    topic: `${SignalTopic}${'' | `:${number}` | `:${string}`}`;
     target: string;
     data: Record<string, unknown>;
   }) => {

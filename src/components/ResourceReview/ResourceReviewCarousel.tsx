@@ -1,15 +1,4 @@
-import { Carousel } from '@mantine/carousel';
-import {
-  ActionIcon,
-  AspectRatio,
-  Box,
-  Button,
-  Center,
-  Container,
-  createStyles,
-  Text,
-  Loader,
-} from '@mantine/core';
+import { ActionIcon, Box, Button, Container, createStyles, Text, Loader } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
@@ -26,6 +15,7 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { ImageSort } from '~/server/common/enums';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 
 export function ResourceReviewCarousel({
   userId,
@@ -37,7 +27,7 @@ export function ResourceReviewCarousel({
   reviewId: number;
 }) {
   const { classes } = useStyles();
-  const mobile = useContainerSmallerThan('sm');
+  const mobile = useContainerSmallerThan('md');
 
   // today, typescript was not cool.
   // functions will only check extra parameters if it's fresh
@@ -54,41 +44,41 @@ export function ResourceReviewCarousel({
 
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;
 
+  const totalItems = images.length + (viewMore ? 1 : 0);
+  const slidesToShow = mobile ? 1 : 2;
+
   return (
-    <Box
-      mb="md"
-      sx={(theme) => ({
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
-      })}
-    >
+    <div className="mb-4 bg-gray-2 dark:bg-dark-9">
       <Container py="md">
         {isLoading ? (
           <div className="flex h-96 items-center justify-center">
             <Loader />
           </div>
         ) : (
-          <Carousel
+          <Embla
             key={reviewId}
-            classNames={classes}
-            slideSize="50%"
-            breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 5 }]}
-            slideGap="xl"
-            align={images.length > 2 ? 'end' : 'center'}
-            withControls={images.length > 2 ? true : false}
-            slidesToScroll={mobile ? 1 : 2}
+            align={totalItems > slidesToShow ? 'start' : 'center'}
+            withControls={totalItems > slidesToShow ? true : false}
             loop
           >
-            {images.map((image, i) => (
-              <Carousel.Slide key={image.id}>
-                <ImageGuard2 image={image} connectType="review" connectId={reviewId}>
-                  {(safe) => (
-                    <Center style={{ height: '100%', width: '100%' }}>
-                      <div style={{ width: '100%', position: 'relative' }}>
-                        <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                        <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
+            <Embla.Viewport>
+              <Embla.Container className="-ml-3 flex @md:-ml-6">
+                {images.map((image, i) => (
+                  <Embla.Slide
+                    key={image.id}
+                    index={i}
+                    className="flex flex-[0_0_100%] items-center justify-center pl-3 @md:flex-[0_0_50%] @md:pl-6"
+                  >
+                    <ImageGuard2 image={image} connectType="review" connectId={reviewId}>
+                      {(safe) => (
+                        <div className="relative">
+                          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                          <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
 
-                        <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
-                          <div className="relative aspect-square">
+                          <RoutedDialogLink
+                            name="imageDetail"
+                            state={{ imageId: image.id, images }}
+                          >
                             {!safe ? (
                               <MediaHash {...image} />
                             ) : (
@@ -102,76 +92,70 @@ export function ResourceReviewCarousel({
                                 style={{ width: '100%', objectPosition: 'top' }}
                               />
                             )}
-                          </div>
-                        </RoutedDialogLink>
-                        <Reactions
-                          entityId={image.id}
-                          entityType="image"
-                          reactions={image.reactions}
-                          metrics={{
-                            likeCount: image.stats?.likeCountAllTime,
-                            dislikeCount: image.stats?.dislikeCountAllTime,
-                            heartCount: image.stats?.heartCountAllTime,
-                            laughCount: image.stats?.laughCountAllTime,
-                            cryCount: image.stats?.cryCountAllTime,
-                          }}
-                          readonly={!safe}
-                          className={classes.reactions}
-                          targetUserId={image.user.id}
-                        />
-                        {image.hasMeta && (
-                          <div className="absolute bottom-0.5 right-0.5 z-10">
-                            <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                              <ActionIcon variant="transparent" size="lg">
-                                <IconInfoCircle
-                                  color="white"
-                                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                  opacity={0.8}
-                                  strokeWidth={2.5}
-                                  size={26}
-                                />
-                              </ActionIcon>
-                            </ImageMetaPopover2>
-                          </div>
-                        )}
-                      </div>
-                    </Center>
-                  )}
-                </ImageGuard2>
-              </Carousel.Slide>
-            ))}
-            {viewMore && (
-              <Carousel.Slide style={{ display: 'flex', alignItems: 'center' }}>
-                <AspectRatio
-                  ratio={1}
-                  sx={(theme) => ({
-                    width: '100%',
-                    borderRadius: theme.radius.md,
-                    overflow: 'hidden',
-                  })}
-                >
-                  <Button
-                    component={Link}
-                    href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&userId=${userId}`}
-                    rel="nofollow"
-                    variant="outline"
-                    fullWidth
-                    className={classes.viewMore}
-                    radius="md"
-                  >
-                    View more
-                  </Button>
-                </AspectRatio>
-              </Carousel.Slide>
-            )}
-          </Carousel>
+                          </RoutedDialogLink>
+                          <Reactions
+                            entityId={image.id}
+                            entityType="image"
+                            reactions={image.reactions}
+                            metrics={{
+                              likeCount: image.stats?.likeCountAllTime,
+                              dislikeCount: image.stats?.dislikeCountAllTime,
+                              heartCount: image.stats?.heartCountAllTime,
+                              laughCount: image.stats?.laughCountAllTime,
+                              cryCount: image.stats?.cryCountAllTime,
+                            }}
+                            readonly={!safe}
+                            className={classes.reactions}
+                            targetUserId={image.user.id}
+                            disableBuzzTip={image.poi}
+                          />
+                          {image.hasMeta && (
+                            <div className="absolute bottom-0.5 right-0.5 z-10">
+                              <ImageMetaPopover2 imageId={image.id} type={image.type}>
+                                <ActionIcon variant="transparent" size="lg">
+                                  <IconInfoCircle
+                                    color="white"
+                                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                    opacity={0.8}
+                                    strokeWidth={2.5}
+                                    size={26}
+                                  />
+                                </ActionIcon>
+                              </ImageMetaPopover2>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </ImageGuard2>
+                  </Embla.Slide>
+                ))}
+                {viewMore && (
+                  <Embla.Slide className="flex flex-[0_0_100%] items-center justify-center pl-3 @md:flex-[0_0_50%] @md:pl-6">
+                    <div className="aspect-square w-full max-w-[450px]">
+                      <Button
+                        component={Link}
+                        href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&userId=${userId}`}
+                        rel="nofollow"
+                        variant="outline"
+                        fullWidth
+                        className="size-full"
+                        radius="md"
+                      >
+                        View more
+                      </Button>
+                    </div>
+                  </Embla.Slide>
+                )}
+              </Embla.Container>
+            </Embla.Viewport>
+          </Embla>
         )}
 
         <Text size="xs" color="dimmed" mt="xs" mb="-xs">
           Images this user generated with this resource
         </Text>
       </Container>
-    </Box>
+    </div>
   );
 }
 
@@ -186,12 +170,6 @@ const useStyles = createStyles((theme) => ({
         minHeight: 16,
       },
     },
-  },
-
-  viewMore: {
-    maxHeight: '100%',
-    height: 500,
-    width: '100%',
   },
 
   footer: {

@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
+import dayjs from 'dayjs';
 import { uniq } from 'lodash-es';
+import { getModelTypesForAuction, miscAuctionName } from '~/components/Auction/auction.utils';
 import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
 import type {
@@ -64,6 +66,7 @@ export const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
   ecosystem: true,
   name: true,
   slug: true,
+  description: true,
 });
 
 export const auctionSelect = Prisma.validator<Prisma.AuctionSelect>()({
@@ -102,6 +105,21 @@ export async function getAllAuctions() {
     where: { startAt: { lte: now }, endAt: { gt: now } },
     select: auctionSelect,
     orderBy: { auctionBase: { ecosystem: { sort: 'asc', nulls: 'first' } } },
+  });
+
+  aData.sort((a, b) => {
+    if (
+      a.auctionBase.ecosystem === miscAuctionName &&
+      b.auctionBase.ecosystem !== miscAuctionName
+    ) {
+      return 1;
+    } else if (
+      a.auctionBase.ecosystem !== miscAuctionName &&
+      b.auctionBase.ecosystem === miscAuctionName
+    ) {
+      return -1;
+    }
+    return 0;
   });
 
   return aData.map((ad) => {
@@ -153,7 +171,8 @@ export const prepareBids = (
 const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
   const entityIds = data.map((x) => x.entityId);
 
-  const mvData = await dbRead.modelVersion.findMany({
+  // TODO switch back to dbRead
+  const mvData = await dbWrite.modelVersion.findMany({
     where: { id: { in: entityIds } },
     select: {
       id: true,
@@ -204,8 +223,12 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
 };
 
 export type GetAuctionBySlugReturn = AsyncReturnType<typeof getAuctionBySlug>;
-export async function getAuctionBySlug({ slug }: GetAuctionBySlugInput) {
-  const now = new Date();
+export async function getAuctionBySlug({ slug, d }: GetAuctionBySlugInput) {
+  const now = dayjs
+    .utc()
+    .add(d ?? 0, 'day')
+    .startOf('day')
+    .toDate();
 
   const auction = await dbWrite.auction.findFirst({
     where: { startAt: { lte: now }, endAt: { gt: now }, auctionBase: { slug } },
@@ -385,7 +408,8 @@ export const createBid = async ({
   // - Check if entityId is valid for this auction type
 
   if (auctionData.auctionBase.type === AuctionType.Model) {
-    const mv = await dbRead.modelVersion.findFirst({
+    // TODO switch back to dbRead
+    const mv = await dbWrite.modelVersion.findFirst({
       where: { id: entityId },
       select: {
         baseModel: true,
@@ -417,7 +441,10 @@ export const createBid = async ({
     const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);
     if (!matchAllowed) throw throwBadRequestError('Invalid model type for this auction.');
 
-    if (!!auctionData.auctionBase.ecosystem) {
+    if (
+      !!auctionData.auctionBase.ecosystem &&
+      auctionData.auctionBase.ecosystem !== miscAuctionName
+    ) {
       if (!(matchAllowed.baseModels ?? []).includes(mv.baseModel))
         throw throwBadRequestError('Invalid model ecosystem for this auction.');
     }
@@ -898,3 +925,17 @@ export const togglePauseRecurringBid = async ({
     },
   });
 };
+
+export async function getLastAuctionReset() {
+  const auctionReset = await dbWrite.$queryRaw<{ since_date: Date }[]>`
+    SELECT
+    a."validFrom" as since_date
+    FROM "Auction" a
+    JOIN "AuctionBase" ab ON ab.id = a."auctionBaseId"
+    WHERE ab.slug = 'featured-checkpoints' AND a.finalized
+    ORDER BY "endAt" DESC
+    LIMIT 1;
+  `;
+
+  return auctionReset[0]?.since_date ?? null;
+}

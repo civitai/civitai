@@ -32,9 +32,11 @@ export const browsingLevelLabels = {
 export const browsingLevelDescriptions = {
   [NsfwLevel.PG]: 'Safe for work. No naughty stuff',
   [NsfwLevel.PG13]: 'Revealing clothing, violence, or light gore',
-  [NsfwLevel.R]: 'Adult themes and situations, partial nudity, graphic violence, or death',
-  [NsfwLevel.X]: 'Graphic nudity, adult objects, or settings',
+  [NsfwLevel.R]:
+    'Adult themes and situations, partial nudity, female nipples, graphic violence, or death',
+  [NsfwLevel.X]: 'Graphic nudity, genitalia, adult objects, or settings',
   [NsfwLevel.XXX]: 'Overtly sexual or disturbing graphic content',
+  [NsfwLevel.Blocked]: 'Violates our terms of service',
 } as const;
 
 // public browsing levels
@@ -51,6 +53,7 @@ export const nsfwBrowsingLevelsArray: NsfwLevel[] = [
   NsfwLevel.XXX,
   NsfwLevel.Blocked,
 ];
+
 export function getBrowsingLevelLabel(value: number) {
   return browsingLevelLabels[value as keyof typeof browsingLevelLabels] ?? '?';
 }
@@ -82,6 +85,15 @@ export function hasPublicBrowsingLevel(level: number) {
 
 export function hasSafeBrowsingLevel(level: number) {
   return Flags.intersects(level, sfwBrowsingLevelsFlag);
+}
+
+const explicitBrowsingLevelFlags = flagifyBrowsingLevel([
+  NsfwLevel.X,
+  NsfwLevel.XXX,
+  NsfwLevel.Blocked,
+]);
+export function getHasExplicitBrowsingLevel(level: number) {
+  return level !== 0 && Flags.intersects(level, explicitBrowsingLevelFlags);
 }
 
 export const browsingLevelOr = (array: (number | undefined)[]) => {

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
-import { PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -31,6 +31,7 @@ import {
   deleteImageById,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
+  ingestImage,
   purgeImageGenerationDataCache,
   purgeResizeCache,
   queueImageSearchIndexUpdate,
@@ -52,6 +53,10 @@ import {
   generationFormWorkflowConfigurations,
   isMadeOnSite,
 } from '~/shared/constants/generation.constants';
+import {
+  getVideoGenerationConfig,
+  videoGenerationConfig2,
+} from '~/server/orchestrator/generation/generation.config';
 import {
   Availability,
   CollectionContributorPermission,
@@ -80,6 +85,7 @@ import {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
+import { isValidAIGeneration } from '~/utils/image-utils';
 
 type GetAllPostsRaw = {
   id: number;
@@ -128,6 +134,9 @@ export const getPostsInfinite = async ({
   clubId,
   browsingLevel,
   pending,
+  excludedTagIds,
+  disablePoi,
+  disableMinor,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
@@ -376,6 +385,8 @@ export const getPostsInfinite = async ({
         user,
         browsingLevel,
         pending,
+        disablePoi,
+        disableMinor,
       })
     : [];
 
@@ -869,10 +880,11 @@ export const addPostImage = async ({
   }
 
   let techniqueId: number | undefined;
-  if (meta && 'workflow' in meta) {
-    const workflow = generationFormWorkflowConfigurations.find((x) => x.key === meta.workflow);
-    if (workflow) {
-      techniqueId = (await getTechniqueByName(workflow.subType))?.id;
+  if (meta && 'engine' in meta) {
+    // older meta has type: string, but the updated meta has process: string
+    const process = (meta.process ?? meta.type) as string | undefined;
+    if (process) {
+      techniqueId = (await getTechniqueByName(process))?.id;
     }
   }
 
@@ -946,19 +958,40 @@ export async function bustCachesForPost(postId: number) {
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
-  const currentImage = await dbWrite.image.findUnique({
+  const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
-    select: { hideMeta: true },
+    select: { hideMeta: true, ingestion: true, blockedFor: true, metadata: true, nsfwLevel: true },
   });
+
+  const blockedForVerification = currentImage.blockedFor === BlockedReason.AiNotVerified;
+  const updatedIsVerifiable = isValidAIGeneration({
+    id: image.id,
+    nsfwLevel: currentImage.nsfwLevel,
+    meta: image.meta,
+  });
+
+  const shouldIngest = blockedForVerification && updatedIsVerifiable;
 
   const result = await dbWrite.image.update({
     where: { id: image.id },
     data: {
       ...image,
       meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
+      // If this image was blocked due to missing metadata, we need to set it back to pending
+      ingestion: shouldIngest ? 'Pending' : undefined,
+      blockedFor: shouldIngest ? null : undefined,
+      metadata: {
+        ...((currentImage.metadata as MixedObject) ?? {}),
+        ...(shouldIngest ? { skipScannedAtReassignment: true } : {}),
+      } as Prisma.JsonObject,
     },
     select: { id: true, url: true, userId: true },
   });
+
+  if (shouldIngest) {
+    // Ensures a proper rescan of this image.
+    await ingestImage({ image: result });
+  }
 
   // If changing hide meta, purge the resize cache so that we strip metadata
   if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {

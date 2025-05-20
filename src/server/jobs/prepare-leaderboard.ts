@@ -1,24 +1,26 @@
 import dayjs from 'dayjs';
+import { chunk } from 'lodash-es';
+import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
 import { logToAxiom } from '~/server/logging/client';
+import { redis } from '~/server/redis/client';
 import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import { withRetries } from '~/server/utils/errorHandling';
 import { insertSorted } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate, JobContext } from './job';
-import { clickhouse } from '~/server/clickhouse/client';
-import { chunk } from 'lodash-es';
-import { redis } from '~/server/redis/client';
-import { withRetries } from '~/server/utils/errorHandling';
 
 const log = createLogger('leaderboard', 'blue');
 
 const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async (jobContext) => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
+
+  log('Leaderboard job start');
 
   await setCoverImageNsfwLevel();
 
@@ -110,7 +112,7 @@ type LegendsBoardResult = {
 };
 async function updateLegendsBoardResults() {
   log('Legends Board - Fetching');
-  const legendsBoardData = await pgDbReadLong.query<LegendsBoardResult>(`
+  const legendsBoardDataRes = await pgDbReadLong.cancellableQuery<LegendsBoardResult>(`
     WITH scores AS (
       SELECT
         "userId",
@@ -148,11 +150,12 @@ async function updateLegendsBoardResults() {
     FROM positions
     WHERE position <= 1000
   `);
+  const legendsBoardData = await legendsBoardDataRes.result();
 
   log('Legends Board - Truncating');
   await dbWrite.$executeRaw`TRUNCATE "LegendsBoardResult"`;
   log('Legends Board - Populating');
-  const tasks = chunk(legendsBoardData.rows, 500).map((batch) => async () => {
+  const tasks = chunk(legendsBoardData, 500).map((batch) => async () => {
     const batchJson = JSON.stringify(batch);
     await dbWrite.$executeRaw`
       INSERT INTO "LegendsBoardResult"("userId", "leaderboardId", "score", "metrics", "position")

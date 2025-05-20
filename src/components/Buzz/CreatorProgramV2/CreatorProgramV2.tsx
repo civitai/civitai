@@ -306,29 +306,40 @@ export const CreatorProgramRequirement = ({
   );
 };
 
-const CompensationPoolCard = () => {
+export const CompensationPoolCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const isLoading = isLoadingCompensationPool;
   const date = formatDate(compensationPool?.phases.bank[0] ?? new Date(), 'MMMM YYYY', true);
 
   if (isLoading) {
     return (
-      <div className={clsx(cardProps.className, 'basis-1/4')}>
+      <div className={clsx(cardProps.className, 'h-full basis-1/4')}>
         <Loader className="m-auto" />
       </div>
     );
   }
 
   return (
-    <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
+    <div className={clsx(cardProps.className, 'h-full basis-1/4 gap-6')}>
       <div className="flex h-full flex-col justify-between gap-12">
-        <h3 className="text-center text-xl font-bold">Compensation Pool</h3>
+        <div className="flex flex-col">
+          <h3 className="text-center text-xl font-bold">Compensation Pool</h3>
+          <p className="text-center">{date}</p>
+        </div>
 
         <div className="flex flex-col">
-          <p className="text-center">{date}</p>
           <p className="text-center text-2xl font-bold">
             ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
           </p>
+        </div>
+        <div className="flex flex-col">
+          <h3 className="text-center text-xl font-bold">Current Banked Buzz</h3>
+          <div className="flex justify-center gap-1">
+            <CurrencyIcon className="my-auto" currency={Currency.BUZZ} size={20} />
+            <span className="text-2xl font-bold">
+              {numberWithCommas(compensationPool?.size.current)}
+            </span>
+          </div>
         </div>
         <Anchor onClick={openCompensationPoolModal}>
           <div className="flex items-center justify-center gap-2">
@@ -483,7 +494,7 @@ const EstimatedEarningsCard = () => {
   const { phase } = useCreatorProgramPhase();
   const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
   const isLoading = isLoadingCompensationPool || isLoadingBanked;
-  const cap = banked?.cap.cap;
+  const cap = banked?.cap?.cap;
   const currentBanked = banked?.total ?? 0;
   const isCapped = cap && cap <= currentBanked;
 
@@ -647,6 +658,9 @@ const WithdrawCashCard = () => {
   const unsupportedWithdrawalMethod = withdrawalMethodSetup
     ? !WITHDRAWAL_FEES[userPaymentConfiguration.tipaltiWithdrawalMethod as CashWithdrawalMethod]
     : false;
+  const supportedWithdrawalMethods = Object.keys(WITHDRAWAL_FEES).filter(
+    (k) => !!WITHDRAWAL_FEES[k as keyof typeof WITHDRAWAL_FEES]
+  );
 
   useEffect(() => {
     if (userCash && userCash.ready) {
@@ -845,23 +859,24 @@ const WithdrawCashCard = () => {
                   <IconBuildingBank size={24} />
                 </ActionIcon>
               </Tooltip>
-              {!withdrawalMethodSetup && (
-                <Alert color="red" className="mt-auto p-2">
-                  <p>
-                    It does not seem your withdrawal method has been setup. Please go into your
-                    withdrawal method settings to configure.
-                  </p>
-                </Alert>
-              )}
-              {unsupportedWithdrawalMethod && (
-                <Alert color="red" className="mt-auto p-2">
-                  <p>
-                    Your current withdrawal method is not supported. Please update your withdrawal
-                    method in your Tipalti configuration to one of our supported methods.
-                  </p>
-                </Alert>
-              )}
             </div>
+            {!withdrawalMethodSetup && (
+              <Alert color="red" className="mt-auto p-2">
+                <p>
+                  It does not seem your withdrawal method has been setup. Please go into your
+                  withdrawal method settings to configure.
+                </p>
+              </Alert>
+            )}
+            {unsupportedWithdrawalMethod && (
+              <Alert color="red" className="mt-auto p-2">
+                <p>
+                  Your currently selected withdrawal method is not supported. Please{' '}
+                  <Anchor href="/tipalti/setup">update your withdrawal method</Anchor> to one of our
+                  supported methods: {supportedWithdrawalMethods.join(', ')}.
+                </p>
+              </Alert>
+            )}
             {userCash?.withdrawalFee && (
               <div className="flex gap-2">
                 <p>

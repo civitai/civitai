@@ -13,13 +13,12 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconLock } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { z } from 'zod';
-
 import { CommentSectionItem } from '~/components/CommentSection/CommentSectionItem';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -29,6 +28,7 @@ import { CommentGetById, CommentGetCommentsById } from '~/types/router';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function CommentSection({ comments, modelId, parent, highlights }: Props) {
   const currentUser = useCurrentUser();
@@ -36,6 +36,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
   const theme = useMantineTheme();
   const queryUtils = trpc.useContext();
   const { classes } = useStyles();
+  const features = useFeatureFlags();
   highlights = highlights?.filter((x) => x);
 
   const editorRef = useRef<EditorCommandsRef | null>(null);
@@ -102,7 +103,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
           commentCount === 1 ? 'Comment' : 'Comments'
         }`}</Title>
       </Group>
-      {!mainComment?.locked && !isMuted ? (
+      {features.canWrite && !mainComment?.locked && !isMuted ? (
         <Group align="flex-start">
           <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
           <Form form={form} onSubmit={handleSubmitComment} style={{ flex: '1 1 0' }}>
@@ -135,6 +136,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                   onSuperEnter={() => form.handleSubmit(handleSubmitComment)()}
                   hideToolbar
                   // withLinkValidation
+                  inputClasses="break-all"
                 />
               </Box>
               {showCommentActions ? (
@@ -160,8 +162,9 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
         <Alert color="yellow" icon={<IconLock />}>
           <Center>
             {isMuted
-              ? 'You cannot add comments because you have been muted'
-              : 'This thread has been locked'}
+              ? 'You cannot add comments because you have been muted' :
+              !features.canWrite ? 'Civitai is in read-only mode' :
+              'This thread has been locked'}
           </Center>
         </Alert>
       )}

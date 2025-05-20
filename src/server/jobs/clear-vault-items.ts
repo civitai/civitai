@@ -26,7 +26,7 @@ export const clearVaultItems = createJob('clear-vault-items', '0 0 * * *', async
       COALESCE(SUM(vi."detailsSizeKb" + vi."imagesSizeKb" + vi."modelSizeKb")::int, 0) as "usedStorageKb"
     FROM "Vault" v
     LEFT JOIN "VaultItem" vi ON v."userId" = vi."vaultId"
-    WHERE v."updatedAt" < NOW() - INTERVAL '1 month'
+    WHERE v."updatedAt" < NOW() - INTERVAL '2 month'
     GROUP BY
       v."userId"
     HAVING COALESCE(SUM(vi."detailsSizeKb" + vi."imagesSizeKb" + vi."modelSizeKb")::int, 0) > v."storageKb"

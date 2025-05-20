@@ -1,4 +1,4 @@
-import { ComfyStepTemplate, TextToImageStepTemplate } from '@civitai/client';
+import { ComfyStepTemplate, ImageGenStepTemplate, TextToImageStepTemplate } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { z } from 'zod';
@@ -23,15 +23,20 @@ import {
   workflowIdSchema,
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
+import { reportProhibitedRequestSchema } from '~/server/schema/user.schema';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
-import { getBlobData, nsfwNsfwLevels } from '~/server/services/orchestrator/blob';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
+import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import {
   createTextToImage,
   createTextToImageStep,
 } from '~/server/services/orchestrator/textToImage/textToImage';
+import {
+  createImageGen,
+  createImageGenStep,
+} from '~/server/services/orchestrator/imageGen/imageGen';
 import {
   createTrainingWhatIfWorkflow,
   createTrainingWorkflow,
@@ -81,11 +86,29 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
         value: token,
       });
   }
+
   return next({ ctx: { ...ctx, user, token } });
 });
 
+const experimentalMiddleware = middleware(async ({ ctx, next }) => {
+  const user = ctx.user;
+  if (!user) throw throwAuthorizationError();
+
+  const flags = await getExperimentalFlags({
+    userId: user.id,
+    isModerator: user.isModerator,
+    isMember: user.tier != null && user.tier !== 'free',
+  });
+
+  return next({ ctx: { ...ctx, user, ...flags } });
+});
+
 const orchestratorProcedure = protectedProcedure.use(orchestratorMiddleware);
-const orchestratorGuardedProcedure = guardedProcedure.use(orchestratorMiddleware);
+const orchestratorGuardedProcedure = guardedProcedure
+  .use(orchestratorMiddleware)
+  .use(experimentalMiddleware);
+const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
+
 export const orchestratorRouter = router({
   // #region [requests]
   deleteWorkflow: orchestratorProcedure
@@ -161,14 +184,20 @@ export const orchestratorRouter = router({
     .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
       try {
-        const args = { ...input, user: ctx.user, token: ctx.token };
+        const args = { ...input, user: ctx.user, token: ctx.token, experimental: ctx.experimental };
         // if ('sourceImage' in args.params && args.params.sourceImage) {
         //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
         //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
         //   args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
         // }
-        if (input.params.workflow === 'txt2img') return await createTextToImage({ ...args });
-        else return await createComfy({ ...args });
+        // TODO - handle createImageGen
+        if (input.params.engine && input.params.engine !== 'flux-pro-raw') {
+          return await createImageGen(args);
+        } else if (input.params.workflow === 'txt2img') {
+          return await createTextToImage({ ...args });
+        } else {
+          return await createComfy({ ...args });
+        }
       } catch (e) {
         if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
           await reportProhibitedRequestHandler({
@@ -196,17 +225,22 @@ export const orchestratorRouter = router({
           token: ctx.token,
         };
 
-        let step: TextToImageStepTemplate | ComfyStepTemplate;
-        if (args.params.workflow === 'txt2img')
+        let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
+        // TODO - handle createImageGenStep
+        if (args.params.engine && args.params.engine !== 'flux-pro-raw') {
+          step = await createImageGenStep(args);
+        } else if (args.params.workflow === 'txt2img') {
           step = await createTextToImageStep({ ...args, whatIf: true });
-        else step = await createComfyStep({ ...args, whatIf: true });
+        } else {
+          step = await createComfyStep({ ...args, whatIf: true });
+        }
 
         const workflow = await submitWorkflow({
           token: args.token,
           body: {
             steps: [step],
             tips: args.tips,
-            experimental: env.ORCHESTRATOR_EXPERIMENTAL,
+            experimental: ctx.experimental,
           },
           query: {
             whatif: true,
@@ -242,7 +276,14 @@ export const orchestratorRouter = router({
           name: 'generate-image-what-if',
           type: 'error',
           payload: input,
-          error: e,
+          error:
+            e instanceof TRPCError
+              ? {
+                  code: e.code,
+                  name: e.name,
+                  message: e.message,
+                }
+              : e,
         }).catch();
         throw e;
       }
@@ -250,10 +291,14 @@ export const orchestratorRouter = router({
   whatIf: orchestratorGuardedProcedure
     .input(generationSchema)
     .use(edgeCacheIt({ ttl: 60 }))
-    .query(({ ctx, input }) => whatIf({ ...input, userId: ctx.user.id, token: ctx.token })),
+    .query(({ ctx, input }) =>
+      whatIf({ ...input, userId: ctx.user.id, token: ctx.token, experimental: ctx.experimental })
+    ),
   generate: orchestratorGuardedProcedure
     .input(z.any())
-    .mutation(({ ctx, input }) => generate({ ...input, userId: ctx.user.id, token: ctx.token })),
+    .mutation(({ ctx, input }) =>
+      generate({ ...input, userId: ctx.user.id, token: ctx.token, experimental: ctx.experimental })
+    ),
   // #endregion
 
   // #region [Image upload]
@@ -276,4 +321,11 @@ export const orchestratorRouter = router({
       return await createTrainingWhatIfWorkflow(args);
     }),
   // #endregion
+
+  reportProhibitedRequest: experimentalProcedure
+    .input(reportProhibitedRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.testing) return false;
+      return await reportProhibitedRequestHandler({ ctx, input });
+    }),
 });

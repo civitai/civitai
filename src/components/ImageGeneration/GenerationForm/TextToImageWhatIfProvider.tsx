@@ -19,6 +19,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { removeEmpty } from '~/utils/object-helpers';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
@@ -37,12 +38,14 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const currentUser = useCurrentUser();
   const watched = useWatch({ control: form.control });
   const [enabled, setEnabled] = useState(false);
-  const defaultModel =
-    generationConfig[getBaseModelSetType(watched.baseModel) as keyof typeof generationConfig]
-      ?.checkpoint ?? watched.model;
 
   const query = useMemo(() => {
-    const { model, resources = [], vae, ...params } = watched;
+    const values = { ...form.getValues(), ...watched };
+    const { model, resources, vae, ...params } = values;
+    const defaultModel =
+      generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
+        ?.checkpoint ?? model;
+
     if (params.aspectRatio) {
       const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
       if (size) {
@@ -52,25 +55,31 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     }
 
     let modelId = model?.id ?? defaultModel.id;
-    const isFlux = getIsFlux(watched.baseModel);
-    if (isFlux && watched.fluxMode) {
-      const { version } = parseAIR(watched.fluxMode);
+    const isFlux = getIsFlux(params.baseModel);
+    if (isFlux && params.fluxMode) {
+      const { version } = parseAIR(params.fluxMode);
       modelId = version;
-      if (watched.fluxMode !== fluxStandardAir) params.priority = 'low';
+      if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
-    const additionalResources = resources
-      .filter((x) => isDefined(x.id))
-      .map((x) => ({ id: x.id as number, epochNumber: x.epochDetails?.epochNumber }));
+    if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
+    else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+    else params.engine = undefined;
+
+    const additionalResources =
+      resources?.map((x) => {
+        if (!x.epochDetails?.epochNumber) return { id: x.id as number };
+        return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber };
+      }) ?? [];
 
     return {
       resources: [{ id: modelId }, ...additionalResources],
-      params: {
+      params: removeEmpty({
         ...params,
         ...whatIfQueryOverrides,
-      } as TextToImageInput,
+      } as TextToImageInput),
     };
-  }, [watched, defaultModel.id]);
+  }, [watched]);
 
   useEffect(() => {
     // enable after timeout to prevent multiple requests as form data is set

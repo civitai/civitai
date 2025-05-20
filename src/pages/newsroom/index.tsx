@@ -49,7 +49,7 @@ export default function CivitaiNewsroom() {
               The latest news and updates from Civitai.
               <br />
               For press inquiries, please complete{' '}
-              <Anchor component="a" href="/forms/press-inquiry" target="_blank">
+              <Anchor component="a" href="/content/press-inquiry">
                 our inquiry form
               </Anchor>
               .

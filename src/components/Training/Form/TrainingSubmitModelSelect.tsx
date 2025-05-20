@@ -17,7 +17,6 @@ import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
-import { trainingSettings } from '~/components/Training/Form/TrainingParams';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { baseModelSets } from '~/server/common/constants';
 import {
@@ -25,22 +24,29 @@ import {
   trainingDetailsBaseModels15,
   trainingDetailsBaseModels35,
   trainingDetailsBaseModelsFlux,
+  trainingDetailsBaseModelsHunyuan,
+  trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
-  TrainingDetailsParams,
+  TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import {
   defaultBase,
   defaultBaseType,
+  defaultBaseTypeVideo,
+  defaultBaseVideo,
   defaultEngine,
+  defaultEngineVideo,
+  getDefaultTrainingParams,
   TrainingRun,
   TrainingRunUpdate,
   trainingStore,
 } from '~/store/training.store';
 import { stringifyAIR } from '~/utils/string-helpers';
-import { TrainingBaseModelType, trainingModelInfo } from '~/utils/training';
+import { type TrainingBaseModelType, trainingModelInfo } from '~/utils/training';
 
 const useStyles = createStyles((theme) => ({
+  // TODO is this working?
   segControl: {
     root: {
       border: `1px solid ${
@@ -67,6 +73,7 @@ const ModelSelector = ({
   makeDefaultParams,
   isNew = false,
   isCustom = false,
+  isVideo = false,
 }: {
   selectedRun: TrainingRun;
   color: MantineColor;
@@ -76,8 +83,14 @@ const ModelSelector = ({
   makeDefaultParams: (data: TrainingRunUpdate) => void;
   isNew?: boolean;
   isCustom?: boolean;
+  isVideo?: boolean;
 }) => {
   const { classes } = useStyles();
+
+  const versions = Object.entries(trainingModelInfo).filter(
+    ([, v]) => v.type === baseType && v.disabled !== true
+  );
+  if (!versions.length) return null;
 
   return (
     <Group spacing="lg">
@@ -95,24 +108,21 @@ const ModelSelector = ({
       </Indicator>
       {!isCustom ? (
         <SegmentedControl
-          data={Object.entries(trainingModelInfo)
-            .filter(([, v]) => v.type === baseType)
-            .map(([k, v]) => {
-              return {
-                label:
-                  k === 'illustrious' && Date.now() < new Date('2024-11-06').getTime() ? (
-                    <Group noWrap spacing={6}>
-                      <Text>{v.label}</Text>
-                      <Badge size="xs" color="green">
-                        NEW
-                      </Badge>
-                    </Group>
-                  ) : (
-                    v.label
-                  ),
-                value: k,
-              };
-            })}
+          data={versions.map(([k, v]) => {
+            return {
+              label: v.isNew ? (
+                <Group noWrap spacing={6}>
+                  <Text>{v.label}</Text>
+                  <Badge size="xs" color="green">
+                    NEW
+                  </Badge>
+                </Group>
+              ) : (
+                v.label
+              ),
+              value: k,
+            };
+          })}
           value={value!} // TODO undefined vs null?
           onChange={(value) => {
             makeDefaultParams({
@@ -150,8 +160,8 @@ const ModelSelector = ({
             onChange={(gVal) => {
               if (!gVal) {
                 makeDefaultParams({
-                  base: defaultBase,
-                  baseType: defaultBaseType,
+                  base: isVideo ? defaultBaseVideo : defaultBase,
+                  baseType: isVideo ? defaultBaseTypeVideo : defaultBaseType,
                   customModel: null,
                 });
               } else {
@@ -196,10 +206,12 @@ const ModelSelector = ({
 export const ModelSelect = ({
   selectedRun,
   modelId,
+  mediaType,
   numImages,
 }: {
   selectedRun: TrainingRun;
   modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
   numImages: number | undefined;
 }) => {
   const status = useTrainingServiceStatus();
@@ -209,15 +221,9 @@ export const ModelSelect = ({
 
   // - Apply default params with overrides and calculations upon base model selection
   const makeDefaultParams = (data: TrainingRunUpdate) => {
-    const defaultParams = trainingSettings.reduce(
-      (a, v) => ({
-        ...a,
-        [v.name]:
-          v.overrides?.[data.base!]?.all?.default ??
-          v.overrides?.[data.base!]?.[data.params?.engine ?? defaultEngine]?.default ??
-          v.default,
-      }),
-      {} as TrainingDetailsParams
+    const defaultParams = getDefaultTrainingParams(
+      data.base!,
+      data.params?.engine ?? (mediaType === 'video' ? defaultEngineVideo : defaultEngine)
     );
 
     defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
@@ -227,7 +233,7 @@ export const ModelSelect = ({
         defaultParams.trainBatchSize
     );
 
-    updateRun(modelId, selectedRun.id, { params: { ...defaultParams }, ...data });
+    updateRun(modelId, mediaType, selectedRun.id, { params: { ...defaultParams }, ...data });
   };
 
   const formBaseModel = selectedRun.base;
@@ -251,6 +257,16 @@ export const ModelSelect = ({
   const baseModelFlux =
     !!formBaseModel &&
     (trainingDetailsBaseModelsFlux as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelHunyuan =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsHunyuan as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelWan =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsWan as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
 
@@ -279,49 +295,81 @@ export const ModelSelect = ({
         <Card withBorder mt={8} p="sm">
           <Card.Section inheritPadding withBorder py="sm">
             <Stack spacing="xs">
-              <ModelSelector
-                selectedRun={selectedRun}
-                color="violet"
-                name="SD 1.5"
-                value={baseModel15}
-                baseType="sd15"
-                makeDefaultParams={makeDefaultParams}
-              />
-              <ModelSelector
-                selectedRun={selectedRun}
-                color="grape"
-                name="SDXL"
-                value={baseModelXL}
-                baseType="sdxl"
-                makeDefaultParams={makeDefaultParams}
-              />
-              <ModelSelector
-                selectedRun={selectedRun}
-                color="pink"
-                name="SD 3.5"
-                value={baseModel35}
-                baseType="sd35"
-                makeDefaultParams={makeDefaultParams}
-                isNew={new Date() < new Date('2024-11-10')}
-              />
-              <ModelSelector
-                selectedRun={selectedRun}
-                color="red"
-                name="Flux"
-                value={baseModelFlux}
-                baseType="flux"
-                makeDefaultParams={makeDefaultParams}
-                isNew={new Date() < new Date('2024-09-01')}
-              />
-              <ModelSelector
-                selectedRun={selectedRun}
-                color="cyan"
-                name="Custom"
-                value=""
-                baseType="sdxl" // unused
-                makeDefaultParams={makeDefaultParams}
-                isCustom
-              />
+              {mediaType === 'image' && (
+                <>
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="violet"
+                    name="SD 1.5"
+                    value={baseModel15}
+                    baseType="sd15"
+                    makeDefaultParams={makeDefaultParams}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="grape"
+                    name="SDXL"
+                    value={baseModelXL}
+                    baseType="sdxl"
+                    makeDefaultParams={makeDefaultParams}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="pink"
+                    name="SD 3.5"
+                    value={baseModel35}
+                    baseType="sd35"
+                    makeDefaultParams={makeDefaultParams}
+                    isNew={new Date() < new Date('2024-11-10')}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="red"
+                    name="Flux"
+                    value={baseModelFlux}
+                    baseType="flux"
+                    makeDefaultParams={makeDefaultParams}
+                    isNew={new Date() < new Date('2024-09-01')}
+                  />
+                </>
+              )}
+              {mediaType === 'video' && (
+                <>
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="teal"
+                    name="Hunyuan"
+                    value={baseModelHunyuan}
+                    baseType="hunyuan"
+                    makeDefaultParams={makeDefaultParams}
+                    isVideo
+                    isNew={new Date() < new Date('2025-04-30')}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="green"
+                    name="Wan"
+                    value={baseModelWan}
+                    baseType="wan"
+                    makeDefaultParams={makeDefaultParams}
+                    isVideo
+                    isNew={new Date() < new Date('2025-04-30')}
+                  />
+                </>
+              )}
+              {mediaType === 'image' && (
+                <>
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="cyan"
+                    name="Custom"
+                    value=""
+                    baseType="sdxl" // unused
+                    makeDefaultParams={makeDefaultParams}
+                    isCustom
+                  />
+                </>
+              )}
             </Stack>
           </Card.Section>
           {formBaseModel && (
@@ -350,7 +398,7 @@ export const ModelSelect = ({
                     Note: custom models may see a higher failure rate than normal, and cost more
                     Buzz.
                   </AlertWithIcon>
-                ) : selectedRun.baseType === 'sd35' ? (
+                ) : selectedRun.baseType === 'hunyuan' || selectedRun.baseType === 'wan' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
                     Note: this is an experimental build. Pricing, default settings, and results are
                     subject to change.

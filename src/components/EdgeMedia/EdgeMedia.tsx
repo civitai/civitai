@@ -1,6 +1,6 @@
 import { createStyles, Text } from '@mantine/core';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import React, { useEffect, useRef } from 'react';
+import React, { SyntheticEvent, useEffect, useRef } from 'react';
 import { EdgeUrlProps, getInferredMediaType } from '~/client-utils/cf-images-utils';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
@@ -25,6 +25,9 @@ export type EdgeMediaProps = EdgeUrlProps &
     thumbnailUrl?: string | null;
     disableWebm?: boolean;
     disablePoster?: boolean;
+    videoProps?: React.HTMLAttributes<HTMLVideoElement> &
+      React.MediaHTMLAttributes<HTMLVideoElement>;
+    imageProps?: React.HTMLAttributes<HTMLImageElement>;
   };
 
 export function EdgeMedia({
@@ -58,6 +61,8 @@ export function EdgeMedia({
   thumbnailUrl,
   disableWebm,
   disablePoster,
+  videoProps,
+  imageProps,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
@@ -97,6 +102,7 @@ export function EdgeMedia({
           className={className}
           style={style}
           {...imgProps}
+          {...imageProps}
         />
       );
     }
@@ -120,6 +126,7 @@ export function EdgeMedia({
           vimeoVideoId={vimeoVideoId}
           disableWebm={disableWebm}
           disablePoster={disablePoster}
+          {...videoProps}
         />
       );
     default:

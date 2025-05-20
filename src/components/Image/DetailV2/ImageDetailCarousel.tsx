@@ -1,6 +1,4 @@
-import { Carousel, Embla } from '@mantine/carousel';
 import { useHotkeys, useLocalStorage, useOs } from '@mantine/hooks';
-
 import { useState, useEffect, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
@@ -14,6 +12,8 @@ import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { EmblaCarouselType } from 'embla-carousel';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 
 type ImageDetailCarouselProps = {
   videoRef?: React.ForwardedRef<EdgeVideoRef>;
@@ -66,33 +66,25 @@ export function ImageDetailCarousel({
   navigate?: (index: number) => void;
   canNavigate: boolean;
 }) {
-  const [embla, setEmbla] = useState<Embla | null>(null);
+  const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
 
-  const [slidesInView, setSlidesInView] = useState<number[]>([index]);
+  // const [slidesInView, setSlidesInView] = useState<number[]>([index]);
 
-  useEffect(() => {
-    if (!embla) return;
-    const onSelect = () => {
-      setSlidesInView([...embla.slidesInView(true)]);
-    };
+  // useEffect(() => {
+  //   if (!embla) return;
+  //   const onSelect = () => {
+  //     setSlidesInView([...embla.slidesInView(true)]);
+  //   };
 
-    embla.on('select', onSelect);
-    return () => {
-      embla.off('select', onSelect);
-    };
-  }, [embla]);
-
-  function next() {
-    embla?.scrollNext();
-  }
-
-  function prev() {
-    embla?.scrollPrev();
-  }
+  //   embla.on('select', onSelect);
+  //   return () => {
+  //     embla.off('select', onSelect);
+  //   };
+  // }, [embla]);
 
   useHotkeys([
-    ['ArrowLeft', prev],
-    ['ArrowRight', next],
+    ['ArrowLeft', () => embla?.scrollPrev()],
+    ['ArrowRight', () => embla?.scrollNext()],
   ]);
 
   const ref = useResizeObserver<HTMLDivElement>(() => {
@@ -102,35 +94,37 @@ export function ImageDetailCarousel({
   const os = useOs();
   const isDesktop = os === 'windows' || os === 'linux' || os === 'macos';
 
-  useEffect(() => {
-    if (!slidesInView.includes(index)) {
-      embla?.scrollTo(index, true);
-    }
-  }, [index, slidesInView]); // eslint-disable-line
+  // useEffect(() => {
+  //   if (!slidesInView.includes(index)) {
+  //     embla?.scrollTo(index, true);
+  //   }
+  // }, [index, slidesInView]); // eslint-disable-line
 
   if (!images.length) return null;
 
   return (
     <div ref={ref} className="flex min-h-0 flex-1 items-stretch justify-stretch">
-      <Carousel
+      <Embla
         key={images.length}
         withControls={canNavigate}
         className="flex-1"
         onSlideChange={navigate}
-        getEmblaApi={setEmbla}
-        height="100%"
-        initialSlide={index}
-        draggable={!isDesktop && canNavigate}
+        setEmbla={setEmbla}
+        startIndex={index}
         loop
+        watchDrag={!isDesktop && canNavigate}
         withKeyboardEvents={false}
-        // withIndicators={images.length <= maxIndicators && images.length > 1}
       >
-        {images.map((image, i) => (
-          <Carousel.Slide key={image.id}>
-            {index === i && <ImageContent image={image} {...connect} videoRef={videoRef} />}
-          </Carousel.Slide>
-        ))}
-      </Carousel>
+        <Embla.Viewport className="h-full">
+          <Embla.Container className="flex h-full">
+            {images.map((image, i) => (
+              <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
+                {index === i && <ImageContent image={image} {...connect} videoRef={videoRef} />}
+              </Embla.Slide>
+            ))}
+          </Embla.Container>
+        </Embla.Viewport>
+      </Embla>
     </div>
   );
 }
@@ -145,9 +139,6 @@ function ImageContent({
     key: 'detailView_defaultMuted',
     defaultValue: true,
   });
-
-  // We'll be using the client to avoid mis-reading te defaultMuted settings on videos.
-  const isClient = useIsClient();
 
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
@@ -185,12 +176,14 @@ function ImageContent({
                 className: `flex items-center justify-center max-h-full w-auto max-w-full ${
                   !safe ? 'invisible' : ''
                 }`,
-                style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
+                style: {
+                  aspectRatio: (image?.width ?? 0) / (image?.height ?? 0),
+                },
               }}
-              width={!isVideo || isClient ? undefined : 450} // Leave as undefined to get original size
-              anim={isClient}
+              // width={!isVideo ? undefined : 450} // Leave as undefined to get original size
+              anim
               quality={90}
-              original={isVideo && isClient ? true : undefined}
+              original={isVideo ? true : undefined}
               html5Controls={shouldDisplayHtmlControls(image)}
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
@@ -208,6 +201,9 @@ function ImageContent({
                   : undefined
               }
               controls
+              videoProps={{
+                autoPlay: true,
+              }}
             />
           )}
         </div>

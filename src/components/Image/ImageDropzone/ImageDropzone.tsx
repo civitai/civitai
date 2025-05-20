@@ -22,6 +22,8 @@ export function ImageDropzone({
   onExceedMax,
   allowExternalImageDrop,
   onDropCapture,
+  children,
+  iconSize = 50,
   ...props
 }: Props) {
   const theme = useMantineTheme();
@@ -74,7 +76,9 @@ export function ImageDropzone({
             disabled,
         })}
         classNames={{
-          root: clsx({ ['border-red-6 mb-1']: hasError || !!error }),
+          root: clsx('flex size-full items-center justify-center', {
+            ['border-red-6 mb-1']: hasError || !!error,
+          }),
         }}
         disabled={!canAddFiles || disabled}
         onDrop={handleDrop}
@@ -83,50 +87,52 @@ export function ImageDropzone({
         <div className="pointer-events-none flex min-h-28 flex-col items-center justify-center gap-2">
           <Dropzone.Accept>
             <IconUpload
-              size={50}
+              size={iconSize}
               stroke={1.5}
               color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Accept>
           <Dropzone.Reject>
             <IconX
-              size={50}
+              size={iconSize}
               stroke={1.5}
               color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Reject>
           <Dropzone.Idle>
-            <IconPhoto size={50} stroke={1.5} />
+            <IconPhoto size={iconSize} stroke={1.5} />
           </Dropzone.Idle>
 
-          <div className="flex flex-col items-center gap-1">
-            <Text size="xl" inline align="center">
-              {label ?? 'Drag images here or click to select files'}
-            </Text>
-            {description}
-            {(!max || max > 1) && (
-              <Text size="sm" color="dimmed" mt={7} inline>
-                {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+          {children ?? (
+            <div className="flex flex-col items-center gap-1">
+              <Text size="xl" inline align="center">
+                {label ?? 'Drag images here or click to select files'}
               </Text>
-            )}
-            {fileExtensions.length > 0 && (
+              {description}
+              {(!max || max > 1) && (
+                <Text size="sm" color="dimmed" mt={7} inline>
+                  {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+                </Text>
+              )}
+              {fileExtensions.length > 0 && (
+                <Text size="sm" color="dimmed" inline>
+                  {`Accepted file types: ${fileExtensions.join(', ')}`}
+                </Text>
+              )}
               <Text size="sm" color="dimmed" inline>
-                {`Accepted file types: ${fileExtensions.join(', ')}`}
+                {`Images cannot exceed ${formatBytes(maxSize)} `}
               </Text>
-            )}
-            <Text size="sm" color="dimmed" inline>
-              {`Images cannot exceed ${formatBytes(maxSize)} `}
-            </Text>
-            {allowsVideo && (
-              <Text size="sm" color="dimmed" inline>
-                {`Videos cannot exceed ${formatBytes(
-                  constants.mediaUpload.maxVideoFileSize
-                )}, 4K resolution, or ${
-                  constants.mediaUpload.maxVideoDurationSeconds
-                } seconds in duration`}
-              </Text>
-            )}
-          </div>
+              {allowsVideo && (
+                <Text size="sm" color="dimmed" inline>
+                  {`Videos cannot exceed ${formatBytes(
+                    constants.mediaUpload.maxVideoFileSize
+                  )}, 4K resolution, or ${
+                    constants.mediaUpload.maxVideoDurationSeconds
+                  } seconds in duration`}
+                </Text>
+              )}
+            </div>
+          )}
         </div>
       </Dropzone>
       {error && <Input.Error className="mt-1">{error}</Input.Error>}
@@ -144,4 +150,6 @@ type Props = Omit<DropzoneProps, 'children' | 'onDropCapture'> & {
   onExceedMax?: () => void;
   allowExternalImageDrop?: boolean;
   onDropCapture?: (url: string) => void;
+  children?: React.ReactNode;
+  iconSize?: number;
 };

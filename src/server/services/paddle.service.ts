@@ -1,17 +1,18 @@
 import type {
   Adjustment,
   AdjustmentAction,
+  Discount,
   IEventName,
   PriceNotification,
   ProductNotification,
   SubscriptionNotification,
   TransactionNotification,
 } from '@paddle/paddle-node-sdk';
-import { ApiError } from '@paddle/paddle-node-sdk';
+import { ApiError, SubscriptionItemNotification } from '@paddle/paddle-node-sdk';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
-import { HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { constants, HOLIDAY_PROMO_VALUE, specialCosmeticRewards } from '~/server/common/constants';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   cancelPaddleSubscription,
@@ -24,6 +25,7 @@ import {
   getPaddleSubscription,
   subscriptionBuzzOneTimeCharge,
   updatePaddleSubscription,
+  createAnnualSubscriptionDiscount,
 } from '~/server/paddle/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import {
@@ -39,8 +41,10 @@ import {
   subscriptionProductMetadataSchema,
 } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
+import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getPlans } from '~/server/services/subscriptions.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
+import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import {
   handleLogError,
   sleep,
@@ -52,6 +56,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -106,7 +111,7 @@ export const createBuzzPurchaseTransaction = async ({
     throw throwBadRequestError('We were unable to get or create a paddle customer');
   }
 
-  const subscription = await dbRead.customerSubscription.findUnique({
+  const subscription = await dbWrite.customerSubscription.findUnique({
     where: {
       userId: user.id,
       status: {
@@ -115,7 +120,7 @@ export const createBuzzPurchaseTransaction = async ({
     },
     select: { id: true },
   });
-  const products = await dbRead.product.findMany({
+  const products = await dbWrite.product.findMany({
     where: {
       provider: PaymentProvider.Paddle,
     },
@@ -182,23 +187,54 @@ export const processCompleteBuzzTransaction = async (
   const userId = meta.user_id ?? meta.userId;
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
   const amount = meta.buzz_amount ?? meta.buzzAmount;
-  const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
+
+  const { blueBuzzAdded, totalYellowBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
+    buzzAmount: amount,
+    purchasesMultiplier,
+  });
 
   // Pay the user:
-  const buzzTransaction = await createBuzzTransaction({
-    amount: buzzAmount,
+  await createBuzzTransaction({
+    amount: totalYellowBuzz,
     fromAccountId: 0,
     toAccountId: userId,
     externalTransactionId: transaction.id,
     type: TransactionType.Purchase,
     description: `Purchase of ${amount} Buzz. ${
       purchasesMultiplier && purchasesMultiplier > 1 ? 'Multiplier applied due to membership. ' : ''
-    }A total of ${buzzAmount} Buzz was added to your account.`,
+    }A total of ${numberWithCommas(totalYellowBuzz)} Buzz was added to your account.`,
     details: {
       paddleTransactionId: transaction.id,
       ...buzzTransactionExtras,
     },
   });
+
+  if (blueBuzzAdded > 0) {
+    await createBuzzTransaction({
+      amount: blueBuzzAdded,
+      fromAccountId: 0,
+      toAccountId: userId,
+      toAccountType: 'generation',
+      externalTransactionId: `${transaction.id}-bulk-reward`,
+      type: TransactionType.Purchase,
+      description: `A total of ${numberWithCommas(
+        blueBuzzAdded
+      )} Blue Buzz was added to your account for Bulk purchase.`,
+      details: {
+        paddleTransactionId: transaction.id,
+        ...buzzTransactionExtras,
+      },
+    });
+  }
+
+  if (bulkBuzzMultiplier > 1) {
+    // TODO: Grant cosmetic :shrugh:
+    const cosmeticIds = specialCosmeticRewards.bulkBuzzRewards;
+    await grantCosmetics({
+      userId,
+      cosmeticIds,
+    });
+  }
 };
 
 export const purchaseBuzzWithSubscription = async ({
@@ -208,7 +244,7 @@ export const purchaseBuzzWithSubscription = async ({
 }: TransactionWithSubscriptionCreateInput & {
   userId: number;
 }) => {
-  const subscription = await dbRead.customerSubscription.findUnique({
+  const subscription = await dbWrite.customerSubscription.findUnique({
     where: {
       userId,
       status: {
@@ -271,7 +307,7 @@ export const upsertProductRecord = async (product: ProductNotification) => {
 export const upsertPriceRecord = async (price: PriceNotification) => {
   const priceMeta = (price.customData ?? {}) as { default?: boolean };
 
-  const product = await dbRead.product.findFirst({
+  const product = await dbWrite.product.findFirst({
     where: { id: price.productId },
   });
 
@@ -321,7 +357,8 @@ export const upsertSubscription = async (
   log('upsertSubscription :: Event:', eventName);
   const isUpdatingSubscription = eventName === 'subscription.updated';
   const isCreatingSubscription = eventName === 'subscription.activated';
-  const isCancelingSubscription = eventName === 'subscription.canceled';
+  const isSchedulingCancelation = subscriptionNotification.scheduledChange?.action === 'cancel';
+  const isCancelingSubscription = eventName === 'subscription.canceled' || isSchedulingCancelation;
 
   const subscriptionProducts = await getPlans({
     paymentProvider: PaymentProvider.Paddle,
@@ -363,7 +400,7 @@ export const upsertSubscription = async (
       `User with customerId: ${subscriptionNotification.customerId} not found`
     );
 
-  const userSubscription = await dbRead.customerSubscription.findFirst({
+  const userSubscription = await dbWrite.customerSubscription.findFirst({
     // I rather we trust this than the subscriptionId on the user.
     where: { userId: user.id },
     select: { id: true, status: true, metadata: true, product: { select: { provider: true } } },
@@ -447,11 +484,10 @@ export const upsertSubscription = async (
     priceId: mainSubscriptionItem.price?.id as string,
     productId: mainSubscriptionItem.price?.productId as string,
     cancelAtPeriodEnd: isCancelingSubscription ? true : false,
-    cancelAt:
-      subscriptionNotification.scheduledChange?.action === 'cancel'
-        ? new Date(subscriptionNotification.scheduledChange?.effectiveAt)
-        : null,
-    canceledAt: subscriptionNotification.scheduledChange?.action === 'cancel' ? new Date() : null,
+    cancelAt: isSchedulingCancelation
+      ? new Date(subscriptionNotification.scheduledChange?.effectiveAt)
+      : null,
+    canceledAt: isSchedulingCancelation ? new Date() : null,
     currentPeriodStart: subscriptionNotification.currentBillingPeriod?.startsAt
       ? new Date(subscriptionNotification.currentBillingPeriod?.startsAt)
       : undefined,
@@ -485,12 +521,12 @@ export const upsertSubscription = async (
     // });
   }
 
-  const userVault = await dbRead.vault.findFirst({
+  const userVault = await dbWrite.vault.findFirst({
     where: { userId: user.id },
   });
 
   // Get Stripe details on the vault:
-  const product = await dbRead.product.findFirst({
+  const product = await dbWrite.product.findFirst({
     where: { id: data.productId },
   });
 
@@ -503,6 +539,48 @@ export const upsertSubscription = async (
         data: {
           storageKb: parsedMeta.data.vaultSizeKb,
         },
+      });
+    }
+  }
+
+  // Special check for special cosmetics
+  if (Object.values(specialCosmeticRewards.annualRewards).some((r) => r.length > 0)) {
+    const price = await dbWrite.price.findUnique({
+      where: { id: data.priceId },
+      select: {
+        id: true,
+        interval: true,
+        product: {
+          select: {
+            id: true,
+            metadata: true,
+          },
+        },
+      },
+    });
+
+    if (price && price.interval === 'year') {
+      // Grant special cosmetics:
+      const productMeta = price.product.metadata as SubscriptionProductMetadata;
+
+      const keys = Object.keys(specialCosmeticRewards.annualRewards).filter((k) => {
+        return (
+          constants.memberships.tierOrder.indexOf(k as typeof productMeta.tier) <=
+          constants.memberships.tierOrder.indexOf(productMeta.tier)
+        );
+      });
+
+      const cosmeticIds = keys
+        .map((k) => {
+          return specialCosmeticRewards.annualRewards[
+            k as keyof typeof specialCosmeticRewards.annualRewards
+          ];
+        })
+        .flat();
+
+      await grantCosmetics({
+        userId: user.id,
+        cosmeticIds: cosmeticIds,
       });
     }
   }
@@ -593,7 +671,7 @@ export const manageSubscriptionTransactionComplete = async (
 };
 
 export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => {
-  const subscription = await dbRead.customerSubscription.findFirst({
+  const subscription = await dbWrite.customerSubscription.findFirst({
     select: {
       id: true,
       product: {
@@ -616,7 +694,7 @@ export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => 
 
   if (!subscription) {
     // Attempt to cancel the subscription on Paddle
-    const user = await dbRead.user.findUnique({ where: { id: userId } });
+    const user = await dbWrite.user.findUnique({ where: { id: userId } });
 
     if (!user?.paddleCustomerId) {
       return;
@@ -671,7 +749,26 @@ export const updateSubscriptionPlan = async ({
 }: {
   userId: number;
 } & UpdateSubscriptionInputSchema) => {
-  const subscription = await dbRead.customerSubscription.findFirst({
+  const subscription = await dbWrite.customerSubscription.findFirst({
+    include: {
+      price: {
+        select: {
+          id: true,
+          unitAmount: true,
+          interval: true,
+          intervalCount: true,
+          currency: true,
+          active: true,
+        },
+      },
+      product: {
+        select: {
+          id: true,
+          metadata: true,
+          provider: true,
+        },
+      },
+    },
     where: {
       userId,
       status: {
@@ -685,6 +782,37 @@ export const updateSubscriptionPlan = async ({
 
   if (!subscription) {
     throw throwNotFoundError('No active subscription found');
+  }
+
+  const targetPrice = await dbWrite.price.findUnique({
+    where: { id: priceId, active: true },
+    select: {
+      id: true,
+      unitAmount: true,
+      interval: true,
+      intervalCount: true,
+      currency: true,
+      active: true,
+      product: {
+        select: {
+          id: true,
+          metadata: true,
+          provider: true,
+        },
+      },
+    },
+  });
+
+  if (!targetPrice) {
+    throw throwNotFoundError('The product you are trying to update to does not exist');
+  }
+
+  if (targetPrice.product.provider !== PaymentProvider.Paddle) {
+    throw throwBadRequestError('The product you are trying to update to is not managed by Paddle');
+  }
+
+  if (subscription.product.provider !== PaymentProvider.Paddle) {
+    throw throwBadRequestError('The product you are trying to update to is not managed by Paddle');
   }
 
   const paddleSubscription = await getPaddleSubscription({ subscriptionId: subscription.id });
@@ -716,16 +844,44 @@ export const updateSubscriptionPlan = async ({
           prorationBillingMode: 'do_not_bill',
         });
 
+        let discount: Discount | null = null;
+        // Will apply for both downgrades and upgrades. This is basically a pro-ration based off on
+        // the number of payments BUZZ we've made to this user
+        if (subscription?.price.interval === 'year' && targetPrice?.interval === 'year') {
+          const monthsSinceMembership =
+            dayjs().diff(subscription.currentPeriodStart ?? subscription.createdAt, 'month') + 1; // Must always assume we've given at least 1 payment.
+
+          const discountAmount = Math.floor(
+            monthsSinceMembership >= 12
+              ? 0
+              : (monthsSinceMembership / 12) * (subscription.price.unitAmount ?? 0)
+          );
+
+          discount = await createAnnualSubscriptionDiscount({
+            amount: discountAmount.toString(),
+            currency: targetPrice?.currency,
+            userId: userId,
+          });
+        }
+
         // For whatever random reason in the world, Paddle doesn't update the next billed at date
         // automatically when you change the subscription. So we do it manually.
+        const nextBilledAt = dayjs().add(30, 'minute').add(20, 'second').toISOString();
+
         await updatePaddleSubscription({
           subscriptionId: subscription.id,
-          nextBilledAt: dayjs().add(30, 'minute').add(20, 'second').toISOString(),
+          nextBilledAt: nextBilledAt,
           prorationBillingMode: 'prorated_immediately',
           customData: {
             ...paddleSubscription.customData,
             originalNextBilledAt: paddleSubscription?.nextBilledAt,
           },
+          discount: discount
+            ? {
+                id: discount.id,
+                effectiveFrom: 'next_billing_period',
+              }
+            : undefined,
         });
       } catch (e) {
         logToAxiom({
@@ -757,12 +913,12 @@ export const updateSubscriptionPlan = async ({
 
 export const refreshSubscription = async ({ userId }: { userId: number }) => {
   let customerId = '';
-  const user = await dbRead.user.findUnique({
+  const user = await dbWrite.user.findUnique({
     where: { id: userId },
     select: { paddleCustomerId: true, email: true, id: true },
   });
 
-  const customerSubscription = await dbRead.customerSubscription.findFirst({
+  const customerSubscription = await dbWrite.customerSubscription.findFirst({
     where: {
       userId,
       status: {
@@ -871,7 +1027,7 @@ export const createOneTimePurchaseTransaction = async ({
   productId: string;
   userId: number;
 }) => {
-  const product = await dbRead.product.findUnique({
+  const product = await dbWrite.product.findUnique({
     where: { id: productId, provider: PaymentProvider.Paddle },
     select: {
       id: true,
@@ -894,7 +1050,7 @@ export const createOneTimePurchaseTransaction = async ({
     throw throwNotFoundError('Price not found');
   }
 
-  const user = await dbRead.user.findFirst({
+  const user = await dbWrite.user.findFirst({
     where: { id: userId },
     select: { paddleCustomerId: true, email: true },
   });

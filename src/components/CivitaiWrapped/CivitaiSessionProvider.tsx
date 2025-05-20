@@ -1,10 +1,9 @@
 import type { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
 import { createContext, useContext, useEffect, useMemo } from 'react';
-
 import { useDomainSync } from '~/hooks/useDomainSync';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { UserMeta } from '~/server/schema/user.schema';
+import type { UserMeta } from '~/server/schema/user.schema';
 import { browsingModeDefaults } from '~/shared/constants/browsingLevel.constants';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
@@ -99,11 +98,6 @@ type BrowsingSettings = {
   disableHidden: boolean;
   allowAds: boolean;
   autoplayGifs: boolean;
-};
-
-type UserChatSettings = {
-  muteSounds: boolean;
-  acknowledged: boolean;
 };
 
 const CivitaiSessionContext = createContext<AuthedUser | UnauthedUser | null>(null);

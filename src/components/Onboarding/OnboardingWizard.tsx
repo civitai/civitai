@@ -1,18 +1,21 @@
-import { Stack, StepProps, Stepper, Text, Title, createStyles } from '@mantine/core';
+import { Box, Stack, StepProps, Stepper, Text, Title, createStyles } from '@mantine/core';
 import { useRef, useState } from 'react';
 import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
 import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
 import { OnboardingProfile } from '~/components/Onboarding/OnboardingProfile';
 import { OnboardingTos } from '~/components/Onboarding/OnboardingTos';
+import { OnboardingRedTos } from '~/components/Onboarding/OnboardingRedTos';
 import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { OnboardingSteps } from '~/server/common/enums';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
 import { OnboardingProvider } from '~/components/Onboarding/OnboardingProvider';
+import { ColorDomain } from '~/server/common/constants';
+import { useDomainColor } from '~/hooks/useDomainColor';
 
 type StepPropsCustom = Omit<StepProps, 'step'> & {
   step: number;
-  Component: React.FC;
+  Component: React.FC; 
 };
 
 const steps: StepPropsCustom[] = [
@@ -21,6 +24,12 @@ const steps: StepPropsCustom[] = [
     label: 'Terms',
     description: 'Review our terms',
     Component: OnboardingTos,
+  },
+  {
+    step: OnboardingSteps.RedTOS,
+    label: 'Terms',
+    description: 'Review our terms',
+    Component: OnboardingRedTos,
   },
   {
     step: OnboardingSteps.Profile,
@@ -47,6 +56,7 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
   const onboardingStepsRef = useRef(onboardingSteps);
   const [active, setActive] = useState(0);
   const { classes } = useStyles();
+  const domain = useDomainColor();
 
   const next = () => {
     if (active < onboardingStepsRef.current.length - 1) setActive((x) => x + 1);
@@ -64,7 +74,9 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
       <div className="container my-3 flex max-w-md flex-col">
         {!isReturningUser && (
           <div className="mx-auto flex items-center gap-1">
-            <LogoBadge w={86} />
+            <Box w={86}>
+              <LogoBadge />
+            </Box>
             <Stack spacing={0} mt={-5}>
               <Title sx={{ lineHeight: 1 }}>Welcome!</Title>
               <Text>{`Let's setup your account`}</Text>

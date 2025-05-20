@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.601",
+  "version": "5.0.753",
   "private": true,
   "scripts": {
     "start": "cross-env NEXT_MANUAL_SIG_HANDLE=true next start",
@@ -44,7 +44,7 @@
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
     "test:reset": "make bootstrap-db",
-    "meilisearch:migrate": "NODE_ENV=development tsx scripts/meilisearch-migration.ts"
+    "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -57,7 +57,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "^0.1.9-beta.25",
+    "@civitai/client": "^0.1.9-beta.37",
     "@civitai/next-axiom": "^0.17.0",
     "@clickhouse/client": "^0.2.2",
     "@cloudamqp/amqp-client": "^2.1.1",
@@ -73,7 +73,6 @@
     "@headlessui/react": "2.2",
     "@hookform/resolvers": "^2.9.10",
     "@mailchimp/mailchimp_marketing": "^3.0.80",
-    "@mantine/carousel": "^5.10.4",
     "@mantine/core": "^5.10.4",
     "@mantine/dates": "^5.10.4",
     "@mantine/dropzone": "^5.10.4",
@@ -147,8 +146,8 @@
     "discord.js": "^14.7.1",
     "dotenv": "^16.4.5",
     "draft-js": "^0.11.7",
-    "embla-carousel-autoplay": "^7.1.0",
-    "embla-carousel-react": "^7.0.3",
+    "embla-carousel-autoplay": "^8.5.2",
+    "embla-carousel-react": "^8.5.2",
     "exifreader": "^4.13.0",
     "file-saver": "^2.0.5",
     "google-auth-library": "^9.15.0",
@@ -172,7 +171,7 @@
     "micro": "^10.0.1",
     "motion": "^11.11.17",
     "msgpackr": "^1.10.2",
-    "next": "^14.2.25",
+    "next": "^14.2.28",
     "next-auth": "^4.24.5",
     "next-plausible": "^3.12.0",
     "next-sitemap": "^4.2.3",
@@ -192,6 +191,7 @@
     "react-blurhash": "^0.2.0",
     "react-chartjs-2": "^5.2.0",
     "react-dom": "^18.3.1",
+    "react-easy-crop": "^5.4.1",
     "react-highlight-within-textarea": "^3.2.1",
     "react-hook-form": "^7.53.1",
     "react-instantsearch": "7.12.0",
@@ -231,7 +231,7 @@
     "trie-memoize": "^1.2.0",
     "unfurl.js": "^6.4.0",
     "unified": "^11.0.5",
-    "use-sound": "^4.0.1",
+    "use-sound": "^5.0.0",
     "uuid": "^9.0.0",
     "xml2js": "^0.6.2",
     "zod": "^3.23.8",

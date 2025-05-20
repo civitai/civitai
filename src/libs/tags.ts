@@ -48,7 +48,15 @@ export function getTagDisplayName(name: string) {
   return tagNameOverrides[name] || name;
 }
 
-export const tagsNeedingReview = ['child', 'teen', 'baby', 'girl', 'boy'];
+export const tagsNeedingReview = [
+  'child',
+  'teen',
+  'baby',
+  'girl',
+  'boy',
+  'female child',
+  'male child',
+];
 export const tagsToIgnore: Partial<Record<TagSource, string[]>> = {
   Rekognition: [
     'baby',

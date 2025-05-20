@@ -34,6 +34,7 @@ type VersionRow = {
   covered?: boolean;
   freeTrialLimit?: number;
   minor: boolean;
+  sfwOnly: boolean;
   usageControl: ModelUsageControl;
 };
 type FileRow = {
@@ -73,6 +74,7 @@ export default MixedAuthEndpoint(async function handler(
       mv."publishedAt",
       m.type,
       m.minor,
+      m."sfwOnly",
       mv."earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
@@ -212,6 +214,7 @@ export default MixedAuthEndpoint(async function handler(
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
     additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
     minor: modelVersion.minor,
+    sfwOnly: modelVersion.sfwOnly,
   };
   res.status(200).json(data);
 });

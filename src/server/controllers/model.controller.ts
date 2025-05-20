@@ -290,6 +290,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
             ratingAllTime: Number(versionMetrics?.rating?.toFixed(2) ?? 0),
             thumbsUpCountAllTime: versionMetrics?.thumbsUpCount ?? 0,
             thumbsDownCountAllTime: versionMetrics?.thumbsDownCount ?? 0,
+            earnedAmountAllTime: versionMetrics?.earnedAmount ?? 0,
           },
           posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
           hashes,
@@ -418,13 +419,16 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { nsfw, poi, minor } = input;
+    const { nsfw, poi, minor, sfwOnly } = input;
 
     if (nsfw && poi)
       throw throwBadRequestError('Mature content depicting actual people is not permitted.');
 
     if (nsfw && minor)
       throw throwBadRequestError('Mature content depicting minors is not permitted.');
+
+    if (nsfw && sfwOnly)
+      throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
 
     // Check tags for multiple categories
     const { tagsOnModels } = input;
@@ -449,7 +453,7 @@ export const upsertModelHandler = async ({
       isModerator: ctx.user.isModerator,
       gallerySettings: {
         ...gallerySettings,
-        level: input.minor ? sfwBrowsingLevelsFlag : gallerySettings?.level,
+        level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : gallerySettings?.level,
       },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
@@ -740,8 +744,6 @@ export const getDownloadCommandHandler = async ({
     const fileWhere: Prisma.ModelFileWhereInput = {};
     if (type) fileWhere.type = type;
     if (format) fileWhere.metadata = { path: ['format'], equals: format };
-
-    // const prioritizeSafeImages = !ctx.user || (ctx.user.showNsfw && ctx.user.blurNsfw);
 
     const modelVersion = await dbRead.modelVersion.findFirst({
       where: { modelId, id: modelVersionId },
@@ -1426,7 +1428,8 @@ export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesI
            JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
            JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
            JOIN "Model" m ON mv."modelId" = m.id
-    WHERE LOWER(mfh."hash") IN (${Prisma.join(hashes.map((h) => h.toLowerCase()))});
+    WHERE LOWER(mfh."hash") IN (${Prisma.join(hashes.map((h) => h.toLowerCase()))})
+      AND m."deletedAt" IS NULL;
   `;
 
   return modelsByHashes;
@@ -1728,7 +1731,7 @@ export const privateModelFromTrainingHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { nsfw, poi, minor } = input;
+    const { nsfw, poi, minor, sfwOnly } = input;
 
     const membership = await getUserSubscription({ userId });
     if (!membership && !ctx.user.isModerator)
@@ -1757,6 +1760,9 @@ export const privateModelFromTrainingHandler = async ({
 
     if (nsfw && minor)
       throw throwBadRequestError('Mature content depicting minors is not permitted.');
+
+    if (nsfw && sfwOnly)
+      throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
 
     // Check tags for multiple categories
     const { tagsOnModels } = input;

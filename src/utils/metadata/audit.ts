@@ -24,6 +24,18 @@ const blockedNSFWRegex = blockedNSFW.map((word) => ({
   word,
   regex: tokenRegex(word),
 }));
+
+export function getPossibleBlockedNsfwWords(value?: string | null) {
+  if (!value) return [];
+  const regex = new RegExp(value, 'i');
+  return blockedNSFW.filter((word) => regex.test(word));
+}
+
+export function getBlockedNsfwWords(value?: string | null) {
+  if (!value) return [];
+  return blockedNSFWRegex.filter(({ regex }) => regex.test(value)).map((x) => x.word);
+}
+
 export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) => {
   if (!meta) return { blockedFor: [], success: true };
   const prompt = normalizeText(meta.prompt);
@@ -47,6 +59,12 @@ export const auditPrompt = (prompt: string, negativePrompt?: string) => {
   negativePrompt = normalizeText(negativePrompt);
   const { found, age } = includesMinorAge(prompt);
   if (found) return { blockedFor: [`${age} year old`], success: false };
+
+  if (includesPoi(prompt)) {
+    return { blockedFor: ['Prompt cannot include celebrity names'], success: false };
+  } else if (includesPoi(negativePrompt)) {
+    return { blockedFor: ['Negative prompt cannot include celebrity names'], success: false };
+  }
 
   const inappropriate = includesInappropriate({ prompt, negativePrompt });
   if (inappropriate === 'minor')

@@ -5,19 +5,21 @@ import { constants, maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
+import {
+  GenerationSchema,
+  getGenerationTags,
+} from '~/server/orchestrator/generation/generation.schema';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.service';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLimiter } from '~/server/utils/rate-limiting';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-type Ctx = { token: string; userId: number };
+type Ctx = { token: string; userId: number; experimental?: boolean };
 
 const blockedPromptLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
@@ -41,12 +43,15 @@ export async function generate({
   civitaiTip = 0,
   creatorTip = 0,
   tags = [],
+  experimental,
   ...args
 }: GenerationSchema & Ctx) {
   // throw throwBadRequestError(`Your prompt was flagged for: `);
   if ('prompt' in args.data) {
     try {
-      const { blockedFor, success } = auditPrompt(args.data.prompt);
+      const negativePrompt =
+        'negativePrompt' in args.data ? (args.data.negativePrompt as string) : undefined;
+      const { blockedFor, success } = auditPrompt(args.data.prompt, negativePrompt);
       if (!success) throw { blockedFor, type: 'regex' };
 
       const { flagged, categories } = await extModeration
@@ -84,22 +89,13 @@ export async function generate({
   const workflow = await submitWorkflow({
     token: token,
     body: {
-      tags: [
-        ...new Set(
-          [
-            WORKFLOW_TAGS.GENERATION,
-            args.type === 'video' ? WORKFLOW_TAGS.VIDEO : WORKFLOW_TAGS.IMAGE,
-            args.data.workflow,
-            args.data.type,
-            ...tags,
-          ].filter(isDefined)
-        ),
-      ],
-      steps: [step as any], // TODO.orchestrator -  fix types
+      tags: [...new Set([...getGenerationTags(args), ...tags].filter(isDefined))],
+      steps: [step],
       tips: {
         civitai: civitaiTip,
         creators: creatorTip,
       },
+      experimental,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.TextToImageUpdate}`,
@@ -118,7 +114,7 @@ export async function whatIf(args: GenerationSchema & Ctx) {
 
   const workflow = await submitWorkflow({
     token: args.token,
-    body: { steps: [step] },
+    body: { steps: [step], experimental: args.experimental },
     query: { whatif: true },
   });
 

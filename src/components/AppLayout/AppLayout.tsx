@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import React, { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/router';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -11,8 +12,13 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useRouter } from 'next/router';
+import { openReadOnlyModal } from '~/components/Dialog/dialog-registry';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useIsMounted } from '~/hooks/useIsMounted';
+import { ChatPortal } from '~/components/Chat/ChatProvider';
 
+let shownReadonly = false;
+const readonlyAlertCutoff = Date.now() - 1000 * 60 * 30; // 30 minutes
 export function AppLayout({
   children,
   renderSearchComponent,
@@ -37,6 +43,20 @@ export function AppLayout({
   notFound?: boolean;
   announcements?: boolean;
 }) {
+  const isMounted = useIsMounted();
+  const features = useFeatureFlags();
+
+  useEffect(() => {
+    if (isMounted() && !features.canWrite && !shownReadonly) {
+      const lastReadOnly = Number(localStorage.getItem('lastReadOnlyNotice') ?? '0');
+      if (lastReadOnly < readonlyAlertCutoff) {
+        openReadOnlyModal();
+        localStorage.setItem('lastReadOnlyNotice', Date.now().toString());
+        shownReadonly = true;
+      }
+    }
+  }, []);
+
   return (
     <div className="flex h-full flex-1 flex-col">
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
@@ -54,6 +74,7 @@ export function AppLayout({
             announcements={announcements}
           >
             {children}
+            {!footer && <ChatPortal showFooter={false} />}
           </MainContent>
           {right && (
             <aside className="scroll-area relative border-l border-gray-3 dark:border-dark-4">

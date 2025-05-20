@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
+import { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
+import { videoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { isDefined } from '~/utils/type-guards';
 
 const baseGenerationSchema = z.object({
   civitaiTip: z.number().default(0),
@@ -7,18 +10,22 @@ const baseGenerationSchema = z.object({
   tags: z.string().array().optional(),
 });
 
-export type GenerationSchema = z.infer<typeof generationSchema>;
-export const generationSchema = z.discriminatedUnion('type', [
-  baseGenerationSchema.extend({
-    type: z.literal('video'),
-    data: z.record(z.any()).transform((data) => data as VideoGenerationSchema),
+export type GenerationDataSchema = z.infer<typeof generationDataSchema>;
+const generationDataSchema = z.discriminatedUnion('$type', [
+  z.object({
+    $type: z.literal('videoGen'),
+    data: z.record(z.any()).transform((data) => data as VideoGenerationSchema2),
   }),
-  baseGenerationSchema.extend({
-    type: z.literal('image'),
+  z.object({
+    $type: z.literal('videoEnhancement'),
+    data: videoEnhancementSchema,
+  }),
+  z.object({
+    $type: z.literal('image'),
     data: z
       .object({
         workflow: z.string(),
-        type: z.enum(['txt2img', 'img2img']),
+        process: z.enum(['txt2img', 'img2img']),
         prompt: z.string().catch(''),
         seed: z.number().optional(),
       })
@@ -26,8 +33,24 @@ export const generationSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
-export const requestPrioritySchema = z
-  .object({
-    type: z.enum(['default', 'kling', 'minimax', 'vidu']).default('default'),
-  })
-  .default({});
+export type GenerationSchema = z.infer<typeof generationSchema>;
+export const generationSchema = baseGenerationSchema.and(generationDataSchema);
+
+export function getGenerationTags(args: GenerationDataSchema) {
+  const tags = [WORKFLOW_TAGS.GENERATION];
+  const type = args.$type;
+  switch (args.$type) {
+    case 'videoEnhancement':
+      tags.push(WORKFLOW_TAGS.VIDEO);
+      break;
+    case 'videoGen':
+      tags.push(WORKFLOW_TAGS.VIDEO, args.data.engine, args.data.process);
+      break;
+    case 'image':
+      tags.push(WORKFLOW_TAGS.IMAGE, args.data.workflow, args.data.process);
+      break;
+    default:
+      throw new Error(`generation tags not implemented for $type: ${type}`);
+  }
+  return tags.filter(isDefined);
+}

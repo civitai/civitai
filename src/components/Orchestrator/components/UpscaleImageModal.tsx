@@ -1,37 +1,91 @@
-import { Divider, Modal } from '@mantine/core';
+import { Divider, Modal, Notification } from '@mantine/core';
 import { z } from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
+import { InputSourceImageUpscale } from '~/components/Generation/Input/SourceImageUpscale';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
-import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  useGenerateWithCost,
+  useSubmitCreateImage,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
 import { generationConfig } from '~/server/common/constants';
-import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
+import {
+  SourceImageProps,
+  sourceImageSchema,
+} from '~/server/orchestrator/infrastructure/base.schema';
 import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
 import { GenerationResource } from '~/server/services/generation/generation.service';
 import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
+import { showErrorNotification } from '~/utils/notifications';
+import { IconX } from '@tabler/icons-react';
+import { GenForm } from '~/components/Generation/Form/GenForm';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
 });
 
 export function UpscaleImageModal({
-  params: { aspectRatio, ...params },
-  resources,
+  workflow,
+  sourceImage,
+  metadata,
 }: {
-  resources: GenerationResource[];
-  params: TextToImageInput;
+  workflow: string;
+  sourceImage: SourceImageProps;
+  metadata: Record<string, unknown>;
 }) {
   const dialog = useDialogContext();
 
+  const defaultValues = { sourceImage };
+  const form = useForm({ defaultValues, schema });
+  const watched = form.watch();
+
+  const whatIf = trpc.orchestrator.whatIf.useQuery({
+    $type: 'image',
+    data: { workflow, process: 'img2img', ...defaultValues, ...watched },
+  });
+
+  const generate = useGenerateWithCost(whatIf.data?.cost?.total);
+
+  async function handleSubmit(data: z.infer<typeof schema>) {
+    await generate.mutate({
+      $type: 'image',
+      data: { workflow, process: 'img2img', ...data, metadata },
+    });
+    dialog.onClose();
+  }
+
   return (
     <Modal {...dialog} title="Upscale">
-      <UpscalImageForm params={params} resources={resources} />
+      <GenerationProvider>
+        <GenForm form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
+          <InputSourceImageUpscale
+            name="sourceImage"
+            removable={false}
+            upscaleMultiplier
+            upscaleResolution
+          />
+          <Divider />
+          <WhatIfAlert error={whatIf.error} />
+          {generate.error?.message && (
+            <Notification icon={<IconX size={18} />} color="red" className="rounded-md bg-red-8/20">
+              {generate.error.message}
+            </Notification>
+          )}
+          <GenerateButton
+            type="submit"
+            loading={whatIf.isInitialLoading || generate.isLoading}
+            cost={whatIf.data?.cost?.total ?? 0}
+            disabled={whatIf.isError}
+          >
+            Upscale
+          </GenerateButton>
+        </GenForm>
+      </GenerationProvider>
     </Modal>
   );
 }
@@ -86,14 +140,22 @@ function UpscalImageForm({
 
   function handleSubmit(formData: z.infer<typeof schema>) {
     async function performTransaction() {
-      await generateImage.mutateAsync({
-        resources,
-        params: {
-          ...params,
-          quantity: 1,
-          ...formData,
-        },
-      });
+      await generateImage
+        .mutateAsync({
+          resources,
+          params: {
+            ...params,
+            quantity: 1,
+            ...formData,
+          },
+        })
+        .catch((error: any) => {
+          showErrorNotification({
+            title: 'Failed to generate',
+            error: new Error(error.message),
+            reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+          });
+        });
       dialog.onClose();
     }
     conditionalPerformTransaction(whatIf.data?.cost?.total ?? 0, performTransaction);
@@ -102,7 +164,7 @@ function UpscalImageForm({
   return (
     <GenerationProvider>
       <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-        <InputSourceImageUpload
+        <InputSourceImageUpscale
           name="sourceImage"
           removable={false}
           upscaleMultiplier

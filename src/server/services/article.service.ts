@@ -731,7 +731,8 @@ export const upsertArticle = async ({
     if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
 
     const republishing =
-      article.status === ArticleStatus.Unpublished && data.status === ArticleStatus.Published;
+      (article.status === ArticleStatus.Unpublished && data.status === ArticleStatus.Published) ||
+      !!article.publishedAt;
 
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({

@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { Readable } from 'node:stream';
 import { env } from '~/env/server';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
@@ -118,6 +118,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           } else {
             await processBuzzWithdrawalRequest(event);
           }
+          break;
         }
         default:
           throw new Error('Unhandled relevant event!');
@@ -142,7 +143,7 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
     case 'paymentGroupDeclined': {
       const payment = event.eventData.payments[0] as { refCode: string; paymentStatus: string };
 
-      const request = await dbRead.buzzWithdrawalRequest.findFirst({
+      const request = await dbWrite.buzzWithdrawalRequest.findFirst({
         where: {
           transferId: payment.refCode,
         },
@@ -182,7 +183,7 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
     case 'paymentDeferred':
     case 'paymentCanceled': {
       const payment = event.eventData as { refCode: string; paymentStatus: string };
-      const request = await dbRead.buzzWithdrawalRequest.findFirst({
+      const request = await dbWrite.buzzWithdrawalRequest.findFirst({
         where: {
           transferId: payment.refCode,
         },
@@ -232,7 +233,7 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
     }
     case 'paymentError': {
       const payment = event.eventData as { refCode: string; paymentStatus: string };
-      const request = await dbRead.buzzWithdrawalRequest.findFirst({
+      const request = await dbWrite.buzzWithdrawalRequest.findFirst({
         where: {
           transferId: payment.refCode,
         },
@@ -287,7 +288,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
 
-      const cashWithdrawal = await dbRead.cashWithdrawal.findFirst({
+      const cashWithdrawal = await dbWrite.cashWithdrawal.findFirst({
         where: {
           userId,
           id: {
@@ -304,7 +305,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
       // Update the status of the withdrawal request:
       const status =
         event.type === 'paymentGroupApproved'
-          ? CashWithdrawalStatus.Scheduled
+          ? CashWithdrawalStatus.Cleared
           : CashWithdrawalStatus.Rejected;
 
       const metadata = {
@@ -313,11 +314,19 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         approvalDate: event.eventData.approvalDate,
       };
 
+      const note =
+        event.type === 'paymentGroupApproved'
+          ? "Payment approved by Moderators. Tipalti's processing should start shortly."
+          : `Payment has been declined. Please contact support.`;
+
       await updateCashWithdrawal({
         withdrawalId: cashWithdrawal.id,
         status,
         metadata,
+        note,
       });
+
+      await userCashCache.bust(cashWithdrawal.userId);
 
       break;
     }
@@ -333,7 +342,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
 
-      const cashWithdrawal = await dbRead.cashWithdrawal.findFirst({
+      const cashWithdrawal = await dbWrite.cashWithdrawal.findFirst({
         where: {
           userId,
           id: {
@@ -374,7 +383,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
               .map((r: { reasonDescription: string }) => r.reasonDescription)
               .join(', ')}`
           : event.type === 'paymentSubmitted'
-          ? 'Payment submitted'
+          ? 'Your withdrawal has been scheduled! Tipalti will process it shortly, and you should receive your funds within 1–5 business days, depending on your payout method'
           : 'Payment canceled';
 
       await updateCashWithdrawal({
@@ -397,7 +406,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
 
-      const cashWithdrawal = await dbRead.cashWithdrawal.findFirst({
+      const cashWithdrawal = await dbWrite.cashWithdrawal.findFirst({
         where: {
           userId,
           id: {

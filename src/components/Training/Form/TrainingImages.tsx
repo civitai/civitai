@@ -7,6 +7,7 @@ import {
   Card,
   Center,
   Checkbox,
+  Code,
   createStyles,
   Divider,
   Group,
@@ -27,7 +28,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { FileWithPath } from '@mantine/dropzone';
+import type { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
 import type { NotificationProps } from '@mantine/notifications/lib/types';
@@ -45,6 +46,7 @@ import {
   IconZoomIn,
   IconZoomOut,
 } from '@tabler/icons-react';
+import { clsx } from 'clsx';
 import { saveAs } from 'file-saver';
 import { capitalize, isEqual, uniq } from 'lodash-es';
 import dynamic from 'next/dynamic';
@@ -55,12 +57,13 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { openImageSelectModal } from '~/components/Dialog/dialog-registry';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import type { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
+import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import {
   TrainingImagesSwitchLabel,
@@ -70,19 +73,26 @@ import {
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { BaseModel, constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE, MIME_TYPES, ZIP_MIME_TYPE } from '~/server/common/mime-types';
+import {
+  IMAGE_MIME_TYPE,
+  MIME_TYPES,
+  VIDEO_MIME_TYPE,
+  ZIP_MIME_TYPE,
+} from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
   defaultTrainingState,
+  defaultTrainingStateVideo,
   getShortNameFromUrl,
   type ImageDataType,
-  LabelTypes,
+  type LabelTypes,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
-import { TrainingModelData } from '~/types/router';
+import type { TrainingModelData } from '~/types/router';
 import { createImageElement } from '~/utils/image-utils';
 import { getJSZip } from '~/utils/lazy';
 import { auditPrompt } from '~/utils/metadata/audit';
@@ -151,10 +161,14 @@ const useStyles = createStyles((theme) => ({
 
 // TODO [bw] is this enough? do we want jfif?
 const imageExts: { [key: string]: string } = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
+  png: MIME_TYPES.png,
+  jpg: MIME_TYPES.jpg,
+  jpeg: MIME_TYPES.jpeg,
+  webp: MIME_TYPES.webp,
+};
+const videoExts: { [key: string]: string } = {
+  mp4: MIME_TYPES.mp4,
+  webm: MIME_TYPES.webm,
 };
 
 const minWidth = 256;
@@ -181,18 +195,28 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
         a setting sun.&quot;
       </Text>
       <Text mt="sm">
-        Preferred for <Badge color="red">Flux</Badge> and <Badge color="pink">SD3</Badge> models.
+        Preferred for <Badge color="red">Flux</Badge>, <Badge color="pink">SD3</Badge>, and{' '}
+        <Badge color="teal">Video</Badge> models.
       </Text>
     </Stack>
   ),
 };
 
-const LabelSelectModal = ({ modelId }: { modelId: number }) => {
+const LabelSelectModal = ({
+  modelId,
+  mediaType,
+}: {
+  modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
+}) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
 
   const { labelType, imageList } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
   const { setLabelType } = trainingStore;
 
@@ -207,7 +231,7 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
   const [labelValue, setLabelValue] = useState<LabelTypes>(estimatedType);
 
   const handleSelect = () => {
-    setLabelType(modelId, labelValue);
+    setLabelType(modelId, mediaType, labelValue);
     handleClose();
   };
 
@@ -220,14 +244,13 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
       title={
         <Group spacing="xs">
           <IconInfoCircle />
-          <Text size="lg">Found label files</Text>
+          <Text size="lg">Found labels</Text>
         </Group>
       }
     >
       <Stack>
         <Stack spacing={0}>
-          <Text>You&apos;ve included some labeling (.txt) files.</Text>{' '}
-          <Text>Which type are they?</Text>
+          <Text>You&apos;ve included some labeling.</Text> <Text>Which type are they?</Text>
         </Stack>
         <Group spacing="xs">
           <Text size="sm">Current type: </Text>
@@ -259,6 +282,12 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
 };
 
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
+  const thisModelVersion = model.modelVersions[0];
+  const thisMediaType =
+    (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)?.mediaType ?? 'image';
+  const isVideo = thisMediaType === 'video';
+  const thisDefaultTrainingState = isVideo ? defaultTrainingStateVideo : defaultTrainingState;
+
   const {
     updateImage,
     setImageList,
@@ -291,7 +320,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     initialShareDataset,
     autoLabeling,
     autoCaptioning,
-  } = useTrainingImageStore((state) => state[model.id] ?? { ...defaultTrainingState });
+  } = useTrainingImageStore((state) => state[model.id] ?? { ...thisDefaultTrainingState });
 
   const [page, setPage] = useState(1);
   const [zipping, setZipping] = useState<boolean>(false);
@@ -313,7 +342,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { connected } = useSignalContext();
 
-  const thisModelVersion = model.modelVersions[0];
   const existingDataFile = thisModelVersion.files[0];
   const existingMetadata = existingDataFile?.metadata as FileMetadata | null;
 
@@ -327,6 +355,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     autoClose: false,
   };
 
+  const mediaExts = isVideo ? { ...imageExts, ...videoExts } : imageExts;
+  const allowedDropTypes = [
+    ...IMAGE_MIME_TYPE,
+    ...ZIP_MIME_TYPE,
+    ...(isVideo ? VIDEO_MIME_TYPE : []),
+  ];
+
   const { uploading } = getUploadStatus((file) => file.meta?.versionId === thisModelVersion.id);
 
   const thisStep = 2;
@@ -335,6 +370,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const getResizedImgUrl = async (data: FileWithPath | Blob, type: string): Promise<string> => {
     const blob = new Blob([data], { type: type });
     const imgUrl = URL.createObjectURL(blob);
+
+    // TODO resize video?
+    if (![IMAGE_MIME_TYPE].includes(type as never)) return imgUrl;
+
     const img = await createImageElement(imgUrl);
     let { width, height } = img;
 
@@ -390,7 +429,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const showResizeWarnings = () => {
     if (showImgResizeDown.current) {
       showWarningNotification({
-        title: `${showImgResizeDown.current} image${
+        title: `${showImgResizeDown.current} file${
           showImgResizeDown.current === 1 ? '' : 's'
         } resized down`,
         message: `Max image dimensions are ${maxWidth}w and ${maxHeight}h.`,
@@ -400,7 +439,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
     if (showImgResizeUp.current) {
       showWarningNotification({
-        title: `${showImgResizeUp.current} image${
+        title: `${showImgResizeUp.current} file${
           showImgResizeUp.current === 1 ? '' : 's'
         } resized up`,
         message: `Min image dimensions are ${minWidth}w or ${minHeight}h.`,
@@ -450,10 +489,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         const fileSplit = zname.split('.');
         const fileExt = (fileSplit.pop() || '').toLowerCase();
         const baseFileName = fileSplit.join('.');
-        if (fileExt in imageExts) {
+        if (fileExt in mediaExts) {
           const imgBlob = await zf.async('blob');
           try {
-            const scaledUrl = await getResizedImgUrl(imgBlob, imageExts[fileExt]);
+            const scaledUrl = await getResizedImgUrl(imgBlob, mediaExts[fileExt]);
             const czFile = zipReader.file(`${baseFileName}.txt`);
             let labelStr = '';
             if (czFile) {
@@ -462,7 +501,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             }
             parsedFiles.push({
               name: zname,
-              type: imageExts[fileExt],
+              type: mediaExts[fileExt],
               url: scaledUrl,
               label: labelStr,
               invalidLabel: false,
@@ -486,7 +525,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       if (parsedFiles.length > 0) {
         showSuccessNotification({
           title: 'Zip parsed successfully!',
-          message: `Found ${parsedFiles.length} images.`,
+          message: `Found ${parsedFiles.length} files.`,
         });
       } else {
         showErrorNotification({
@@ -509,6 +548,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         if (ZIP_MIME_TYPE.includes(f.type as never) || f.name.endsWith('.zip')) {
           const source = data?.[f.name]?.source ?? null;
           return await handleZip(f, !source, source);
+        } else if (!allowedDropTypes.includes(f.type as never)) {
+          showErrorNotification({
+            error: new Error(`Skipping invalid file: "${f.name}".`),
+          });
+          return { parsedFiles: [] as ImageDataType[], hasAnyLabelFiles: false };
         } else {
           try {
             const scaledUrl = await getResizedImgUrl(f, f.type);
@@ -540,19 +584,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       .filter(isDefined);
     if (filteredFiles.length > MAX_FILES_ALLOWED - imageList.length) {
       showErrorNotification({
-        title: 'Too many images',
+        title: 'Too many files',
         error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
         autoClose: false,
       });
       filteredFiles.splice(MAX_FILES_ALLOWED - imageList.length);
     }
-    setImageList(model.id, imageList.concat(filteredFiles));
+    setImageList(model.id, thisMediaType, imageList.concat(filteredFiles));
 
     const labelsPresent = newFiles.map((nf) => nf.hasAnyLabelFiles).some((hl) => hl);
     if (labelsPresent) {
       dialogStore.trigger({
         component: LabelSelectModal,
-        props: { modelId: model.id },
+        props: { modelId: model.id, mediaType: thisMediaType },
       });
     }
 
@@ -561,22 +605,22 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
   };
 
-  const handleImport = async (images: SelectedImage[], source: ImageSelectSource) => {
-    const importNotifId = `${thisModelVersion.id}-importing-images-${new Date().toISOString()}`;
+  const handleImport = async (assets: SelectedImage[], source: ImageSelectSource) => {
+    const importNotifId = `${thisModelVersion.id}-importing-asset-${new Date().toISOString()}`;
     showNotification({
       id: importNotifId,
       loading: true,
       autoClose: false,
       disallowClose: true,
-      message: `Importing ${images.length} ${source === 'training' ? 'dataset' : 'image'}${
-        images.length !== 1 ? 's' : ''
+      message: `Importing ${assets.length} ${source === 'training' ? 'dataset' : 'asset'}${
+        assets.length !== 1 ? 's' : ''
       }...`,
     });
 
     let files;
     if (source === 'training') {
       files = await Promise.all(
-        images.map(async (i) => {
+        assets.map(async (i) => {
           try {
             const file = await parseExisting(Number(i.url));
             if (!file) return;
@@ -593,7 +637,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       );
     } else {
       files = await Promise.all(
-        images.map((i, idx) =>
+        assets.map((i, idx) =>
           limit(async () => {
             try {
               const result = await fetch(getEdgeUrl(i.url));
@@ -601,9 +645,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
               const blob = await result.blob();
               return {
-                file: new File([blob], `imported_${new Date().toISOString()}_${idx}.jpg`, {
-                  type: IMAGE_MIME_TYPE.includes(blob.type as never) ? blob.type : MIME_TYPES.jpeg,
-                }),
+                file: new File(
+                  [blob],
+                  `imported_${new Date().toISOString()}_${idx}.${
+                    i.type === 'video' ? 'mp4' : 'jpg'
+                  }`,
+                  {
+                    type: [...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE].includes(blob.type as never)
+                      ? blob.type
+                      : i.type === 'video'
+                      ? MIME_TYPES.mp4
+                      : MIME_TYPES.jpeg,
+                  }
+                ),
                 label: i.label,
                 url: i.url,
               };
@@ -636,7 +690,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     if (fileDiff !== 0) {
       showWarningNotification({
-        message: `${fileDiff} ${source === 'training' ? 'dataset' : 'image'}${
+        message: `${fileDiff} ${source === 'training' ? 'dataset' : 'file'}${
           fileDiff === 1 ? '' : 's'
         } could not be imported`,
         autoClose: false,
@@ -646,7 +700,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     async onSuccess(_response, request) {
-      setInitialTriggerWord(model.id, triggerWord);
+      setInitialTriggerWord(model.id, thisMediaType, triggerWord);
 
       queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
         if (!old) return old;
@@ -669,9 +723,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   });
   const updateFileMutation = trpc.modelFile.update.useMutation({
     async onSuccess(_response, request) {
-      setInitialLabelType(model.id, labelType);
-      setInitialOwnRights(model.id, ownRights);
-      setInitialShareDataset(model.id, shareDataset);
+      setInitialLabelType(model.id, thisMediaType, labelType);
+      setInitialOwnRights(model.id, thisMediaType, ownRights);
+      setInitialShareDataset(model.id, thisMediaType, shareDataset);
 
       queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
         if (!old) return old;
@@ -721,7 +775,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         disallowClose: false,
       });
 
-      setInitialImageList(model.id, imageList);
+      setInitialImageList(model.id, thisMediaType, imageList);
 
       queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
         if (!old) return old;
@@ -794,7 +848,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         title: 'Failed to auto tag',
         autoClose: false,
       });
-      setAutoLabeling(model.id, { ...defaultTrainingState.autoLabeling });
+      setAutoLabeling(model.id, thisMediaType, { ...thisDefaultTrainingState.autoLabeling });
     },
   });
   const submitCaptionMutation = trpc.training.autoCaption.useMutation({
@@ -805,7 +859,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         title: 'Failed to auto caption',
         autoClose: false,
       });
-      setAutoLabeling(model.id, { ...defaultTrainingState.autoLabeling });
+      setAutoLabeling(model.id, thisMediaType, { ...thisDefaultTrainingState.autoLabeling });
     },
   });
 
@@ -816,19 +870,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       const fileOwnRights = existingMetadata?.ownRights ?? false;
       const fileShareDataset = existingMetadata?.shareDataset ?? false;
 
-      setLabelType(model.id, fileLabelType);
-      setInitialLabelType(model.id, fileLabelType);
-      setOwnRights(model.id, fileOwnRights);
-      setInitialOwnRights(model.id, fileOwnRights);
-      setShareDataset(model.id, fileShareDataset);
-      setInitialShareDataset(model.id, fileShareDataset);
+      setLabelType(model.id, thisMediaType, fileLabelType);
+      setInitialLabelType(model.id, thisMediaType, fileLabelType);
+      setOwnRights(model.id, thisMediaType, fileOwnRights);
+      setInitialOwnRights(model.id, thisMediaType, fileOwnRights);
+      setShareDataset(model.id, thisMediaType, fileShareDataset);
+      setInitialShareDataset(model.id, thisMediaType, fileShareDataset);
 
       const thisTrainedWord =
         thisModelVersion.trainedWords && thisModelVersion.trainedWords.length > 0
           ? thisModelVersion.trainedWords[0]
           : '';
-      setTriggerWord(model.id, thisTrainedWord);
-      setInitialTriggerWord(model.id, thisTrainedWord);
+      setTriggerWord(model.id, thisMediaType, thisTrainedWord);
+      setInitialTriggerWord(model.id, thisMediaType, thisTrainedWord);
 
       if (imageList.length === 0) {
         setLoadingZip(true);
@@ -836,9 +890,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           .then((files) => {
             if (files) {
               const flatFiles = files.parsedFiles.flat();
-              setImageList(model.id, flatFiles);
+              setImageList(model.id, thisMediaType, flatFiles);
               setInitialImageList(
                 model.id,
+                thisMediaType,
                 flatFiles.map((d) => ({ ...d }))
               );
             }
@@ -857,7 +912,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   useEffect(() => {
     if (autoLabeling.isRunning || !autoLabeling.url) return;
-    setAutoLabeling(model.id, { isRunning: true });
+    setAutoLabeling(model.id, thisMediaType, { isRunning: true });
 
     if (labelType === 'caption') {
       submitCaptionMutation.mutate({
@@ -950,7 +1005,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         autoClose: false,
         disallowClose: true,
         title: 'Creating and uploading archive',
-        message: `Packaging ${imageList.length} image${imageList.length !== 1 ? 's' : ''}...`,
+        message: `Packaging ${imageList.length} file${imageList.length !== 1 ? 's' : ''}...`,
       });
 
       try {
@@ -1047,10 +1102,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const handleNext = async () => {
     if (!attested.status) {
-      setAttest(model.id, { ...attested, error: 'You must agree before proceeding.' });
+      setAttest(model.id, thisMediaType, {
+        ...attested,
+        error: 'You must agree before proceeding.',
+      });
       return;
     }
-    setAttest(model.id, { ...attested, error: '' });
+    setAttest(model.id, thisMediaType, { ...attested, error: '' });
 
     if (
       isEqual(imageList, initialImageList) &&
@@ -1080,17 +1138,25 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
 
     if (imageList.length) {
+      if (isVideo && imageList.some((i) => i.label.length === 0)) {
+        showErrorNotification({
+          error: new Error('All files must have a label for video training'),
+          autoClose: false,
+        });
+        return;
+      }
+
       const issues: string[] = [];
 
       const { blockedFor, success } = auditPrompt(triggerWord);
       if (!success) {
         issues.push(...blockedFor);
         if (!triggerWordInvalid) {
-          setTriggerWordInvalid(model.id, true);
+          setTriggerWordInvalid(model.id, thisMediaType, true);
         }
       } else {
         if (triggerWordInvalid) {
-          setTriggerWordInvalid(model.id, false);
+          setTriggerWordInvalid(model.id, thisMediaType, false);
         }
       }
 
@@ -1100,14 +1166,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           if (!success) {
             issues.push(...blockedFor);
             if (!i.invalidLabel) {
-              updateImage(model.id, {
+              updateImage(model.id, thisMediaType, {
                 matcher: getShortNameFromUrl(i),
                 invalidLabel: true,
               });
             }
           } else {
             if (i.invalidLabel) {
-              updateImage(model.id, {
+              updateImage(model.id, thisMediaType, {
                 matcher: getShortNameFromUrl(i),
                 invalidLabel: false,
               });
@@ -1115,7 +1181,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           }
         } else {
           if (i.invalidLabel) {
-            updateImage(model.id, {
+            updateImage(model.id, thisMediaType, {
               matcher: getShortNameFromUrl(i),
               invalidLabel: false,
             });
@@ -1145,7 +1211,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             </Group>
           ),
           children:
-            'You have not provided any labels for your images. This can produce an inflexible model. We will also attempt to generate sample images, but they may not be what you are looking for. Are you sure you want to continue?',
+            'You have not provided any labels for your files. This can produce an inflexible model. We will also attempt to generate sample files, but they may not be what you are looking for. Are you sure you want to continue?',
           labels: { cancel: 'Cancel', confirm: 'Continue' },
           centered: true,
           onConfirm: handleNextAfterCheck,
@@ -1158,8 +1224,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       showNotification({
         icon: <IconX size={18} />,
         color: 'red',
-        title: 'No images provided',
-        message: 'Must select at least 1 image.',
+        title: 'No files provided',
+        message: 'Must select at least 1 file.',
       });
     }
   };
@@ -1205,7 +1271,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               })}
             >
               <Accordion.Item value="uploading">
-                <Accordion.Control>Upload Images</Accordion.Control>
+                <Accordion.Control>Upload Files</Accordion.Control>
                 <Accordion.Panel>
                   <Stack>
                     <Text size="sm">
@@ -1226,12 +1292,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         variant="light"
                         onClick={() => {
                           openImageSelectModal({
-                            title: 'Select Images',
+                            title: 'Select Media',
                             selectSource: 'generation',
-                            onSelect: async (images) => {
-                              await handleImport(images, 'generation');
+                            onSelect: async (media) => {
+                              await handleImport(media, 'generation');
                             },
                             importedUrls,
+                            videoAllowed: isVideo,
                           });
                         }}
                       >
@@ -1241,12 +1308,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         variant="light"
                         onClick={() => {
                           openImageSelectModal({
-                            title: 'Select Images',
+                            title: 'Select Media',
                             selectSource: 'uploaded',
-                            onSelect: async (images) => {
-                              await handleImport(images, 'uploaded');
+                            onSelect: async (media) => {
+                              await handleImport(media, 'uploaded');
                             },
                             importedUrls,
+                            videoAllowed: isVideo,
                           });
                         }}
                       >
@@ -1262,6 +1330,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                               await handleImport(datasets, 'training');
                             },
                             importedUrls,
+                            videoAllowed: isVideo,
                           });
                         }}
                       >
@@ -1271,9 +1340,27 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
                     <Divider label="OR" labelPosition="center" />
 
+                    {isVideo && (
+                      <DismissibleAlert
+                        color="green"
+                        // eslint-disable-next-line tailwindcss/migration-from-tailwind-2
+                        className="bg-emerald-200 bg-opacity-20 dark:bg-emerald-900 dark:bg-opacity-20"
+                        title="Now accepting videos!"
+                        content={
+                          <Text>
+                            You can now upload videos for training (<Code color="teal">mp4</Code>{' '}
+                            and <Code color="teal">webm</Code>).
+                          </Text>
+                        }
+                        id="training-accept-videos-alert"
+                      />
+                    )}
+
                     <ImageDropzone
                       onDrop={handleDrop}
-                      label="Drag images (or a zip file) here or click to select files"
+                      label={`${
+                        isVideo ? 'Drag images, zips, or videos' : 'Drag images or zips'
+                      } here (or click to select files)`}
                       description={
                         <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
                           Changes made here are not permanently saved until you hit &quot;Next&quot;
@@ -1282,10 +1369,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       max={MAX_FILES_ALLOWED}
                       // loading={isLoading}
                       count={imageList.length}
-                      accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
+                      accept={allowedDropTypes}
                       onExceedMax={() =>
                         showErrorNotification({
-                          title: 'Too many images',
+                          title: 'Too many files',
                           error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
                           autoClose: false,
                         })
@@ -1341,7 +1428,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       onClick={() =>
                         dialogStore.trigger({
                           component: AutoLabelModal,
-                          props: { modelId: model.id },
+                          props: { modelId: model.id, mediaType: thisMediaType },
                         })
                       }
                     >
@@ -1374,12 +1461,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     disabled={autoLabeling.isRunning}
                     onClick={() => {
                       openConfirmModal({
-                        title: 'Remove all images?',
+                        title: 'Remove all files?',
                         children: 'This cannot be undone.',
                         labels: { cancel: 'Cancel', confirm: 'Confirm' },
                         centered: true,
                         onConfirm: () => {
-                          setImageList(model.id, []);
+                          setImageList(model.id, thisMediaType, []);
                           setAccordionUpload('uploading');
                         },
                       });
@@ -1456,12 +1543,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   <TextInput
                     placeholder='Add a trigger word, ex. "unique-word" (optional)'
                     value={triggerWord}
-                    onChange={(event) => setTriggerWord(model.id, event.currentTarget.value)}
+                    onChange={(event) =>
+                      setTriggerWord(model.id, thisMediaType, event.currentTarget.value)
+                    }
                     onBlur={() => {
                       const { blockedFor, success } = auditPrompt(triggerWord);
                       if (!success) {
                         if (!triggerWordInvalid) {
-                          setTriggerWordInvalid(model.id, true);
+                          setTriggerWordInvalid(model.id, thisMediaType, true);
                           showNotification({
                             icon: <IconX size={18} />,
                             autoClose: false,
@@ -1474,7 +1563,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         }
                       } else {
                         if (triggerWordInvalid) {
-                          setTriggerWordInvalid(model.id, false);
+                          setTriggerWordInvalid(model.id, thisMediaType, false);
                         }
                       }
                     }}
@@ -1483,7 +1572,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     rightSection={
                       <ActionIcon
                         onClick={() => {
-                          setTriggerWord(model.id, '');
+                          setTriggerWord(model.id, thisMediaType, '');
                         }}
                         disabled={!triggerWord.length}
                       >
@@ -1494,7 +1583,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 </Group>
               </Paper>
             )}
-            {imageList.length > 0 && <TrainingImagesSwitchLabel modelId={model.id} />}
+            {imageList.length > 0 && (
+              <TrainingImagesSwitchLabel modelId={model.id} mediaType={thisMediaType} />
+            )}
             {imageList.length > 0 ? (
               labelType === 'caption' ? (
                 <TrainingImagesCaptionViewer
@@ -1509,6 +1600,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   selectedTags={selectedTags}
                   setSelectedTags={setSelectedTags}
                   modelId={model.id}
+                  mediaType={thisMediaType}
                   numImages={filteredImages.length}
                 />
               )
@@ -1525,7 +1617,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             {loadingZip ? (
               <Center mt="md" style={{ flexDirection: 'column' }}>
                 <Loader />
-                <Text>Parsing existing images...</Text>
+                <Text>Parsing existing files...</Text>
               </Center>
             ) : imageList.length > 0 && filteredImages.length === 0 ? (
               <Stack mt="md" align="center">
@@ -1533,7 +1625,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   <IconCloudOff size={64 / 1.6} />
                 </ThemeIcon>
                 <Text size={20} align="center">
-                  No images found
+                  No files found
                 </Text>
               </Stack>
             ) : (
@@ -1561,7 +1653,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                   size="md"
                                   disabled={autoLabeling.isRunning || !imgData.label.length}
                                   onClick={() => {
-                                    updateImage(model.id, {
+                                    updateImage(model.id, thisMediaType, {
                                       matcher: getShortNameFromUrl(imgData),
                                       label: '',
                                     });
@@ -1570,7 +1662,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                   <IconTagsOff />
                                 </ActionIcon>
                               </Tooltip>
-                              <Tooltip label="Remove image">
+                              <Tooltip label="Remove file">
                                 <ActionIcon
                                   color="red"
                                   variant="filled"
@@ -1580,6 +1672,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                     const newLen = imageList.length - 1;
                                     setImageList(
                                       model.id,
+                                      thisMediaType,
                                       imageList.filter((i) => i.url !== imgData.url)
                                     );
                                     if (
@@ -1612,32 +1705,52 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                 </Badge>
                               </div>
                             )}
-                            <MImage
-                              alt={imgData.name}
-                              src={imgData.url}
-                              imageProps={{
-                                style: {
-                                  height: isZoomed ? '100%' : '250px',
-                                  width: '100%',
-                                  // if we want to show full image, change objectFit to contain
-                                  objectFit: 'cover',
-                                  // object-position: top;
-                                },
-                                // onLoad: () => URL.revokeObjectURL(imageUrl)
-                              }}
-                            />
+                            {VIDEO_MIME_TYPE.includes(imgData.type as never) ? (
+                              <video
+                                loop
+                                playsInline
+                                disablePictureInPicture
+                                muted
+                                autoPlay
+                                controls={false}
+                                height={isZoomed ? '100%' : 250}
+                                // TODO possibly object-contain
+                                className={clsx('w-full object-cover', {
+                                  ['!h-[250px]']: !isZoomed,
+                                })}
+                              >
+                                <source src={imgData.url} type={imgData.type} />
+                              </video>
+                            ) : (
+                              <MImage
+                                alt={imgData.name}
+                                src={imgData.url}
+                                imageProps={{
+                                  style: {
+                                    height: isZoomed ? '100%' : '250px',
+                                    width: '100%',
+                                    // if we want to show full image, change objectFit to contain
+                                    objectFit: 'cover',
+                                    // object-position: top;
+                                  },
+                                  // onLoad: () => URL.revokeObjectURL(imageUrl)
+                                }}
+                              />
+                            )}
                           </div>
                         </Card.Section>
                         {labelType === 'caption' ? (
                           <TrainingImagesCaptions
                             imgData={imgData}
                             modelId={model.id}
+                            mediaType={thisMediaType}
                             searchCaption={searchCaption}
                           />
                         ) : (
                           <TrainingImagesTags
                             imgData={imgData}
                             modelId={model.id}
+                            mediaType={thisMediaType}
                             selectedTags={selectedTags}
                           />
                         )}
@@ -1674,18 +1787,21 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     .
                   </Text>
                   <Checkbox
-                    label="I own the rights to all these images"
+                    label="I own the rights to all these files"
                     checked={ownRights}
                     onChange={(event) => {
-                      setOwnRights(model.id, event.currentTarget.checked);
-                      !event.currentTarget.checked && setShareDataset(model.id, false);
+                      setOwnRights(model.id, thisMediaType, event.currentTarget.checked);
+                      !event.currentTarget.checked &&
+                        setShareDataset(model.id, thisMediaType, false);
                     }}
                   />
                   <Checkbox
                     label="I want to share my dataset"
                     disabled={!ownRights}
                     checked={shareDataset}
-                    onChange={(event) => setShareDataset(model.id, event.currentTarget.checked)}
+                    onChange={(event) =>
+                      setShareDataset(model.id, thisMediaType, event.currentTarget.checked)
+                    }
                   />
                 </Stack>
               </Paper>
@@ -1709,7 +1825,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               checked={attested.status}
               error={attested.error}
               onChange={(event) =>
-                setAttest(model.id, { status: event.currentTarget.checked, error: '' })
+                setAttest(model.id, thisMediaType, {
+                  status: event.currentTarget.checked,
+                  error: '',
+                })
               }
             />
           </div>

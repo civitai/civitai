@@ -20,6 +20,8 @@ import {
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
   IconPlus,
+  IconSortAscending,
+  IconSortDescending,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -27,6 +29,7 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
+
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 
 const useStyle = createStyles((theme) => ({
@@ -59,14 +62,12 @@ const useStyleDrawer = createStyles((theme) => ({
       display: 'none',
     },
   },
-
   drawerButton: {
     display: 'none',
     [containerQuery.smallerThan('sm')]: {
       display: 'block',
     },
   },
-
   drawerHeader: {
     padding: theme.spacing.xs,
     marginBottom: 0,
@@ -74,7 +75,15 @@ const useStyleDrawer = createStyles((theme) => ({
   },
 }));
 
-const MyCollectionsDrawer = () => {
+type SortOrder = 'asc' | 'desc';
+
+const MyCollectionsDrawer = ({
+  sortOrder,
+  setSortOrder,
+}: {
+  sortOrder: SortOrder;
+  setSortOrder: React.Dispatch<React.SetStateAction<SortOrder>>;
+}) => {
   const [drawerOpen, { close, toggle }] = useDisclosure();
   const { classes } = useStyleDrawer();
 
@@ -104,18 +113,35 @@ const MyCollectionsDrawer = () => {
         }
         classNames={{ header: classes.drawerHeader }}
       >
-        <MyCollections onSelect={() => close()}>
-          {({ FilterBox, Collections }) => {
-            return (
-              <Stack spacing={4}>
-                {FilterBox}
-                <Divider />
-                <ScrollArea.Autosize maxHeight="calc(100vh - 93px)" px="sm">
-                  {Collections}
-                </ScrollArea.Autosize>
-              </Stack>
-            );
-          }}
+        <MyCollections onSelect={() => close()} sortOrder={sortOrder}>
+          {({ FilterBox, Collections }) => (
+            <Stack spacing={4}>
+              <Group spacing="xs" noWrap px="sm">
+                <div style={{ flex: 1 }}>{FilterBox}</div>
+                <Tooltip
+                  label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
+                  position="top"
+                  withArrow
+                >
+                  <ActionIcon
+                    variant="light"
+                    size="sm"
+                    onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                  >
+                    {sortOrder === 'asc' ? (
+                      <IconSortDescending size={18} />
+                    ) : (
+                      <IconSortAscending size={18} />
+                    )}
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
+              <Divider />
+              <ScrollArea.Autosize maxHeight="calc(100vh - 93px)" px="sm">
+                {Collections}
+              </ScrollArea.Autosize>
+            </Stack>
+          )}
         </MyCollections>
       </Drawer>
     </>
@@ -127,6 +153,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   const currentUser = useCurrentUser();
   const { classes } = useStyle();
   const [showSidebar, setShowSidebar] = useState(true);
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
   return (
     <Container fluid className={classes.container}>
@@ -166,32 +193,51 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
             </Group>
           </Card.Section>
           {!isMobile && (
-            <MyCollections>
-              {({ FilterBox, Collections, isLoading }) => {
-                return (
-                  <>
-                    <Card.Section withBorder mb="xs">
-                      {FilterBox}
-                    </Card.Section>
-                    {isLoading && (
-                      <Center>
-                        <Loader variant="bars" />
-                      </Center>
-                    )}
-                    <Card.Section ml={0}>
-                      <ScrollArea.Autosize maxHeight="calc(80vh - var(--header-height,0))">
-                        {Collections}
-                      </ScrollArea.Autosize>
-                    </Card.Section>
-                  </>
-                );
-              }}
+            <MyCollections sortOrder={sortOrder}>
+              {({ FilterBox, Collections, isLoading }) => (
+                <>
+                  <Card.Section withBorder mb="xs" px="xs" py="xs">
+                    <Group spacing="xs" noWrap>
+                      <div style={{ flex: 1 }}>{FilterBox}</div>
+                      <Tooltip
+                        label={sortOrder === 'asc' ? 'Sort Z-A' : 'Sort A-Z'}
+                        position="top"
+                        withArrow
+                      >
+                        <ActionIcon
+                          variant="light"
+                          size="sm"
+                          onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                        >
+                          {sortOrder === 'asc' ? (
+                            <IconSortDescending size={18} />
+                          ) : (
+                            <IconSortAscending size={18} />
+                          )}
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                  </Card.Section>
+                  {isLoading && (
+                    <Center>
+                      <Loader variant="bars" />
+                    </Center>
+                  )}
+                  <Card.Section ml={0}>
+                    <ScrollArea.Autosize maxHeight="calc(80vh - var(--header-height,0))">
+                      {Collections}
+                    </ScrollArea.Autosize>
+                  </Card.Section>
+                </>
+              )}
             </MyCollections>
           )}
         </Card>
       )}
       <div className={classes.content}>
-        {!!currentUser && isMobile && <MyCollectionsDrawer />}
+        {!!currentUser && isMobile && (
+          <MyCollectionsDrawer sortOrder={sortOrder} setSortOrder={setSortOrder} />
+        )}
         {children}
       </div>
     </Container>

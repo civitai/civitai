@@ -21,6 +21,7 @@ import {
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { setExperimentalConfig } from '~/server/services/orchestrator/experimental';
 import { Queue } from 'bullmq';
 import { EventQueue } from '~/server/event-queue/event-queue';
 import { ImageQueue } from '~/server/event-queue/image.queue';

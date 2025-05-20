@@ -18,6 +18,7 @@ import {
   IconArrowsShuffle,
   IconBan,
   IconCheck,
+  IconFlagQuestion,
   IconInfoHexagon,
   IconTrash,
 } from '@tabler/icons-react';
@@ -27,7 +28,6 @@ import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
@@ -40,7 +40,6 @@ import {
   useDeleteTextToImageRequest,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
-import { Currency } from '~/shared/utils/prisma/enums';
 
 import { TimeSpan, WorkflowStatus } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
@@ -58,6 +57,7 @@ import { orchestratorPendingStatuses } from '~/shared/constants/generation.const
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -79,6 +79,7 @@ export function QueueItem({
   filter: { marker?: string } | undefined;
 }) {
   const { classes, cx } = useStyle();
+  const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const [ref, inView] = useInViewDynamic({ id });
 
@@ -147,12 +148,11 @@ export function QueueItem({
 
   const handleGenerate = () => {
     generationStore.setData({
-      resources: step.resources ?? [],
-      params: { ...(step.params as any), seed: undefined },
+      resources: (step.resources as any) ?? [],
+      params: { ...(step.params as any), seed: null },
       remixOfId: step.metadata?.remixOfId,
       type: images[0].type, // TODO - type based off type of media
       workflow: step.params.workflow,
-      sourceImage: (step.params as any).sourceImage,
       engine: (step.params as any).engine,
     });
   };
@@ -173,8 +173,9 @@ export function QueueItem({
   const processingCount = images.filter((x) => x.status === 'processing').length;
 
   const canRemix =
-    step.params.workflow &&
-    !['img2img-upscale', 'img2img-background-removal'].includes(step.params.workflow);
+    (step.params.workflow &&
+      !['img2img-upscale', 'img2img-background-removal'].includes(step.params.workflow)) ||
+    !!(step.params as any).engine;
 
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
@@ -215,8 +216,12 @@ export function QueueItem({
                     variant="badge"
                   />
                 )}
+              {!!request.duration && currentUser?.isModerator && (
+                <Badge color="yellow">Duration: {request.duration}</Badge>
+              )}
             </div>
             <div className="flex gap-1">
+              <SubmitBlockedImagesForReviewButton step={step} />
               <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
                 <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                   {copied ? <IconCheck /> : <IconInfoHexagon />}
@@ -256,11 +261,13 @@ export function QueueItem({
               </Alert>
             )}
 
-            <ContentClamp maxHeight={36} labelSize="xs">
-              <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
-                {prompt}
-              </Text>
-            </ContentClamp>
+            {prompt && (
+              <ContentClamp maxHeight={36} labelSize="xs">
+                <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
+                  {prompt}
+                </Text>
+              </ContentClamp>
+            )}
 
             <div className="-my-2">
               {workflowDefinition && (
@@ -504,5 +511,33 @@ function CancelOrDeleteWorkflow({
         </ActionIcon>
       </ButtonTooltip>
     </PopConfirm>
+  );
+}
+
+function SubmitBlockedImagesForReviewButton({ step }: { step: NormalizedGeneratedImageStep }) {
+  const blockedImages = step.images.filter((x) => !!x.blockedReason);
+  const currentUser = useCurrentUser();
+  if (!blockedImages.length || !currentUser?.username) return null;
+
+  return (
+    <ButtonTooltip {...tooltipProps} label="Submit blocked images for review">
+      <ActionIcon
+        component="a"
+        target="_blank"
+        size="md"
+        p={4}
+        radius={0}
+        color="orange"
+        href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai%20Username=${encodeURIComponent(
+          currentUser.username
+        )}&Prompt=${encodeURIComponent(
+          (step.params as any).prompt
+        )}&Negative%20Prompt=${encodeURIComponent(
+          (step.params as any).negativePrompt
+        )}&Job%20IDs=${encodeURIComponent(blockedImages.map((x) => x.jobId).join(','))}`}
+      >
+        <IconFlagQuestion size={20} />
+      </ActionIcon>
+    </ButtonTooltip>
   );
 }

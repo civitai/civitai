@@ -1576,4 +1576,19 @@ clickhouse client -n <<-EOSQL
     FROM default.views
     WHERE entityType = 'Image'
     GROUP BY imageId;
+
+    create table if not exists default.knights_new_order_image_rating
+    (
+        userId       Int32,
+        imageId      Int32,
+        rating       Int32,
+        damnedReason LowCardinality(String),
+        status       LowCardinality(String),
+        grantedExp   Int32,
+        multiplier   Int32,
+        createdAt    Datetime
+    )
+    engine = MergeTree()
+        ORDER BY (createdAt, userId)
+        SETTINGS index_granularity = 8192;
 EOSQL

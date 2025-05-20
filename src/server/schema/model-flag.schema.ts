@@ -29,6 +29,7 @@ export const modelScanResultSchema = z.object({
       POI: z.boolean(),
       NSFW: z.boolean(),
       minor: z.boolean(),
+      sfwOnly: z.boolean().nullish(),
       triggerwords: z.string().array().nullish(),
       image_urls: z.string().array().nullish(),
       links: z.string().array().nullish(),
@@ -40,6 +41,7 @@ export const modelScanResultSchema = z.object({
     context: z.string().nullish(),
     NSFW: z.boolean(),
     minor: z.boolean(),
+    sfwOnly: z.boolean().nullish(),
     triggerwords: z.string().array(),
     POIInfo: z
       .object({
@@ -52,6 +54,7 @@ export const modelScanResultSchema = z.object({
     POI_flag: z.boolean(),
     NSFW_flag: z.boolean(),
     minor_flag: z.boolean(),
+    sfwOnly_flag: z.boolean().nullish(),
     triggerwords_flag: z.boolean(),
   }),
 });
