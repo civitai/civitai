@@ -561,8 +561,6 @@ function ResourceHitList({
           .filter((x) => x.type === model.type)
           .flatMap((x) => x.baseModels);
 
-        if (!baseModels.length) return null;
-
         const versions = model.versions.filter((version) => {
           return (
             (canGenerate ? canGenerate === version.canGenerate : true) &&

@@ -52,17 +52,17 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
     // _types used to set up groups
     const _types = [...new Set(types ?? value?.map((x) => x.model.type) ?? [])];
     const _values =
-      (useMemo(
-      () =>
-        types
+      useMemo(
+        () =>
+          types
             ? value?.filter(
                 (x) =>
                   types.includes(x.model.type) &&
                   (!!baseModels?.length ? baseModels.includes(x.baseModel) : true)
               )
             : value,
-      [value]
-    )) ?? [];
+        [value]
+      ) ?? [];
     const groups = _types
       .map((type) => ({
         type,
