@@ -98,6 +98,7 @@ export function GeneratedImage({
     stepName: step.name,
     imageId: image.id,
   });
+  const isSelecting = orchestratorImageSelect.useIsSelecting();
 
   const [nsfwLevelError, setNsfwLevelError] = useState(false);
 
@@ -117,11 +118,15 @@ export function GeneratedImage({
   const handleImageClick = () => {
     if (!image || !available || isLightbox || nsfwLevelError) return;
 
-    dialogStore.trigger({
-      id: 'generated-image',
-      component: GeneratedImageLightbox,
-      props: { image, request },
-    });
+    if (isSelecting) {
+      handleToggleSelect();
+    } else {
+      dialogStore.trigger({
+        id: 'generated-image',
+        component: GeneratedImageLightbox,
+        props: { image, request },
+      });
+    }
   };
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
@@ -221,6 +226,11 @@ export function GeneratedImage({
     handleDataTransfer(e);
   }
 
+  function handleToggleSelect(value = !selected) {
+    toggleSelect(value);
+    if (running && value) helpers?.next();
+  }
+
   const blockedReason = getImageBlockedReason(image.blockedReason);
   const isBlocked = !!nsfwLevelError || !!blockedReason;
 
@@ -284,10 +294,7 @@ export function GeneratedImage({
               <Checkbox
                 className={classes.checkbox}
                 checked={selected}
-                onChange={(e) => {
-                  toggleSelect(e.target.checked);
-                  if (running && e.target.checked) helpers?.next();
-                }}
+                onChange={(e) => handleToggleSelect(e.target.checked)}
               />
             </label>
           )}
