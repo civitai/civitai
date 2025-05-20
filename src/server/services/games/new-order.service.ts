@@ -770,7 +770,21 @@ export async function getNewOrderRanks({ name }: { name: string }) {
   return rank;
 }
 
-async function getRatedImages({ userId, startAt }: { userId: number; startAt: Date }) {
+async function getRatedImages({
+  userId,
+  startAt,
+  rankType,
+}: {
+  userId: number;
+  startAt: Date;
+  rankType?: NewOrderRankType;
+}) {
+  const AND = [
+    `userId = ${userId}`,
+    `createdAt >= parseDateTimeBestEffort('${startAt.toISOString()}')`,
+  ];
+  if (rankType) AND.push(`rank = '${rankType}'`);
+
   const images = await fetchThroughCache(
     `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}`,
     async () => {
@@ -778,7 +792,7 @@ async function getRatedImages({ userId, startAt }: { userId: number; startAt: Da
         SELECT 
           DISTINCT "imageId"
         FROM knights_new_order_image_rating
-        WHERE "userId" = ${userId} AND "createdAt" >= ${startAt}
+        WHERE ${AND.join(' AND ')}
     `;
       return results.map((r) => r.imageId);
     },
@@ -852,7 +866,11 @@ export async function getImagesQueue({
     ? [...poolCounters.Templar, ...poolCounters.Knight]
     : poolCounters[player.rankType];
 
-  const ratedImages = await getRatedImages({ userId: playerId, startAt: player.startAt });
+  const ratedImages = await getRatedImages({
+    userId: playerId,
+    startAt: player.startAt,
+    rankType: player.rankType,
+  });
 
   for (const pool of shuffle(rankPools)) {
     let offset = 0;

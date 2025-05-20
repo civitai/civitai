@@ -292,6 +292,7 @@ export const ratingPlayBackRates: Record<string, number> = {
   [NsfwLevel.R]: 1,
   [NsfwLevel.X]: 0.8,
   [NsfwLevel.XXX]: 0.7,
+  [NsfwLevel.Blocked]: 1,
 };
 
 export const openJudgmentHistoryModal = () =>
