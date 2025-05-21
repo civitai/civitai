@@ -94,11 +94,10 @@ export default Page(
       if (!currentImage || !playerData) return;
 
       const isCorrectRating = currentImage.nsfwLevel === rating;
-      const isBlocked = rating === NsfwLevel.Blocked;
       const isAcolyte = playerData.rankType === NewOrderRankType.Acolyte;
 
       setPrevHistory((prev) => [...prev, currentImage.id]);
-      if (isBlocked || (!isCorrectRating && isAcolyte)) {
+      if (!isCorrectRating && isAcolyte) {
         playSound('buzz');
       } else {
         playSound('point', ratingPlayBackRates[rating]);
@@ -133,7 +132,6 @@ export default Page(
 
     const handleFetchNextBatch = () => {
       if (filteredData.length <= 1 && !isRefetching) {
-        playSound('challenge');
         refetch();
       }
     };
@@ -207,7 +205,7 @@ export default Page(
                             width={700}
                             contain
                           />
-                          {playerData.rankType !== NewOrderRankType.Acolyte && (
+                          {currentUser?.isModerator && (
                             <ActionIcon
                               component={Link}
                               href={`/images/${currentImage.id}`}
@@ -229,7 +227,7 @@ export default Page(
                       id="rating"
                       shadow="sm"
                       radius="sm"
-                      className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 p-4 text-5xl font-medium text-white"
+                      className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 p-4 text-5xl font-medium text-black dark:text-white"
                       style={{ display: 'none' }}
                       withBorder
                     >
@@ -249,7 +247,6 @@ export default Page(
                       <NewOrderImageRatings
                         imageId={currentImage.id}
                         imageNsfwLevel={currentImage.nsfwLevel}
-                        ratings={currentImage.ratings}
                       />
                     )}
                   </div>
