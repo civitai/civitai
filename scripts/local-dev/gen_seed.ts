@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import { BaseModelType, constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { notifDbWrite } from '~/server/db/notifDb';
@@ -593,12 +593,12 @@ const genModels = (num: number, userIds: number[]) => {
 /**
  * ModelVersion
  */
-const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[]) => {
+const genMvs = (num: number, modelData: { id: number; uploadType: ModelUploadType }[]) => {
   const ret = [];
 
   for (let step = 1; step <= num; step++) {
     const model = rand(modelData);
-    const isTrain = model.type === 'Trained';
+    const isTrain = model.uploadType === 'Trained';
     const created = faker.date.past({ years: 3 }).toISOString();
     const isDeleted = fbool(0.05);
     const isPublished = fbool(0.4);
@@ -607,7 +607,7 @@ const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[])
       randw([
         { value: `V${faker.number.int(6)}`, weight: 5 },
         { value: generateRandomName(faker.number.int({ min: 1, max: 6 })), weight: 1 },
-      ]), //name
+      ]), // name
       rand([null, `<p>${faker.lorem.sentence()}</p>`]), // description
       isTrain ? faker.number.int({ min: 10, max: 10_000 }) : null, // steps
       isTrain ? faker.number.int({ min: 1, max: 200 }) : null, // epochs
@@ -630,7 +630,14 @@ const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[])
       isPublished ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // publishedAt
       rand([null, 1, 2]), // clipSkip
       null, // vaeId // TODO
-      rand([null, ...constants.baseModelTypes]), // baseModelType
+      randw([
+        {
+          value: null,
+          weight: 1,
+        },
+        { value: 'Standard', weight: 30 },
+        { value: rand(constants.baseModelTypes.filter((v) => v !== 'Standard')), weight: 2 },
+      ]), // baseModelType
       isTrain
         ? rand([
             '{}',
@@ -655,80 +662,88 @@ const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[])
       ]), // nsfwLevel
       null, // earlyAccessConfig // TODO
       null, // earlyAccessEndsAt // TODO
-      model.type, // uploadType
+      model.uploadType, // uploadType
     ];
     ret.push(row);
   }
   return ret;
 };
 
-/**
- * ModelFile
- */
-const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[]) => {
-  const ret = [];
+// TODO do these URLs work?
+const _modelFileTypeMap = {
+  Model: {
+    ext: 'safetensors',
+    url: 'https://civitai-delivery-worker-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/modelVersion/627691/Capitan_V2_Nyakumi_Neko_style.safetensors',
+    meta: '{"fp": "fp16", "size": "full", "format": "SafeTensor"}',
+    metaTrain:
+      '{"format": "SafeTensor", "selectedEpochUrl": "https://orchestration.civitai.com/v1/consumer/jobs/2604a7f9-fced-4279-bc4e-05fc3bd95e29/assets/Capitan_V2_Nyakumi_Neko_style.safetensors"}',
+  },
+  'Training Data': {
+    ext: 'zip',
+    url: 'https://civitai-delivery-worker-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/training-images/3625125/806329TrainingData.yqVq.zip',
+    meta: '{"fp": null, "size": null, "format": "Other"}',
+    metaTrain:
+      '{"format": "Other", "numImages": 26, "ownRights": false, "numCaptions": 26, "shareDataset": false, "trainingResults": {"jobId": "c5657331-beee-488d-97fa-8b9e6d6fd48f", "epochs": [{"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000001.safetensors", "epoch_number": 1, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_00_20240904200838.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_01_20240904200845.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_02_20240904200852.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000002.safetensors", "epoch_number": 2, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_00_20240904201044.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_01_20240904201051.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_02_20240904201058.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000003.safetensors", "epoch_number": 3, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_00_20240904201248.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_01_20240904201255.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_02_20240904201302.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000004.safetensors", "epoch_number": 4, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_00_20240904201452.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_01_20240904201459.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_02_20240904201505.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000005.safetensors", "epoch_number": 5, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_00_20240904201656.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_01_20240904201702.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_02_20240904201709.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000006.safetensors", "epoch_number": 6, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_00_20240904201900.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_01_20240904201907.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_02_20240904201913.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000007.safetensors", "epoch_number": 7, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_00_20240904202103.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_01_20240904202110.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_02_20240904202117.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000008.safetensors", "epoch_number": 8, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_00_20240904202306.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_01_20240904202313.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_02_20240904202320.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000009.safetensors", "epoch_number": 9, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_00_20240904202510.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_01_20240904202517.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_02_20240904202523.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo.safetensors", "epoch_number": 10, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_00_20240904202715.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_01_20240904202721.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_02_20240904202728.png"}]}], "history": [{"time": "2024-09-04T19:58:04.411Z", "jobId": "c5657331-beee-488d-97fa-8b9e6d6fd48f", "status": "Submitted"}, {"time": "2024-09-04T19:58:10.988Z", "status": "Processing", "message": ""}, {"time": "2024-09-04T20:29:37.747Z", "status": "InReview", "message": "Job complete"}], "attempts": 1, "end_time": "2024-09-04T20:29:35.087Z", "start_time": "2024-09-04T19:58:09.668Z", "submittedAt": "2024-09-04T19:58:04.411Z", "transactionId": "2ebb5147-5fd3-4dbb-a735-e206d218686b"}}',
+  },
+  Archive: {
+    ext: 'zip',
+    url: 'https://civitai-delivery-worker-prod-2023-05-01.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/91602/default/bingLogoRemoval.2ayv.zip',
+    meta: '{"fp": null, "size": null, "format": "Other"}',
+    metaTrain: '{"fp": null, "size": null, "format": "Other"}',
+  },
+  Config: {
+    ext: 'yaml',
+    url: 'https://civitai-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/14014/training-images/somnia140.cR9o.yaml',
+    meta: '{"format": "Other"}',
+    metaTrain: '{"format": "Other"}',
+  },
+  Negative: {
+    ext: 'pt',
+    url: 'https://civitai-delivery-worker-prod-2023-10-01.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/default/3336/aloeanticgi1500.sPBn.pt',
+    meta: '{"fp": null, "size": null, "format": "Other"}',
+    metaTrain: '{"fp": null, "size": null, "format": "Other"}',
+  },
+  'Pruned Model': {
+    ext: 'safetensors',
+    url: 'https://civitai-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/78515/training-images/mihaV3E100.cCux.safetensors',
+    meta: '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
+    metaTrain: '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
+  },
+};
 
-  // TODO do these URLs work?
-  const typeMap = {
-    Model: {
-      ext: 'safetensors',
-      url: 'https://civitai-delivery-worker-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/modelVersion/627691/Capitan_V2_Nyakumi_Neko_style.safetensors',
-      meta: '{"fp": "fp16", "size": "full", "format": "SafeTensor"}',
-      metaTrain:
-        '{"format": "SafeTensor", "selectedEpochUrl": "https://orchestration.civitai.com/v1/consumer/jobs/2604a7f9-fced-4279-bc4e-05fc3bd95e29/assets/Capitan_V2_Nyakumi_Neko_style.safetensors"}',
-    },
-    'Training Data': {
-      ext: 'zip',
-      url: 'https://civitai-delivery-worker-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/training-images/3625125/806329TrainingData.yqVq.zip',
-      meta: '{"fp": null, "size": null, "format": "Other"}',
-      metaTrain:
-        '{"format": "Other", "numImages": 26, "ownRights": false, "numCaptions": 26, "shareDataset": false, "trainingResults": {"jobId": "c5657331-beee-488d-97fa-8b9e6d6fd48f", "epochs": [{"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000001.safetensors", "epoch_number": 1, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_00_20240904200838.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_01_20240904200845.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_02_20240904200852.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000002.safetensors", "epoch_number": 2, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_00_20240904201044.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_01_20240904201051.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_02_20240904201058.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000003.safetensors", "epoch_number": 3, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_00_20240904201248.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_01_20240904201255.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_02_20240904201302.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000004.safetensors", "epoch_number": 4, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_00_20240904201452.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_01_20240904201459.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_02_20240904201505.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000005.safetensors", "epoch_number": 5, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_00_20240904201656.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_01_20240904201702.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_02_20240904201709.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000006.safetensors", "epoch_number": 6, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_00_20240904201900.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_01_20240904201907.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_02_20240904201913.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000007.safetensors", "epoch_number": 7, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_00_20240904202103.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_01_20240904202110.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_02_20240904202117.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000008.safetensors", "epoch_number": 8, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_00_20240904202306.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_01_20240904202313.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_02_20240904202320.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000009.safetensors", "epoch_number": 9, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_00_20240904202510.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_01_20240904202517.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_02_20240904202523.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo.safetensors", "epoch_number": 10, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_00_20240904202715.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_01_20240904202721.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_02_20240904202728.png"}]}], "history": [{"time": "2024-09-04T19:58:04.411Z", "jobId": "c5657331-beee-488d-97fa-8b9e6d6fd48f", "status": "Submitted"}, {"time": "2024-09-04T19:58:10.988Z", "status": "Processing", "message": ""}, {"time": "2024-09-04T20:29:37.747Z", "status": "InReview", "message": "Job complete"}], "attempts": 1, "end_time": "2024-09-04T20:29:35.087Z", "start_time": "2024-09-04T19:58:09.668Z", "submittedAt": "2024-09-04T19:58:04.411Z", "transactionId": "2ebb5147-5fd3-4dbb-a735-e206d218686b"}}',
-    },
-    Archive: {
-      ext: 'zip',
-      url: 'https://civitai-delivery-worker-prod-2023-05-01.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/91602/default/bingLogoRemoval.2ayv.zip',
-      meta: '{"fp": null, "size": null, "format": "Other"}',
-      metaTrain: '{"fp": null, "size": null, "format": "Other"}',
-    },
-    Config: {
-      ext: 'yaml',
-      url: 'https://civitai-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/14014/training-images/somnia140.cR9o.yaml',
-      meta: '{"format": "Other"}',
-      metaTrain: '{"format": "Other"}',
-    },
-    Negative: {
-      ext: 'pt',
-      url: 'https://civitai-delivery-worker-prod-2023-10-01.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/default/3336/aloeanticgi1500.sPBn.pt',
-      meta: '{"fp": null, "size": null, "format": "Other"}',
-      metaTrain: '{"fp": null, "size": null, "format": "Other"}',
-    },
-    'Pruned Model': {
-      ext: 'safetensors',
-      url: 'https://civitai-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/78515/training-images/mihaV3E100.cCux.safetensors',
-      meta: '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
-      metaTrain: '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
-    },
-  };
+const _genMFileData = (
+  num: number,
+  step: number,
+  mv: { id: number; uploadType: ModelUploadType }
+) => {
+  const isTrain = mv.uploadType === 'Trained';
+  const created = faker.date.past({ years: 3 }).toISOString();
+  const passScan = fbool(0.98);
 
-  for (let step = 1; step <= num; step++) {
-    const mv = rand(mvData);
-    const isTrain = mv.type === 'Trained';
-    const created = faker.date.past({ years: 3 }).toISOString();
-    const passScan = fbool(0.98);
-    const type = randw([
-      { value: 'Model', weight: 8 },
-      { value: 'Training Data', weight: 5 },
-      { value: 'Archive', weight: 1 },
-      { value: 'Config', weight: 1 },
-      { value: 'Negative', weight: 1 },
-      { value: 'Pruned Model', weight: 1 },
-    ]);
+  const availTypes = [
+    { value: 'Model', weight: 20 },
+    { value: 'Training Data', weight: 5 },
+    { value: 'Archive', weight: 1 },
+    { value: 'Config', weight: 1 },
+    { value: 'Negative', weight: 1 },
+    { value: 'Pruned Model', weight: 1 },
+  ] as const;
+  const seenTypes: string[] = [];
+
+  const rows = [];
+  let currentId = step;
+
+  for (let i = 0; i < num; i++) {
+    currentId++;
+    const remainingTypes = availTypes.filter((type) => !seenTypes.includes(type.value));
+    const type = randw(remainingTypes);
+    seenTypes.push(type);
 
     const row = [
       (type === 'Training Data'
         ? `${mv.id}_training_data`
-        : `${faker.word.noun()}_${faker.number.int(100)}`) + `.${typeMap[type].ext}`, // name
-      typeMap[type].url, // url
+        : `${faker.word.noun()}_${faker.number.int(100)}`) + `.${_modelFileTypeMap[type].ext}`, // name
+      _modelFileTypeMap[type].url, // url
       faker.number.float(2_000_000), // sizeKB
       created, // createdAt
       mv.id, // modelVersionId
@@ -743,7 +758,7 @@ const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[])
       passScan ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // scannedAt
       passScan
         ? `{"url": "${
-            typeMap[type].url
+            _modelFileTypeMap[type].url
           }", "fixed": null, "hashes": {"CRC32": "${faker.string.hexadecimal({
             length: 8,
             casing: 'upper',
@@ -776,9 +791,9 @@ const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[])
         { value: true, weight: 3 },
         { value: false, weight: 1 },
       ]), // exists
-      step, // id
+      currentId, // id
       type, // type
-      isTrain ? typeMap[type].metaTrain : typeMap[type].meta, // metadata
+      isTrain ? _modelFileTypeMap[type].metaTrain : _modelFileTypeMap[type].meta, // metadata
       rand(Object.values(ModelFileVisibility)), // visibility
       fbool(0.1), // dataPurged
       type === 'Model'
@@ -789,6 +804,54 @@ const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[])
         { value: faker.word.noun(), weight: 1 },
       ]), // overrideName
     ];
+    rows.push(row);
+  }
+
+  return { rows, currentId };
+};
+
+/**
+ * ModelFile
+ */
+const genMFiles = (mvData: { id: number; uploadType: ModelUploadType }[]) => {
+  const ret: (string | number | boolean | null)[][] = [];
+
+  let step = 0;
+
+  mvData.forEach((mv) => {
+    const numFiles = randw([
+      { value: 0, weight: 1 },
+      { value: 1, weight: 16 },
+      { value: 2, weight: 2 },
+      { value: 3, weight: 1 },
+    ]);
+
+    if (numFiles > 0) {
+      const { rows, currentId } = _genMFileData(numFiles, step, mv);
+      ret.push(...rows);
+      step = currentId;
+    }
+  });
+  return ret;
+};
+
+/**
+ * CoveredCheckpoint
+ */
+const genCoveredCheckpoints = (num: number, mvData: { id: number; modelId: number }[]) => {
+  const ret = [];
+  const remainingMvs = [...mvData];
+
+  for (let step = 1; step <= num; step++) {
+    if (!remainingMvs.length) break;
+    const mvIndex = faker.number.int({ min: 0, max: remainingMvs.length - 1 });
+    const mv = remainingMvs.splice(mvIndex, 1)[0];
+
+    const row = [
+      mv.modelId, // model_id
+      mv.id, // version_id
+    ];
+
     ret.push(row);
   }
   return ret;
@@ -2983,7 +3046,14 @@ const genRows = async (truncate = true) => {
   const models = genModels(numRows, userIds);
   const modelIds = await insertRows('Model', models);
   const modelData = models
-    .map((m) => ({ id: m[6] as number, userId: m[7] as number, type: m[25] as ModelUploadType }))
+    .map((m) => ({
+      id: m[6] as number,
+      userId: m[7] as number,
+      uploadType: m[25] as ModelUploadType,
+      type: m[2] as ModelType,
+      status: m[9] as ModelStatus,
+      availability: m[28] as Availability,
+    }))
     .filter((m) => modelIds.includes(m.id));
 
   const mvs = genMvs(Math.ceil(numRows * 3), modelData);
@@ -2996,13 +3066,29 @@ const genRows = async (truncate = true) => {
         id: mv[6] as number,
         modelId: modelId,
         userId: matchModel?.userId,
-        type: mv[mv.length - 1] as ModelUploadType,
+        uploadType: mv[28] as ModelUploadType,
+        type: matchModel?.type,
+        status: matchModel?.status,
+        availability: matchModel?.availability,
+        baseModelType: mv[19] as BaseModelType, // scannedAt
       };
     })
     .filter((mv) => mvIds.includes(mv.id));
 
-  const mFiles = genMFiles(Math.ceil(numRows * 4), mvData);
+  const mFiles = genMFiles(mvData);
   await insertRows('ModelFile', mFiles);
+
+  const coveredCheckpoints = genCoveredCheckpoints(
+    Math.ceil(numRows / 2),
+    mvData.filter(
+      (mv) =>
+        mv.type === 'Checkpoint' &&
+        mv.status === 'Published' &&
+        mv.availability === 'Public' &&
+        mv.baseModelType === 'Standard'
+    )
+  );
+  await insertRows('CoveredCheckpoint', coveredCheckpoints, false);
 
   const reviews = genReviews(Math.ceil(numRows * 5), userIds, mvData);
   const reviewIds = await insertRows('ResourceReview', reviews);
