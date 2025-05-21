@@ -11,6 +11,12 @@ export const transactionCreateSchema = z.object({
 
 export type PriceEstimateInput = z.infer<typeof priceEstimateInputSchema>;
 export const priceEstimateInputSchema = z.object({
-  amount: z.number(),
+  unitAmount: z.number(),
   currencyTo: z.string().optional(),
+});
+
+export type CreatePaymentInvoiceInput = z.infer<typeof createPaymentInvoiceInputSchema>;
+export const createPaymentInvoiceInputSchema = z.object({
+  unitAmount: z.number(),
+  buzzAmount: z.number(),
 });

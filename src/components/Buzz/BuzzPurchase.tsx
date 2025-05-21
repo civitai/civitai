@@ -518,7 +518,7 @@ export const BuzzPurchase = ({
               </Accordion.Item>
             </Accordion>
 
-            <Group spacing="xs" mt="md" noWrap>
+            <Stack spacing="xs" mt="md" noWrap>
               <BuzzPurchasePaymentButton
                 unitAmount={unitAmount}
                 buzzAmount={buzzAmount}
@@ -550,7 +550,7 @@ export const BuzzPurchase = ({
                   Cancel
                 </Button>
               )}
-            </Group>
+            </Stack>
           </Stack>
         </Stack>
       </Grid.Col>

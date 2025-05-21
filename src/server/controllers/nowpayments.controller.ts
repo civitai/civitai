@@ -3,8 +3,13 @@ import { Context } from '~/server/createContext';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { verifyCaptchaToken } from '~/server/recaptcha/client';
-import { PriceEstimateInput, TransactionCreateInput } from '~/server/schema/nowpayments.schema';
+import {
+  CreatePaymentInvoiceInput,
+  PriceEstimateInput,
+  TransactionCreateInput,
+} from '~/server/schema/nowpayments.schema';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import Decimal from 'decimal.js';
 // import { createBuzzPurchaseTransaction } from '~/server/services/nowpayments.service';
 
 export const getStatus = async () => {
@@ -35,11 +40,11 @@ export const getStatus = async () => {
 };
 
 export const getPriceEstimate = async ({ input }: { input: PriceEstimateInput }) => {
-  const defaultCurrency = 'USD';
+  const defaultCurrency = 'usd';
   const targetCurrency = input.currencyTo ?? 'btc'; // Bitcoin
 
   const estimate = await nowpaymentsCaller.getPriceEstimate({
-    amount: input.amount / 100,
+    amount: input.unitAmount / 100,
     currency_from: defaultCurrency,
     currency_to: targetCurrency,
   });
@@ -59,9 +64,37 @@ export const getPriceEstimate = async ({ input }: { input: PriceEstimateInput })
     throw new Error('Failed to get currency');
   }
 
-  const isValid = currency?.min_amount > estimate?.estimated_amount;
+  // 1 =  minAmount is greater than estimate.
+  // We use decimal.js because bitcoin amounts can be very small and we need to compare them accurately.
+  const isValid = new Decimal(currency?.min_amount).comparedTo(estimate?.estimated_amount) < 1;
+
+  console.log({ isValid, currency, estimate });
 
   return isValid ? estimate : null;
+};
+
+export const createPaymentInvoice = async ({
+  input,
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: CreatePaymentInvoiceInput;
+}) => {
+  const invoice = await nowpaymentsCaller.createPaymentInvoice({
+    price_amount: input.unitAmount / 100,
+    price_currency: 'usd',
+    order_id: `${ctx.user.id}-${input.buzzAmount}-${new Date().getTime()}`,
+    order_description: `Buzz purchase for ${input.buzzAmount} BUZZ`,
+    is_fixed_rate: true,
+  });
+
+  console.log('Invoice created', invoice);
+
+  if (!invoice) {
+    throw new Error('Failed to create invoice');
+  }
+
+  return invoice;
 };
 
 export const createBuzzPurchaseTransactionHandler = async ({

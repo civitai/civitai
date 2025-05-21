@@ -5,55 +5,56 @@ export namespace NOWPayments {
   export const createPaymentInvoiceInputSchema = z.object({
     price_amount: z.number(),
     price_currency: z.string(),
-    order_id: z.string(),
-    order_description: z.string(),
-    ipn_callback_url: z.string(),
-    success_url: z.string(),
-    cancel_url: z.string(),
+    order_id: z.string().nullish(),
+    order_description: z.string().nullish(),
+    ipn_callback_url: z.string().nullish(),
+    success_url: z.string().nullish(),
+    cancel_url: z.string().nullish(),
+    is_fixed_rate: z.boolean().nullish(),
+    is_fee_paid_by_user: z.boolean().nullish(),
   });
 
   export type CreatePaymentInvoiceResponse = z.infer<typeof createPaymentInvoiceResponseSchema>;
   export const createPaymentInvoiceResponseSchema = z.object({
-    payment_id: z.string(),
-    payment_status: z.string(),
-    pay_address: z.string(),
-    price_amount: z.number(),
-    price_currency: z.string(),
-    pay_amount: z.number(),
-    pay_currency: z.string(),
-    order_id: z.string(),
-    order_description: z.string(),
-    ipn_callback_url: z.string(),
-    created_at: z.string(),
-    updated_at: z.string(),
-    purchase_id: z.string(),
-    amount_received: z.number().nullable(),
-    payin_extra_id: z.string().nullable(),
-    smart_contract: z.string(),
-    network: z.string(),
-    network_precision: z.number(),
-    time_limit: z.number().nullable(),
-    burning_percent: z.number().nullable(),
-    expiration_estimate_date: z.string(),
+    id: z.string(), // Invoice ID
+    token_id: z.string(), // Internal identifier
+    order_id: z.string(), // Order ID specified in request
+    order_description: z.string(), // Order description specified in request
+    price_amount: z.string(), // Base price in fiat
+    price_currency: z.string(), // Ticker of base fiat currency
+    pay_currency: z.string().nullish(), // Currency customer will pay with, or null if customer can choose
+    ipn_callback_url: z.string().nullish(), // Link to your endpoint for IPN notifications
+    invoice_url: z.string(), // Link to the payment page for the customer
+    success_url: z.string().nullish(), // Redirect link after successful payment
+    cancel_url: z.string().nullish(), // Redirect link if payment fails
+    customer_email: z.string().nullish(), // Customer email, if provided
+    partially_paid_url: z.string().nullish(), // Redirect link if payment gets partially paid status
+    payout_currency: z.string().nullish(), // Ticker of payout currency
+    created_at: z.string(), // Time of invoice creation
+    updated_at: z.string(), // Time of latest invoice update
+    is_fixed_rate: z.boolean(), // True if Fixed Rate option is enabled
+    is_fee_paid_by_user: z.boolean(), // True if Fee Paid By User option is enabled
+    source: z.string().nullish(), // Source of the payment, if provided
+    collect_user_data: z.boolean(), // True if user data collection is enabled
   });
 
   export type CreatePaymentInput = z.infer<typeof createPaymentInputSchema>;
   export const createPaymentInputSchema = z.object({
     price_amount: z.number(),
     price_currency: z.string(),
-    pay_amount: z.number().optional(),
-    pay_currency: z.string().optional(),
-    ipn_callback_url: z.string().optional(),
-    order_id: z.string().optional(),
-    order_description: z.string().optional(),
-    payout_address: z.string().optional(),
-    payout_currency: z.string().optional(),
-    payout_extra_id: z.string().optional(),
-    success_url: z.string().optional(),
-    cancel_url: z.string().optional(),
-    partially_paid_url: z.string().optional(),
-    is_fixed_rate: z.boolean().optional(),
-    is_fee_paid_by_user: z.boolean().optional(),
+    pay_amount: z.number().nullish(),
+    pay_currency: z.string().nullish(),
+    ipn_callback_url: z.string().nullish(),
+    order_id: z.string().nullish(),
+    order_description: z.string().nullish(),
+    payout_address: z.string().nullish(),
+    payout_currency: z.string().nullish(),
+    payout_extra_id: z.string().nullish(),
+    success_url: z.string().nullish(),
+    cancel_url: z.string().nullish(),
+    partially_paid_url: z.string().nullish(),
+    is_fixed_rate: z.boolean().nullish(),
+    is_fee_paid_by_user: z.boolean().nullish(),
   });
 
   export type CreatePaymentResponse = z.infer<typeof createPaymentResponseSchema>;
@@ -71,13 +72,13 @@ export namespace NOWPayments {
     created_at: z.string(),
     updated_at: z.string(),
     purchase_id: z.string(),
-    amount_received: z.number().nullable(),
-    payin_extra_id: z.string().nullable(),
+    amount_received: z.number().nullish(),
+    payin_extra_id: z.string().nullish(),
     smart_contract: z.string(),
     network: z.string(),
     network_precision: z.number(),
-    time_limit: z.number().nullable(),
-    burning_percent: z.number().nullable(),
+    time_limit: z.number().nullish(),
+    burning_percent: z.number().nullish(),
     expiration_estimate_date: z.string(),
   });
 
@@ -85,8 +86,8 @@ export namespace NOWPayments {
   export type EstimatePriceInput = z.infer<typeof estimatePriceInputSchema>;
   export const estimatePriceInputSchema = z.object({
     amount: z.number(),
-    currency_from: z.string().optional(),
-    currency_to: z.string().optional(),
+    currency_from: z.string().nullish(),
+    currency_to: z.string().nullish(),
   });
 
   export type EstimatePriceResponse = z.infer<typeof estimatePriceResponseSchema>;
@@ -94,7 +95,7 @@ export namespace NOWPayments {
     currency_from: z.string(),
     currency_to: z.string(),
     amount_from: z.number(),
-    estimated_amount: z.number(),
+    estimated_amount: z.union([z.number(), z.string()]),
   });
 
   // Minimum Payment Amount

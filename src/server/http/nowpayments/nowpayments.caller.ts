@@ -59,7 +59,7 @@ class NOWPaymentsCaller extends HttpCaller {
   async getMinimumPaymentAmount(
     input: NOWPayments.MinAmountInput
   ): Promise<NOWPayments.MinAmountResponse | null> {
-    const response = await this.getRaw(`/v1/min-amount`, { queryParams: input });
+    const response = await this.getRaw(`/min-amount`, { queryParams: input });
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get minimum payment amount', response.statusText);
@@ -72,20 +72,24 @@ class NOWPaymentsCaller extends HttpCaller {
   async getPriceEstimate(
     input: NOWPayments.EstimatePriceInput
   ): Promise<NOWPayments.EstimatePriceResponse | null> {
-    const response = await this.getRaw(`/v1/estimate`, { queryParams: input });
+    console.log('Estimate Price Input', input);
+    const response = await this.getRaw(`/estimate`, { queryParams: input });
+
+    console.log(response);
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get price estimate', response.statusText);
       return null;
     }
     const data = await response.json();
+
     return NOWPayments.estimatePriceResponseSchema.parse(data);
   }
 
   async getExchangeRate(
     input: NOWPayments.ExchangeRateInput
   ): Promise<NOWPayments.ExchangeRateResponse | null> {
-    const response = await this.getRaw(`/v1/exchange-rate`, { queryParams: input });
+    const response = await this.getRaw(`/exchange-rate`, { queryParams: input });
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get exchange rate', response.statusText);
@@ -98,20 +102,21 @@ class NOWPaymentsCaller extends HttpCaller {
   async createPaymentInvoice(
     input: NOWPayments.CreatePaymentInvoiceInput
   ): Promise<NOWPayments.CreatePaymentInvoiceResponse | null> {
-    const response = await this.postRaw(`/v1/invoice`, { body: JSON.stringify(input) });
+    const response = await this.postRaw(`/invoice`, { body: JSON.stringify(input) });
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to create payment invoice', response.statusText);
       return null;
     }
     const data = await response.json();
+
     return NOWPayments.createPaymentInvoiceResponseSchema.parse(data);
   }
 
   async getInvoiceStatus(
     invoice_id: string
   ): Promise<NOWPayments.CreatePaymentInvoiceResponse | null> {
-    const response = await this.getRaw(`/v1/invoice/${invoice_id}`);
+    const response = await this.getRaw(`/invoice/${invoice_id}`);
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get invoice status', response.statusText);
@@ -124,7 +129,7 @@ class NOWPaymentsCaller extends HttpCaller {
   async createPayment(
     input: NOWPayments.CreatePaymentInput
   ): Promise<NOWPayments.CreatePaymentResponse | null> {
-    const response = await this.postRaw(`/v1/payment`, { body: JSON.stringify(input) });
+    const response = await this.postRaw(`/payment`, { body: JSON.stringify(input) });
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to create payment', response.statusText);
@@ -135,7 +140,7 @@ class NOWPaymentsCaller extends HttpCaller {
   }
 
   async getPaymentStatus(payment_id: string): Promise<NOWPayments.CreatePaymentResponse | null> {
-    const response = await this.getRaw(`/v1/payment/${payment_id}`);
+    const response = await this.getRaw(`/payment/${payment_id}`);
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get payment status', response.statusText);
@@ -151,7 +156,7 @@ class NOWPaymentsCaller extends HttpCaller {
     sortBy?: string;
     orderBy?: string;
   }): Promise<NOWPayments.PaymentsListResponse | null> {
-    const response = await this.getRaw(`/v1/payment`, { queryParams: params });
+    const response = await this.getRaw(`/payment`, { queryParams: params });
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get payments', response.statusText);
@@ -162,7 +167,7 @@ class NOWPaymentsCaller extends HttpCaller {
   }
 
   async getBalance(): Promise<NOWPayments.BalanceResponse | null> {
-    const response = await this.getRaw(`/v1/balance`);
+    const response = await this.getRaw(`/balance`);
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get balance', response.statusText);
@@ -173,7 +178,7 @@ class NOWPaymentsCaller extends HttpCaller {
   }
 
   async getPayoutCurrencies(): Promise<NOWPayments.PayoutCurrenciesResponse | null> {
-    const response = await this.getRaw(`/v1/payout-currencies`);
+    const response = await this.getRaw(`/payout-currencies`);
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get payout currencies', response.statusText);
