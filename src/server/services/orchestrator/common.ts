@@ -401,15 +401,18 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
   });
 
   return workflows.map((workflow) => {
+    const transactions =
+      workflow.transactions?.list?.map(({ type, amount, accountType }) => ({
+        type,
+        amount,
+        accountType,
+      })) ?? [];
+
     return {
       id: workflow.id as string,
       status: workflow.status ?? ('unassignend' as WorkflowStatus),
       createdAt: workflow.createdAt ? new Date(workflow.createdAt) : new Date(),
-      totalCost:
-        workflow.transactions?.list?.reduce((acc, value) => {
-          if (value.type === 'debit') return acc + value.amount;
-          else return acc - value.amount;
-        }, 0) ?? 0,
+      transactions,
       cost: workflow.cost,
       tags: workflow.tags ?? [],
       duration:
