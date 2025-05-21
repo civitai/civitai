@@ -244,6 +244,11 @@ export default defineNextConfig(
           destination: '/creator-program',
           permanent: true,
         },
+        {
+          source: '/research/rater',
+          destination: '/games/knights-of-new-order',
+          permanent: true,
+        },
       ];
     },
     output: 'standalone'

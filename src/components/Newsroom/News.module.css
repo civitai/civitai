@@ -16,12 +16,15 @@
   transition: border-color 0.2s;
 
   &:hover {
-    // background-color: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-1));
+    /* background-color: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-1)); */
     border-color: var(--mantine-color-blue-7);
   }
 
   &:hover .action {
-    background-color: alpha(var(--mantine-color-blue-7), light-dark(0.1, 0.05));
+    background-color: light-dark(
+      alpha(var(--mantine-color-blue-7), 0.1),
+      alpha(var(--mantine-color-blue-7), 0.05)
+    );
   }
 }
 
@@ -39,7 +42,7 @@
 .title {
   font-size: var(--mantine-font-size-lg);
 
-  @container (min-width: 48rem) {
+  @container (min-width: theme('screens.sm')) {
     font-size: var(--mantine-font-size-xl);
   }
 }
@@ -54,11 +57,10 @@
   margin-top: var(--mantine-spacing-xs);
   margin-bottom: var(--mantine-spacing-md);
 
-  @container (min-width: 48rem) {
+  @container (min-width: theme('screens.sm')) {
     font-size: var(--mantine-font-size-lg);
   }
 }
 
-.action {
-  // Styles for the action button, background set on card hover
-}
+/* Styles for the action button, background set on card hover */
+.action {}

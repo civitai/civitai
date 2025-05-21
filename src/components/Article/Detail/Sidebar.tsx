@@ -13,7 +13,7 @@ import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { useHeadingsData } from '~/hooks/useHeadingsData';
 import type { ArticleGetById } from '~/server/services/article.service';
-import utilClasses from '~/lib/helpers.module.scss';
+import utilClasses from '~/libs/helpers.module.scss';
 
 export function Sidebar({ articleId, attachments, creator }: Props) {
   const { nestedHeadings } = useHeadingsData();

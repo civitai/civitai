@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Badge,
   Box,
   Center,
@@ -38,7 +37,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { constants } from '~/server/common/constants';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import classes from './[id].module.scss';
+import classes from './[id].module.css';
 import clsx from 'clsx';
 
 const excludeLegendsRegex = /Donors|Knights/i;

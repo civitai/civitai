@@ -301,7 +301,11 @@ export function ModelVersionWizard({ data }: Props) {
 
   return (
     <FilesProvider model={modelData} version={modelVersion}>
-      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to edit your model version. Please try again later."} />
+      <ReadOnlyAlert
+        message={
+          "Civitai is currently in read-only mode and you won't be able to edit your model version. Please try again later."
+        }
+      />
       <div className="container max-w-sm pb-4">
         <Link legacyBehavior href={`/models/${modelData?.id}`} passHref>
           <Anchor size="xs">

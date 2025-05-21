@@ -10,7 +10,7 @@ import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { FeatureIntroduction } from '../../components/FeatureIntroduction/FeatureIntroduction';
-import classes from './index.module.scss';
+import classes from './index.module.css';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

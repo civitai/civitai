@@ -28,7 +28,7 @@ import { BuildBudget, BuildFeatures } from '~/server/schema/build-guide.schema';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import classes from './index.module.scss';
+import classes from './index.module.css';
 
 const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
 const processors = ['AMD', 'Intel'] as const;

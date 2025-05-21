@@ -19,7 +19,7 @@ import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import classes from '~/styles/SafetyPage.module.scss';
+import classes from './index.module.scss';
 
 const contentRoot = 'src/static-content/rules';
 const files = ['minors', 'real-people'];

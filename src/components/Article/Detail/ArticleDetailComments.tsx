@@ -1,7 +1,7 @@
 import { Stack, Group, Text, Loader, Center, Divider, Title, Button, Modal } from '@mantine/core';
 import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 
-import classes from '~/components/CommentsV2/Comment/Comment.module.scss';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 import { IconAlertCircle, IconMessageCancel } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useState } from 'react';
@@ -92,7 +92,11 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
                     <Divider
                       label={
                         <Group gap="xs" align="center">
-                          <Text variant="link" style={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                          <Text
+                            variant="link"
+                            style={{ cursor: 'pointer' }}
+                            onClick={toggleShowMore}
+                          >
                             Show {remaining} More
                           </Text>
                         </Group>
@@ -168,7 +172,11 @@ const HiddenCommentsModal = ({ opened, onClose, entityId, userId }: HiddenCommen
                     <Divider
                       label={
                         <Group gap="xs" align="center">
-                          <Text variant="link" style={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                          <Text
+                            variant="link"
+                            style={{ cursor: 'pointer' }}
+                            onClick={toggleShowMore}
+                          >
                             Show {remaining} More
                           </Text>
                         </Group>

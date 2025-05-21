@@ -44,7 +44,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ResourceReviewPagedModel } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import classes from './ModelReviews.module.scss';
+import classes from './review.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,

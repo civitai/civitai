@@ -1,42 +1,20 @@
-import {
-  Anchor,
-  Box,
-  Button,
-  Center,
-  Container,
-  Grid,
-  Loader,
-  Paper,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Button, Center, Loader, Paper, Stack, Text, Title } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { useQueryBounty } from '~/components/Bounty/bounty.utils';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { BountyGetById } from '~/types/router';
-import { ClubManagementNavigation } from '~/components/Club/ClubManagementNavigation';
-import { InputText } from '~/libs/form';
-import { useRouter } from 'next/router';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
 // import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
-import UserProfileEntry from '~/pages/user/[username]';
 import { useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import React, { useState } from 'react';
-import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { trpc } from '~/utils/trpc';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { IconAlertCircle, IconPlus } from '@tabler/icons-react';
+import { IconPlus } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
-import classes from '~/components/Club/ClubPost/ClubFeed/ClubFeed.module.scss';
+import classes from '~/components/Club/ClubPost/ClubFeed.module.scss';
 
 const querySchema = z.object({ id: z.coerce.number() });
 

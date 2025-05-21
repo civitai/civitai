@@ -9,18 +9,16 @@ import {
   Button,
   Drawer,
   ButtonProps,
-  useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { BuzzWithdrawalRequestStatus, PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
+import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
-import classes from './PurchasableRewardsFiltersDropdown.module.scss';
+import classes from './PurchasableRewardsModeratorFiltersDropdown.module.scss';
 import clsx from 'clsx';
 
 type Filters = Omit<GetPaginatedPurchasableRewardsModeratorSchema, 'limit'>;
@@ -31,7 +29,6 @@ export function PurchasableRewardsFiltersModeratorDropdown({
   ...buttonProps
 }: Props) {
   const mobile = useIsMobile();
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
   const [opened, setOpened] = useState(false);

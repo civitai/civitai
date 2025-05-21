@@ -11,7 +11,7 @@ import { useClubContributorStatus } from '~/components/Club/club.utils';
 import { ClubPostUpsertForm } from '~/components/Club/ClubPost/ClubPostUpsertForm';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { createServerSideProps } from '../../../../../server/utils/server-side-helpers';
-import classes from '~/components/Club/ClubPost/ClubFeed/ClubFeed.module.scss';
+import classes from '~/components/Club/ClubPost/ClubFeed.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

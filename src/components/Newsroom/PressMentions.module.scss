@@ -23,7 +23,7 @@
   margin-top: var(--mantine-spacing-sm);
   margin-bottom: var(--mantine-spacing-md);
 
-  @container (min-width: 48rem) {
+  @container (min-width: theme('screens.sm')) {
     font-size: var(--mantine-font-size-xl);
   }
 }

@@ -46,7 +46,7 @@
 .title {
   font-size: var(--mantine-font-size-lg);
 
-  @container (min-width: 48rem) {
+  @container (min-width: theme('screens.sm')) {
     // md breakpoint (Mantine default)
     font-size: var(--mantine-font-size-xl);
   }
@@ -55,7 +55,7 @@
 .text {
   font-size: var(--mantine-font-size-md);
 
-  @container (min-width: 48rem) {
+  @container (min-width: theme('screens.sm')) {
     font-size: var(--mantine-font-size-lg);
   }
 }

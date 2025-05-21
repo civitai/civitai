@@ -35,7 +35,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import classes from '~/components/Club/ClubPost/ClubFeed/ClubFeed.module.scss';
+import classes from '~/components/Club/ClubPost/ClubFeed.module.scss';
 
 const querySchema = z.object({ id: z.coerce.number() });
 

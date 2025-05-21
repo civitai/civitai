@@ -233,7 +233,11 @@ export default function Auctions({
             </ContainerGrid2.Col>
           )}
 
-          <ContainerGrid2.Col span={{ base: 12, md: 8 }} display="flex" style={{ justifyContent: 'center' }}>
+          <ContainerGrid2.Col
+            span={{ base: 12, md: 8 }}
+            display="flex"
+            style={{ justifyContent: 'center' }}
+          >
             {slug !== MY_BIDS ? <AuctionInfo /> : <AuctionMyBids />}
           </ContainerGrid2.Col>
         </ContainerGrid2>

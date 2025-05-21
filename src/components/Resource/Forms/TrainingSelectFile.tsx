@@ -33,11 +33,10 @@ import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.sto
 import { ModelVersionById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB, formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import classes from './TrainingSelectFile.module.scss';
+import classes from './TrainingSelectFile.module.css';
 import clsx from 'clsx';
 
 const TRANSMITTER_KEY = 'trainer';

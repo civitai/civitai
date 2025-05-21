@@ -8,7 +8,7 @@ import { Meta } from '~/components/Meta/Meta';
 // import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
-import styles from './index.module.scss';
+import styles from './index.module.css';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,

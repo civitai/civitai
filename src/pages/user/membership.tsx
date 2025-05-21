@@ -47,7 +47,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { booleanString } from '~/utils/zod-helpers';
-import styles from './membership.module.scss';
+import styles from './membership.module.css';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

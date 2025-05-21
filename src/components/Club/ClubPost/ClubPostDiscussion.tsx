@@ -1,7 +1,7 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
 import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
-import classes from '~/components/CommentsV2/Comment/Comment.module.scss';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 
 type Props = {
   clubId: number;
@@ -45,7 +45,11 @@ export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
                     <Divider
                       label={
                         <Group gap="xs" align="center">
-                          <Text variant="link" style={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                          <Text
+                            variant="link"
+                            style={{ cursor: 'pointer' }}
+                            onClick={toggleShowMore}
+                          >
                             Show {remaining} More
                           </Text>
                         </Group>

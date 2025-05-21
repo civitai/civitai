@@ -1,6 +1,6 @@
-import { Stack, Group, Text, Loader, Center, Divider, Paper } from '@mantine/core';
+import { Stack, Text, Loader, Center, Divider } from '@mantine/core';
 import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
-import classes from '~/components/CommentsV2/Comment/Comment.module.scss';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 import { ReturnToRootThread } from '../CommentsV2/ReturnToRootThread';
 
 type Props = {

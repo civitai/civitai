@@ -2,7 +2,7 @@ import { Button, Card, Stack, Text, Title } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { CivitaiNewsItem } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
-import classes from './News.module.scss';
+import classes from './News.module.css';
 
 export function News({ articles }: { articles: CivitaiNewsItem[] }) {
   return (
