@@ -1,7 +1,9 @@
 import {
   Accordion,
+  Anchor,
   Button,
   Center,
+  Checkbox,
   Chip,
   Grid,
   Group,
@@ -538,13 +540,13 @@ export const BuzzPurchase = ({
                 />
               )} */}
 
-              <BuzzNowPaymentsButton
+              {/* <BuzzNowPaymentsButton
                 unitAmount={unitAmount}
                 buzzAmount={buzzAmount}
                 onPurchaseSuccess={onPurchaseSuccess}
                 disabled={!ctaEnabled}
                 purchaseSuccessMessage={purchaseSuccessMessage}
-              />
+              /> */}
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">
                   Cancel

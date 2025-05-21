@@ -1,3 +1,4 @@
+import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
@@ -23,6 +24,31 @@ class NOWPaymentsCaller extends HttpCaller {
     super(baseUrl, {
       headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
     });
+  }
+
+  private sortObject = (obj: MixedObject): MixedObject => {
+    return Object.keys(obj)
+      .sort()
+      .reduce((result, key) => {
+        result[key] =
+          obj[key] && typeof obj[key] === 'object' ? this.sortObject(obj[key]) : obj[key];
+        return result;
+      }, {} as MixedObject);
+  };
+
+  validateWebhookEvent(signature: string, payload: MixedObject) {
+    if (!env.NOW_PAYMENTS_IPN_KEY) throw new Error('Missing NOW_PAYMENTS_IPN_KEY env');
+
+    const sortedPayload = this.sortObject(payload);
+
+    const hash = createHmac('sha512', env.NOW_PAYMENTS_IPN_KEY)
+      .update(JSON.stringify(sortedPayload))
+      .digest('hex');
+    return {
+      isValid: hash.toString().toLowerCase() === signature,
+      hash: hash.toString().toLowerCase(),
+      signature,
+    };
   }
 
   static getInstance(): NOWPaymentsCaller {
