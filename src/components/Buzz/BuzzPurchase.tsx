@@ -1,5 +1,6 @@
 import {
   Accordion,
+  Anchor,
   Button,
   Center,
   Chip,
@@ -461,12 +462,23 @@ export const BuzzPurchase = ({
                   onValidate={onValidate}
                 />
               )} */}
+
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">
                   Cancel
                 </Button>
               )}
             </Group>
+
+            <Stack spacing={0}>
+              <p className="mb-0 text-xs opacity-50">
+                By clicking Pay Now, you agree to our{' '}
+                <Anchor href="/content/tos">Terms of Service</Anchor>
+              </p>
+              <p className="text-xs opacity-50">
+                Transactions will appear as CIVIT AI INC on your billing statement
+              </p>
+            </Stack>
           </Stack>
         </Stack>
       </Grid.Col>
