@@ -8,6 +8,7 @@ import {
   useContext,
   useState,
 } from 'react';
+import { MY_BIDS } from '~/server/common/constants';
 import type { GetAllAuctionsReturn } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 
@@ -43,7 +44,7 @@ export const useAuctionContext = () => {
   return context;
 };
 
-export const MY_BIDS = 'my-bids';
+
 
 export const AuctionContextProvider = ({ children }: { children: ReactNode }) => {
   const [selectedAuction, setSelectedAuction] =

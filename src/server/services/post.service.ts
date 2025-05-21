@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -83,6 +82,7 @@ import {
   UpdatePostImageInput,
 } from './../schema/post.schema';
 import { isValidAIGeneration } from '~/utils/image-utils';
+import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
 type GetAllPostsRaw = {
   id: number;
@@ -702,7 +702,7 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
       AND ${Prisma.raw(isModerator ? '1 = 1' : 'i."userId" = p."userId"')}
   `;
   if (images.length) {
-    for (const image of images) await deleteImageById({ id: image.id, updatePost: false });
+    for (const image of images) await deleteImageById({ id: image.id });
   }
 
   await bustCachesForPost(id);

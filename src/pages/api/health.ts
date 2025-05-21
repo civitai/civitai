@@ -5,6 +5,7 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { initWorkers } from '~/server/event-queue/workers';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { registerCounter } from '~/server/prom/client';
@@ -95,6 +96,12 @@ const checkFns = {
   //     return false;
   //   });
   // },
+  async bullMq() {
+    return await initWorkers().catch((e) => {
+      logError({ error: e, name: 'bull-mq', details: null });
+      return false;
+    });
+  },
 } as const;
 type CheckKey = keyof typeof checkFns;
 const counters = (() =>
@@ -151,9 +158,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   });
 });
 
-function timeoutAsyncFn(fn: () => Promise<boolean>) {
+function timeoutAsyncFn(fn: () => Promise<any>) {
   return Promise.race([
     fn(),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), env.HEALTHCHECK_TIMEOUT)),
+    new Promise<any>((resolve) => setTimeout(() => resolve(false), env.HEALTHCHECK_TIMEOUT)),
   ]);
 }

@@ -1362,6 +1362,11 @@ export const MAX_APPEAL_MESSAGE_LENGTH = 220;
 
 export const FEATURED_MODEL_COLLECTION_ID = 104;
 
+export const MY_BIDS = 'my-bids';
+
+export const MIN_DONATION_GOAL = 1000;
+export const MAX_DONATION_GOAL = 1000000000;
+
 export const newOrderConfig = {
   baseExp: 100,
   blessedBuzzConversionRatio: 0.001,

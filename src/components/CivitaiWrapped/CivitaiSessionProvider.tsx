@@ -64,7 +64,7 @@ export function CivitaiSessionProvider({
   );
 }
 
-export type CivitaiSessionUser = SessionUser & {
+type CivitaiSessionUser = SessionUser & {
   isMember: boolean;
   refresh: () => Promise<Session | null>;
   showNsfw: boolean;
@@ -76,8 +76,8 @@ export type CivitaiSessionUser = SessionUser & {
 };
 
 type SharedUser = { settings: BrowsingSettings };
-export type AuthedUser = { type: 'authed' } & SharedUser & CivitaiSessionUser;
-export type UnauthedUser = { type: 'unauthed' } & SharedUser;
+type AuthedUser = { type: 'authed' } & SharedUser & CivitaiSessionUser;
+type UnauthedUser = { type: 'unauthed' } & SharedUser;
 
 export type CurrentUser = Omit<
   AuthedUser,

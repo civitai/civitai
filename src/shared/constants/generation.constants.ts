@@ -11,6 +11,7 @@ import {
   Sampler,
 } from '~/server/common/constants';
 import { GenerationLimits } from '~/server/schema/generation.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { MediaType, ModelType } from '~/shared/utils/prisma/enums';

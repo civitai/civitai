@@ -1,10 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
-import {
-  MAX_DONATION_GOAL,
-  MIN_DONATION_GOAL,
-} from '~/components/Model/ModelVersions/model-version.utils';
-import { constants } from '~/server/common/constants';
+import { constants, MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
