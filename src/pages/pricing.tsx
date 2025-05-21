@@ -342,6 +342,18 @@ export default function Pricing() {
               ))}
             </ContainerGrid>
           )}
+
+          {!isLoading && (
+            <Stack spacing={0}>
+              <p className="mb-0 text-xs opacity-50">
+                By purchasing a membership, you agree to our{' '}
+                <Anchor href="/content/tos">Terms of Service</Anchor>
+              </p>
+              <p className="text-xs opacity-50">
+                Transactions will appear as CIVIT AI INC on your billing statement
+              </p>
+            </Stack>
+          )}
         </Stack>
       </Container>
     </>
