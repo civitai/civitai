@@ -74,6 +74,7 @@ import { EmblaCarouselType } from 'embla-carousel';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
+import { capitalize } from '~/utils/string-helpers';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -251,7 +252,7 @@ export function GeneratedImage({
                 message="Private generation is limited to PG, PG-13 only."
               />
             ) : blockedReason ? (
-              <BlockedBlock title="Blocked Image" message={blockedReason} />
+              <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
             ) : (
               <EdgeMedia2
                 src={image.url}
