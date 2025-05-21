@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
 import { find as findLinks } from 'linkifyjs';
 import { unfurl } from 'unfurl.js';
-import { chatBlocklist, linkifyOptions } from '~/components/Chat/util';
+import { linkifyOptions } from '~/components/Chat/util';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
@@ -219,13 +219,6 @@ export const createMessage = async ({
       const blockedByAll = otherMembers.every((cm) => blockedUserIds.includes(cm.userId));
       if (blockedByAll) {
         throw throwBadRequestError(`Unable to post in this chat`);
-      }
-    }
-
-    for (const blockRegex of chatBlocklist) {
-      if (blockRegex.test(content)) {
-        console.log(blockRegex, content);
-        throw throwBadRequestError(`Blocked words found.`);
       }
     }
   }

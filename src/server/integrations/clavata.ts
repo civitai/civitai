@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { ClavataStreamingResponse, v1CreateJobRequest, v1Outcome } from '~/types/clavata';
 
 // clavata-api-client.ts
 export interface ClavataApiClientOptions {
@@ -12,10 +13,10 @@ export interface ClavataApiClientOptions {
   confidenceThreshold?: number;
 }
 
-export interface ImageTag {
+export interface ClavataTag {
   tag: string;
   confidence: number; // 0-100
-  outcome: 'OUTCOME_FALSE' | 'OUTCOME_TRUE' | 'OUTCOME_UNSPECIFIED';
+  outcome?: v1Outcome;
 }
 
 export class ClavataApiClient {
@@ -40,13 +41,77 @@ export class ClavataApiClient {
     image: string,
     policyId?: string,
     signal?: AbortSignal
-  ): Promise<{ externalId: string; tags: ReadonlyArray<ImageTag> }> {
+  ): Promise<{ externalId: string; tags: ReadonlyArray<ClavataTag> }> {
     const base64 =
       image.startsWith('data:') || /^[A-Za-z0-9+/]+=*$/.test(image)
         ? image
         : await this.imageUrlToBase64(image, signal);
 
     return this.runJobWithBase64(base64, policyId, signal);
+  }
+
+  async runTextJobAsync(
+    text: string,
+    policyId?: string
+  ): Promise<{ externalId: string; tags: ReadonlyArray<ClavataTag> }> {
+    if (!text || !text.length) return { externalId: '', tags: [] };
+
+    const body: v1CreateJobRequest = {
+      contentData: [{ text }],
+      policyId: policyId ?? this.opts.policyId,
+      threshold: this.opts.confidenceThreshold,
+    };
+
+    const res = await this.fetchFn(`${this.opts.baseUrl}/v1/jobs/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.opts.token}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Clavata request failed (${res.status} ${res.statusText}): ${text}`);
+    }
+
+    const json = (await res.json()) as ClavataStreamingResponse;
+    console.log(json);
+
+    // TODO make sure this is right
+    if (json.error && json.error.code && json.error.code !== 0) {
+      throw new Error(
+        `Clavata request failed: ${json.error.code}|${json.error.message}|${JSON.stringify(
+          json.error.details
+        )}`
+      );
+    }
+
+    if (!json.result) {
+      throw new Error('Expected JSON with result');
+    }
+    console.log(json.result);
+
+    const externalId: string | undefined = json?.result?.jobUuid;
+    if (!externalId) {
+      throw new Error('Expected JSON with result.jobUuid');
+    }
+
+    const sectionReports = json.result.policyEvaluationReport?.sectionEvaluationReports ?? [];
+
+    const tags = sectionReports
+      .map((r) => ({
+        tag: r.name as string,
+        confidence: Math.round((r.reviewResult?.score ?? 0) * 100),
+        outcome: r.reviewResult?.outcome,
+      }))
+      .filter((t) => t.tag && t.confidence > this.opts.confidenceThreshold * 100)
+      .sort((a, b) => b.confidence - a.confidence);
+
+    // TODO other data?
+
+    return { externalId, tags };
   }
 
   /* ---------- private helpers ---------- */
@@ -62,11 +127,12 @@ export class ClavataApiClient {
       : btoa(String.fromCharCode(...new Uint8Array(buffer)));
   }
 
+  // TODO combine with above
   private async runJobWithBase64(
     base64Image: string,
     policyId?: string,
     signal?: AbortSignal
-  ): Promise<{ externalId: string; tags: ReadonlyArray<ImageTag> }> {
+  ): Promise<{ externalId: string; tags: ReadonlyArray<ClavataTag> }> {
     const body = {
       contentData: [{ image: base64Image }],
       policyId: policyId ?? this.opts.policyId,
@@ -97,14 +163,14 @@ export class ClavataApiClient {
 
     const sectionReports = json.result.policyEvaluationReport?.sectionEvaluationReports ?? [];
 
-    const tags: ImageTag[] = sectionReports
+    const tags: ClavataTag[] = sectionReports
       .map((r: any) => ({
         tag: r.name as string,
         confidence: Math.round((r.reviewResult?.score ?? 0) * 100),
         outcome: r.reviewResult?.outcome,
       }))
-      .filter((t: ImageTag) => t.tag && t.confidence > this.opts.confidenceThreshold * 100)
-      .sort((a: ImageTag, b: ImageTag) => b.confidence - a.confidence);
+      .filter((t: ClavataTag) => t.tag && t.confidence > this.opts.confidenceThreshold * 100)
+      .sort((a: ClavataTag, b: ClavataTag) => b.confidence - a.confidence);
 
     return { externalId, tags };
   }
@@ -115,7 +181,7 @@ export const clavata =
     ? new ClavataApiClient(fetch, {
         baseUrl: env.CLAVATA_ENDPOINT,
         token: env.CLAVATA_TOKEN,
-        policyId: env.CLAVATA_POLICY,
+        policyId: env.CLAVATA_POLICIES?.imageUpload,
         confidenceThreshold: 0.5,
       })
     : undefined;

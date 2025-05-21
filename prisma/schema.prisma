@@ -3590,6 +3590,21 @@ model NewOrderSmite {
   cleansedReason String?
 }
 
+enum ClavataModeration_EntityType {
+  Chat
+  Comment
+  Username
+}
+
+model ClavataModeration {
+  id         Int                          @id @default(autoincrement())
+  externalId String
+  entityType ClavataModeration_EntityType
+  entityId   Int
+  tags       Json                         @default("[]")
+  metadata   Json                         @default("{}")
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id

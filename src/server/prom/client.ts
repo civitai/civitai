@@ -63,6 +63,11 @@ export const rewardFailedCounter = registerCounter({
   help: 'Reward failed',
 });
 
+export const clavataCounter = registerCounter({
+  name: 'clavata_req_total',
+  help: 'Clavata requests',
+});
+
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;

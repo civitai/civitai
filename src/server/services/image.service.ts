@@ -27,6 +27,7 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
   getUserFollows,
@@ -118,10 +119,6 @@ import {
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import {
-  getVideoGenerationConfig,
-  videoGenerationConfig2,
-} from '~/server/orchestrator/generation/generation.config';
 import { Flags } from '~/shared/utils';
 import {
   Availability,
@@ -2496,25 +2493,25 @@ export const getImagesForModelVersion = async ({
   const engines = Object.keys(videoGenerationConfig2);
   const query = Prisma.sql`
     -- getImagesForModelVersion
-    WITH targets AS (
+   WITH targets AS (
       SELECT
-        id,
-        "modelVersionId"
-      FROM (
+        i.id,
+        mv.id AS "modelVersionId"
+      FROM unnest(ARRAY[${Prisma.join(modelVersionIds)}]) AS mv(id) 
+      CROSS JOIN LATERAL
+      (
         SELECT
-          i.id,
-          p."modelVersionId",
-          row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY i."postId", i.index) row_num
+          i.id
         FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE (p."userId" = m."userId" OR m."userId" = -1)
-          AND p."modelVersionId" IN (${Prisma.join(modelVersionIds)})
-          AND ${Prisma.join(imageWhere, ' AND ')}
-
-      ) ranked
-      WHERE ranked.row_num <= ${imagesPerVersion}
+          AND p."modelVersionId" = mv.id
+          AND p."publishedAt" IS NOT NULL AND i."needsReview" IS NULL AND i."acceptableMinor" = FALSE AND i."nsfwLevel" != 0
+        ORDER BY i."postId", i.index
+        LIMIT 20
+      ) i
     )
     SELECT
       i.id,

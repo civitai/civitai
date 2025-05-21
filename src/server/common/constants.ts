@@ -1353,3 +1353,6 @@ export const buzzBulkBonusMultipliers = [
   [300000, 1.15],
   [400000, 1.2],
 ];
+
+export const clavataPolicyKeys = ['imageUpload', 'chat', 'comment', 'username'] as const;
+export type ClavataPolicyKey = (typeof clavataPolicyKeys)[number];

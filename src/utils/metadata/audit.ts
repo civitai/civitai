@@ -1,14 +1,15 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import { normalizeText } from '~/utils/normalize-text';
+import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import blockedNSFW from './lists/blocklist-nsfw.json';
+import blocked from './lists/blocklist.json';
+import promptTags from './lists/prompt-tags.json';
 import nsfwPromptWords from './lists/words-nsfw-prompt.json';
 import nsfwWordsSoft from './lists/words-nsfw-soft.json';
 import nsfwWordsPaddle from './lists/words-paddle-nsfw.json';
-import blocked from './lists/blocklist.json';
-import youngWords from './lists/words-young.json';
 import poiWords from './lists/words-poi.json';
-import promptTags from './lists/prompt-tags.json';
+import youngWords from './lists/words-young.json';
+
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
 // #region [audit]
@@ -524,3 +525,26 @@ export function cleanPrompt({
   return { prompt, negativePrompt };
 }
 // #endregion [highlight]
+
+/*
+const wordReplace = (word: string) => {
+  return word
+    .replace(/i/g, '[i|l|1]')
+    .replace(/o/g, '[o|0]')
+    .replace(/s/g, '[s|z]')
+    .replace(/e/g, '[e|3]');
+};
+
+export const chatBlocklist = (blockedWords as [string, boolean][])
+  .map(([word, isUrl]) => {
+    if (isUrl) return [{ re: new RegExp(`.*${word}.*`, 'i'), word }];
+    const modWord = wordReplace(word);
+    const pluralWord = pluralize(word);
+    const pluralModWord = wordReplace(pluralize(word));
+    return [
+      { re: new RegExp(`\\b${modWord}\\b`, 'i'), word },
+      { re: new RegExp(`\\b${pluralModWord}\\b`, 'i'), word: pluralWord },
+    ];
+  })
+  .flat();
+ */

@@ -9,11 +9,11 @@ import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
+import { clavataModerationJobs } from '~/server/jobs/clavata-moderation';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
 import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
-import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
@@ -22,6 +22,7 @@ import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
+import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
@@ -32,12 +33,12 @@ import {
 } from '~/server/jobs/event-engine-work';
 import { fullImageExistence } from '~/server/jobs/full-image-existence';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
-import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import { Job } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
+import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
@@ -65,6 +66,7 @@ import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { metricJobs } from '~/server/jobs/update-metrics';
+import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { logToAxiom } from '~/server/logging/client';
@@ -72,7 +74,6 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
-import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -141,6 +142,7 @@ export const jobs: Job[] = [
   ...newOrderJobs,
   updateModelVersionNsfwLevelsJob,
   deliverAnnualSubscriptionBuzz,
+  ...clavataModerationJobs,
 ];
 
 const log = createLogger('jobs', 'green');
