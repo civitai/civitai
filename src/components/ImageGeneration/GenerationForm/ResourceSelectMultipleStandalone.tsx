@@ -3,13 +3,15 @@ import {
   ResourceSelectMultiple,
   ResourceSelectMultipleProps,
 } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import {
+  ResourceSelectHandler,
+  useGenerationStatus,
+} from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconPlus } from '@tabler/icons-react';
 import { withController } from '~/libs/form/hoc/withController';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useState } from 'react';
 import classes from './ResourceSelectMultipleStandalone.module.scss';
 
 export function ResourceSelectMultipleStandalone(props: ResourceSelectMultipleProps) {
@@ -18,7 +20,14 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
   const currentUser = useCurrentUser();
   const resourceIds = !!props.value?.length ? props.value.map((x) => x.id) : [];
   const atLimit = resourceIds.length >= status.limits.resources;
-  const [opened, setOpened] = useState(false);
+  // const [opened, setOpened] = useState(false);
+
+  const options = {
+    ...props.options,
+    excludeIds: resourceIds,
+  };
+
+  const resourceSelectHandler = ResourceSelectHandler(options);
 
   return (
     <PersistentAccordion
@@ -50,7 +59,18 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
                 onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setOpened(true);
+                  resourceSelectHandler
+                    .select({
+                      title: props.buttonLabel,
+                      selectSource: props.selectSource,
+                      excludedIds: resources?.map((x) => x.id),
+                    })
+                    .then((resource) => {
+                      if (!resource) return;
+                      props.onChange?.(
+                        resourceSelectHandler.getValues([...(resources ?? []), resource])
+                      );
+                    });
                 }}
                 radius="xl"
                 ml="auto"
@@ -85,12 +105,9 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
         <Accordion.Panel>
           <ResourceSelectMultiple
             {...props}
-            modalOpened={opened}
-            onCloseModal={() => setOpened(false)}
-            options={{
-              ...props.options,
-              excludeIds: resourceIds,
-            }}
+            // modalOpened={opened}
+            // onCloseModal={() => setOpened(false)}
+            options={options}
             hideButton
           />
         </Accordion.Panel>

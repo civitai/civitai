@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { videoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { isDefined } from '~/utils/type-guards';
 
 const baseGenerationSchema = z.object({
   civitaiTip: z.number().default(0),
@@ -24,7 +25,7 @@ const generationDataSchema = z.discriminatedUnion('$type', [
     data: z
       .object({
         workflow: z.string(),
-        type: z.enum(['txt2img', 'img2img']),
+        process: z.enum(['txt2img', 'img2img']),
         prompt: z.string().catch(''),
         seed: z.number().optional(),
       })
@@ -35,18 +36,6 @@ const generationDataSchema = z.discriminatedUnion('$type', [
 export type GenerationSchema = z.infer<typeof generationSchema>;
 export const generationSchema = baseGenerationSchema.and(generationDataSchema);
 
-export function getGenerationTagsForType($type: GenerationDataSchema['$type']) {
-  switch ($type) {
-    case 'videoGen':
-    case 'videoEnhancement':
-      return [WORKFLOW_TAGS.VIDEO];
-    case 'image':
-      return [WORKFLOW_TAGS.IMAGE];
-    default:
-      throw new Error(`generation tags not implemented for $type: ${$type}`);
-  }
-}
-
 export function getGenerationTags(args: GenerationDataSchema) {
   const tags = [WORKFLOW_TAGS.GENERATION];
   const type = args.$type;
@@ -55,13 +44,13 @@ export function getGenerationTags(args: GenerationDataSchema) {
       tags.push(WORKFLOW_TAGS.VIDEO);
       break;
     case 'videoGen':
-      tags.push(WORKFLOW_TAGS.VIDEO, args.data.engine);
+      tags.push(WORKFLOW_TAGS.VIDEO, args.data.engine, args.data.process);
       break;
     case 'image':
-      tags.push(WORKFLOW_TAGS.IMAGE, args.data.workflow, args.data.type);
+      tags.push(WORKFLOW_TAGS.IMAGE, args.data.workflow, args.data.process);
       break;
     default:
       throw new Error(`generation tags not implemented for $type: ${type}`);
   }
-  return tags;
+  return tags.filter(isDefined);
 }
