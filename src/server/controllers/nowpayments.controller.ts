@@ -11,6 +11,7 @@ import {
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import Decimal from 'decimal.js';
 import { env } from 'process';
+import { createBuzzOrder } from '~/server/services/nowpayments.service';
 // import { createBuzzPurchaseTransaction } from '~/server/services/nowpayments.service';
 
 export const getStatus = async () => {
@@ -85,35 +86,10 @@ export const createPaymentInvoice = async ({
     throw throwAuthorizationError('Email is required to create a transaction');
   }
 
-  const callbackUrl =
-    `${env.NEXTAUTH_URL}/api/webhooks/nowpayments?` +
-    new URLSearchParams([['buzzAmount', input.buzzAmount.toString()]]);
-
-  const successUrl =
-    `${env.NEXTAUTH_URL}/payment/nowpayments/success?` +
-    new URLSearchParams([['buzzAmount', input.buzzAmount.toString()]]);
-
-  const orderId = `${ctx.user.id}-${input.buzzAmount}-${new Date().getTime()}`;
-
-  const invoice = await nowpaymentsCaller.createPaymentInvoice({
-    price_amount: new Decimal(input.unitAmount).dividedBy(100).toNumber(), // Nowpayuemnts use actual amount. Not multiplied by 100
-    price_currency: 'usd',
-    order_id: orderId,
-    order_description: `Buzz purchase for ${input.buzzAmount} BUZZ`,
-    // is_fixed_rate: false,
-    // is_fee_paid_by_user: true,
-    ipn_callback_url: callbackUrl,
-    success_url: successUrl,
-    cancel_url: env.NEXTAUTH_URL,
+  return createBuzzOrder({
+    ...input,
+    userId: ctx.user.id,
   });
-
-  console.log(invoice);
-
-  if (!invoice) {
-    throw new Error('Failed to create invoice');
-  }
-
-  return invoice;
 };
 
 export const createBuzzPurchaseTransactionHandler = async ({

@@ -520,7 +520,7 @@ export const BuzzPurchase = ({
               </Accordion.Item>
             </Accordion>
 
-            <Stack spacing="xs" mt="md" noWrap>
+            <Stack spacing="xs" mt="md">
               <BuzzPurchasePaymentButton
                 unitAmount={unitAmount}
                 buzzAmount={buzzAmount}
@@ -540,13 +540,13 @@ export const BuzzPurchase = ({
                 />
               )} */}
 
-              {/* <BuzzNowPaymentsButton
+              <BuzzNowPaymentsButton
                 unitAmount={unitAmount}
                 buzzAmount={buzzAmount}
                 onPurchaseSuccess={onPurchaseSuccess}
                 disabled={!ctaEnabled}
                 purchaseSuccessMessage={purchaseSuccessMessage}
-              /> */}
+              />
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">
                   Cancel

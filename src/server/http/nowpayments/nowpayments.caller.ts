@@ -26,6 +26,30 @@ class NOWPaymentsCaller extends HttpCaller {
     });
   }
 
+  private authenticate = async () => {
+    if (!env.NOW_PAYMENTS_EMAIL || !env.NOW_PAYMENTS_PWD) {
+      throw new Error('Missing NOW_PAYMENTS_EMAIL or NOW_PAYMENTS_PWD env');
+    }
+
+    const response = await this.postRaw(`/auth`, {
+      body: JSON.stringify({
+        email: env.NOW_PAYMENTS_EMAIL,
+        password: env.NOW_PAYMENTS_PWD,
+      }),
+    });
+
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      console.error('Failed to authenticate', response.statusText);
+      return null;
+    }
+
+    const data = (await response.json()) as {
+      token: string;
+    };
+    return data.token;
+  };
+
   private sortObject = (obj: MixedObject): MixedObject => {
     return Object.keys(obj)
       .sort()
@@ -139,19 +163,6 @@ class NOWPaymentsCaller extends HttpCaller {
     return NOWPayments.createPaymentInvoiceResponseSchema.parse(data);
   }
 
-  async getInvoiceStatus(
-    invoice_id: string
-  ): Promise<NOWPayments.CreatePaymentInvoiceResponse | null> {
-    const response = await this.getRaw(`/invoice/${invoice_id}`);
-    if (response.status === 404) return null;
-    if (!response.ok) {
-      console.error('Failed to get invoice status', response.statusText);
-      return null;
-    }
-    const data = await response.json();
-    return NOWPayments.createPaymentInvoiceResponseSchema.parse(data);
-  }
-
   async createPayment(
     input: NOWPayments.CreatePaymentInput
   ): Promise<NOWPayments.CreatePaymentResponse | null> {
@@ -165,7 +176,9 @@ class NOWPaymentsCaller extends HttpCaller {
     return NOWPayments.createPaymentResponseSchema.parse(data);
   }
 
-  async getPaymentStatus(payment_id: string): Promise<NOWPayments.CreatePaymentResponse | null> {
+  async getPaymentStatus(
+    payment_id: string | number
+  ): Promise<NOWPayments.CreatePaymentResponse | null> {
     const response = await this.getRaw(`/payment/${payment_id}`);
     if (response.status === 404) return null;
     if (!response.ok) {
@@ -181,8 +194,21 @@ class NOWPaymentsCaller extends HttpCaller {
     page?: number;
     sortBy?: string;
     orderBy?: string;
+    invoiceId?: string | number;
   }): Promise<NOWPayments.PaymentsListResponse | null> {
-    const response = await this.getRaw(`/payment`, { queryParams: params });
+    const token = await this.authenticate();
+
+    console.log('Token', token);
+    if (!token) {
+      console.error('Failed to authenticate');
+      return null;
+    }
+
+    const response = await this.getRaw(`/payment/`, {
+      queryParams: { params },
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get payments', response.statusText);

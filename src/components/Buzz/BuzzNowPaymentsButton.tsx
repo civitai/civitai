@@ -1,20 +1,12 @@
-import { Box, Button, Stack, Text } from '@mantine/core';
-import { FUNDING, PayPalButtons } from '@paypal/react-paypal-js';
-import { useCallback, useMemo } from 'react';
+import { Button, Stack, Text } from '@mantine/core';
 import { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
 import { useMutateNowPayments, useNowPaymentsStatus } from '~/components/NowPayments/util';
-import { env } from '~/env/client';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { showSuccessNotification } from '~/utils/notifications';
+import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
 
 export const BuzzNowPaymentsButton = ({
   unitAmount,
   buzzAmount,
-  onPurchaseSuccess,
-  purchaseSuccessMessage,
   disabled,
 }: Pick<BuzzPurchaseProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
@@ -43,18 +35,25 @@ export const BuzzNowPaymentsButton = ({
   // const crypto;
 
   return (
-    <Button
-      disabled={disabled}
-      loading={creatingPaymentInvoice}
-      onClick={handleClick}
-      radius="xl"
-      fullWidth
-      color="grape"
-    >
-      Pay With Crypto{' '}
-      {!!unitAmount
-        ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
-        : ''}
-    </Button>
+    <Stack spacing={0} align="center">
+      <Button
+        disabled={disabled}
+        loading={creatingPaymentInvoice}
+        onClick={handleClick}
+        radius="xl"
+        fullWidth
+        color="grape"
+      >
+        Pay with Crypto{' '}
+        {!!unitAmount
+          ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
+          : ''}
+      </Button>
+      <Text size="xs" color="dimmed" mt={5}>
+        A fixed fee of $
+        {formatCurrencyForDisplay(NOW_PAYMENTS_FIXED_FEE, undefined, { decimals: true })} applies to
+        Crypto payments.
+      </Text>
+    </Stack>
   );
 };

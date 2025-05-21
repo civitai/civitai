@@ -1353,3 +1353,5 @@ export const buzzBulkBonusMultipliers = [
   [300000, 1.15],
   [400000, 1.2],
 ];
+
+export const NOW_PAYMENTS_FIXED_FEE = 300; // 3.00 USD
