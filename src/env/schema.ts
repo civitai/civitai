@@ -2,7 +2,6 @@
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
 import {
-  booleanString,
   commaDelimitedStringArray,
   commaDelimitedStringObject,
   stringToArray,
@@ -133,6 +132,8 @@ export const serverSchema = z.object({
   CLAVATA_ENDPOINT: z.string().url().optional(),
   CLAVATA_TOKEN: z.string().optional(),
   CLAVATA_POLICY: z.string().optional(),
+
+  TOKEN_LOGINS: commaDelimitedStringObject().optional(),
 
   EXTERNAL_IMAGE_SCANNER: z.string().optional(),
   CLAVATA_SCAN: z.enum(['off', 'shadow', 'active']).default('shadow'),
