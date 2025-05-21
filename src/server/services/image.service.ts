@@ -145,6 +145,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
+import { input } from 'motion/dist/react-m';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -268,6 +269,23 @@ type AffectedImage = {
   postId: number | undefined;
 };
 
+const reviewTypeToBlockedReason = {
+  csam: BlockImageReason.CSAM,
+  minor: BlockImageReason.TOS,
+  poi: BlockImageReason.TOS,
+  reported: BlockImageReason.TOS,
+  blocked: BlockImageReason.TOS,
+  tag: BlockImageReason.TOS,
+  newUser: BlockImageReason.Ownership,
+  appeal: BlockImageReason.TOS,
+  modRule: BlockImageReason.TOS,
+} as const;
+
+export const reviewTypeToBlockedReasonKeys = Object.keys(reviewTypeToBlockedReason) as [
+  string,
+  ...string[]
+];
+
 export const moderateImages = async ({
   ids,
   needsReview,
@@ -308,6 +326,15 @@ export const moderateImages = async ({
         },
       }).catch();
     }
+
+    await bulkAddBlockedImages({
+      data: affected
+        .filter((x) => !!x.pHash)
+        .map((x) => ({
+          hash: x.pHash,
+          reason: reviewTypeToBlockedReason[reviewType],
+        })),
+    });
 
     return affected;
   } else if (reviewAction === 'removeName') {
