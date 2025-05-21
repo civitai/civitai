@@ -55,12 +55,14 @@ test.describe('generation', () => {
 
   test('swap models', async ({ page }) => {
     await openGen({ page });
+
     await page.getByRole('button', { name: 'Swap' }).click();
     // await items?
     const firstItem = page.getByTestId('resource-select-items').locator('> div').first();
 
     const modelName = await firstItem.getByTestId('resource-select-name').innerText();
     console.log(modelName);
+    expect(modelName.length).toBeGreaterThan(0);
 
     await firstItem.getByRole('button', { name: 'Select' }).click();
 
