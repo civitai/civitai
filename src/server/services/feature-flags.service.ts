@@ -119,7 +119,9 @@ const featureFlags = createFeatureFlags({
   newOrderGame: ['mod', 'member', 'granted'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
-  annualMemberships: ['mod'],
+  cryptoPayments: ['public'],
+  annualMemberships: ['public'],
+  disablePayments: ['public'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

@@ -11,7 +11,7 @@ import type {
 import { ApiError, SubscriptionItemNotification } from '@paddle/paddle-node-sdk';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
-import { constants, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
+import { constants, HOLIDAY_PROMO_VALUE, specialCosmeticRewards } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -41,8 +41,10 @@ import {
   subscriptionProductMetadataSchema,
 } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
+import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getPlans } from '~/server/services/subscriptions.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
+import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import {
   handleLogError,
   sleep,
@@ -54,6 +56,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -184,23 +187,54 @@ export const processCompleteBuzzTransaction = async (
   const userId = meta.user_id ?? meta.userId;
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
   const amount = meta.buzz_amount ?? meta.buzzAmount;
-  const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
+
+  const { blueBuzzAdded, totalYellowBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
+    buzzAmount: amount,
+    purchasesMultiplier,
+  });
 
   // Pay the user:
-  const buzzTransaction = await createBuzzTransaction({
-    amount: buzzAmount,
+  await createBuzzTransaction({
+    amount: totalYellowBuzz,
     fromAccountId: 0,
     toAccountId: userId,
     externalTransactionId: transaction.id,
     type: TransactionType.Purchase,
     description: `Purchase of ${amount} Buzz. ${
       purchasesMultiplier && purchasesMultiplier > 1 ? 'Multiplier applied due to membership. ' : ''
-    }A total of ${buzzAmount} Buzz was added to your account.`,
+    }A total of ${numberWithCommas(totalYellowBuzz)} Buzz was added to your account.`,
     details: {
       paddleTransactionId: transaction.id,
       ...buzzTransactionExtras,
     },
   });
+
+  if (blueBuzzAdded > 0) {
+    await createBuzzTransaction({
+      amount: blueBuzzAdded,
+      fromAccountId: 0,
+      toAccountId: userId,
+      toAccountType: 'generation',
+      externalTransactionId: `${transaction.id}-bulk-reward`,
+      type: TransactionType.Purchase,
+      description: `A total of ${numberWithCommas(
+        blueBuzzAdded
+      )} Blue Buzz was added to your account for Bulk purchase.`,
+      details: {
+        paddleTransactionId: transaction.id,
+        ...buzzTransactionExtras,
+      },
+    });
+  }
+
+  if (bulkBuzzMultiplier > 1) {
+    // TODO: Grant cosmetic :shrugh:
+    const cosmeticIds = specialCosmeticRewards.bulkBuzzRewards;
+    await grantCosmetics({
+      userId,
+      cosmeticIds,
+    });
+  }
 };
 
 export const purchaseBuzzWithSubscription = async ({
@@ -509,6 +543,48 @@ export const upsertSubscription = async (
     }
   }
 
+  // Special check for special cosmetics
+  if (Object.values(specialCosmeticRewards.annualRewards).some((r) => r.length > 0)) {
+    const price = await dbWrite.price.findUnique({
+      where: { id: data.priceId },
+      select: {
+        id: true,
+        interval: true,
+        product: {
+          select: {
+            id: true,
+            metadata: true,
+          },
+        },
+      },
+    });
+
+    if (price && price.interval === 'year') {
+      // Grant special cosmetics:
+      const productMeta = price.product.metadata as SubscriptionProductMetadata;
+
+      const keys = Object.keys(specialCosmeticRewards.annualRewards).filter((k) => {
+        return (
+          constants.memberships.tierOrder.indexOf(k as typeof productMeta.tier) <=
+          constants.memberships.tierOrder.indexOf(productMeta.tier)
+        );
+      });
+
+      const cosmeticIds = keys
+        .map((k) => {
+          return specialCosmeticRewards.annualRewards[
+            k as keyof typeof specialCosmeticRewards.annualRewards
+          ];
+        })
+        .flat();
+
+      await grantCosmetics({
+        userId: user.id,
+        cosmeticIds: cosmeticIds,
+      });
+    }
+  }
+
   await invalidateSession(user.id);
   await getMultipliersForUser(user.id, true);
 };
@@ -803,9 +879,9 @@ export const updateSubscriptionPlan = async ({
           discount: discount
             ? {
                 id: discount.id,
-                effectiveFrom: 'immediately',
+                effectiveFrom: 'next_billing_period',
               }
-            : null,
+            : undefined,
         });
       } catch (e) {
         logToAxiom({

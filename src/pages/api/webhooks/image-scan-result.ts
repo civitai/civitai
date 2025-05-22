@@ -38,6 +38,7 @@ import { getComputedTags } from '~/server/utils/tag-rules';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   ImageIngestionStatus,
+  MediaType,
   ModerationRuleAction,
   NewOrderRankType,
   TagSource,
@@ -504,10 +505,7 @@ async function handleSuccess({
 
     if (Object.keys(data).length > 0) {
       data.updatedAt = new Date();
-      await dbWrite.image.updateMany({
-        where: { id },
-        data,
-      });
+      await dbWrite.image.update({ where: { id }, data });
     }
 
     // Add to scanJobs and update aiRating
@@ -526,9 +524,9 @@ async function handleSuccess({
 
     // Update scannedAt and ingestion if not blocked
     if (data.ingestion !== 'Blocked') {
-      const [{ ingestion } = { ingestion: ImageIngestionStatus.Pending }] = await dbWrite.$queryRaw<
-        { ingestion: ImageIngestionStatus }[]
-      >`
+      const [
+        { ingestion, type } = { ingestion: ImageIngestionStatus.Pending, type: MediaType.image },
+      ] = await dbWrite.$queryRaw<{ ingestion: ImageIngestionStatus; type: MediaType }[]>`
         WITH scan_count AS (
           SELECT id, COUNT(*) as count
           FROM "Image",
@@ -545,10 +543,10 @@ async function handleSuccess({
               ELSE NOW()
             END,
           "updatedAt" = NOW(),
-          "ingestion" ='Scanned'
+          "ingestion" = 'Scanned'
         FROM scan_count s
         WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS}
-        RETURNING "ingestion";
+        RETURNING "ingestion", type;
       `;
       data.ingestion = ingestion;
 
@@ -578,30 +576,32 @@ async function handleSuccess({
 
         await queueImageSearchIndexUpdate({ ids: [id], action });
 
-        // #region [NewOrder]
-        // New Order Queue Management. Only added when scan is succesful.
-        const queueDetails: { priority: 1 | 2 | 3; rankType: NewOrderRankType } = {
-          priority: 1,
-          rankType: NewOrderRankType.Knight,
-        };
+        if (type === MediaType.image) {
+          // #region [NewOrder]
+          // New Order Queue Management. Only added when scan is succesful.
+          const queueDetails: { priority: 1 | 2 | 3; rankType: NewOrderRankType } = {
+            priority: 1,
+            rankType: NewOrderRankType.Knight,
+          };
 
-        if (flags.nsfw) queueDetails.priority = 2;
+          if (flags.nsfw) queueDetails.priority = 2;
 
-        if (reviewKey) {
-          data.needsReview = reviewKey;
-          queueDetails.rankType = NewOrderRankType.Templar;
+          if (reviewKey) {
+            data.needsReview = reviewKey;
+            queueDetails.rankType = NewOrderRankType.Templar;
 
-          if (reviewKey === 'minor') queueDetails.priority = 1;
-          if (reviewKey === 'poi') queueDetails.priority = 2;
-        } else {
-          // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
-          await addImageToQueue({
-            imageIds: id,
-            rankType: queueDetails.rankType,
-            priority: queueDetails.priority,
-          });
+            if (reviewKey === 'minor') queueDetails.priority = 1;
+            if (reviewKey === 'poi') queueDetails.priority = 2;
+          } else {
+            // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
+            await addImageToQueue({
+              imageIds: id,
+              rankType: queueDetails.rankType,
+              priority: queueDetails.priority,
+            });
+          }
+          // #endregion
         }
-        // #endregion
       }
     }
 
@@ -627,7 +627,14 @@ async function logScanResultError({
   error?: any;
   message?: any;
 }) {
-  await logToAxiom({ name: 'image-scan-result', type: 'error', imageId: id, message, error });
+  await logToAxiom({
+    name: 'image-scan-result',
+    type: 'error',
+    imageId: id,
+    message,
+    stack: error.stack,
+    cause: error.cause,
+  });
 }
 
 // Tag Preprocessing

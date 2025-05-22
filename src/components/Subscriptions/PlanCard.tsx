@@ -20,6 +20,7 @@ import {
   IconCloud,
   IconHeartHandshake,
   IconHexagon,
+  IconHexagon3d,
   IconHexagonPlus,
   IconList,
   IconPhotoAi,
@@ -82,15 +83,17 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const { classes } = useStyles();
   const meta = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const subscriptionMeta = (subscription?.product.metadata ?? {}) as SubscriptionProductMetadata;
-  const planDetails = getPlanDetails(product, features) ?? {};
-  const { benefits, image } = planDetails;
   const defaultPriceId = _isActivePlan
     ? subscription?.price.id ?? product.defaultPriceId
     : product.defaultPriceId;
   const [priceId, setPriceId] = useState<string | null>(
-    product.prices.find((p) => p.id === defaultPriceId)?.id ?? product.prices[0].id
+    product.prices.find((p) => p.id === defaultPriceId)?.id ??
+      product.prices.find((p) => p.currency.toLowerCase() === 'usd')?.id ??
+      product.prices[0].id
   );
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
+  const planDetails = getPlanDetails(product, features, price.interval === 'year') ?? {};
+  const { benefits, image } = planDetails;
   const isSameInterval = _isActivePlan && subscription?.price.interval === price.interval;
   const isUpgrade =
     hasActiveSubscription &&
@@ -114,10 +117,13 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     ? subscribeBtnProps.downgrade
     : subscribeBtnProps.subscribe;
 
+  
   const disabledDueToProvider =
     !!subscription && subscription.product.provider !== product.provider;
   const disabledDueToYearlyPlan =
     !!subscription && subscription.price.interval === 'year' && price.interval === 'month';
+
+  const ctaDisabled = disabledDueToProvider || disabledDueToYearlyPlan || features.disablePayments;
 
   const metadata = (subscription?.product?.metadata ?? {
     tier: 'free',
@@ -210,7 +216,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   <Button
                     radius="xl"
                     {...btnProps}
-                    disabled={disabledDueToProvider || disabledDueToYearlyPlan}
+                    disabled={ctaDisabled}
                     onClick={() => {
                       dialogStore.trigger({
                         component: DowngradeFeedbackModal,
@@ -229,7 +235,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   <Button
                     radius="xl"
                     {...btnProps}
-                    disabled={disabledDueToProvider || disabledDueToYearlyPlan}
+                    disabled={ctaDisabled}
                     onClick={() => {
                       dialogStore.trigger({
                         component: MembershipUpgradeModal,
@@ -246,7 +252,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                 ) : (
                   <SubscribeButton
                     priceId={priceId}
-                    disabled={disabledDueToProvider || disabledDueToYearlyPlan}
+                    disabled={ctaDisabled}
                   >
                     <Button radius="xl" {...btnProps}>
                       {isActivePlan ? `You are ${meta?.tier}` : `Subscribe to ${meta?.tier}`}
@@ -265,8 +271,13 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
 
 export const getPlanDetails: (
   product: Pick<SubscriptionPlan, 'metadata' | 'name'>,
-  features: FeatureAccess
-) => PlanMeta = (product: Pick<SubscriptionPlan, 'metadata' | 'name'>, features: FeatureAccess) => {
+  features: FeatureAccess,
+  isAnnual?: boolean
+) => PlanMeta = (
+  product: Pick<SubscriptionPlan, 'metadata' | 'name'>,
+  features: FeatureAccess,
+  isAnnual
+) => {
   const metadata = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',
@@ -433,6 +444,39 @@ export const getPlanDetails: (
             <IconHexagon size={benefitIconSize} />
           ),
         iconColor: !metadata.badgeType || metadata.badgeType === 'none' ? 'gray' : 'blue',
+        iconVariant: 'light' as ThemeIconVariant,
+      },
+      {
+        content:
+          !!metadata.badgeType && !!isAnnual ? (
+            <Text lh={1}>
+              <Text
+                variant="link"
+                td="underline"
+                component="a"
+                href="/articles/14950"
+                target="_blank"
+              >
+                Exclusive cosmetics
+              </Text>
+            </Text>
+          ) : (
+            <Text lh={1}>
+              No{' '}
+              <Text
+                variant="link"
+                td="underline"
+                component="a"
+                href="/articles/14950"
+                target="_blank"
+              >
+                exclusive cosmetics
+              </Text>
+            </Text>
+          ),
+        icon: <IconHexagon3d size={benefitIconSize} />,
+        iconColor:
+          !metadata.badgeType || metadata.badgeType === 'none' || !isAnnual ? 'gray' : 'blue',
         iconVariant: 'light' as ThemeIconVariant,
       },
     ].filter(isDefined),

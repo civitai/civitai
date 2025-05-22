@@ -46,7 +46,7 @@ export function UpscaleImageModal({
 
   const whatIf = trpc.orchestrator.whatIf.useQuery({
     $type: 'image',
-    data: { workflow, type: 'img2img', ...defaultValues, ...watched },
+    data: { workflow, process: 'img2img', ...defaultValues, ...watched },
   });
 
   const generate = useGenerateWithCost(whatIf.data?.cost?.total);
@@ -54,7 +54,7 @@ export function UpscaleImageModal({
   async function handleSubmit(data: z.infer<typeof schema>) {
     await generate.mutate({
       $type: 'image',
-      data: { workflow, type: 'img2img', ...data, metadata },
+      data: { workflow, process: 'img2img', ...data, metadata },
     });
     dialog.onClose();
   }

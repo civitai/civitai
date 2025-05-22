@@ -144,14 +144,55 @@ export default function Pricing() {
             As the leading generative AI community, we&rsquo;re adding new features every week. Help
             us keep the community thriving by becoming a Supporter and get exclusive perks.
           </Text>
-          <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
-            Your Membership provides full access across all Civitai domains, ensuring the same great
-            benefits and features wherever you explore
-          </Text>
         </Stack>
       </Container>
       <Container size="xl">
         <Stack>
+          {features.disablePayments && (
+            <Center>
+              <AlertWithIcon
+                color="red"
+                iconColor="red"
+                icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
+                iconSize={28}
+                py={11}
+                maw="calc(50% - 8px)"
+              >
+                <Stack spacing={0}>
+                  <Text lh={1.2}>
+                    Purchasing or updating memberships is currently disabled. We are working hard to
+                    resolve this and will notify you when it is back up. You can still manage your
+                    active membership, and your benefits will be active until your
+                    membership&rsquo;s expiration date.{' '}
+                    <Anchor href="https://civitai.com/articles/14945" color="red.3">
+                      Learn more
+                    </Anchor>
+                  </Text>
+                </Stack>
+              </AlertWithIcon>
+            </Center>
+          )}
+          {features.cryptoPayments && features.disablePayments && (
+            <Center>
+              <AlertWithIcon
+                color="yellow"
+                iconColor="yellow"
+                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+                iconSize={28}
+                py={11}
+                maw="calc(50% - 8px)"
+              >
+                <Stack spacing={0}>
+                  <Text lh={1.2}>
+                    You can still purchase Buzz using crypto!{' '}
+                    <Anchor href="/purchase/buzz" color="yellow.7">
+                      Buy now
+                    </Anchor>
+                  </Text>
+                </Stack>
+              </AlertWithIcon>
+            </Center>
+          )}
           {subscription?.isBadState && (
             <AlertWithIcon
               color="red"
@@ -165,7 +206,7 @@ export default function Pricing() {
                   Uh oh! It looks like there was an issue with your membership. You can update your
                   payment method or renew your membership now by clicking{' '}
                   <SubscribeButton priceId={subscription.price.id}>
-                    <Anchor component="button" type="button">
+                    <Anchor component="button" type="button" disabled={features.disablePayments}>
                       here
                     </Anchor>
                   </SubscribeButton>
@@ -255,7 +296,7 @@ export default function Pricing() {
                       <Center>
                         <Box mr={6}>Annual Plans</Box>
                         <Badge p={5} color="green" variant="filled" radius="xl">
-                          Save 15%!
+                          1 month for free!
                         </Badge>
                       </Center>
                     ),
@@ -337,7 +378,11 @@ export default function Pricing() {
               </ContainerGrid.Col>
               {products.map((product) => (
                 <ContainerGrid.Col key={product.id} md={3} sm={6} xs={12}>
-                  <PlanCard product={product} subscription={subscription} />
+                  <PlanCard
+                    key={`${interval}-${product.id}`}
+                    product={product}
+                    subscription={subscription}
+                  />
                 </ContainerGrid.Col>
               ))}
             </ContainerGrid>

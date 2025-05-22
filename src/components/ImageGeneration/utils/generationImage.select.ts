@@ -22,6 +22,7 @@ export const orchestratorImageSelect = {
   useIsSelected: (args: OrchestratorImageSelectArgs) => {
     return selectStore.useIsSelected(stringify(args));
   },
+  useIsSelecting: selectStore.useIsSelecting,
   setSelected: (args: OrchestratorImageSelectArgs[]) => {
     return selectStore.setSelected(args.map(stringify));
   },

@@ -281,7 +281,7 @@ export const ratingOptions = [...browsingLevels, NsfwLevel.Blocked];
 export const damnedReasonOptions = [
   NewOrderDamnedReason.InappropriateMinors,
   NewOrderDamnedReason.RealisticMinors,
-  NewOrderDamnedReason.InappropriateRealPerson,
+  NewOrderDamnedReason.DepictsRealPerson,
   NewOrderDamnedReason.Bestiality,
   NewOrderDamnedReason.GraphicViolence,
 ] as const;
@@ -292,6 +292,7 @@ export const ratingPlayBackRates: Record<string, number> = {
   [NsfwLevel.R]: 1,
   [NsfwLevel.X]: 0.8,
   [NsfwLevel.XXX]: 0.7,
+  [NsfwLevel.Blocked]: 1,
 };
 
 export const openJudgmentHistoryModal = () =>
@@ -304,20 +305,27 @@ export const useInquisitorTools = () => {
   const queryUtils = trpc.useUtils();
 
   const smitePlayerMutation = trpc.games.newOrder.smitePlayer.useMutation({
-    onSuccess: (_, payload) => {
-      queryUtils.games.newOrder.getImagesQueue.setData(
-        undefined,
-        produce((old) => {
-          if (!old) return old;
+    onSuccess: async (_, payload) => {
+      if (payload.imageId) {
+        queryUtils.games.newOrder.getImageRaters.setData(
+          { imageId: payload.imageId },
+          produce((old) => {
+            if (!old) return old;
 
-          const imageIndex = old.findIndex((image) => image.id === payload.imageId);
-          if (imageIndex === -1) return old;
+            // Remove the rating from both Knight and Templar lists
+            for (const rankType of [NewOrderRankType.Knight, NewOrderRankType.Templar]) {
+              const ratings = old[rankType];
+              if (Array.isArray(ratings)) {
+                old[rankType] = ratings.filter((r) => r.player.id !== payload.playerId);
+              }
+            }
 
-          const image = old[imageIndex];
-          image.ratings =
-            image.ratings?.filter((rating) => rating.player.id !== payload.playerId) ?? [];
-        })
-      );
+            return old;
+          })
+        );
+      } else {
+        await queryUtils.games.newOrder.getImageRaters.invalidate();
+      }
     },
     onError: (error) => {
       showErrorNotification({ title: 'Failed to smite player', error: new Error(error.message) });
@@ -388,4 +396,13 @@ export const useQueryPlayersInfinite = (
   const flatData = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
 
   return { players: flatData, ...rest };
+};
+
+export const useQueryImageRaters = ({ imageId }: { imageId: number }) => {
+  const { data, ...rest } = trpc.games.newOrder.getImageRaters.useQuery({ imageId });
+
+  return {
+    raters: data ?? { [NewOrderRankType.Knight]: [], [NewOrderRankType.Templar]: [] },
+    ...rest,
+  };
 };
