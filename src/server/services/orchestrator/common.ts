@@ -277,13 +277,6 @@ export async function parseGenerateImageInput({
     if (params.draft && injectableResources.draft) {
       injectable.push(injectableResources.draft);
     }
-    // if (isPromptNsfw && status.minorFallback) {
-    //   injectable.push(injectableResources.safe_pos);
-    //   injectable.push(injectableResources.safe_neg);
-    // }
-    // if (!params.nsfw && status.sfwEmbed) {
-    //   injectable.push(injectableResources.civit_nsfw);
-    // }
   }
 
   const positivePrompts = [params.prompt];
@@ -692,9 +685,6 @@ function formatTextToImageStep({
     metadata?.params?.draft ??
     (injectable.draft ? versionIds.includes(injectable.draft.id) : false);
 
-  // infer nsfw from resources if not included in meta params
-  const isNsfw = metadata?.params?.nsfw ?? !versionIds.includes(injectable.civit_nsfw.id);
-
   let quantity = input.quantity ?? 1;
   if (isDraft) {
     quantity *= 4;
@@ -758,7 +748,6 @@ function formatTextToImageStep({
     height: input.height,
     seed: input.seed,
     draft: isDraft,
-    nsfw: isNsfw,
     workflow: 'txt2img',
     //support using metadata params first (one of the quirks of draft mode makes this necessary)
     clipSkip: params?.clipSkip ?? input.clipSkip,
