@@ -121,7 +121,7 @@ export default function PurchaseBuzz() {
   }
 
   return (
-    <Container size="md" mb="lg">
+    <Container size="lg" mb="lg">
       {minBuzzAmount && (
         <Alert radius="sm" color="info" mb="xl">
           <Stack gap={0}>
@@ -144,13 +144,13 @@ export default function PurchaseBuzz() {
         </Group>
       </Alert>
       <ContainerGrid2 gutter={48}>
-        <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
+        <ContainerGrid2.Col span={{ base: 12, md: 3 }}>
           <Stack>
             <Title order={2}>Buzz Benefits</Title>
             <BuzzFeatures />
           </Stack>
         </ContainerGrid2.Col>
-        <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
+        <ContainerGrid2.Col span={{ base: 12, md: 9 }}>
           <BuzzPurchase
             onPurchaseSuccess={handlePurchaseSuccess}
             minBuzzAmount={minBuzzAmount}

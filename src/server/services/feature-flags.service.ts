@@ -119,6 +119,7 @@ const featureFlags = createFeatureFlags({
   newOrderGame: ['mod', 'member', 'granted'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
+  cryptoPayments: ['mod'],
   annualMemberships: ['public'],
 });
 

@@ -57,6 +57,7 @@ import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { TransactionsPopover } from '~/components/ImageGeneration/GenerationForm/TransactionsPopover';
 import classes from './QueueItem.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -107,7 +108,6 @@ export function QueueItem({
     });
   }
 
-  const cost = request.totalCost;
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
 
@@ -168,8 +168,6 @@ export function QueueItem({
       ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
       : status;
 
-  const actualCost = cost;
-
   const completedCount = images.filter((x) => x.status === 'succeeded').length;
   const processingCount = images.filter((x) => x.status === 'processing').length;
 
@@ -208,15 +206,12 @@ export function QueueItem({
               <Text size="xs" c="dimmed">
                 {formatDateMin(request.createdAt)}
               </Text>
-              {!!actualCost &&
-                dayjs(request.createdAt).toDate() >=
-                  constants.buzz.generationBuzzChargingStartDate && (
-                  <GenerationCostPopover
-                    workflowCost={request.cost ?? {}}
-                    readOnly
-                    variant="badge"
-                  />
-                )}
+              {!!request.cost?.total && (
+                <GenerationCostPopover workflowCost={request.cost} readOnly variant="badge" />
+              )}
+              {request.transactions.length > 0 && (
+                <TransactionsPopover data={request.transactions} />
+              )}
               {!!request.duration && currentUser?.isModerator && (
                 <Badge color="yellow">Duration: {request.duration}</Badge>
               )}

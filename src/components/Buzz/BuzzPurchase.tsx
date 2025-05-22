@@ -1,7 +1,9 @@
 import {
   Accordion,
+  Anchor,
   Button,
   Center,
+  Checkbox,
   Chip,
   Grid,
   Group,
@@ -43,12 +45,14 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
+import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
-type Props = {
+export type BuzzPurchaseProps = {
   message?: string;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   onPurchaseSuccess?: () => void;
@@ -64,7 +68,7 @@ const BuzzPurchasePaymentButton = ({
   onPurchaseSuccess,
   purchaseSuccessMessage,
   disabled,
-}: Pick<Props, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
+}: Pick<BuzzPurchaseProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
@@ -205,7 +209,7 @@ export const BuzzPurchase = ({
   onCancel,
   purchaseSuccessMessage,
   ...props
-}: Props) => {
+}: BuzzPurchaseProps) => {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const canUpgradeMembership = useCanUpgrade();
@@ -525,7 +529,7 @@ export const BuzzPurchase = ({
               </Accordion.Item>
             </Accordion>
 
-            <Group gap="xs" mt="md" wrap="nowrap">
+            <Stack gap="xs" mt="md">
               <BuzzPurchasePaymentButton
                 unitAmount={unitAmount}
                 buzzAmount={buzzAmount}
@@ -544,12 +548,22 @@ export const BuzzPurchase = ({
                   onValidate={onValidate}
                 />
               )} */}
+
+              {features.cryptoPayments && (
+                <BuzzNowPaymentsButton
+                  unitAmount={unitAmount}
+                  buzzAmount={buzzAmount}
+                  onPurchaseSuccess={onPurchaseSuccess}
+                  disabled={!ctaEnabled}
+                  purchaseSuccessMessage={purchaseSuccessMessage}
+                />
+              )}
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">
                   Cancel
                 </Button>
               )}
-            </Group>
+            </Stack>
           </Stack>
         </Stack>
       </Grid.Col>

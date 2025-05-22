@@ -76,6 +76,7 @@ import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import classes from './GeneratedImage.module.css';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
+import { capitalize } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export type GeneratedImageProps = {
@@ -253,7 +254,7 @@ export function GeneratedImage({
                 message="Private generation is limited to PG, PG-13 only."
               />
             ) : blockedReason ? (
-              <BlockedBlock title="Blocked Image" message={blockedReason} />
+              <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
             ) : (
               <EdgeMedia2
                 src={image.url}

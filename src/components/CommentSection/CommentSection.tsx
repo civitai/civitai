@@ -23,12 +23,12 @@ import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEdit
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { commentUpsertInput } from '~/server/schema/comment.schema';
 import { CommentGetById, CommentGetCommentsById } from '~/types/router';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import classes from './CommentSection.module.css';
 
 export function CommentSection({ comments, modelId, parent, highlights }: Props) {
