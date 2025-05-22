@@ -1,4 +1,6 @@
-import { Button, Stack, Text } from '@mantine/core';
+import { Anchor, Button, Stack, Text } from '@mantine/core';
+import { IconInfoCircle } from '@tabler/icons-react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
 import { useMutateNowPayments, useNowPaymentsStatus } from '~/components/NowPayments/util';
 import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
@@ -16,7 +18,7 @@ export const BuzzNowPaymentsButton = ({
   const { createPaymentInvoice, creatingPaymentInvoice } = useMutateNowPayments();
   const { isLoading, healthy } = useNowPaymentsStatus();
 
-  if (isLoading || !healthy) {
+  if (!isLoading && !healthy) {
     return null;
   }
 
@@ -28,7 +30,7 @@ export const BuzzNowPaymentsButton = ({
 
     if (data.invoice_url) {
       // Open new screen so that the user can go ahead and pay.
-      window.open(data.invoice_url, '_blank');
+      window.location.replace(data.invoice_url);
     }
   };
 
@@ -37,7 +39,7 @@ export const BuzzNowPaymentsButton = ({
   return (
     <Stack spacing={0} align="center">
       <Button
-        disabled={disabled}
+        disabled={disabled || isLoading}
         loading={creatingPaymentInvoice}
         onClick={handleClick}
         radius="xl"
@@ -46,14 +48,26 @@ export const BuzzNowPaymentsButton = ({
       >
         Pay with Crypto{' '}
         {!!unitAmount
-          ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
+          ? `- $${formatCurrencyForDisplay(unitAmount + NOW_PAYMENTS_FIXED_FEE, undefined, {
+              decimals: false,
+            })}`
           : ''}
       </Button>
-      <Text size="xs" color="dimmed" mt={5}>
-        A fixed fee of $
-        {formatCurrencyForDisplay(NOW_PAYMENTS_FIXED_FEE, undefined, { decimals: true })} applies to
-        Crypto payments.
+      <Text size="xs" color="dimmed" mt={8}>
+        Crypto purchases include a $
+        {formatCurrencyForDisplay(NOW_PAYMENTS_FIXED_FEE, undefined, { decimals: true })} fee to
+        cover network expenses.
       </Text>
+      <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
+        Never purchased with Crypto before?{' '}
+        <Anchor
+          href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Learn how
+        </Anchor>
+      </AlertWithIcon>
     </Stack>
   );
 };

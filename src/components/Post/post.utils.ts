@@ -14,6 +14,7 @@ import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const usePostQueryParams = () => useZodRouteParams(postQueryParamSchema);
 
@@ -44,11 +45,14 @@ export const useQueryPosts = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
+  const currentUser = useCurrentUser();
   const browsingLevel = useBrowsingLevelDebounced();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+    ...(filters.username === currentUser?.username
+      ? []
+      : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ].filter(isDefined);
   const { data, isLoading, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
     {

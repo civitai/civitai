@@ -627,7 +627,14 @@ async function logScanResultError({
   error?: any;
   message?: any;
 }) {
-  await logToAxiom({ name: 'image-scan-result', type: 'error', imageId: id, message, error });
+  await logToAxiom({
+    name: 'image-scan-result',
+    type: 'error',
+    imageId: id,
+    message,
+    stack: error.stack,
+    cause: error.cause,
+  });
 }
 
 // Tag Preprocessing

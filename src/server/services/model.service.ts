@@ -316,7 +316,7 @@ export const getModelsRaw = async ({
   }
 
   if (disablePoi) {
-    AND.push(Prisma.sql`m."poi" = false`);
+    AND.push(Prisma.sql`(m."poi" = false OR m."userId" = ${userId})`);
   }
   if (disableMinor) {
     AND.push(Prisma.sql`m."minor" = false`);

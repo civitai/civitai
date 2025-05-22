@@ -30,7 +30,9 @@ class SignalClient {
     });
 
     if (!response.ok) {
-      throw new Error(`failed to send signal: ${target}`);
+      throw new Error(`failed to send signal: ${target}. Expected 200, got ${response.status}`, {
+        cause: await response.json(),
+      });
     }
   };
 
