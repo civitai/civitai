@@ -95,25 +95,23 @@ export const processBuzzOrder = async (paymentId: string | number) => {
       const estimate = await nowpaymentsCaller.getPriceEstimate({
         amount: payment?.price_amount as number,
         currency_from: 'usd', // We only do USD
-        currency_to: payment?.outcome_currency as string,
+        currency_to: payment?.pay_currency as string,
       });
 
       if (!estimate) {
-        log({
-          message: 'Failed to get price estimate',
-          payment,
-        });
-
-        return;
+        throw new Error('Failed to get estimate');
       }
 
-      const buzzAmount = Number(payment?.order_id.split('-')[1] as string);
-      const estimateToBuzz = Math.floor(
-        Decimal(estimate?.estimated_amount as string)
-          .mul(1000)
-          .toNumber()
+      const ratio = new Decimal(estimate?.estimated_amount).dividedBy(
+        new Decimal(estimate?.amount_from)
       );
+
+      const buzzValueUsd = new Decimal(payment.actually_paid as string | number).dividedBy(ratio);
+
+      const buzzAmount = Number(payment?.order_id.split('-')[1] as string);
+      const estimateToBuzz = Math.floor(buzzValueUsd.mul(1000).toNumber());
       const toPay = Math.min(estimateToBuzz, buzzAmount);
+
       const isPartial = toPay < buzzAmount;
       // Give user the buzz assuming it hasn't been given
       const { transactionId } = await createBuzzTransaction({
@@ -144,6 +142,7 @@ export const processBuzzOrder = async (paymentId: string | number) => {
         message: 'Failed to process payment',
         payment,
         error,
+        isPartiallyPaid,
       });
     }
   }
