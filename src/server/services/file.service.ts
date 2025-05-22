@@ -164,6 +164,7 @@ export const getFileForModelVersion = async ({
           mode: true,
           nsfw: true,
           availability: true,
+          poi: true,
         },
       },
       name: true,
@@ -178,6 +179,11 @@ export const getFileForModelVersion = async ({
   });
 
   if (!modelVersion) return { status: 'not-found' };
+
+  // disablePoi - Disables downloads for POI resources.
+  if (modelVersion.model.poi && modelVersion.model.userId !== user?.id) {
+    return { status: 'not-found' };
+  }
 
   const [versionAccess] = await hasEntityAccess({
     entityIds: [modelVersion?.id],

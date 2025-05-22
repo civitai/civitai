@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -123,11 +124,14 @@ export const useQueryModels = (
   filters?: Partial<Omit<GetAllModelsInput, 'page'>>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
+  const currentUser = useCurrentUser();
   const _filters = filters ?? {};
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(_filters.excludedTagIds ?? []),
-    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+    ...(_filters.username === currentUser?.username
+      ? []
+      : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ];
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();

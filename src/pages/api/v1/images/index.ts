@@ -108,6 +108,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       browsingLevel: _browsingLevel,
       withMeta,
       user: session?.user,
+      disableMinor: true,
+      disablePoi: true,
     });
 
     const metadata: Metadata = {

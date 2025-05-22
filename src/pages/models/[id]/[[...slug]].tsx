@@ -553,7 +553,11 @@ export default function ModelDetailsV2({
     return <NotFound />;
   }
 
-  if (model.poi && browsingSettingsAddons.settings.disablePoi) {
+  if (
+    model.poi &&
+    browsingSettingsAddons.settings.disablePoi &&
+    model.user.id !== currentUser?.id
+  ) {
     return <NotFound />;
   }
 

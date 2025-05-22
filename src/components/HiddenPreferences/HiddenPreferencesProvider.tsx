@@ -2,6 +2,7 @@ import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { HiddenTag } from '~/server/services/user-preferences.service';
 
 export type HiddenPreferencesState = {
@@ -11,6 +12,7 @@ export type HiddenPreferencesState = {
   hiddenImages: Map<number, boolean>;
   hiddenLoading: boolean;
   moderatedTags: HiddenTag[];
+  systemHiddenTags: Map<number, boolean>;
 };
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
@@ -25,6 +27,7 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
   const { data, isLoading } = useQueryHiddenPreferences();
   const currentUser = useCurrentUser();
   const disableHidden = useBrowsingSettings((x) => x.disableHidden);
+  const { settings } = useBrowsingSettingsAddons();
 
   const hidden = useMemo(() => {
     const moderatedTags = data.hiddenTags.filter((x) => !!x.nsfwLevel);
@@ -51,8 +54,9 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
       hiddenImages: images,
       hiddenLoading: isLoading,
       moderatedTags,
+      systemHiddenTags: new Map((settings?.excludedTagIds ?? []).map((id) => [id, true])),
     };
-  }, [data, isLoading, disableHidden]);
+  }, [data, isLoading, disableHidden, settings]);
 
   const hiddenDeferred = useDeferredValue(hidden);
 

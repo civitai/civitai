@@ -216,7 +216,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   const supportsMinor = ['models', 'images'].includes(targetIndex);
   const filters = [
     supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? 'poi != true OR user.id = ${currentUser?.id}'
+      ? `poi != true OR user.id = ${currentUser?.id}`
       : null,
     supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
     isModels && !currentUser?.isModerator
