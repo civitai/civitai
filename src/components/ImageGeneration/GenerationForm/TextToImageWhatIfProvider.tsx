@@ -8,6 +8,7 @@ import {
   fluxStandardAir,
   getBaseModelSetType,
   getIsFlux,
+  getIsFluxStandard,
   getIsSD3,
   getSizeFromAspectRatio,
   whatIfQueryOverrides,
@@ -56,13 +57,14 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
 
     let modelId = model?.id ?? defaultModel.id;
     const isFlux = getIsFlux(params.baseModel);
-    if (isFlux && params.fluxMode) {
+    const isFluxStandard = getIsFluxStandard(modelId);
+    if (isFlux && params.fluxMode && isFluxStandard) {
       const { version } = parseAIR(params.fluxMode);
       modelId = version;
       if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
-    if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
+    if (params.fluxUltraRaw && isFluxStandard) params.engine = 'flux-pro-raw';
     else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
     else params.engine = undefined;
 
