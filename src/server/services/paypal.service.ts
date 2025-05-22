@@ -68,7 +68,7 @@ export const createBuzzOrder = async ({
   }
 };
 
-export const processBuzzOrder = async (orderId: string) => {
+export const processBuzzOrder = async (orderId: string | number) => {
   const response = await fetch(`${env.PAYPAL_API_URL}/v2/checkout/orders/${orderId}`, {
     headers: {
       Authorization,

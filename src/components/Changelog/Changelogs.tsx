@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Badge,
   Button,
   Card,
@@ -14,11 +15,12 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { useDebouncedValue, useLocalStorage } from '@mantine/hooks';
+import { useClipboard, useDebouncedValue, useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertCircle,
   IconExternalLink,
+  IconLink,
   IconMinus,
   IconPinFilled,
   IconPlus,
@@ -29,6 +31,7 @@ import {
 import { clsx } from 'clsx';
 import dayjs from 'dayjs';
 import { isEqual } from 'lodash-es';
+import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -91,6 +94,8 @@ const ChangelogItem = ({
   lastSeen: number;
 }) => {
   const queryUtils = trpc.useUtils();
+  const router = useRouter();
+  const { copy } = useClipboard();
   const { mutate: deleteItem } = trpc.changelog.delete.useMutation();
 
   const handleDelete = (id: number) => {
@@ -124,13 +129,32 @@ const ChangelogItem = ({
     });
   };
 
+  const [isHighlighted, setIsHighlighted] = useState<string>();
+
+  useEffect(() => {
+    const { id } = router.query as { id?: string };
+    setIsHighlighted(id);
+    if (id) {
+      const elem = document.getElementById(id);
+      if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+    }
+  }, [router.query]);
+
   const typeMapped = changelogTypeMap[item.type];
   const titleGradient = !item.titleColor
     ? titleGradientTWStyles['blue']
     : titleGradientTWStyles[item.titleColor] ?? titleGradientTWStyles['blue'];
+  const slug = `${item.id}`;
 
   return (
-    <Card withBorder shadow="sm" p="md" radius="md">
+    <Card
+      withBorder
+      shadow="sm"
+      p="md"
+      radius="md"
+      id={slug}
+      className={clsx(isHighlighted === slug && 'shadow-[0_0_7px_3px] !shadow-blue-8')}
+    >
       <Card.Section withBorder inheritPadding py="md">
         <Stack spacing="sm">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between">
@@ -168,20 +192,26 @@ const ChangelogItem = ({
               </span>
             </span>
 
-            <Badge
-              color={typeMapped.color}
-              size="lg"
-              variant="light"
-              className="hidden sm:ml-4 sm:inline-flex"
-            >
-              {typeMapped.text}
-            </Badge>
+            <Group spacing="xs" className="hidden sm:ml-4 sm:inline-flex">
+              <ActionIcon
+                size="sm"
+                color="gray"
+                variant="transparent"
+                onClick={() => copy(`${window.location.href.split('#')[0]}?id=${slug}`)}
+                title="Copy link to this changelog"
+              >
+                <IconLink size={16} />
+              </ActionIcon>
+              <Badge color={typeMapped.color} size="lg" variant="light">
+                {typeMapped.text}
+              </Badge>
+            </Group>
           </div>
 
           <Group position="apart">
             <Group spacing="xs">
               <Text size="md">{dayjs(item.effectiveAt).format('MMM DD, YYYY')}</Text>
-              {item.updatedAt.getTime() > item.effectiveAt.getTime() && (
+              {dayjs(item.updatedAt) > dayjs(item.createdAt).add(1, 'hour') && (
                 <Text size="sm" color="dimmed">
                   Updated: {dayjs().to(dayjs(item.updatedAt))}
                 </Text>
