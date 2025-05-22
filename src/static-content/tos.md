@@ -140,7 +140,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
   - Impersonation of real individuals or creators.
   - Bounties requesting likenesses of real people, living or deceased.
 
-- (i) Nudity-manipulating tools or AI workflows:
+- (j) Nudity-manipulating tools or AI workflows:
   - AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" real individuals.
 
 Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
