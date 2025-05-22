@@ -281,7 +281,7 @@ export const ratingOptions = [...browsingLevels, NsfwLevel.Blocked];
 export const damnedReasonOptions = [
   NewOrderDamnedReason.InappropriateMinors,
   NewOrderDamnedReason.RealisticMinors,
-  NewOrderDamnedReason.InappropriateRealPerson,
+  NewOrderDamnedReason.DepictsRealPerson,
   NewOrderDamnedReason.Bestiality,
   NewOrderDamnedReason.GraphicViolence,
 ] as const;

@@ -210,7 +210,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
 const damnedReasonToReviewType = {
   [NewOrderDamnedReason.InappropriateMinors]: 'minor',
   [NewOrderDamnedReason.RealisticMinors]: 'csam',
-  [NewOrderDamnedReason.InappropriateRealPerson]: 'poi',
+  [NewOrderDamnedReason.DepictsRealPerson]: 'poi',
   [NewOrderDamnedReason.Bestiality]: 'reported',
   [NewOrderDamnedReason.GraphicViolence]: 'reported',
 } as const;
