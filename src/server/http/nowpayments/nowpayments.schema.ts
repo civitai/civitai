@@ -58,30 +58,32 @@ export namespace NOWPayments {
   });
 
   export type CreatePaymentResponse = z.infer<typeof createPaymentResponseSchema>;
-  export const createPaymentResponseSchema = z.object({
-    payment_id: z.union([z.string(), z.number()]),
-    invoice_id: z.union([z.string(), z.number()]).nullish(),
-    payment_status: z.string(),
-    pay_address: z.string(),
-    price_amount: z.number(),
-    price_currency: z.string(),
-    pay_amount: z.number(),
-    pay_currency: z.string(),
-    order_id: z.string(),
-    order_description: z.string(),
-    ipn_callback_url: z.string().nullish(),
-    created_at: z.string(),
-    updated_at: z.string(),
-    purchase_id: z.union([z.string(), z.number()]).nullish(),
-    amount_received: z.number().nullish(),
-    payin_extra_id: z.string().nullish(),
-    smart_contract: z.string().nullish(),
-    network: z.string().nullish(),
-    network_precision: z.number().nullish(),
-    time_limit: z.number().nullish(),
-    burning_percent: z.union([z.number(), z.string()]).nullish(),
-    expiration_estimate_date: z.string().nullish(),
-  });
+  export const createPaymentResponseSchema = z
+    .object({
+      payment_id: z.union([z.string(), z.number()]),
+      invoice_id: z.union([z.string(), z.number()]).nullish(),
+      payment_status: z.string(),
+      pay_address: z.string(),
+      price_amount: z.number(),
+      price_currency: z.string(),
+      pay_amount: z.number(),
+      pay_currency: z.string(),
+      order_id: z.string(),
+      order_description: z.string(),
+      ipn_callback_url: z.string().nullish(),
+      created_at: z.string(),
+      updated_at: z.string(),
+      purchase_id: z.union([z.string(), z.number()]).nullish(),
+      amount_received: z.number().nullish(),
+      payin_extra_id: z.string().nullish(),
+      smart_contract: z.string().nullish(),
+      network: z.string().nullish(),
+      network_precision: z.number().nullish(),
+      time_limit: z.number().nullish(),
+      burning_percent: z.union([z.number(), z.string()]).nullish(),
+      expiration_estimate_date: z.string().nullish(),
+    })
+    .passthrough();
 
   // Estimate Price
   export type EstimatePriceInput = z.infer<typeof estimatePriceInputSchema>;

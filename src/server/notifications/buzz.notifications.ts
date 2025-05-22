@@ -14,4 +14,15 @@ export const buzzNotifications = createNotificationProcessor({
       };
     },
   },
+  'partially-paid': {
+    displayName: 'Partially Paid',
+    category: NotificationCategory.Buzz,
+    toggleable: false,
+    prepareMessage: () => {
+      return {
+        message: `Thanks for purchasing Buzz via Crypto! We received a partial payment, likely due to network or conversion fees. You’ve been credited Buzz based on the amount received`,
+        url: '/user/transactions',
+      };
+    },
+  },
 });
