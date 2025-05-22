@@ -524,7 +524,6 @@ type GenerationResourceBase = {
   trainedWords: string[];
   vaeId?: number;
   baseModel: string;
-  earlyAccessEndsAt?: Date;
   earlyAccessConfig?: ModelVersionEarlyAccessConfig;
   canGenerate: boolean;
   hasAccess: boolean;
@@ -635,11 +634,9 @@ export async function getResourceData({
         (x) =>
           x.covered &&
           !x.hasAccess &&
-          x.availability === 'EarlyAccess' &&
-          x.earlyAccessEndsAt &&
-          isFutureDate(x.earlyAccessEndsAt) &&
+          x.earlyAccessConfig &&
           // Free generation will technically bypass access checks, but we still want to show the early access badge
-          !x.earlyAccessConfig?.freeGeneration
+          !x.earlyAccessConfig.freeGeneration
       )
       .map((x) => x.id);
 
@@ -660,12 +657,11 @@ export async function getResourceData({
       tupleItem.map((item) => {
         return {
           ...item,
-          earlyAccessConfig:
-            item.availability === 'EarlyAccess' && item.earlyAccessConfig
-              ? Object.keys(item.earlyAccessConfig).length
-                ? item.earlyAccessConfig
-                : undefined
-              : undefined,
+          earlyAccessConfig: item.earlyAccessConfig
+            ? Object.keys(item.earlyAccessConfig).length
+              ? item.earlyAccessConfig
+              : undefined
+            : undefined,
           hasAccess: !!(
             (
               item.hasAccess ||
