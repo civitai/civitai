@@ -17,7 +17,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
 import React from 'react';
 import clsx from 'clsx';
-import classes from './Reactions.module.scss';
+import classes from './Reactions.module.css';
 
 export type ReactionMetrics = {
   likeCount?: number;
@@ -325,7 +325,8 @@ function BuzzTippingBadge({
       color="yellow.7"
       variant="light"
       {...(buttonStyling ? buttonStyling('BuzzTip') : {})}
-      classNames={{ root: 'flex gap-0.5 items-center' }}
+      className="cursor-pointer hover:bg-yellow-5/20"
+      classNames={{ label: 'flex gap-0.5 items-center flex-nowrap' }}
     >
       <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
       <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>

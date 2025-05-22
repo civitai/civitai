@@ -107,7 +107,6 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
               <Text>
                 Apply{' '}
                 <Anchor
-                  td="underline"
                   onClick={(e: React.MouseEvent) => {
                     e.preventDefault();
                     e.stopPropagation();

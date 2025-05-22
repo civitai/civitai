@@ -1,4 +1,4 @@
-import { ActionIcon, Card, Center, Indicator, Loader, Stack } from '@mantine/core';
+import { Card, Center, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';

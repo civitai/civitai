@@ -1,4 +1,3 @@
-import { ActionIcon } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useState } from 'react';

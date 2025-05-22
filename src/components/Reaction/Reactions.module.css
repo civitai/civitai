@@ -1,0 +1,26 @@
+.reactionBadge {
+  /* // [data-disabled] state */
+  &[data-disabled] {
+    cursor: default;
+    /* // The color and background are dynamic based on the `color` prop and theme.
+    // Set these via a style prop or utility class if needed.
+    // For gray (not reacted): */
+    color: var(--mantine-color-gray-6);
+    background: transparent !important;
+  }
+
+  /* // [data-disabled] and hasReacted (blue) */
+  &[data-disabled].hasReacted {
+    color: var(--mantine-color-blue-6);
+    /* // background-color can be set via a style prop if needed */
+  }
+
+  /* // Hover state */
+  &:hover {
+    /* // The background color is dynamic based on the `color` prop and theme.
+    // For blue: */
+    background: alpha(var(--mantine-color-blue-6), 0.4);
+    /* // For gray:
+    // background: alpha(var(--mantine-color-gray-6), 0.4); */
+  }
+}

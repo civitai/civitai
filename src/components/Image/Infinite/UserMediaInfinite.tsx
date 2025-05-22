@@ -24,7 +24,7 @@ import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { postgresSlugify, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import classes from './UserMediaInfinite.module.scss';
+import classes from './UserMediaInfinite.module.css';
 
 const availableReactions = Object.keys(constants.availableReactions) as ReviewReactions[];
 
@@ -90,8 +90,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                     onChange={(reactions) => replace({ reactions: reactions as ReviewReactions[] })}
                     multiple
                   >
-                    <Group gap={4} wrap="nowrap"                     className={classes.chipGroup}
-                    >
+                    <Group gap={4} wrap="nowrap" className={classes.chipGroup}>
                       {availableReactions.map((reaction, index) => (
                         <Chip
                           key={index}

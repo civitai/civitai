@@ -3,7 +3,7 @@
   --footer-height: 45px;
 }
 
-@layer base, mantine, tailwind, utilities;
+@layer base, theme, mantine, tailwind, utilities;
 
 @layer base {
   @tailwind base;
@@ -44,9 +44,20 @@ button, input, optgroup, select, textarea {
   flex-direction: column;
 }
 
-button,
-a {
-  pointer-events: auto;
+@layer theme {
+  button, a {
+    pointer-events: auto;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button {
+    background: transparent;
+    border: none;
+  }
 }
 
 /* Don't zoom text input on iOS */
@@ -78,11 +89,6 @@ a {
     transform: translateX(-50%);
     bottom: unset;
   }
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
 }
 
 * {

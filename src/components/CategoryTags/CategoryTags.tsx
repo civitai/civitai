@@ -37,7 +37,7 @@ export function CategoryTags({
       {includeEA && <EarlyAccessBadge />}
       {includeAll && (
         <Button
-          className="uppercase overflow-visible"
+          className="overflow-visible uppercase"
           variant={!_tag ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
           color={!_tag ? 'blue' : 'gray'}
           onClick={() => _setTag(undefined)}
@@ -53,7 +53,7 @@ export function CategoryTags({
           return (
             <Button
               key={tag.id}
-              className="uppercase overflow-visible"
+              className="overflow-visible uppercase"
               variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
               onClick={() => _setTag(!active ? tag.name : undefined)}

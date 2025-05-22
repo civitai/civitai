@@ -15,7 +15,7 @@ import { IconProps } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import classes from './HomeStyleSegmentedControl.module.scss';
+import classes from './HomeStyleSegmentedControl.module.css';
 
 export function HomeStyleSegmentedControl({
   data,
@@ -50,7 +50,7 @@ export function HomeStyleSegmentedControl({
             </Text>
             {/* Ideally this is a temporary solution. We should be using the `canViewNsfw` feature flag to return the correct numbers to the users */}
             {canViewNsfw && value.count != null && (
-              <Badge>
+              <Badge classNames={{ label: 'overflow-visible' }}>
                 {loading ? <Loader size="xs" variant="dots" /> : value.count.toLocaleString()}
               </Badge>
             )}

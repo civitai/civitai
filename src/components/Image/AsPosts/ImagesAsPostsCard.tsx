@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Badge,
   getPrimaryShade,
   Group,
@@ -26,7 +25,7 @@ import {
   IconProps,
   IconUserPlus,
 } from '@tabler/icons-react';
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -55,13 +54,12 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 // import { TwCarousel } from '~/components/TwCarousel/TwCarousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
-import classes from './ImagesAsPostsCard.module.scss';
+import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ImagesAsPostsCard({
   data,
-  width: cardWidth,
   height,
 }: {
   data: ImagesAsPostModel;
@@ -164,9 +162,6 @@ export function ImagesAsPostsCard({
   //   };
   // }, [embla]);
 
-  const imageIdsString = data.images.map((x) => x.id).join('_');
-  const carouselKey = useMemo(() => `${imageIdsString}_${cardWidth}`, [imageIdsString, cardWidth]);
-
   const moderationOptions = (image: (typeof data.images)[number]) => {
     if (!showModerationOptions) return null;
     const imageAlreadyHidden = gallerySettings
@@ -236,7 +231,6 @@ export function ImagesAsPostsCard({
     ? gallerySettings.pinnedPosts?.[currentModelVersionId]?.includes(data.postId)
     : false;
   const isOP = data.user.id === model?.user.id;
-  const carouselHeight = height - 58 - 8;
 
   const cosmetic = data.images.find((i) => isDefined(i.cosmetic))?.cosmetic;
   const cosmeticData =

@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Card, Divider, Group, Skeleton, Stack, Text } from '@mantine/core';
+import { Button, Card, Divider, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconArrowRight, IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
@@ -10,7 +10,7 @@ import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import clsx from 'clsx';
-import classes from './LeaderboardsHomeBlock.module.scss';
+import classes from './LeaderboardsHomeBlock.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; showAds?: boolean };

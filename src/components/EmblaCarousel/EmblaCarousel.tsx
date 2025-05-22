@@ -178,7 +178,7 @@ function EmblaButton({
       {...props}
       style={style}
       className={clsx(
-        'flex size-[--control-size] items-center justify-center rounded-full border-gray-3 bg-white text-black shadow-sm transition-opacity duration-150 hover:opacity-100 data-[disabled]:opacity-25 data-[disabled]:hover:opacity-25',
+        'flex size-[--control-size] items-center justify-center rounded-full bg-white text-black shadow-sm transition-opacity duration-150 hover:opacity-100 data-[disabled]:opacity-25 data-[disabled]:hover:opacity-25',
         'opacity-85',
         'dark:opacity-65',
         className

@@ -1,5 +1,5 @@
 import { CloseButton, Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
-import { Button, ButtonProps, Card, Divider } from '@mantine/core';
+import { Button, ButtonProps, Card, Divider, Group } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
@@ -25,7 +25,9 @@ export function ImageMetaPopover2({
 
   return (
     <Popover className="relative flex items-center">
-      <PopoverButton>{children}</PopoverButton>
+      <PopoverButton className="flex cursor-pointer items-center justify-center border-none bg-transparent">
+        {children}
+      </PopoverButton>
       <PopoverPanel
         className="z-[500]"
         anchor="top end"
@@ -92,8 +94,10 @@ function ImageMetaPopoverInner({ imageId }: { imageId: number }) {
             }}
             className="flex-1"
           >
-            <IconBrush size={16} />
-            Remix
+            <Group gap={4} align="center">
+              <IconBrush size={16} />
+              Remix
+            </Group>
           </CloseButton>
         )}
         {meta && (

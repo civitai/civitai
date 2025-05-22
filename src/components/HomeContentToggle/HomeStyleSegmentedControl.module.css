@@ -12,8 +12,10 @@
       }
 
       &::-webkit-scrollbar-thumb {
-        background-color: light-dark(rgba(var(--mantine-color-white-rgb), 0.5),
-            rgba(var(--mantine-color-black-rgb), 0.5));
+        background-color: light-dark(
+          alpha(var(--mantine-color-black), 0.5),
+          alpha(var(--mantine-color-white), 0.5)
+        );
       }
     }
   }

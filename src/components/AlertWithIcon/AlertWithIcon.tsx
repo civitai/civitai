@@ -31,15 +31,19 @@ export const AlertWithIcon = ({
             <Text
               size={titleSize[size]}
               fw={500}
-              color={props.color ?? 'blue'}
+              c={props.color ?? 'blue'}
               style={{ lineHeight: 1.1 }}
             >
               {title}
             </Text>
           )}
-          <Text size={size} style={{ lineHeight: 1.15 }}>
-            {children}
-          </Text>
+          {typeof children === 'string' ? (
+            <Text size={size} style={{ lineHeight: 1.15 }}>
+              {children}
+            </Text>
+          ) : (
+            children
+          )}
         </Stack>
       </Group>
     </Alert>

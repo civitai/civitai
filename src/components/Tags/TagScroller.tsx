@@ -42,8 +42,8 @@ export function TagScroller({
               const shouldAdd = e.ctrlKey;
               handleChange(tag.id, shouldAdd);
             }}
-            className="uppercase"
-            size="compact-md"
+            className="overflow-visible uppercase"
+            size="compact-sm"
           >
             {tag.name}
           </Button>

@@ -1,4 +1,4 @@
-import { ActionIcon, Box, Group, Popover, Stack, Text, Title } from '@mantine/core';
+import { Box, Group, Popover, Stack, Text, Title } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight, IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo, useRef } from 'react';
@@ -11,7 +11,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsLive } from '~/hooks/useIsLive';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import homeBlockClasses from '~/components/HomeBlocks/HomeBlock.module.scss';
-import classes from './SocialHomeBlock.module.scss';
+import classes from './SocialHomeBlock.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

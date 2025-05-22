@@ -362,6 +362,9 @@ export function InteractiveTipBuzzButton({
             color: 'inherit',
             fontWeight: 'inherit',
             cursor: !selfView ? 'pointer' : 'default',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
           onClick={undefined}
         >

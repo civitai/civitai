@@ -1,4 +1,4 @@
-import { ActionIcon, Menu, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import { Menu, useComputedColorScheme } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification, updateNotification } from '@mantine/notifications';
@@ -133,7 +133,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     },
   });
 
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
   const handleToggleMute = () => {
