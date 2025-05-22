@@ -35,7 +35,7 @@ export const useMutateNowPayments = () => {
 
   const createPaymentInvoiceMutation = trpc.nowPayments.createPaymentInvoice.useMutation({
     async onSuccess() {
-      showSuccessNotification({ message: 'Payment invoice created successfully' });
+      // TODO: Nothing atm.
     },
     onError(error) {
       showErrorNotification({
