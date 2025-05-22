@@ -17,7 +17,7 @@ export const createBuzzOrder = async (input: CreatePaymentInvoiceInput & { userI
     new URLSearchParams([['buzzAmount', input.buzzAmount.toString()]]);
 
   const successUrl =
-    `${env.NEXTAUTH_URL}/payment/nowpayments/success?` +
+    `${env.NEXTAUTH_URL}/payment/nowpayments?` +
     new URLSearchParams([['buzzAmount', input.buzzAmount.toString()]]);
 
   const orderId = `${input.userId}-${input.buzzAmount}-${new Date().getTime()}`;

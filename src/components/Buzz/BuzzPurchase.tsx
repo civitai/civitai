@@ -45,6 +45,7 @@ import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
 import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -206,6 +207,7 @@ export const BuzzPurchase = ({
   purchaseSuccessMessage,
   ...props
 }: BuzzPurchaseProps) => {
+  const features = useFeatureFlags();
   const { classes, cx, theme } = useBuzzButtonStyles();
   const canUpgradeMembership = useCanUpgrade();
   const currentUser = useCurrentUser();
@@ -540,13 +542,15 @@ export const BuzzPurchase = ({
                 />
               )} */}
 
-              <BuzzNowPaymentsButton
-                unitAmount={unitAmount}
-                buzzAmount={buzzAmount}
-                onPurchaseSuccess={onPurchaseSuccess}
-                disabled={!ctaEnabled}
-                purchaseSuccessMessage={purchaseSuccessMessage}
-              />
+              {features.cryptoPayments && (
+                <BuzzNowPaymentsButton
+                  unitAmount={unitAmount}
+                  buzzAmount={buzzAmount}
+                  onPurchaseSuccess={onPurchaseSuccess}
+                  disabled={!ctaEnabled}
+                  purchaseSuccessMessage={purchaseSuccessMessage}
+                />
+              )}
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">
                   Cancel
