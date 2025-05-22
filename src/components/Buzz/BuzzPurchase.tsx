@@ -189,7 +189,7 @@ const BuzzPurchasePaymentButton = ({
       fullWidth
     >
       {features.disablePayments ? (
-        <Text>Paddle Payments are currently disabled</Text>
+        <Text>Credit Card are currently disabled</Text>
       ) : (
         <>
           Pay Now{' '}
