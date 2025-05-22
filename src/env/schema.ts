@@ -220,6 +220,13 @@ export const serverSchema = z.object({
   CREATOR_POOL_TAXES: z.coerce.number().optional(),
   CREATOR_POOL_PORTION: z.coerce.number().optional(),
   CREATOR_POOL_FORECAST_PORTION: z.coerce.number().optional().default(50),
+
+  // NOWPayments Related:
+
+  // API Related:
+  NOW_PAYMENTS_API_URL: z.string().optional(),
+  NOW_PAYMENTS_API_KEY: z.string().optional(),
+  NOW_PAYMENTS_IPN_KEY: z.string().optional(),
 });
 
 /**

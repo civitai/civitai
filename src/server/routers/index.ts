@@ -74,6 +74,7 @@ import { userLinkRouter } from './user-link.router';
 import { userPaymentConfigurationRouter } from './user-payment-configuration.router';
 import { userRouter } from './user.router';
 import { vaultRouter } from './vault.router';
+import { nowPaymentsRouter } from './nowpayments.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -151,6 +152,7 @@ export const appRouter = router({
   creatorProgram: creatorProgramRouter,
   auction: auctionRouter,
   changelog: changelogRouter,
+  nowPayments: nowPaymentsRouter,
 });
 
 // export type definition of API
