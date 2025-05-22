@@ -46,11 +46,15 @@ export const processBuzzOrder = async (paymentId: string | number) => {
   const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
 
   if (!payment) {
+    log({
+      message: 'Failed to retrieve payment status',
+      paymentId,
+    });
     throw new Error('Could not retrieve invoice data');
   }
 
   const isPaid = payment.payment_status === 'finished';
-  const alertStatus = ['partially_paid', 'confirmed'].includes(payment.payment_status);
+  const alertStatus = true; // ['partially_paid', 'confirmed'].includes(payment.payment_status);
   if (isPaid) {
     const [userId, buzzAmount] = payment.order_id.split('-').map((x) => parseInt(x));
 

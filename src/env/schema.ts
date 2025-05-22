@@ -226,8 +226,6 @@ export const serverSchema = z.object({
   NOW_PAYMENTS_API_URL: z.string().optional(),
   NOW_PAYMENTS_API_KEY: z.string().optional(),
   NOW_PAYMENTS_IPN_KEY: z.string().optional(),
-  NOW_PAYMENTS_EMAIL: z.string().optional(),
-  NOW_PAYMENTS_PWD: z.string().optional(),
 });
 
 /**
