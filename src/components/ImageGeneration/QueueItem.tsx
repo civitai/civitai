@@ -208,7 +208,7 @@ export function QueueItem({
               {!!request.cost?.total && (
                 <GenerationCostPopover workflowCost={request.cost} readOnly variant="badge" />
               )}
-              {request.transactions.length > 1 && (
+              {request.transactions.length > 0 && (
                 <TransactionsPopover data={request.transactions} />
               )}
               {!!request.duration && currentUser?.isModerator && (
