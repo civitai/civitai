@@ -1,12 +1,4 @@
-import {
-  Badge,
-  Card,
-  Loader,
-  ScrollArea,
-  Text,
-  Tooltip,
-  UnstyledButton,
-} from '@mantine/core';
+import { Badge, Card, Loader, ScrollArea, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconChevronLeft, IconHammer } from '@tabler/icons-react';
 import { useState } from 'react';
 import { NsfwLevel } from '~/server/common/enums';
@@ -45,7 +37,7 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
           }`}
         >
           <h2 className="text-lg font-semibold text-white">Raters</h2>
-          <ScrollArea.Autosize maxHeight={400}>
+          <ScrollArea.Autosize mah={400}>
             {isLoading ? (
               <div className="flex size-full items-center justify-center">
                 <Loader />

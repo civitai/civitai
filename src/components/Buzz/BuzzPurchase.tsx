@@ -1,9 +1,7 @@
 import {
   Accordion,
-  Anchor,
   Button,
   Center,
-  Checkbox,
   Chip,
   Grid,
   Group,
@@ -14,7 +12,6 @@ import {
   Text,
   ThemeIcon,
   useComputedColorScheme,
-  useMantineTheme,
 } from '@mantine/core';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -210,7 +207,7 @@ export const BuzzPurchase = ({
   purchaseSuccessMessage,
   ...props
 }: BuzzPurchaseProps) => {
-  const theme = useMantineTheme();
+  const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const canUpgradeMembership = useCanUpgrade();
   const currentUser = useCurrentUser();

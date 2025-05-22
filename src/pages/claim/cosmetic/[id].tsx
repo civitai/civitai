@@ -26,6 +26,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { numericString } from '~/utils/zod-helpers';
+import animationClasses from '~/libs/animations.module.scss';
 
 const querySchema = z.object({ id: numericString() });
 
@@ -166,16 +167,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
               </Alert>
             </Center>
           )}
-          <Center
-            style={{
-              animationName: `enterFall, jelloVertical`,
-              animationDuration: `1.5s, 2s`,
-              animationDelay: `0s, 1.5s`,
-              animationIterationCount: '1, 1',
-            }}
-            h={256}
-            my="lg"
-          >
+          <Center className={animationClasses.jelloFall} h={256} my="lg">
             {cosmetic.type === 'Badge' && (
               <EdgeMedia
                 src={(cosmetic.data as MixedObject).url}

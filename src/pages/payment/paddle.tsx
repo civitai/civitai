@@ -10,6 +10,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { usePaddle } from '~/providers/PaddleProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import animationClasses from '~/libs/animations.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -90,15 +91,7 @@ export default function CompletePaddlePaymentTransaction() {
           )}
           {success && (
             <>
-              <Center
-                style={{
-                  // animation: `${jelloVerical} 2s 1s ease-in-out`,
-                  animationName: `enterFall, jelloVertical`,
-                  animationDuration: `1.5s, 2s`,
-                  animationDelay: `0s, 1.5s`,
-                  animationIterationCount: '1, 1',
-                }}
-              >
+              <Center className={animationClasses.jelloFall}>
                 <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
               </Center>
               <Title order={1} className="text-center">

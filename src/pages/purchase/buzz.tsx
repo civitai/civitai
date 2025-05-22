@@ -23,6 +23,7 @@ import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
+import animationClasses from '~/libs/animations.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -82,14 +83,7 @@ export default function PurchaseBuzz() {
   if (success) {
     return (
       <Container size="md" mb="lg">
-        <Center
-          style={{
-            animationName: `enterFall, jelloVertical`,
-            animationDuration: `1.5s, 2s`,
-            animationDelay: `0s, 1.5s`,
-            animationIterationCount: '1, 1',
-          }}
-        >
+        <Center className={animationClasses.jelloFall}>
           <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
         </Center>
         <Title order={1} className="text-center">

@@ -72,6 +72,12 @@ const theme = createTheme({
         labelPosition: 'left',
       },
     },
+    ActionIcon: {
+      defaultProps: {
+        color: 'gray',
+        variant: 'subtle',
+      },
+    },
     // InputWrapper: {
     //   classNames: { label: 'w-full' },
     // },

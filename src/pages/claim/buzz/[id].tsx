@@ -24,6 +24,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import animationClasses from '~/libs/animations.module.scss';
 
 const querySchema = z.object({ id: z.string() });
 
@@ -65,8 +66,8 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
   // const color = claim.accountType === 'generation' ? config.
 
   const claimMutation = trpc.buzz.claim.useMutation({
-    onSuccess: async (result) => {
-      await queryUtils.buzz.getClaimStatus.setData({ id }, result);
+    onSuccess: (result) => {
+      queryUtils.buzz.getClaimStatus.setData({ id }, result);
     },
     onError: (error) => {
       showErrorNotification({
@@ -99,16 +100,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
               </Alert>
             </Center>
           )}
-          <Center
-            style={{
-              animationName: `enterFall, jelloVertical`,
-              animationDuration: `1.5s, 2s`,
-              animationDelay: `0s, 1.5s`,
-              animationIterationCount: '1, 1',
-            }}
-            h={120}
-            my="lg"
-          >
+          <Center className={animationClasses.jelloFall} h={120} my="lg">
             <Stack gap={0}>
               <Text fz={64} fw={500} ml={-30} c={color} span>
                 <Icon

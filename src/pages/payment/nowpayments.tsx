@@ -13,7 +13,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
-import { enterFall, jelloVertical } from '~/libs/animations';
+import animationClasses from '~/libs/animations.module.scss';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -37,26 +37,18 @@ export default function NOWPaymentsSuccess() {
       <Meta title="Successful Payment | Civitai" deIndex />
       <Container size="xs" mb="lg">
         <Stack>
-          <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-            <Group spacing="xs" noWrap position="center">
+          <Alert radius="sm" color="green" className="z-10">
+            <Group gap="xs" wrap="nowrap" justify="center">
               <ThemeIcon color="green" size="lg">
                 <IconCircleCheck />
               </ThemeIcon>
               <Title order={2}>Payment Complete!</Title>
             </Group>
           </Alert>
-          <Center
-            sx={{
-              // animation: `${jelloVerical} 2s 1s ease-in-out`,
-              animationName: `${enterFall}, ${jelloVertical}`,
-              animationDuration: `1.5s, 2s`,
-              animationDelay: `0s, 1.5s`,
-              animationIterationCount: '1, 1',
-            }}
-          >
+          <Center className={animationClasses.jelloFall}>
             <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
           </Center>
-          <Title order={1} align="center">
+          <Title order={1} ta="center">
             Thank you! 🎉
           </Title>
           <Text size="lg" align="center" mb="lg">

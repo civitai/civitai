@@ -193,7 +193,7 @@ const ChangelogItem = ({
               </span>
             </span>
 
-            <Group spacing="xs" className="hidden sm:ml-4 sm:inline-flex">
+            <Group gap="xs" className="hidden sm:ml-4 sm:inline-flex">
               <ActionIcon
                 size="sm"
                 color="gray"

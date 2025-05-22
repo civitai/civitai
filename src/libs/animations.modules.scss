@@ -1,3 +1,39 @@
+.wiggle {
+  animation: wiggle 0.5s ease-in-out infinite;
+}
+
+.bounceRight {
+  animation: bounceRight 1s ease-in-out infinite;
+}
+
+.vibrate {
+  animation: vibrate 0.5s ease-in-out infinite;
+}
+
+.jelloVertical {
+  animation: jelloVertical 0.5s ease-in-out infinite;
+}
+
+.enterFall {
+  animation: enterFall 1s ease-in-out forwards;
+}
+
+.fadeInOut {
+  animation: fadeInOut 0.5s ease-in-out forwards;
+}
+
+.blink {
+  animation: blink 0.5s ease-in-out infinite;
+}
+
+.jelloFall {
+  animation-name: enterFall, jelloVertical;
+  animation-duration: 1.5s, 2s;
+  animation-delay: 0s, 1.5s;
+  animation-iteration-count: 1, 1;
+
+}
+
 @keyframes wiggle {
   0% {
     transform: rotate(0deg);
