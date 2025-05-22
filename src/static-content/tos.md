@@ -3,7 +3,7 @@ title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
 ---
 
-Last Updated: 04/24/2025
+Last Updated: 05/21/2025
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](https://www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
 
@@ -90,13 +90,15 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
   Prohibited Content Includes (but is not limited to):
 
-- (a) Content involving real individuals or minors (under 18) in any sexualized context or context that insinuates, or portrays sexual intent, including but not limited to:
+- (a) Content that uses, reproduces, or is based on the likeness of real people - living or deceased - including public figures, celebrities, influencers, and private individuals, in any context.
 
-  - All stylized, anime, or cartoon content depicting children in inappropriate or sexualized situations. For a more detailed explanation, please [review our safety center for guidelines on depicting the likeness of real people and depicting minors](https://civitai.com/safety).
+- (b) Content involving minors (under 18) in any sexualized context or context that insinuates, or portrays sexual intent, including but not limited to:
+
+  - All stylized, anime, or cartoon content depicting children in inappropriate or sexualized situations. For a more detailed explanation, please [review our safety center for guidelines on depicting minors](https://civitai.com/safety).
   - "Loli", "Lolicon", "Shota", or "Shotacon" content.
   - Photorealistic minors in any context.
 
-- (b) Illegal or violent activities, including:
+- (c) Illegal or violent activities, including:
 
   - Depictions of incest, including sexual activity between immediate or close biological family members.
   - Child abuse, exploitation, or endangerment.
@@ -104,17 +106,17 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
   - Depictions of human death, brutal violence, or graphic injuries.
   - Bestiality.
 
-- (c) The following content depicting sexual activity or context that insinuates, or portrays sexual intent;
+- (d) The following content depicting sexual activity or context that insinuates, or portrays sexual intent;
 
   - Weapons aimed at or pointed toward individuals.
   - Promotion or depiction of illegal substances or regulated products (e.g., narcotics, pharmaceuticals).
   - Vomit.
 
-- (d) Content depicting sexual activity while in a mind-altered state, including;
+- (e) Content depicting sexual activity while in a mind-altered state, including;
 
   - Being drunk, drugged, under hypnosis, or mind control.
 
-- (e) The depiction of the following bodily excretions and related content, regardless of context;
+- (f) The depiction of the following bodily excretions and related content, regardless of context;
 
   - Urine.
   - Feces (scat, coprophagia, gaseous emission, object or lifeform being ejected from an anus, etc.)
@@ -122,30 +124,30 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
   - Smegma.
   - Diapers.
 
-- (f) Self-harm, body image disorders, or promotion of dangerous behavior:
+- (g) Self-harm, body image disorders, or promotion of dangerous behavior:
 
   - Cutting, mutilation, or suicide themes.
   - Depictions of anorexia, bulimia, or other disordered eating.
 
-- (g) Content that promotes hate, harm, or extremist ideologies, including:
+- (h) Content that promotes hate, harm, or extremist ideologies, including:
 
   - Hate speech or imagery targeting groups or individuals.
   - Extremist propaganda or incitement to violence.
 
-- (h) Misleading or impersonated content:
+- (i) Misleading or impersonated content:
 
   - Falsely labeled content claiming to be from another creator.
   - Impersonation of real individuals or creators.
   - Bounties requesting likenesses of real people, living or deceased.
 
-- (i) Nudity-manipulating tools or AI workflows:
+- (j) Nudity-manipulating tools or AI workflows:
   - AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" real individuals.
 
 Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
 
 In addition to the categories of explicitly prohibited content above, certain types of content are subject to additional requirements to ensure community safety, legal compliance, and content authenticity.
 
-- (j) Metadata Requirement for sexualized content, or content that insinuates, or portrays sexual intent:
+- (k) Metadata Requirement for sexualized content, or content that insinuates, or portrays sexual intent:
 
   - Such content must be accompanied by AI generation metadata. At a minimum, this must include the prompt used. Where possible, additional metadata such as model name, sampler, seed, and any other available generation parameters should also be provided.
 
@@ -222,7 +224,7 @@ In addition to the categories of explicitly prohibited content above, certain ty
 
 - 12.7 **False Notifications of Claimed Infringement or Counter Notifications.** The Copyright Act provides at 17 U.S.C. § 512(f) that: “[a]ny person who knowingly materially misrepresents under [Section 512 of the Copyright Act (17 U.S.C. § 512)] (1) that material or activity is infringing, or (2) that material or activity was removed or disabled by mistake or misidentification, will be liable for any damages, including costs and attorneys’ fees, incurred by the alleged infringer, by any copyright owner or copyright owner’s authorized licensee, or by a service provider, who is injured by such misrepresentation, as the result of [Civitai] relying upon such misrepresentation in removing or disabling access to the material or activity claimed to be infringing, or in replacing the removed material or ceasing to disable access to it.” Civitai reserves the right to seek damages from any party that submits a Notification of Claimed Infringement or Counter Notification in violation of the law.
 
-13.  **Modification of Terms.** We may, from time to time, change these Terms. Please check these Terms periodically for changes. Revisions will be effective immediately except that, for existing Users, material revisions will be effective 30 days after posting or notice to you of the revisions unless otherwise stated. We may require that you accept modified Terms in order to continue to use the Service. If you do not agree to the modified Terms, then you should remove your User Content and discontinue your use of the Service. Except as expressly permitted in this Section 13 (Modification of Terms), these Terms may be amended only by a written agreement signed by authorized representatives of the parties to these Terms.
+13. **Modification of Terms.** We may, from time to time, change these Terms. Please check these Terms periodically for changes. Revisions will be effective immediately except that, for existing Users, material revisions will be effective 30 days after posting or notice to you of the revisions unless otherwise stated. We may require that you accept modified Terms in order to continue to use the Service. If you do not agree to the modified Terms, then you should remove your User Content and discontinue your use of the Service. Except as expressly permitted in this Section 13 (Modification of Terms), these Terms may be amended only by a written agreement signed by authorized representatives of the parties to these Terms.
 
 14. **Term, Termination, and Modification of the Service**
 

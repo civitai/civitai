@@ -71,17 +71,6 @@ export function useApplyHiddenPreferences<
       ]);
     }
 
-    // Handle domain specific hidden tags
-    if ((browsingSettingsAddons.settings.excludedTagIds ?? []).length > 0) {
-      preferences.hiddenTags = new Map([
-        ...preferences.hiddenTags,
-        ...(browsingSettingsAddons.settings.excludedTagIds ?? []).map((id): [number, boolean] => [
-          id,
-          true,
-        ]),
-      ]);
-    }
-
     const { items, hidden } = filterPreferences({
       type,
       data,
@@ -177,7 +166,8 @@ function filterPreferences<
 
   const isModerator = !!currentUser?.isModerator;
   const { key, value } = paired<BaseDataTypeMap>(type, data);
-  const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, moderatedTags } = hiddenPreferences;
+  const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, moderatedTags, systemHiddenTags } =
+    hiddenPreferences;
   const maxSelectedLevel = Math.max(...parseBitwiseBrowsingLevel(browsingLevel));
   const maxBrowsingLevel = Flags.maxValue(browsingLevel);
 
@@ -202,11 +192,17 @@ function filterPreferences<
             hidden.models++;
             return false;
           }
-          for (const tag of model.tags ?? [])
+          for (const tag of model.tags ?? []) {
             if (hiddenTags.get(tag)) {
               hidden.tags++;
               return false;
             }
+
+            if (systemHiddenTags.get(tag) && !isOwner) {
+              hidden.tags++;
+              return false;
+            }
+          }
           return true;
         })
         .map(({ images, ...x }) => {
@@ -220,8 +216,14 @@ function filterPreferences<
                 if (i.nsfwLevel > maxSelectedLevel) return false;
               } else if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
-              for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
-              if (i.poi && poiDisabled) {
+              for (const tag of i.tags ?? []) {
+                if (hiddenTags.get(tag)) return false;
+
+                if (systemHiddenTags.get(tag) && !isOwner) {
+                  return false;
+                }
+              }
+              if (i.poi && poiDisabled && !isOwner) {
                 hidden.poi++;
                 return false;
               }
@@ -270,7 +272,7 @@ function filterPreferences<
           return false;
         }
 
-        if (image.poi && poiDisabled) {
+        if (image.poi && poiDisabled && !isOwner) {
           hidden.poi++;
           return false;
         }
@@ -288,11 +290,17 @@ function filterPreferences<
           hidden.images++;
           return false;
         }
-        for (const tag of image.tagIds ?? [])
+        for (const tag of image.tagIds ?? []) {
           if (hiddenTags.get(tag)) {
             hidden.tags++;
             return false;
           }
+
+          if (systemHiddenTags.get(tag) && !isOwner) {
+            hidden.tags++;
+            return false;
+          }
+        }
 
         if (!currentUser?.isModerator && !!getBlockedNsfwWords(image.prompt).length) return false;
 
@@ -318,18 +326,24 @@ function filterPreferences<
           hidden.users++;
           return false;
         }
-        for (const tag of article.tags ?? [])
+        for (const tag of article.tags ?? []) {
           if (hiddenTags.get(tag.id)) {
             hidden.tags++;
             return false;
           }
+
+          if (systemHiddenTags.get(tag.id) && !isOwner) {
+            hidden.tags++;
+            return false;
+          }
+        }
         if (article.coverImage) {
           if (hiddenImages.get(article.coverImage.id)) {
             hidden.images++;
             return false;
           }
 
-          if (article.coverImage.poi && poiDisabled) {
+          if (article.coverImage.poi && poiDisabled && !isOwner) {
             hidden.poi++;
             return false;
           }
@@ -339,11 +353,17 @@ function filterPreferences<
             return false;
           }
 
-          for (const tag of article.coverImage.tags)
+          for (const tag of article.coverImage.tags) {
             if (hiddenTags.get(tag)) {
               hidden.tags++;
               return false;
             }
+
+            if (systemHiddenTags.get(tag) && !isOwner) {
+              hidden.tags++;
+              return false;
+            }
+          }
         }
         return true;
       });
@@ -382,12 +402,17 @@ function filterPreferences<
               hidden.images++;
               return false;
             }
-            for (const tag of collection.image.tagIds ?? [])
+            for (const tag of collection.image.tagIds ?? []) {
               if (hiddenTags.get(tag)) {
                 hidden.images++;
               }
 
-            if (collection.image.poi && poiDisabled) {
+              if (systemHiddenTags.get(tag) && !isOwner) {
+                hidden.images++;
+              }
+            }
+
+            if (collection.image.poi && poiDisabled && !isOwner) {
               hidden.poi++;
               return false;
             }
@@ -408,8 +433,13 @@ function filterPreferences<
               if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
               if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
-              for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-              if (i.poi && poiDisabled) {
+              for (const tag of i.tagIds ?? []) {
+                if (hiddenTags.get(tag)) return false;
+                if (systemHiddenTags.get(tag) && !isOwner) {
+                  return false;
+                }
+              }
+              if (i.poi && poiDisabled && !isOwner) {
                 hidden.poi++;
                 return false;
               }
@@ -454,11 +484,17 @@ function filterPreferences<
               hidden.images++;
               return false;
             }
-          for (const tag of bounty.tags ?? [])
+          for (const tag of bounty.tags ?? []) {
             if (hiddenTags.get(tag)) {
               hidden.tags++;
               return false;
             }
+
+            if (systemHiddenTags.get(tag) && !isOwner) {
+              hidden.tags++;
+              return false;
+            }
+          }
           return true;
         })
         .map(({ images, ...x }) => {
@@ -468,8 +504,13 @@ function filterPreferences<
             if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
             if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
             if (hiddenImages.get(i.id)) return false;
-            for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-            if (i.poi && poiDisabled) {
+            for (const tag of i.tagIds ?? []) {
+              if (hiddenTags.get(tag)) return false;
+              if (systemHiddenTags.get(tag) && !isOwner) {
+                return false;
+              }
+            }
+            if (i.poi && poiDisabled && !isOwner) {
               hidden.poi++;
               return false;
             }
@@ -520,8 +561,13 @@ function filterPreferences<
             if ((isOwner || isModerator) && image.nsfwLevel === 0) return true;
             if (!Flags.intersects(image.nsfwLevel, browsingLevel)) return false;
             if (hiddenImages.get(image.id)) return false;
-            for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-            if (image.poi && poiDisabled) {
+            for (const tag of image.tagIds ?? []) {
+              if (hiddenTags.get(tag)) return false;
+              if (systemHiddenTags.get(tag) && !isOwner) {
+                return false;
+              }
+            }
+            if (image.poi && poiDisabled && !isOwner) {
               hidden.poi++;
               return false;
             }
@@ -553,6 +599,12 @@ function filterPreferences<
           hidden.tags++;
           return false;
         }
+
+        if (systemHiddenTags.get(tag.id)) {
+          hidden.tags++;
+          return false;
+        }
+
         if (
           !!tag.nsfwLevel &&
           tag.nsfwLevel > NsfwLevel.PG13 &&

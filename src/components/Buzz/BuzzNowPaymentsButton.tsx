@@ -1,4 +1,4 @@
-import { Alert, Anchor, Button, Stack, Text } from '@mantine/core';
+import { Anchor, Button, Stack, Text } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
@@ -53,7 +53,7 @@ export const BuzzNowPaymentsButton = ({
             })}`
           : ''}
       </Button>
-      <Text size="xs" color="dimmed" mt={5}>
+      <Text size="xs" color="dimmed" mt={8}>
         Crypto purchases include a $
         {formatCurrencyForDisplay(NOW_PAYMENTS_FIXED_FEE, undefined, { decimals: true })} fee to
         cover network expenses.

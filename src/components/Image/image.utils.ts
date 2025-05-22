@@ -4,6 +4,7 @@ import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
@@ -94,12 +95,15 @@ export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
   options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
 ) => {
+  const currentUser = useCurrentUser();
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+    ...(filters.username === currentUser?.username || filters.userId === currentUser?.id
+      ? []
+      : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ].filter(isDefined);
 
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(

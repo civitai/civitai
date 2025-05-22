@@ -7,6 +7,7 @@ import {
   Card,
   Center,
   Container,
+  createStyles,
   Group,
   Loader,
   SegmentedControl,
@@ -14,12 +15,11 @@ import {
   Text,
   ThemeIcon,
   Title,
-  createStyles,
 } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconInfoTriangleFilled } from '@tabler/icons-react';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -33,7 +33,7 @@ import {
 } from '~/components/Stripe/memberships.util';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
-import { PlanCard, getPlanDetails } from '~/components/Subscriptions/PlanCard';
+import { getPlanDetails, PlanCard } from '~/components/Subscriptions/PlanCard';
 import { env } from '~/env/client';
 import { isDev } from '~/env/other';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -386,6 +386,18 @@ export default function Pricing() {
                 </ContainerGrid.Col>
               ))}
             </ContainerGrid>
+          )}
+
+          {!isLoading && (
+            <Stack spacing={0}>
+              <p className="mb-0 text-xs opacity-50">
+                By purchasing a membership, you agree to our{' '}
+                <Anchor href="/content/tos">Terms of Service</Anchor>
+              </p>
+              <p className="text-xs opacity-50">
+                Transactions will appear as CIVIT AI INC on your billing statement
+              </p>
+            </Stack>
           )}
         </Stack>
       </Container>

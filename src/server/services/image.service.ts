@@ -871,7 +871,7 @@ export const getAllImages = async (
   }
 
   if (disablePoi) {
-    AND.push(Prisma.sql`(i."poi" != TRUE)`);
+    AND.push(Prisma.sql`(i."poi" != TRUE OR p."userId" = ${userId})`);
   }
   if (disableMinor) {
     AND.push(Prisma.sql`(i."minor" != TRUE)`);
@@ -1720,7 +1720,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
 
   if (disablePoi) {
-    filters.push(`(NOT poi = true)`);
+    filters.push(`(NOT poi = true OR "userId" = ${currentUserId})`);
   }
   if (disableMinor) {
     filters.push(`(NOT minor = true)`);
@@ -2721,7 +2721,7 @@ export const getImagesForPosts = async ({
   }
 
   if (disablePoi) {
-    imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL)`);
+    imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL OR i."userId" = ${userId})`);
   }
 
   if (disableMinor) {

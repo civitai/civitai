@@ -92,7 +92,16 @@ export default MixedAuthEndpoint(async function handler(
 
   try {
     const { items, nextCursor } = await getModelsWithVersions({
-      input: { browsingLevel, ...data, take: limit, skip, cursor, collectionId },
+      input: {
+        browsingLevel,
+        ...data,
+        take: limit,
+        skip,
+        cursor,
+        collectionId,
+        disablePoi: true,
+        disableMinor: true,
+      },
       user,
     });
 

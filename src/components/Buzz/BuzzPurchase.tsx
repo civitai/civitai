@@ -3,7 +3,6 @@ import {
   Anchor,
   Button,
   Center,
-  Checkbox,
   Chip,
   Grid,
   Group,
@@ -16,18 +15,19 @@ import {
 } from '@mantine/core';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
 import { useBuzzButtonStyles } from '~/components/Buzz/styles';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
-import { useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
 import { BuzzPurchaseMultiplierFeature } from '~/components/Subscriptions/SubscriptionFeature';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { buzzBulkBonusMultipliers, constants } from '~/server/common/constants';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -44,8 +44,6 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
-import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -534,6 +532,17 @@ export const BuzzPurchase = ({
                 disabled={!ctaEnabled}
                 purchaseSuccessMessage={purchaseSuccessMessage}
               />
+
+              <Stack spacing={0} align="center" my={4}>
+                <p className="mb-0 text-xs opacity-50">
+                  By clicking Pay Now, you agree to our{' '}
+                  <Anchor href="/content/tos">Terms of Service</Anchor>
+                </p>
+                <p className="text-xs opacity-50">
+                  Transactions will appear as CIVIT AI INC on your billing statement
+                </p>
+              </Stack>
+
               {/* {env.NEXT_PUBLIC_PAYPAL_CLIENT_ID && (
                 <BuzzPaypalButton
                   onError={(error) => setError(error.message)}
@@ -553,6 +562,7 @@ export const BuzzPurchase = ({
                   purchaseSuccessMessage={purchaseSuccessMessage}
                 />
               )}
+
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">
                   Cancel
