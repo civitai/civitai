@@ -23,12 +23,12 @@ import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEdit
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { commentUpsertInput } from '~/server/schema/comment.schema';
 import { CommentGetById, CommentGetCommentsById } from '~/types/router';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function CommentSection({ comments, modelId, parent, highlights }: Props) {
   const currentUser = useCurrentUser();
@@ -162,9 +162,10 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
         <Alert color="yellow" icon={<IconLock />}>
           <Center>
             {isMuted
-              ? 'You cannot add comments because you have been muted' :
-              !features.canWrite ? 'Civitai is in read-only mode' :
-              'This thread has been locked'}
+              ? 'You cannot add comments because you have been muted'
+              : !features.canWrite
+              ? 'Civitai is in read-only mode'
+              : 'This thread has been locked'}
           </Center>
         </Alert>
       )}

@@ -62,22 +62,25 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
 
   const skip = cursor ?? 0;
 
+  const select = Prisma.validator<Prisma.ChangelogSelect>()({
+    id: true,
+    title: true,
+    titleColor: true,
+    content: true,
+    link: true,
+    cta: true,
+    effectiveAt: true,
+    updatedAt: true,
+    createdAt: true,
+    type: true,
+    tags: true,
+    disabled: true,
+    sticky: true,
+  });
+
   try {
     const data = await dbRead.changelog.findMany({
-      select: {
-        id: true,
-        title: true,
-        titleColor: true,
-        content: true,
-        link: true,
-        cta: true,
-        effectiveAt: true,
-        updatedAt: true,
-        type: true,
-        tags: true,
-        disabled: true,
-        sticky: true,
-      },
+      select,
       where,
       take: limit + 1,
       skip,
@@ -112,20 +115,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
       skip > 0
         ? []
         : await dbRead.changelog.findMany({
-            select: {
-              id: true,
-              title: true,
-              titleColor: true,
-              content: true,
-              link: true,
-              cta: true,
-              effectiveAt: true,
-              updatedAt: true,
-              type: true,
-              tags: true,
-              disabled: true,
-              sticky: true,
-            },
+            select,
             where: whereSticky,
             orderBy: [
               {
