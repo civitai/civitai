@@ -89,7 +89,7 @@ export async function createComfyStep(
       quantity: params.quantity,
       comfyWorkflow,
       imageMetadata,
-      useSpineComfy: false,
+      useSpineComfy: null,
     },
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
     metadata: {
