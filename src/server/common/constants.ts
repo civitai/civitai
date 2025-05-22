@@ -1190,16 +1190,12 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
   {
     type: 'some',
     nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
-    excludedFooterLinks: ['wiki', 'newsroom'],
+    excludedFooterLinks: [],
     disableMinor: true,
     disablePoi: true,
     excludedTagIds: [
       415792, // Clavata Celebrity
       426772, // Clavata Celebrity
-      5161, //actor
-      5162, //actress
-      5188, //celebrity
-      5249, //real person
       5351, //child
       5161, //actor
       5162, //actress
@@ -1214,20 +1210,6 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
       130820, //adult actress
       133182, //porn star
     ],
-  },
-  {
-    type: 'some',
-    nsfwLevels: [NsfwLevel.X, NsfwLevel.XXX],
-    excludedFooterLinks: ['wiki', 'api', 'newsroom'],
-    disablePoi: true,
-    disableMinor: true,
-    excludedTagIds: [],
-    generationDefaultValues: {
-      denoise: 0.65,
-    },
-    generationMinValues: {
-      denoise: 0.5,
-    },
   },
 ] as const;
 

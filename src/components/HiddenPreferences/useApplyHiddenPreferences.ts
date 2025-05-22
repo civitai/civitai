@@ -221,7 +221,7 @@ function filterPreferences<
               } else if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
               for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
-              if (i.poi && poiDisabled) {
+              if (i.poi && poiDisabled && !isOwner) {
                 hidden.poi++;
                 return false;
               }
@@ -270,7 +270,7 @@ function filterPreferences<
           return false;
         }
 
-        if (image.poi && poiDisabled) {
+        if (image.poi && poiDisabled && !isOwner) {
           hidden.poi++;
           return false;
         }
@@ -329,7 +329,7 @@ function filterPreferences<
             return false;
           }
 
-          if (article.coverImage.poi && poiDisabled) {
+          if (article.coverImage.poi && poiDisabled && !isOwner) {
             hidden.poi++;
             return false;
           }
@@ -387,7 +387,7 @@ function filterPreferences<
                 hidden.images++;
               }
 
-            if (collection.image.poi && poiDisabled) {
+            if (collection.image.poi && poiDisabled && !isOwner) {
               hidden.poi++;
               return false;
             }
@@ -409,7 +409,7 @@ function filterPreferences<
               if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
               for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-              if (i.poi && poiDisabled) {
+              if (i.poi && poiDisabled && !isOwner) {
                 hidden.poi++;
                 return false;
               }
@@ -469,7 +469,7 @@ function filterPreferences<
             if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
             if (hiddenImages.get(i.id)) return false;
             for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-            if (i.poi && poiDisabled) {
+            if (i.poi && poiDisabled && !isOwner) {
               hidden.poi++;
               return false;
             }
@@ -521,7 +521,7 @@ function filterPreferences<
             if (!Flags.intersects(image.nsfwLevel, browsingLevel)) return false;
             if (hiddenImages.get(image.id)) return false;
             for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
-            if (image.poi && poiDisabled) {
+            if (image.poi && poiDisabled && !isOwner) {
               hidden.poi++;
               return false;
             }
