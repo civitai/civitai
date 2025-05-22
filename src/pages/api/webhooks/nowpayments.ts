@@ -38,10 +38,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       switch (event.payment_status) {
         case 'finished':
+        default: // temporary as we test
           await processBuzzOrder(event.payment_id as string | number);
           break;
-        default:
-          throw new Error('Unhandled relevant event!');
+        // throw new Error('Unhandled relevant event!');
       }
     } catch (error: any) {
       console.log(`❌ Error message: ${error.message}`);
