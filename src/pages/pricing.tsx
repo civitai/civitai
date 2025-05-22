@@ -244,7 +244,7 @@ export default function Pricing() {
             </AlertWithIcon>
           )}
           <Group>
-            {currentMembershipUnavailable && (
+            {/* {currentMembershipUnavailable && (
               <AlertWithIcon
                 color="yellow"
                 iconColor="yellow"
@@ -262,7 +262,7 @@ export default function Pricing() {
                   or level up your support here.
                 </Text>
               </AlertWithIcon>
-            )}
+            )} */}
             {appliesForDiscount && (
               <Alert maw={650} mx="auto" py={4} miw="calc(50% - 8px)" pl="sm">
                 <Group spacing="xs">
