@@ -166,12 +166,12 @@ export function throwConflictError(message: string | null = null, error?: unknow
   });
 }
 
-export function handleLogError(e: Error) {
+export function handleLogError(e: Error, name?: string) {
   const error = new Error(e.message ?? 'Unexpected error occurred', { cause: e });
   if (isProd)
     logToAxiom(
       {
-        name: error.name,
+        name: name ?? error.name,
         message: error.message,
         stack: error.stack,
         cause: error.cause,
