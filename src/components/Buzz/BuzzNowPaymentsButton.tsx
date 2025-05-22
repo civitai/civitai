@@ -28,7 +28,7 @@ export const BuzzNowPaymentsButton = ({
 
     if (data.invoice_url) {
       // Open new screen so that the user can go ahead and pay.
-      window.open(data.invoice_url, '_blank');
+      window.location.replace(data.invoice_url);
     }
   };
 
