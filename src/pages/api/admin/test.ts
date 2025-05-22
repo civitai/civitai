@@ -10,7 +10,7 @@ import { getSystemPermissions } from '~/server/services/system-cache';
 import { addGenerationEngine } from '~/server/services/generation/engines';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
-import { getResourceData } from '~/server/services/generation/generation.service';
+import { getResourceData, getResourceData2 } from '~/server/services/generation/generation.service';
 import { Prisma } from '@prisma/client';
 import { getCommentsThreadDetails2 } from '~/server/services/commentsv2.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
@@ -22,6 +22,7 @@ import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { setExperimentalConfig } from '~/server/services/orchestrator/experimental';
+import { resourceDataCache } from '~/server/services/model-version.service';
 
 type Row = {
   userId: number;
@@ -95,9 +96,12 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   setWorkflowDefinition(workflow.key, workflow);
     // }
 
-    await setExperimentalConfig({ userIds: [5] });
+    const data = await getResourceData({ ids: [1820704], epochNumbers: ['1820704@10'] });
+    const data2 = await getResourceData2([{ id: 1820704, epoch: 10 }], session?.user);
 
-    res.status(200).send({ ok: true });
+    // await setExperimentalConfig({ userIds: [5] });
+
+    res.status(200).send({ data, data2 });
   } catch (e) {
     console.log(e);
     res.status(400).end();

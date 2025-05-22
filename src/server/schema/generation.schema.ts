@@ -298,7 +298,7 @@ export const getGenerationDataSchema = z.discriminatedUnion('type', [
     ids: z
       .union([z.array(z.coerce.number()), z.coerce.number()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
-    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
+    // epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
   }),
 ]);
 

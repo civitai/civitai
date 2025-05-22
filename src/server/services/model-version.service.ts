@@ -1443,8 +1443,10 @@ export const resourceDataCache = createCachedArray({
         mv."availability",
         mv."clipSkip",
         mv."vaeId",
+        mv."status",
         (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
         gc."covered",
+        FALSE AS "hasAccess",
         (
           SELECT to_json(obj)
           FROM (
@@ -1466,16 +1468,17 @@ export const resourceDataCache = createCachedArray({
       WHERE mv.id IN (${Prisma.join(ids)})
     `;
 
-    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>(
-      (acc, result) => ({ ...acc, [result.id]: result }),
-      {}
-    );
+    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>((acc, item) => {
+      if (['Public', 'Unsearchable'].includes(item.availability) && item.status === 'Published')
+        item.hasAccess = true;
+
+      return { ...acc, [item.id]: item };
+    }, {});
     return results;
   },
   idKey: 'id',
   dontCacheFn: (data) => {
-    const cacheable = ['Public', 'Unsearchable'].includes(data.availability);
-    return !cacheable || !data.covered;
+    return !data.hasAccess || !data.covered;
   },
   ttl: CacheTTL.hour,
 });
@@ -1491,7 +1494,8 @@ export type GenerationResourceDataModel = {
   availability: Availability;
   earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
   covered: boolean | null;
-  air: string;
+  status: ModelStatus;
+  hasAccess: boolean;
   model: {
     id: number;
     name: string;
