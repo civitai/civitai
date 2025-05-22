@@ -249,10 +249,9 @@ export const getGenerationData = async ({
       return await getMediaGenerationData({ id: query.id, user, generation: query.generation });
     case 'modelVersion':
       return await getModelVersionGenerationData({
-        versionIds: [query.id],
+        versionIds: [{ id: query.id, epoch: query.epoch }],
         user,
         generation: query.generation,
-        epochNumbers: query.epochNumbers,
       });
     case 'modelVersions':
       return await getModelVersionGenerationData({
@@ -309,8 +308,7 @@ async function getMediaGenerationData({
     select: { imageId: true, modelVersionId: true, strength: true },
   });
   const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
-  const fn = generation ? getGenerationResourceData : getResourceData;
-  const resources = await fn({ ids: versionIds, user }).then((data) =>
+  const resources = await getResourceData(versionIds, user, generation).then((data) =>
     data.map((item) => {
       const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
       return {
@@ -412,19 +410,16 @@ const getModelVersionGenerationData = async ({
   versionIds,
   user,
   generation,
-  epochNumbers,
 }: {
-  versionIds: number[];
+  versionIds: { id: number; epoch?: number }[] | number[];
   user?: SessionUser;
   generation: boolean;
-  epochNumbers?: string[];
 }) => {
   if (!versionIds.length) throw new Error('missing version ids');
-  const fn = generation ? getGenerationResourceData : getResourceData;
-  const resources = await fn({ ids: versionIds, user, epochNumbers });
+  const resources = await getResourceData(versionIds, user, generation);
   const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
   if (checkpoint?.vaeId) {
-    const [vae] = await fn({ ids: [checkpoint.vaeId], user });
+    const [vae] = await getResourceData([checkpoint.vaeId], user, generation);
     if (vae) resources.push({ ...vae, vaeId: undefined });
   }
 
@@ -531,10 +526,11 @@ type GenerationResourceBase = {
   earlyAccessConfig?: ModelVersionEarlyAccessConfig;
   canGenerate: boolean;
   hasAccess: boolean;
-  air: string;
+  // air: string;
   // covered: boolean;
   additionalResourceCost?: boolean;
   availability?: Availability;
+  epochNumber?: number;
   // settings
   clipSkip?: number;
   minStrength: number;
@@ -564,216 +560,8 @@ export type GenerationResource = GenerationResourceBase & {
 
 const explicitCoveredModelAirs = [fluxUltraAir];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
-export async function getResourceData({
-  ids,
-  user,
-  epochNumbers,
-}: {
-  ids: number[];
-  epochNumbers?: string[];
-  user?: {
-    id?: number;
-    isModerator?: boolean;
-  };
-}): Promise<GenerationResource[]> {
-  if (!ids.length) return [];
-  const { id: userId, isModerator } = user ?? {};
-  const unavailableResources = await getUnavailableResources();
-  const featuredModels = await getFeaturedModels();
 
-  function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
-    const isUnavailable = unavailableResources.includes(item.model.id);
-    const covered =
-      (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable;
-    const hasAccess = !!(
-      ['Public', 'Unsearchable'].includes(item.availability) ||
-      userId === item.model.userId ||
-      isModerator
-    );
-
-    return {
-      ...item,
-      air: stringifyAIR({
-        baseModel: item.baseModel,
-        type: item.model.type,
-        modelId: item.model.id,
-        id: item.id,
-      }),
-      minStrength: settings?.minStrength ?? -1,
-      maxStrength: settings?.maxStrength ?? 2,
-      strength: settings?.strength ?? 1,
-      covered,
-      hasAccess,
-    };
-  }
-
-  return await resourceDataCache.fetch(ids).then(async (initialResult) => {
-    const initialTransformed = initialResult.map(transformGenerationData);
-    const modelIds = initialTransformed
-      .filter((x) => !x.covered || !x.hasAccess)
-      .map((x) => x.model.id);
-
-    const substituteIds = await dbRead.modelVersion
-      .findMany({
-        where: {
-          status: 'Published',
-          generationCoverage: { covered: true },
-          modelId: { in: modelIds },
-        },
-        orderBy: { index: { sort: 'asc', nulls: 'last' } },
-        select: { id: true, baseModel: true, modelId: true },
-      })
-      .then((data) =>
-        data
-          .filter((x) => {
-            const match = initialTransformed.find((initial) => initial.model.id === x.modelId);
-            if (!match) return false;
-            return match.baseModel === x.baseModel;
-          })
-          .map((x) => x.id)
-      );
-
-    const substitutesTransformed = await resourceDataCache
-      .fetch(substituteIds)
-      .then((data) => data.map(transformGenerationData));
-
-    const earlyAccessIds = [...initialTransformed, ...substitutesTransformed]
-      .filter(
-        (x) =>
-          x.covered &&
-          !x.hasAccess &&
-          x.earlyAccessConfig &&
-          // Free generation will technically bypass access checks, but we still want to show the early access badge
-          !x.earlyAccessConfig.freeGeneration
-      )
-      .map((x) => x.id);
-
-    const entityAccessArray = userId
-      ? await hasEntityAccess({
-          entityType: 'ModelVersion',
-          entityIds: earlyAccessIds,
-          userId,
-          isModerator,
-          permissions: EntityAccessPermission.EarlyAccessGeneration,
-        })
-      : [];
-
-    const [initialWithAccess, substitutesWithAccess] = [
-      initialTransformed,
-      substitutesTransformed,
-    ].map((tupleItem) =>
-      tupleItem.map((item) => {
-        return {
-          ...item,
-          earlyAccessConfig: item.earlyAccessConfig
-            ? Object.keys(item.earlyAccessConfig).length
-              ? item.earlyAccessConfig
-              : undefined
-            : undefined,
-          hasAccess: !!(
-            (
-              item.hasAccess ||
-              entityAccessArray.find((e) => e.entityId === item.id)?.hasAccess ||
-              !!item.earlyAccessConfig?.generationTrialLimit
-            ) // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
-          ),
-        };
-      })
-    );
-
-    const modelFilesCached = await getFilesForModelVersionCache(
-      [...initialWithAccess, ...substitutesWithAccess].filter((x) => x.hasAccess).map((x) => x.id)
-    );
-
-    return initialWithAccess.flatMap(({ ...item }) => {
-      const primaryFile = getPrimaryFile(modelFilesCached[item.id]?.files ?? []);
-      const trainingFile = modelFilesCached[item.id]?.files.find((f) => f.type === 'Training Data');
-
-      const substitute = substitutesWithAccess.find(
-        (sub) => sub.model.id === item.model.id && sub.hasAccess
-      );
-      const fileSizeKB = primaryFile?.sizeKB;
-      let additionalResourceCost = false;
-      if (fileSizeKB) {
-        additionalResourceCost =
-          !FREE_RESOURCE_TYPES.includes(item.model.type) &&
-          !featuredModels.map((fm) => fm.modelId).includes(item.model.id) &&
-          fileSizeKB > 10 * 1024;
-      }
-
-      const epochs = epochNumbers
-        ?.filter((v) => {
-          const [modelVersionId] = v.split('@');
-          if (!modelVersionId) return false;
-          return Number(modelVersionId) === item.id;
-        })
-        ?.map((s) => Number(s.split('@')[1]));
-
-      const epochsDetails =
-        epochs
-          ?.map((epochNumber) => {
-            const epochDetails =
-              epochNumber && trainingFile
-                ? getTrainingFileEpochNumberDetails(trainingFile, Number(epochNumber))
-                : null;
-
-            return epochDetails;
-          })
-          .filter(isDefined) ?? [];
-
-      let substituteData;
-
-      // TODO - review hasAccess - if private, use a substitute, if early access, don't use substitute
-      if (substitute) {
-        const { model, availability, ...sub } = substitute;
-        substituteData = removeNulls({ ...sub, canGenerate: sub.covered && sub.hasAccess });
-      }
-
-      const payload = removeNulls({
-        ...item,
-        canGenerate: item.covered && item.hasAccess,
-        fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
-        additionalResourceCost,
-        substitute: substituteData,
-      });
-
-      /*
-        epochs are used to generate images from a trained model before the model is finished training. It allows the user to determine the best trained model from the available epochs.
-      */
-      return (epochsDetails?.length ?? 0) > 0
-        ? epochsDetails.map((epochDetails) => ({
-            ...payload,
-            epochDetails,
-            air: stringifyAIR({
-              baseModel: item.baseModel,
-              type: item.model.type,
-              modelId: epochDetails.jobId,
-              id: epochDetails.fileName,
-              source: 'orchestrator',
-            }),
-          }))
-        : payload;
-    });
-  });
-}
-
-export async function getGenerationResourceData(args: {
-  ids: number[];
-  user?: {
-    id?: number;
-    isModerator?: boolean;
-  };
-  epochNumbers?: string[];
-}) {
-  return await getResourceData(args).then((data) =>
-    data.filter((resource) => {
-      const baseModel = getBaseModelSetType(resource.baseModel) as SupportedBaseModel;
-      return !!baseModelResourceTypes[baseModel];
-    })
-  );
-}
-
-export async function getResourceData2(
+export async function getResourceData(
   versionIds: { id: number; epoch?: number }[] | number[],
   user: { id?: number; isModerator?: boolean } = {},
   generation = false
@@ -793,6 +581,7 @@ export async function getResourceData2(
     const covered =
       (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable;
     const canGenerate = hasAccess && covered;
+    const epochNumber = args.find((x) => x.id === item.id)?.epoch;
 
     return {
       ...item,
@@ -801,6 +590,7 @@ export async function getResourceData2(
       strength: settings?.strength ?? 1,
       hasAccess,
       canGenerate,
+      epochNumber,
     };
   }
 

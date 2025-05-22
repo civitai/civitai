@@ -10,11 +10,13 @@ import {
   BaseModelSetType,
   constants,
   generation,
-  generationConfig,
   getGenerationConfig,
 } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
-import { GenerationData } from '~/server/services/generation/generation.service';
+import {
+  GenerationData,
+  GenerationResource,
+} from '~/server/services/generation/generation.service';
 import {
   SupportedBaseModel,
   fluxModeOptions,
@@ -296,7 +298,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           const formData = form.getValues();
           const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
           const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
-          const formResources = [
+          const formResources: GenerationResource[] = [
             formData.model,
             ...(formData.resources ?? []),
             formData.vae,

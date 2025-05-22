@@ -31,7 +31,7 @@ import {
 import { UserTier } from '~/server/schema/user.schema';
 import {
   GenerationResource,
-  getGenerationResourceData,
+  getResourceData,
 } from '~/server/services/generation/generation.service';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
 import { GeneratedImageWorkflow, WorkflowDefinition } from '~/server/services/orchestrator/types';
@@ -84,19 +84,17 @@ export async function getGenerationStatus() {
 }
 
 // TODO - pass user data
-export async function getResourceDataWithInjects<T extends GenerationResource>(args: {
-  ids: number[];
-  user?: SessionUser;
-  epochNumbers?: string[];
-  cb?: (resource: GenerationResource) => T;
-}) {
-  const ids = [...args.ids, ...allInjectableResourceIds];
-  const results = await getGenerationResourceData({
-    ids,
-    user: args.user,
-    epochNumbers: args.epochNumbers,
-  });
-  const allResources = (args.cb ? results.map(args.cb) : results) as T[];
+export async function getResourceDataWithInjects<T extends GenerationResource>(
+  versions: { id: number; epoch?: number }[],
+  user?: SessionUser,
+  cb?: (resource: GenerationResource) => T
+) {
+  const results = await getResourceData(
+    [...versions, ...allInjectableResourceIds.map((id) => ({ id }))],
+    user,
+    true
+  );
+  const allResources = (cb ? results.map(cb) : results) as T[];
 
   return {
     resources: allResources.filter((x) => !allInjectableResourceIds.includes(x.id)),
@@ -170,18 +168,15 @@ export async function parseGenerateImageInput({
   if (!status.available && !user.isModerator)
     throw throwBadRequestError('Generation is currently disabled');
 
-  const resourceData = await getResourceDataWithInjects({
-    ids: originalResources.map((x) => x.id),
+  const resourceData = await getResourceDataWithInjects(
+    originalResources.map(({ id, epochNumber }) => ({ id, epoch: epochNumber })),
     user,
-    epochNumbers: originalResources
-      .filter((x) => !!x.epochNumber)
-      .map((x) => `${x.id}@${x.epochNumber}`),
-    cb: (resource) => ({
+    (resource) => ({
       ...resource,
       ...originalResources.find((x) => x.id === resource.id),
       triggerWord: resource.trainedWords?.[0],
-    }),
-  });
+    })
+  );
 
   if (
     resourceData.resources.some(
@@ -388,17 +383,8 @@ export type WorkflowFormatted = AsyncReturnType<typeof formatGenerationResponse>
 export async function formatGenerationResponse(workflows: Workflow[], user?: SessionUser) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
-  // console.dir(allResources, { depth: null });
-  const versionIds = allResources.map((x) => x.id);
-  const epochNumbers = uniq(
-    allResources.filter((x) => !!x.epochNumber).map((x) => `${x.id}@${x.epochNumber}`)
-  );
-
-  const { resources, injectable } = await getResourceDataWithInjects({
-    ids: versionIds,
-    user,
-    epochNumbers,
-  });
+  const versions = allResources.map(({ id, epochNumber }) => ({ id, epoch: epochNumber }));
+  const { resources, injectable } = await getResourceDataWithInjects(versions, user);
 
   return workflows.map((workflow) => {
     const transactions =

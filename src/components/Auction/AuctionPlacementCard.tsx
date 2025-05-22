@@ -797,7 +797,6 @@ export const ModelPlacementCard = ({
                             trainedWords: [],
                             canGenerate: true,
                             hasAccess: true,
-                            covered: true,
                           })
                         : undefined
                     }

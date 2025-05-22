@@ -50,7 +50,6 @@ const generationResourceSchemaBase = z.object({
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),
   image: imageSchema.pick({ url: true, type: true }).optional(), // TODO there are more here
-  covered: z.boolean(),
   hasAccess: z.boolean(),
   additionalResourceCost: z.boolean().optional(),
   availability: z.nativeEnum(Availability).optional(),
@@ -291,7 +290,7 @@ export const getGenerationDataSchema = z.discriminatedUnion('type', [
   baseSchema.extend({
     type: z.literal('modelVersion'),
     id: z.coerce.number(),
-    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
+    epoch: z.coerce.number().optional(), // Formatted as modelVersion@epoch
   }),
   baseSchema.extend({
     type: z.literal('modelVersions'),
