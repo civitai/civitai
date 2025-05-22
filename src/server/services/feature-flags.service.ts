@@ -120,6 +120,7 @@ const featureFlags = createFeatureFlags({
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
   annualMemberships: ['mod'],
+  cryptoPayments: ['mod'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
