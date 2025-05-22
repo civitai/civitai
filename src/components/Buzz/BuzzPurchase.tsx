@@ -189,7 +189,7 @@ const BuzzPurchasePaymentButton = ({
       fullWidth
     >
       {features.disablePayments ? (
-        <Text>Credit Card are currently disabled</Text>
+        <Text>Credit Cards are currently disabled</Text>
       ) : (
         <>
           Pay Now{' '}
@@ -212,7 +212,7 @@ export const BuzzPurchase = ({
 }: BuzzPurchaseProps) => {
   const features = useFeatureFlags();
   const { classes, cx, theme } = useBuzzButtonStyles();
-  const canUpgradeMembership = useCanUpgrade();
+  const canUpgradeMembership = false; // useCanUpgrade();
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
@@ -312,7 +312,7 @@ export const BuzzPurchase = ({
             </Center>
           ) : (
             <Input.Wrapper error={error}>
-              <Stack spacing="xl" mb={error ? 5 : undefined}>
+              <Stack spacing="md" mb={error ? 5 : undefined}>
                 <Chip.Group
                   className={classes.chipGroup}
                   value={selectedPrice?.id ?? ''}
@@ -454,13 +454,11 @@ export const BuzzPurchase = ({
               </Stack>
             </Input.Wrapper>
           )}
-          <Stack spacing="md" mt="md">
-            {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
-
+          <Stack spacing="md">
             <Accordion
               variant="contained"
               classNames={{ item: classes.accordionItem }}
-              defaultValue="buyBulk"
+              // defaultValue="buyBulk"
             >
               <Accordion.Item value="buyBulk">
                 <Accordion.Control px="md" py={8}>
@@ -524,6 +522,7 @@ export const BuzzPurchase = ({
                 </Accordion.Panel>
               </Accordion.Item>
             </Accordion>
+            {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
 
             <Stack spacing="xs" mt="md">
               <BuzzPurchasePaymentButton
