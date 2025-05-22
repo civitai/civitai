@@ -8,6 +8,12 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
+import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
+import { GenerationResource } from '~/server/services/generation/generation.service';
+import {
+  ResourceSelectOptions,
+  ResourceSelectSource,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 
 // export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
 //   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -260,7 +266,7 @@ export const isMadeOnSite = (meta: ImageMetaProps | null) => {
 export function getStepMeta(step?: WorkflowStepFormatted) {
   if (!step) return;
   const civitaiResources = step.resources?.map((args): CivitaiResource => {
-    if ('air' in args) {
+    if ('air' in args && typeof args.air === 'string') {
       const { version, type } = parseAIR(args.air);
       return { modelVersionId: version, type, weight: args.strength };
     } else {
@@ -268,4 +274,71 @@ export function getStepMeta(step?: WorkflowStepFormatted) {
     }
   });
   return removeEmpty({ ...step?.params, civitaiResources });
+}
+
+export function ResourceSelectHandler(options?: ResourceSelectOptions) {
+  const types = [...(options?.resources ?? [])?.map((x) => x.type)];
+  const baseModels = [
+    ...new Set(
+      (options?.resources ?? [])?.flatMap((x) => [
+        ...(x.baseModels ?? []),
+        ...(x.partialSupport ?? []),
+      ])
+    ),
+  ];
+
+  async function select({
+    title,
+    selectSource,
+    excludedIds = [],
+  }: {
+    title?: React.ReactNode;
+    selectSource?: ResourceSelectSource;
+    excludedIds?: number[];
+  }) {
+    return new Promise<GenerationResource | void>((res, rej) => {
+      openResourceSelectModal({
+        title,
+        options: { ...options, excludeIds: [...(options?.excludeIds ?? []), ...excludedIds] },
+        selectSource,
+        onClose: () => res(),
+        onSelect: (resource) => {
+          if (
+            selectSource === 'generation' &&
+            !resource.canGenerate &&
+            resource.substitute?.canGenerate
+          ) {
+            res({ ...resource, ...resource.substitute });
+          } else {
+            res(resource);
+          }
+        },
+      });
+    });
+  }
+
+  function hasMatch(data: GenerationResource) {
+    let match = true;
+    if (types.length && !types.includes(data.model.type)) match = false;
+    else if (baseModels.length && !types.includes(data.model.type)) match = false;
+    return match;
+  }
+
+  function getValues(data: GenerationResource[] | null) {
+    if (!data) return null;
+    return types ? data.filter(hasMatch) : data;
+  }
+
+  function getValue(data: GenerationResource | null) {
+    if (!data) return null;
+    return hasMatch(data) ? data : null;
+  }
+
+  return {
+    types,
+    baseModels,
+    select,
+    getValues,
+    getValue,
+  };
 }

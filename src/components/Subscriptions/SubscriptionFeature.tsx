@@ -37,7 +37,7 @@ export const SubscriptionFeature = ({
   subtitle,
 }: {
   title: string | React.ReactNode;
-  subtitle: string;
+  subtitle: string | ((className: string) => React.ReactNode);
 }) => {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
@@ -58,9 +58,13 @@ export const SubscriptionFeature = ({
         {image && <EdgeMedia src={image} style={{ width: 50 }} />}
         <Stack spacing={2}>
           <Text className={classes.title}>{title}</Text>
-          <Text className={classes.subtitle} lh={1.2}>
-            {subtitle}
-          </Text>
+          {typeof subtitle === 'string' ? (
+            <Text className={classes.subtitle} lh={1.2}>
+              {subtitle}
+            </Text>
+          ) : (
+            subtitle(classes.subtitle)
+          )}
         </Stack>
       </Group>
     </Paper>
@@ -71,7 +75,7 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
   const { subscription } = useActiveSubscription();
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const purchasesMultiplier = multipliers.purchasesMultiplier ?? 1;
-  const { yellowBuzzAdded, blueBuzzAdded } = getBuzzBulkMultiplier({
+  const { yellowBuzzAdded, blueBuzzAdded, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
     buzzAmount,
     purchasesMultiplier,
   });
@@ -92,17 +96,32 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
           </span>
         </Group>
       }
-      subtitle={
-        subscription
-          ? `As a ${capitalize(metadata.tier)} member you get ${Math.round(
-              (purchasesMultiplier - 1) * 100
-            )}% bonus Buzz on each purchase (${numberWithCommas(yellowBuzzAdded)} Yellow Buzz). ${
-              blueBuzzAdded > 0
-                ? `Buying in Bulk will also add ${numberWithCommas(blueBuzzAdded)} Extra Blue Buzz!`
-                : ''
-            } `
-          : `Buying in Bulk will also add ${numberWithCommas(blueBuzzAdded)} Extra Blue Buzz!`
-      }
+      subtitle={(className: string) => (
+        <Stack spacing="sm">
+          <Text className={className}>
+            {subscription
+              ? `As a ${capitalize(metadata.tier)} member you get ${Math.round(
+                  (purchasesMultiplier - 1) * 100
+                )}% bonus Buzz on each purchase (${numberWithCommas(
+                  yellowBuzzAdded
+                )} Yellow Buzz). ${
+                  blueBuzzAdded > 0
+                    ? `Buying in Bulk will also add ${numberWithCommas(
+                        blueBuzzAdded
+                      )} Extra Blue Buzz!`
+                    : ''
+                } `
+              : `Buying in Bulk will also add ${numberWithCommas(blueBuzzAdded)} Extra Blue Buzz!`}
+          </Text>
+
+          {bulkBuzzMultiplier > 1 && (
+            <Text className={className}>
+              You will also get some extra love with your purchase! A few cosmetics will be added to
+              your account for free!
+            </Text>
+          )}
+        </Stack>
+      )}
     />
   );
 };

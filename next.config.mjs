@@ -68,7 +68,7 @@ export default defineNextConfig(
     experimental: {
       // scrollRestoration: true,
       largePageDataBytes: 512 * 100000,
-      optimizePackageImports: ['@civitai/client', './srs/libs/form'],
+      optimizePackageImports: ['@civitai/client', './srs/libs/form', 'lodash-es', '@tabler-icons-react', '@headlessui/react'],
     },
     headers: async () => {
       // Add X-Robots-Tag header to all pages matching /sitemap.xml and /sitemap-models.xml /sitemap-articles.xml, etc

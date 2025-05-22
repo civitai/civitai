@@ -557,9 +557,9 @@ function ResourceHitList({
 
     const ret = models
       .map((model) => {
-        const resourceType = resources.find((x) => x.type === model.type);
-        if (!resourceType) return null;
-        const { baseModels } = resourceType;
+        const baseModels = resources
+          .filter((x) => x.type === model.type)
+          .flatMap((x) => x.baseModels);
 
         const versions = model.versions.filter((version) => {
           return (

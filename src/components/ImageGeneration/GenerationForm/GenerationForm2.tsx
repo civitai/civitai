@@ -41,6 +41,7 @@ import { InputRequestPriority } from '~/components/Generation/Input/RequestPrior
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageById } from '~/components/Image/ById/ImageById';
 import {
+  ResourceSelectHandler,
   useGenerationStatus,
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
@@ -262,6 +263,8 @@ export function GenerationFormContent() {
         if (keys.includes(key)) delete params[key as keyof typeof params];
       }
     }
+
+    if (workflowDefinition?.type === 'txt2img') params.sourceImage = null;
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
@@ -520,7 +523,7 @@ export function GenerationFormContent() {
                 </div>
 
                 <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
-                  {({ model, resources: formResources, vae, fluxMode }) => {
+                  {({ model, resources: formResources, vae }) => {
                     const resources = formResources ?? [];
                     const selectedResources = [...resources, vae, model].filter(isDefined);
                     const minorFlaggedResources = selectedResources.filter((x) => x.model.minor);
@@ -529,6 +532,19 @@ export function GenerationFormContent() {
                       allUnstableResources.includes(x.id)
                     );
                     const atLimit = resources.length >= status.limits.resources;
+
+                    const resourceSelectHandlerOptions = {
+                      canGenerate: true,
+                      resources: resourceTypes.filter(
+                        (x) => x.type !== 'VAE' && x.type !== 'Checkpoint'
+                      ),
+                      excludeIds: selectedResources.map((r) => r.id),
+                    };
+
+                    const additionResourceTitle = 'Add additional resource';
+                    const resourceSelectHandler = ResourceSelectHandler(
+                      resourceSelectHandlerOptions
+                    );
 
                     return (
                       <Card
@@ -603,7 +619,19 @@ export function GenerationFormContent() {
                                         onClick={(e) => {
                                           e.preventDefault();
                                           e.stopPropagation();
-                                          setOpened(true);
+                                          const formResources = form.getValues('resources') ?? [];
+                                          resourceSelectHandler
+                                            .select({
+                                              title: additionResourceTitle,
+                                              excludedIds: formResources.map((x) => x.id),
+                                            })
+                                            .then((resource) => {
+                                              if (!resource) return;
+                                              const resources = [...formResources, resource];
+                                              const newValue =
+                                                resourceSelectHandler.getValues(resources) ?? [];
+                                              form.setValue('resources', newValue);
+                                            });
                                         }}
                                         radius="xl"
                                         ml="auto"
@@ -639,16 +667,8 @@ export function GenerationFormContent() {
                                   <InputResourceSelectMultiple
                                     name="resources"
                                     limit={status.limits.resources}
-                                    buttonLabel="Add additional resource"
-                                    modalOpened={opened}
-                                    onCloseModal={() => setOpened(false)}
-                                    options={{
-                                      canGenerate: true,
-                                      resources: resourceTypes.filter(
-                                        (x) => x.type !== 'VAE' && x.type !== 'Checkpoint'
-                                      ),
-                                      excludeIds: selectedResources.map((r) => r.id),
-                                    }}
+                                    buttonLabel={additionResourceTitle}
+                                    options={resourceSelectHandlerOptions}
                                     hideButton
                                   />
                                 </Accordion.Panel>
@@ -1186,15 +1206,21 @@ export function GenerationFormContent() {
                                             : [
                                                 {
                                                   label: 'Fast',
-                                                  value: Number(10 + samplerCfgOffset).toString(),
+                                                  value: Math.round(
+                                                    Number(10 + samplerCfgOffset)
+                                                  ).toString(),
                                                 },
                                                 {
                                                   label: 'Balanced',
-                                                  value: Number(20 + samplerCfgOffset).toString(),
+                                                  value: Math.round(
+                                                    Number(20 + samplerCfgOffset)
+                                                  ).toString(),
                                                 },
                                                 {
                                                   label: 'High',
-                                                  value: Number(30 + samplerCfgOffset).toString(),
+                                                  value: Math.round(
+                                                    Number(30 + samplerCfgOffset)
+                                                  ).toString(),
                                                 },
                                               ]
                                         }

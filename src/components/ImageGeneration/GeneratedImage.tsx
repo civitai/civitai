@@ -74,6 +74,7 @@ import { EmblaCarouselType } from 'embla-carousel';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
+import { capitalize } from '~/utils/string-helpers';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -98,6 +99,7 @@ export function GeneratedImage({
     stepName: step.name,
     imageId: image.id,
   });
+  const isSelecting = orchestratorImageSelect.useIsSelecting();
 
   const [nsfwLevelError, setNsfwLevelError] = useState(false);
 
@@ -117,11 +119,15 @@ export function GeneratedImage({
   const handleImageClick = () => {
     if (!image || !available || isLightbox || nsfwLevelError) return;
 
-    dialogStore.trigger({
-      id: 'generated-image',
-      component: GeneratedImageLightbox,
-      props: { image, request },
-    });
+    if (isSelecting) {
+      handleToggleSelect();
+    } else {
+      dialogStore.trigger({
+        id: 'generated-image',
+        component: GeneratedImageLightbox,
+        props: { image, request },
+      });
+    }
   };
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
@@ -221,6 +227,11 @@ export function GeneratedImage({
     handleDataTransfer(e);
   }
 
+  function handleToggleSelect(value = !selected) {
+    toggleSelect(value);
+    if (running && value) helpers?.next();
+  }
+
   const blockedReason = getImageBlockedReason(image.blockedReason);
   const isBlocked = !!nsfwLevelError || !!blockedReason;
 
@@ -241,7 +252,7 @@ export function GeneratedImage({
                 message="Private generation is limited to PG, PG-13 only."
               />
             ) : blockedReason ? (
-              <BlockedBlock title="Blocked Image" message={blockedReason} />
+              <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
             ) : (
               <EdgeMedia2
                 src={image.url}
@@ -284,10 +295,7 @@ export function GeneratedImage({
               <Checkbox
                 className={classes.checkbox}
                 checked={selected}
-                onChange={(e) => {
-                  toggleSelect(e.target.checked);
-                  if (running && e.target.checked) helpers?.next();
-                }}
+                onChange={(e) => handleToggleSelect(e.target.checked)}
               />
             </label>
           )}
@@ -642,6 +650,18 @@ function GeneratedImageWorkflowMenuItems({
     });
   }
 
+  async function handleImg2Vid() {
+    generationStore.setData({
+      resources: [],
+      params: {
+        ...(step.params as any),
+        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+      },
+      type: 'video',
+      engine: useGenerationFormStore.getState().engine,
+    });
+  }
+
   async function handleSelectWorkflow(workflow: string) {
     handleGenerate({ workflow, sourceImage: image.url as any }); // TODO - see if there is a good way to handle this type mismatch. We're converting a string to a sourceImage object after we pass the data to the generation store
   }
@@ -776,19 +796,7 @@ function GeneratedImageWorkflowMenuItems({
       {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
       {!isBlocked && !!img2vidConfigs.length && (
         <>
-          <Menu.Item
-            onClick={async () =>
-              handleGenerate(
-                { sourceImage: await getSourceImageFromUrl({ url: image.url }) },
-                {
-                  type: 'video',
-                  engine: useGenerationFormStore.getState().engine,
-                }
-              )
-            }
-          >
-            Image To Video
-          </Menu.Item>
+          <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
       {/* {!isBlocked && image.type === 'video' && (

@@ -7,6 +7,7 @@ import {
   SignalMessages,
   NewOrderSignalActions,
   NotificationCategory,
+  NewOrderDamnedReason,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -32,7 +33,7 @@ import {
 } from '~/server/schema/games/new-order.schema';
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
-import { updateImageNsfwLevel } from '~/server/services/image.service';
+import { moderateImages, updateImageNsfwLevel } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { claimCosmetic } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -44,7 +45,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getLevelProgression } from '~/server/utils/game-helpers';
 import { Flags } from '~/shared/utils';
-import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { MediaType, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
@@ -206,6 +207,14 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   return smite;
 }
 
+const damnedReasonToReviewType = {
+  [NewOrderDamnedReason.InappropriateMinors]: 'minor',
+  [NewOrderDamnedReason.RealisticMinors]: 'csam',
+  [NewOrderDamnedReason.InappropriateRealPerson]: 'poi',
+  [NewOrderDamnedReason.Bestiality]: 'reported',
+  [NewOrderDamnedReason.GraphicViolence]: 'reported',
+} as const;
+
 export async function addImageRating({
   playerId,
   imageId,
@@ -277,6 +286,14 @@ export async function addImageRating({
     await updatePendingImageRatings({ imageId, rating });
     await valueInQueue.pool.reset({ id: imageId });
 
+    if (rating === NsfwLevel.Blocked) {
+      await moderateImages({
+        ids: [imageId],
+        reviewAction: 'delete',
+        reviewType: damnedReason ? damnedReasonToReviewType[damnedReason] : 'reported',
+      });
+    }
+
     signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
@@ -289,12 +306,25 @@ export async function addImageRating({
   }
 
   const isAcolyte = player.rankType === NewOrderRankType.Acolyte;
-  const status = isAcolyte
-    ? image.nsfwLevel === rating
-      ? NewOrderImageRatingStatus.AcolyteCorrect
-      : NewOrderImageRatingStatus.AcolyteFailed
-    : // Knights / Templars leave the image in the pending status until their vote is confirmed.
-      NewOrderImageRatingStatus.Pending;
+  let status: NewOrderImageRatingStatus;
+
+  if (isAcolyte) {
+    status =
+      image.nsfwLevel === rating
+        ? NewOrderImageRatingStatus.AcolyteCorrect
+        : NewOrderImageRatingStatus.AcolyteFailed;
+  } else if (
+    (player.rankType === NewOrderRankType.Knight && valueInQueue.value + 1 >= 5) ||
+    (player.rankType === NewOrderRankType.Templar && valueInQueue.value + 1 >= 2)
+  ) {
+    status =
+      image.nsfwLevel === rating
+        ? NewOrderImageRatingStatus.Correct
+        : NewOrderImageRatingStatus.Failed;
+  } else {
+    // Knights / Templars leave the image in the pending status until their vote is confirmed.
+    status = NewOrderImageRatingStatus.Pending;
+  }
 
   const multiplier = [
     NewOrderImageRatingStatus.Failed,
@@ -740,7 +770,21 @@ export async function getNewOrderRanks({ name }: { name: string }) {
   return rank;
 }
 
-async function getRatedImages({ userId, startAt }: { userId: number; startAt: Date }) {
+async function getRatedImages({
+  userId,
+  startAt,
+  rankType,
+}: {
+  userId: number;
+  startAt: Date;
+  rankType?: NewOrderRankType;
+}) {
+  const AND = [
+    `userId = ${userId}`,
+    `createdAt >= parseDateTimeBestEffort('${startAt.toISOString()}')`,
+  ];
+  if (rankType) AND.push(`rank = '${rankType}'`);
+
   const images = await fetchThroughCache(
     `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}`,
     async () => {
@@ -748,7 +792,7 @@ async function getRatedImages({ userId, startAt }: { userId: number; startAt: Da
         SELECT 
           DISTINCT "imageId"
         FROM knights_new_order_image_rating
-        WHERE "userId" = ${userId} AND "createdAt" >= ${startAt}
+        WHERE ${AND.join(' AND ')}
     `;
       return results.map((r) => r.imageId);
     },
@@ -785,24 +829,6 @@ export async function addImageToQueue({
     })
   );
 
-  if (rankType === 'Inquisitor') {
-    const imageRaters = await getImageRaters({ imageIds });
-    const imagesWithRaters = images.map((image) => ({
-      ...image,
-      ratings: imageRaters[image.id],
-    }));
-
-    signalClient
-      .topicSend({
-        topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
-        target: SignalMessages.NewOrderQueueUpdate,
-        data: { images: imagesWithRaters, action: NewOrderSignalActions.AddImage },
-      })
-      .catch();
-
-    return true;
-  }
-
   signalClient
     .topicSend({
       topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
@@ -825,7 +851,13 @@ export async function getImagesQueue({
 }) {
   const player = await getPlayerById({ playerId });
 
-  const imageIds: number[] = [];
+  const validatedImages: Array<{
+    id: number;
+    url: string;
+    nsfwLevel: number;
+    metadata: ImageMetadata;
+  }> = [];
+  const seenImageIds = new Set<number>();
   const rankPools = isModerator
     ? queueType
       ? poolCounters[queueType]
@@ -834,51 +866,63 @@ export async function getImagesQueue({
     ? [...poolCounters.Templar, ...poolCounters.Knight]
     : poolCounters[player.rankType];
 
-  const ratedImages = await getRatedImages({ userId: playerId, startAt: player.startAt });
+  const ratedImages = await getRatedImages({
+    userId: playerId,
+    startAt: player.startAt,
+    rankType: player.rankType,
+  });
 
-  for (const pool of rankPools) {
+  for (const pool of shuffle(rankPools)) {
     let offset = 0;
 
-    while (imageIds.length < imageCount) {
+    while (validatedImages.length < imageCount) {
       // Fetch images with offset to ensure we get enough images in case some are already rated.
-      const images = (await pool.getAll({ limit: imageCount * 10, offset })).map(Number);
-      if (images.length === 0) break;
+      const imageIds = (await pool.getAll({ limit: imageCount * 10, offset })).map(Number);
+      if (imageIds.length === 0) break;
 
-      // Allow mods to see all images regardless of rating.
-      if (!isModerator) imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
-      else imageIds.push(...images);
+      // Filter out already rated images and previously seen images before doing the DB query
+      const unratedImageIds = isModerator
+        ? imageIds.filter((id) => !seenImageIds.has(id))
+        : imageIds.filter((id) => !ratedImages.includes(id) && !seenImageIds.has(id));
 
-      if (imageIds.length >= imageCount) break;
+      if (unratedImageIds.length === 0) {
+        offset += imageCount * 10;
+        continue;
+      }
+
+      // Query the database for each batch with all conditions
+      const images = await dbRead.image.findMany({
+        where: {
+          id: { in: unratedImageIds },
+          type: MediaType.image,
+          post: !isModerator ? { publishedAt: { lt: new Date() } } : undefined,
+          nsfwLevel: isModerator ? undefined : { notIn: [0, NsfwLevel.Blocked] },
+        },
+        select: { id: true, url: true, nsfwLevel: true, metadata: true },
+      });
+
+      // Add new image IDs to the seen set
+      images.forEach((image) => seenImageIds.add(image.id));
+
+      validatedImages.push(
+        ...images.map((image) => ({
+          ...image,
+          metadata: image.metadata as ImageMetadata,
+        }))
+      );
+
+      if (validatedImages.length >= imageCount) break;
 
       offset += imageCount * 10; // Increment offset for the next batch
     }
 
-    if (imageIds.length >= imageCount) break;
+    if (validatedImages.length >= imageCount) break;
   }
 
-  const imageRaters =
-    isModerator && (!queueType || queueType === 'Inquisitor')
-      ? await getImageRaters({ imageIds })
-      : {};
-  const images = await dbRead.image.findMany({
-    where: {
-      id: { in: imageIds },
-      post: !isModerator ? { publishedAt: { lt: new Date() } } : undefined,
-      nsfwLevel: isModerator ? undefined : { notIn: [0, NsfwLevel.Blocked] },
-    },
-    select: { id: true, url: true, nsfwLevel: true, metadata: true },
-  });
-
-  return shuffle(images)
-    .slice(0, imageCount)
-    .map(({ metadata, ...i }) => {
-      const ratings = isModerator ? imageRaters[i.id] : null;
-
-      return { ...i, ratings, metadata: metadata as ImageMetadata };
-    });
+  return shuffle(validatedImages).slice(0, imageCount);
 }
 
-async function getImageRaters({ imageIds }: { imageIds: number[] }) {
+export async function getImageRaters({ imageIds }: { imageIds: number[] }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
   if (imageIds.length === 0) return {};
 
@@ -888,23 +932,43 @@ async function getImageRaters({ imageIds }: { imageIds: number[] }) {
     rating: NsfwLevel;
   }>`
     SELECT "userId", "imageId", any("rating") as "rating"
-    FROM knights_new_order_image_rating
-    WHERE "imageId" IN (${imageIds})
+    FROM (
+      SELECT 
+        "userId", 
+        "imageId", 
+        "rating",
+        row_number() OVER (PARTITION BY "imageId" ORDER BY "createdAt" DESC) as rn
+      FROM knights_new_order_image_rating
+      WHERE "imageId" IN (${imageIds})
+        AND rank IN ('${NewOrderRankType.Knight}', '${NewOrderRankType.Templar}')
+    )
+    WHERE rn <= 7 -- max 5 knights + 2 templars
     GROUP BY "userId", "imageId"
   `;
 
   const raters: Record<
     number,
-    { player: Awaited<ReturnType<typeof getPlayerById>>; rating: NsfwLevel }[]
+    Partial<
+      Record<
+        NewOrderRankType,
+        { player: Awaited<ReturnType<typeof getPlayerById>>; rating: NsfwLevel }[]
+      >
+    >
   > = {};
 
   for (const { userId, imageId, rating } of ratings) {
-    if (!raters[imageId]) raters[imageId] = [];
+    if (!raters[imageId])
+      raters[imageId] = {
+        [NewOrderRankType.Knight]: [],
+        [NewOrderRankType.Templar]: [],
+      };
 
     const player = await getPlayerById({ playerId: userId });
     if (!player) continue;
 
-    raters[imageId].push({ player, rating });
+    const rankType = player.rankType ?? NewOrderRankType.Knight;
+    if (!raters[imageId][rankType]) raters[imageId][rankType] = [];
+    raters[imageId][rankType].push({ player, rating });
   }
 
   return raters;

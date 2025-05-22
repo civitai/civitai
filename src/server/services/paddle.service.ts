@@ -11,7 +11,7 @@ import type {
 import { ApiError, SubscriptionItemNotification } from '@paddle/paddle-node-sdk';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
-import { constants, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
+import { constants, HOLIDAY_PROMO_VALUE, specialCosmeticRewards } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -41,6 +41,7 @@ import {
   subscriptionProductMetadataSchema,
 } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
+import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getPlans } from '~/server/services/subscriptions.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
@@ -228,6 +229,11 @@ export const processCompleteBuzzTransaction = async (
 
   if (bulkBuzzMultiplier > 1) {
     // TODO: Grant cosmetic :shrugh:
+    const cosmeticIds = specialCosmeticRewards.bulkBuzzRewards;
+    await grantCosmetics({
+      userId,
+      cosmeticIds,
+    });
   }
 };
 
@@ -533,6 +539,48 @@ export const upsertSubscription = async (
         data: {
           storageKb: parsedMeta.data.vaultSizeKb,
         },
+      });
+    }
+  }
+
+  // Special check for special cosmetics
+  if (Object.values(specialCosmeticRewards.annualRewards).some((r) => r.length > 0)) {
+    const price = await dbWrite.price.findUnique({
+      where: { id: data.priceId },
+      select: {
+        id: true,
+        interval: true,
+        product: {
+          select: {
+            id: true,
+            metadata: true,
+          },
+        },
+      },
+    });
+
+    if (price && price.interval === 'year') {
+      // Grant special cosmetics:
+      const productMeta = price.product.metadata as SubscriptionProductMetadata;
+
+      const keys = Object.keys(specialCosmeticRewards.annualRewards).filter((k) => {
+        return (
+          constants.memberships.tierOrder.indexOf(k as typeof productMeta.tier) <=
+          constants.memberships.tierOrder.indexOf(productMeta.tier)
+        );
+      });
+
+      const cosmeticIds = keys
+        .map((k) => {
+          return specialCosmeticRewards.annualRewards[
+            k as keyof typeof specialCosmeticRewards.annualRewards
+          ];
+        })
+        .flat();
+
+      await grantCosmetics({
+        userId: user.id,
+        cosmeticIds: cosmeticIds,
       });
     }
   }

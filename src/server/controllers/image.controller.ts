@@ -58,22 +58,6 @@ import {
   moderateImages,
 } from './../services/image.service';
 
-const reviewTypeToBlockedReason = {
-  csam: BlockImageReason.CSAM,
-  minor: BlockImageReason.TOS,
-  poi: BlockImageReason.TOS,
-  reported: BlockImageReason.TOS,
-  blocked: BlockImageReason.TOS,
-  tag: BlockImageReason.TOS,
-  newUser: BlockImageReason.Ownership,
-  appeal: BlockImageReason.TOS,
-  modRule: BlockImageReason.TOS,
-} as const;
-export const reviewTypeToBlockedReasonKeys = Object.keys(reviewTypeToBlockedReason) as [
-  string,
-  ...string[]
-];
-
 export const moderateImageHandler = async ({
   input,
   ctx,
@@ -108,15 +92,6 @@ export const moderateImageHandler = async ({
           ownerId: userId,
         });
       }
-
-      await bulkAddBlockedImages({
-        data: affected
-          .filter((x) => !!x.pHash)
-          .map((x) => ({
-            hash: x.pHash,
-            reason: reviewTypeToBlockedReason[input.reviewType],
-          })),
-      });
     } else {
       await bulkRemoveBlockedImages({ ids: input.ids });
     }
