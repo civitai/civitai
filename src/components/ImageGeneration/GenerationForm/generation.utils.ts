@@ -289,7 +289,7 @@ export function ResourceSelectHandler(options?: ResourceSelectOptions) {
 
   async function select({
     title,
-    selectSource,
+    selectSource = 'generation',
     excludedIds = [],
   }: {
     title?: React.ReactNode;
