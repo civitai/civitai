@@ -145,7 +145,7 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
                                 ? WithdrawalRequestBadgeColor[request.status]
                                 : undefined
                             }
-                            weight={hasReachedStripe ? 'bold' : undefined}
+                            fw={hasReachedStripe ? 'bold' : undefined}
                           >
                             ${formatCurrencyForDisplay(payoutAmount, Currency.USD)}{' '}
                           </Text>

@@ -275,7 +275,7 @@ export function ExplainImageRaterPopover() {
         </LegacyActionIcon>
       </Popover.Target>
       <Popover.Dropdown>
-        <Text c="orange" weight={500}>
+        <Text c="orange" fw={500}>
           What is this?
         </Text>
         <Text

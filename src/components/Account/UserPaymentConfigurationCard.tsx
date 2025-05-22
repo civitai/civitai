@@ -65,7 +65,7 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
   return (
     <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
       <Group justify="space-between" mb="md">
-        <Text size="lg" weight="bold">
+        <Text size="lg" fw="bold">
           Civitai Creator Program Code of Conduct
         </Text>
       </Group>
@@ -162,7 +162,7 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
     case StripeConnectStatus.Rejected:
       return (
         <Stack>
-          <Text c="red" weight="bold">
+          <Text c="red" fw="bold">
             Looks like you can&rsquo;t receive payments
           </Text>
           <Text>
@@ -177,7 +177,7 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
     case StripeConnectStatus.PendingVerification:
       return (
         <Stack>
-          <Text weight="bold">Your account is pending verification</Text>
+          <Text fw="bold">Your account is pending verification</Text>
           <Text>
             Once your account is approved and verified you will be able to start receiving payments
             for your content. Stripe verification process can take 3 to 5 business days, so please
@@ -355,6 +355,7 @@ const TipaltiConfigurationCard = () => {
           href="/tipalti/setup"
           target="_blank"
           rel="nofollow noreferrer"
+          classNames={{ label: 'text-white' }}
           fullWidth
         >
           Set up my Tipalti Account
@@ -382,7 +383,7 @@ export function UserPaymentConfigurationCard() {
       {userPaymentConfiguration?.tipaltiAccountId && userPaymentConfiguration?.stripeAccountId && (
         <Divider my="xl" />
       )}
-      {userPaymentConfiguration?.tipaltiAccountId && <TipaltiConfigurationCard />}
+      {!userPaymentConfiguration?.tipaltiAccountId && <TipaltiConfigurationCard />}
     </Card>
   );
 }

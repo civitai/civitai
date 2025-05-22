@@ -41,7 +41,7 @@ const SubscriptionRequiredModal = ({ feature }: { feature: keyof typeof data }) 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="md">
       <Stack>
-        {typeof title === 'string' ? <Text weight="bold">{title}</Text> : title}
+        {typeof title === 'string' ? <Text fw="bold">{title}</Text> : title}
         {typeof content === 'string' ? <Text>{content}</Text> : content}
 
         <Stack gap="xs">

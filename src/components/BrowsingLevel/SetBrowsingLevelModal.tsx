@@ -54,7 +54,7 @@ export default function SetBrowsingLevelModal({
             className={clsx({ [classes.active]: nsfwLevel === level })}
             onClick={() => handleClick(level)}
           >
-            <Text weight={700}>{browsingLevelLabels[level]}</Text>
+            <Text fw={700}>{browsingLevelLabels[level]}</Text>
             <Text>{browsingLevelDescriptions[level]}</Text>
           </UnstyledButton>
         ))}

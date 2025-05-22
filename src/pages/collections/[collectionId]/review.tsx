@@ -359,7 +359,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
         footer={
           <div className="flex flex-col gap-1">
             {reviewData.title && (
-              <Text className={cardClasses.dropShadow} size="xl" weight={700} lineClamp={2} inline>
+              <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} inline>
                 {reviewData.title}
               </Text>
             )}

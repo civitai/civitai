@@ -5,7 +5,7 @@ export function ComingSoon({ children, message }: { children: React.ReactNode; m
     <HoverCard withArrow width={250} openDelay={500}>
       <HoverCard.Target>{children}</HoverCard.Target>
       <HoverCard.Dropdown>
-        <Text c="yellow" weight={500}>
+        <Text c="yellow" fw={500}>
           Coming soon!
         </Text>
         {message ? (

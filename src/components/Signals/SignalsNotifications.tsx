@@ -15,14 +15,14 @@ const notificationConfig: Partial<
     message:
       updated.delta > 0 ? (
         <Text>
-          <Text weight="bold" span>
+          <Text fw="bold" span>
             {updated.delta.toLocaleString()} Buzz
           </Text>{' '}
           has been added to your Buzz account
         </Text>
       ) : (
         <Text>
-          <Text weight="bold" span>
+          <Text fw="bold" span>
             {Math.abs(updated.delta).toLocaleString()} Buzz
           </Text>{' '}
           has been debited from your Buzz account
@@ -35,14 +35,14 @@ const notificationConfig: Partial<
     message:
       updated.delta > 0 ? (
         <Text>
-          <Text weight="bold" span>
+          <Text fw="bold" span>
             {updated.delta.toLocaleString()} Buzz
           </Text>{' '}
           has been added to your Buzz account
         </Text>
       ) : (
         <Text>
-          <Text weight="bold" span>
+          <Text fw="bold" span>
             {Math.abs(updated.delta).toLocaleString()} Buzz
           </Text>{' '}
           has been debited from your Buzz account

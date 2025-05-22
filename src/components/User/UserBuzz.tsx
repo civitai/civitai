@@ -42,16 +42,10 @@ export function UserBuzz({
       <Loader color={config.color(theme)} variant="dots" size="xs" />
     </Group>
   ) : (
-    <Text component="div" c={config.color(theme)} transform="uppercase" {...textProps}>
+    <Text component="div" c={config.color(theme)} tt="uppercase" {...textProps}>
       <Group gap={4} wrap="nowrap">
         <Icon size={iconSize} color="currentColor" fill="currentColor" />
-        <Text
-          size={textSize}
-          weight={600}
-          lh={0}
-          style={{ fontVariantNumeric: 'tabular-nums' }}
-          span
-        >
+        <Text size={textSize} fw={600} lh={0} style={{ fontVariantNumeric: 'tabular-nums' }} span>
           {balance === null ? (
             <Loader size="sm" variant="dots" color={config.color(theme)} />
           ) : withAbbreviation ? (

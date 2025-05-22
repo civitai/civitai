@@ -43,7 +43,7 @@ export function UploadTracker() {
 
       <Popover.Dropdown p={0}>
         <Group justify="space-between" p="sm">
-          <Text weight="bold" size="sm">
+          <Text fw="bold" size="sm">
             Files
           </Text>
           <Tooltip label="Cancel all" position="left">
@@ -67,12 +67,7 @@ export function UploadTracker() {
                     size={20}
                   />
                 </Group>
-                <Text
-                  size="sm"
-                  weight={500}
-                  lineClamp={1}
-                  style={{ flex: 1, display: 'inline-block' }}
-                >
+                <Text size="sm" fw={500} lineClamp={1} style={{ flex: 1, display: 'inline-block' }}>
                   {name}
                 </Text>
 

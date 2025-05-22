@@ -221,7 +221,7 @@ function MerchShowcaseSection({
         />
       </div>
       {/* <div className="flex flex-col lg:px-11">
-        <Text size={32} weight={600}>
+        <Text size={32} fw={600}>
           The backstory
         </Text>
         <Text size={24} lh="40px" c="dimmed">
@@ -273,7 +273,7 @@ function ProductItem({
         )}
       </div>
       <div className="flex flex-col gap-2">
-        <Text size="22px" lh={1.2} weight="bold">
+        <Text size="22px" lh={1.2} fw="bold">
           {name}
         </Text>
         {description && (

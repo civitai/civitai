@@ -112,7 +112,7 @@ export function BountyCard({ data }: Props) {
                 variant="light"
                 radius="xl"
               >
-                <Text c="white" size="xs" transform="capitalize">
+                <Text c="white" size="xs" tt="capitalize">
                   {getDisplayName(type)}
                 </Text>
               </Badge>
@@ -128,7 +128,7 @@ export function BountyCard({ data }: Props) {
           <UserAvatarSimple {...data.user} />
           <div className="flex items-start justify-between gap-2"></div>
           <div className="flex items-start justify-between gap-2">
-            <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+            <Text size="xl" fw={700} lineClamp={2} lh={1.2}>
               {name}
             </Text>
             {!image.scannedAt && (
@@ -140,7 +140,7 @@ export function BountyCard({ data }: Props) {
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
                   <div>
-                    <Text c="yellow" weight={590}>
+                    <Text c="yellow" fw={590}>
                       Pending scan
                     </Text>
                     <Text size="sm">

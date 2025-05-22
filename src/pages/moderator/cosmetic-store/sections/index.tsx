@@ -208,7 +208,7 @@ export default function CosmeticStoreSections() {
                         <Group justify="space-between" wrap="nowrap" pos="relative">
                           <Stack gap={0}>
                             <Group>
-                              <Text size="lg" weight={700}>
+                              <Text size="lg" fw={700}>
                                 {section.title}
                               </Text>
                               <Badge>{section._count.items} Items in section</Badge>

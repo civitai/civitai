@@ -110,7 +110,7 @@ const UpdateBuzzWithdrawalRequest = ({
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="md">
       <Group justify="space-between" mb="md">
-        <Text size="lg" weight="bold">
+        <Text size="lg" fw="bold">
           Confirm the status change
         </Text>
       </Group>
@@ -118,11 +118,11 @@ const UpdateBuzzWithdrawalRequest = ({
       <Stack>
         <Text>
           You are about to set{' '}
-          <Text component="span" weight="bold">
+          <Text component="span" fw="bold">
             ({requestIds.length})
           </Text>{' '}
           withdrawal request to{' '}
-          <Text component="span" weight="bold" color={WithdrawalRequestBadgeColor[status]}>
+          <Text component="span" fw="bold" color={WithdrawalRequestBadgeColor[status]}>
             {getDisplayName(status)}
           </Text>
           .
@@ -462,7 +462,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                             ? WithdrawalRequestBadgeColor[request.status]
                             : undefined
                         }
-                        weight={showColorTransferedAmount ? 'bold' : undefined}
+                        fw={showColorTransferedAmount ? 'bold' : undefined}
                       >
                         $
                         {formatCurrencyForDisplay(

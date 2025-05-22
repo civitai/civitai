@@ -101,7 +101,7 @@ const StripeTransactionModal = ({
     return (
       <Stack>
         <Group justify="space-between" wrap="nowrap">
-          <Text size="lg" weight={700}>
+          <Text size="lg" fw={700}>
             Complete your transaction
           </Text>
         </Group>
@@ -123,14 +123,14 @@ const StripeTransactionModal = ({
     return (
       <Stack>
         <Group justify="space-between" wrap="nowrap">
-          <Text size="lg" weight={700}>
+          <Text size="lg" fw={700}>
             Complete your transaction
           </Text>
         </Group>
         <Divider mx="-lg" />
         <Text>
           Thank you, we have received your payment but something seems to have gone wrong. Please{' '}
-          <Text component="span" weight="bold">
+          <Text component="span" fw="bold">
             DO NOT ATTEMPT TO PURCHASE AGAIN
           </Text>
           . If your Buzz is not delivered within the next few minutes, please contact support.
@@ -162,7 +162,7 @@ const StripeTransactionModal = ({
     >
       <Stack gap="md">
         <Group justify="space-between" wrap="nowrap">
-          <Text size="lg" weight={700}>
+          <Text size="lg" fw={700}>
             Complete your transaction
           </Text>
         </Group>
@@ -172,7 +172,7 @@ const StripeTransactionModal = ({
         {(supportedUserPaymentMethods?.length ?? 0) > 0 && (
           <Stack>
             <Divider mx="-lg" />
-            <Text weight="bold">Saved payment methods</Text>
+            <Text fw="bold">Saved payment methods</Text>
             <Stack gap="sm">
               {supportedUserPaymentMethods.map((paymentMethod) => (
                 <PaymentMethodItem key={paymentMethod.id} paymentMethod={paymentMethod}>
@@ -194,7 +194,7 @@ const StripeTransactionModal = ({
               ))}
             </Stack>
             <Divider mx="-lg" />
-            <Text weight="bold">Add new payment method</Text>
+            <Text fw="bold">Add new payment method</Text>
           </Stack>
         )}
         {setupFuturePayment && (

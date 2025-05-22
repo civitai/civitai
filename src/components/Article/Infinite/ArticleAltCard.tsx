@@ -95,7 +95,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
               }}
               variant="smallRounded"
               label={
-                <Text size="xs" weight={500}>
+                <Text size="xs" fw={500}>
                   {data.user.username}
                 </Text>
               }
@@ -119,7 +119,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
             </CivitaiTooltip>
           )}
           <Stack className={classes.content} gap={6} p="xs">
-            <Text fz={14} weight={500} color="white" lineClamp={2} lh={1.2}>
+            <Text fz={14} fw={500} color="white" lineClamp={2} lh={1.2}>
               {title}
             </Text>
             <Group justify="space-between">

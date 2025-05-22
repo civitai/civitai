@@ -83,7 +83,7 @@ export function SortBy({ title, ...props }: SortByProps & { title: string }) {
       <Accordion.Item value={title}>
         <Accordion.Control>
           <Group>
-            <Text size="md" weight={500}>
+            <Text size="md" fw={500}>
               {title}
             </Text>
             <Box className={styles.divider} />
@@ -170,7 +170,7 @@ export function SearchableMultiSelectRefinementList({
       <Accordion.Item value={props.attribute}>
         <Accordion.Control>
           <Group>
-            <Text size="md" weight={500}>
+            <Text size="md" fw={500}>
               {title}
             </Text>
             <Box className={styles.divider} />
@@ -205,7 +205,7 @@ export function ChipRefinementList({ title, ...props }: RefinementListProps & { 
       <Accordion.Item value={props.attribute}>
         <Accordion.Control>
           <Group>
-            <Text size="md" weight={500}>
+            <Text size="md" fw={500}>
               {title}
             </Text>{' '}
             <Box className={styles.divider} />
@@ -335,7 +335,7 @@ export const CustomSearchBox = forwardRef<
           <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
             <HoverCard.Target>
               <Text
-                weight="bold"
+                fw="bold"
                 style={{
                   border: `1px solid ${
                     colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
@@ -353,7 +353,7 @@ export const CustomSearchBox = forwardRef<
               </Text>
             </HoverCard.Target>
             <HoverCard.Dropdown>
-              <Text size="sm" color="yellow" weight={500}>
+              <Text size="sm" color="yellow" fw={500}>
                 Pro-tip: Quick search faster!
               </Text>
               <Text size="xs" lh={1.2}>
@@ -395,7 +395,7 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
       <Accordion.Item value={props.attribute}>
         <Accordion.Control>
           <Group>
-            <Text size="md" weight={500}>
+            <Text size="md" fw={500}>
               {title}
             </Text>
             <Box className={styles.divider} />

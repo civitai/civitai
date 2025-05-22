@@ -192,7 +192,7 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
                         <Grid.Col span={{ base: 12, md: 3 }}>
                           <Paper withBorder pos="relative" p="sm" radius="lg" h="100%">
                             <Stack gap={0} h="100%">
-                              <Text weight="bold" size="md">
+                              <Text fw="bold" size="md">
                                 {item.title}
                               </Text>
                               {item.description && (

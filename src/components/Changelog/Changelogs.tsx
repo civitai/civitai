@@ -522,7 +522,7 @@ export function Changelogs() {
   return (
     <Stack ref={ref}>
       <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <Text fz={26} weight="bold" className="w-full text-left sm:w-auto">
+        <Text fz={26} fw="bold" className="w-full text-left sm:w-auto">
           Updates
         </Text>
 

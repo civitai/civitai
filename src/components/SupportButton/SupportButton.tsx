@@ -19,7 +19,7 @@ const options: SupportButtonOption[] = [
     variant: 'outline',
     color: 'green',
     href: '/pricing?utm_campaign=doit',
-    children: <Text weight={500}>Do It</Text>,
+    children: <Text fw={500}>Do It</Text>,
   },
   {
     variant: 'light',

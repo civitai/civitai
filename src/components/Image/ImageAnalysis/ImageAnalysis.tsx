@@ -26,7 +26,7 @@ export function ImageAnalysis({
             <Divider label={`Face ${i + 1}`} />
             <SimpleGrid cols={2} verticalSpacing="xs">
               <Group gap="xs">
-                <Text size="sm" mr="xs" weight={500}>
+                <Text size="sm" mr="xs" fw={500}>
                   Age
                 </Text>
                 <Code
@@ -42,7 +42,7 @@ export function ImageAnalysis({
                 </Code>
               </Group>
               <Group gap="xs">
-                <Text size="sm" mr="xs" weight={500}>
+                <Text size="sm" mr="xs" fw={500}>
                   Gender
                 </Text>
                 <Code
@@ -64,7 +64,7 @@ export function ImageAnalysis({
       <Divider label="NSFW Asessment" />
       <SimpleGrid cols={2} verticalSpacing="xs">
         <Group gap="xs">
-          <Text size="sm" mr="xs" weight={500}>
+          <Text size="sm" mr="xs" fw={500}>
             NSFW
           </Text>
           <Code
@@ -78,7 +78,7 @@ export function ImageAnalysis({
           .sort(([, v1], [, v2]) => v2 - v1)
           .map(([label, value]) => (
             <Group key={label} gap="xs">
-              <Text size="sm" mr="xs" weight={500}>
+              <Text size="sm" mr="xs" fw={500}>
                 {capitalize(label)}
               </Text>
               <Code

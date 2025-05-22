@@ -57,7 +57,7 @@ export const CosmeticSample = ({
     case CosmeticType.NamePlate:
       const data = cosmetic.data as NamePlateCosmetic['data'];
       return (
-        <Text weight="bold" {...data} size={values.textSize}>
+        <Text fw="bold" {...data} size={values.textSize}>
           Sample Text
         </Text>
       );

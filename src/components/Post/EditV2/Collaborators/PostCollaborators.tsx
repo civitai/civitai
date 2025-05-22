@@ -25,7 +25,7 @@ export const PostCollaboratorSelection = ({ post }: { post: PostDetailEditable }
 
   return (
     <Stack gap="xs">
-      <Text size="lg" weight={500}>
+      <Text size="lg" fw={500}>
         Invite Collaborators
       </Text>
       <Text size="sm" c="dimmed">

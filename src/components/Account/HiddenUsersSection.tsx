@@ -39,27 +39,25 @@ export function HiddenUsersSection() {
   return (
     <Card withBorder>
       <Card.Section withBorder inheritPadding py="xs">
-        <Text weight={500}>Hidden Users</Text>
+        <Text fw={500}>Hidden Users</Text>
       </Card.Section>
       <Card.Section withBorder style={{ marginTop: -1 }}>
-        <Portal reuseTargetNode>
-          <Autocomplete
-            name="tag"
-            ref={searchInputRef}
-            placeholder="Search users to hide"
-            data={options}
-            value={search}
-            onChange={setSearch}
-            leftSection={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
-            onOptionSubmit={(value: string) => {
-              const { id } = options.find((x) => x.value === value) ?? {};
-              if (!id) return;
-              handleToggleBlocked({ id, username: value });
-              searchInputRef.current?.focus();
-            }}
-            variant="unstyled"
-          />
-        </Portal>
+        <Autocomplete
+          name="tag"
+          ref={searchInputRef}
+          placeholder="Search users to hide"
+          data={options}
+          value={search}
+          onChange={setSearch}
+          leftSection={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
+          onOptionSubmit={(value: string) => {
+            const { id } = options.find((x) => x.value === value) ?? {};
+            if (!id) return;
+            handleToggleBlocked({ id, username: value });
+            searchInputRef.current?.focus();
+          }}
+          variant="unstyled"
+        />
       </Card.Section>
       <Card.Section inheritPadding py="md">
         <Stack gap={5}>

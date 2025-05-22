@@ -25,7 +25,7 @@ export function TemplateSelect({ userId, onSelect }: Props) {
   return (
     <Stack gap={0}>
       <Stack gap={8} px="sm" pt={8}>
-        <Text size="sm" weight={600}>
+        <Text size="sm" fw={600}>
           Your models
         </Text>
         <TextInput

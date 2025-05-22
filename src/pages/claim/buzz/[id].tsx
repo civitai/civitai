@@ -94,7 +94,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
             <Center>
               <Alert radius="sm" color="blue" className="z-10">
                 <Group gap="xs" wrap="nowrap" justify="center">
-                  <Text size="md" weight={500}>{`🎉 You've received a Buzz Reward! 🎉`}</Text>
+                  <Text size="md" fw={500}>{`🎉 You've received a Buzz Reward! 🎉`}</Text>
                 </Group>
               </Alert>
             </Center>
@@ -110,7 +110,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
             my="lg"
           >
             <Stack gap={0}>
-              <Text fz={64} weight={500} ml={-30} c={color} span>
+              <Text fz={64} fw={500} ml={-30} c={color} span>
                 <Icon
                   color={color}
                   fill={color}
@@ -123,7 +123,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
               {claim.details.useMultiplier && rewardsMultiplier > 1 && (
                 <Text size="sm" c={color}>
                   Originally{' '}
-                  <Text weight="bold" span>
+                  <Text fw="bold" span>
                     {numberWithCommas(claim.details.amount)}{' '}
                   </Text>{' '}
                   Buzz

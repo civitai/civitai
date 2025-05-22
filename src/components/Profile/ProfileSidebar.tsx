@@ -311,7 +311,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
       {badges.length > 0 && (
         <Stack gap={sizeOpts.spacing}>
-          <Text size={sizeOpts.text} c="dimmed" weight={590}>
+          <Text size={sizeOpts.text} c="dimmed" fw={590}>
             Badges
           </Text>
           <Group gap="xs">
@@ -361,7 +361,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                   </Popover.Target>
                   <Popover.Dropdown>
                     <Stack gap={0}>
-                      <Text size="sm" align="center" weight={500}>
+                      <Text size="sm" align="center" fw={500}>
                         {award.name}
                       </Text>
                       {award.videoUrl && (

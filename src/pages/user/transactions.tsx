@@ -158,7 +158,7 @@ export default function UserTransactions() {
                   <Stack gap={4}>
                     <Group justify="space-between">
                       <Group gap={8}>
-                        <Text weight="500">{formatDate(date)}</Text>
+                        <Text fw="500">{formatDate(date)}</Text>
                         <Badge>{TransactionType[type]}</Badge>
                       </Group>
                       <Text c={isDebit ? 'red' : 'green'}>
@@ -174,7 +174,7 @@ export default function UserTransactions() {
                       <Text c="dimmed">
                         <Group gap={4}>
                           {isDebit ? 'To: ' : 'From: '}
-                          <Text weight="500" span>
+                          <Text fw="500" span>
                             {fromUser.username}
                           </Text>
                         </Group>
@@ -184,7 +184,7 @@ export default function UserTransactions() {
                       <Text c="dimmed">
                         <Group gap={4}>
                           {isDebit ? 'From: ' : 'To: '}
-                          <Text weight="500" span>
+                          <Text fw="500" span>
                             {toUser.username}
                           </Text>
                         </Group>

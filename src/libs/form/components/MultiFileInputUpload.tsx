@@ -182,7 +182,7 @@ export function MultiFileInputUpload({
               )
             ) : (
               <>
-                <Text size="sm" weight={500} lineClamp={1}>
+                <Text size="sm" fw={500} lineClamp={1}>
                   {file.name}
                 </Text>
                 <Tooltip label="Remove">
@@ -212,7 +212,7 @@ function UploadItem({ progress, speed, timeRemaining, abort, name }: UploadItemP
   return (
     <Stack gap={4}>
       <Group gap={8} justify="space-between" wrap="nowrap">
-        <Text size="sm" weight={500} lineClamp={1}>
+        <Text size="sm" fw={500} lineClamp={1}>
           {name}
         </Text>
         <Tooltip label="Cancel">

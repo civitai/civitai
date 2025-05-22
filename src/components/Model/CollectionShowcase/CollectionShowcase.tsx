@@ -142,10 +142,10 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
       </ImageGuard2>
       <div className="flex flex-auto flex-col gap-2">
         <div>
-          <Text size="sm" weight={500} lineClamp={1}>
+          <Text size="sm" fw={500} lineClamp={1}>
             {name}
           </Text>
-          <Text size="xs" c="dimmed" weight={500} lineClamp={1}>
+          <Text size="xs" c="dimmed" fw={500} lineClamp={1}>
             {version.name}
           </Text>
         </div>

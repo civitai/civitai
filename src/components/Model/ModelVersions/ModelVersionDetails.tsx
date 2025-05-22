@@ -521,7 +521,7 @@ export function ModelVersionDetails({
     {
       label: (
         <Group gap="xs">
-          <Text weight={500}>AIR</Text>
+          <Text fw={500}>AIR</Text>
           <URNExplanation size={20} />
         </Group>
       ),
@@ -538,7 +538,7 @@ export function ModelVersionDetails({
     {
       label: (
         <Group gap="xs">
-          <Text weight={500}>Bounty</Text>
+          <Text fw={500}>Bounty</Text>
         </Group>
       ),
       value: (
@@ -604,7 +604,7 @@ export function ModelVersionDetails({
       <Stack gap={4}>
         <Group justify="space-between" wrap="nowrap">
           <Group gap={4}>
-            <Text size="xs" weight={500} lineClamp={2}>
+            <Text size="xs" fw={500} lineClamp={2}>
               {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
             </Text>
             {file.visibility !== 'Public' ? (
@@ -1423,7 +1423,7 @@ export function ModelVersionDetails({
             </Text>
           )}
           {license?.poweredBy && (
-            <Text size="xs" weight={500}>
+            <Text size="xs" fw={500}>
               {license.poweredBy}
             </Text>
           )}

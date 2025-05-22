@@ -119,7 +119,7 @@ export function ImageMeta({
           {metas.long.map(({ label, value }) => (
             <Stack key={label} gap={0}>
               <Group gap={4} align="center">
-                <Text size="sm" weight={500}>
+                <Text size="sm" fw={500}>
                   {label}
                 </Text>
 
@@ -176,7 +176,7 @@ export function ImageMeta({
             .filter(({ value }) => typeof value !== 'object')
             .map(({ label, value }) => (
               <Group key={label} justify="space-between">
-                <Text size="sm" mr="xs" weight={500}>
+                <Text size="sm" mr="xs" fw={500}>
                   {label}
                 </Text>
                 <Code
@@ -196,7 +196,7 @@ export function ImageMeta({
               .filter(({ value }) => typeof value !== 'object')
               .map(({ label, value }) => (
                 <Group key={label} gap="xs">
-                  <Text size="sm" mr="xs" weight={500}>
+                  <Text size="sm" mr="xs" fw={500}>
                     {label}
                   </Text>
                   <Code
@@ -244,7 +244,7 @@ export function ImageMeta({
             <Group gap="xs">
               {Object.entries(metas.external.source).map(([label, value]) => (
                 <Group key={label} gap="xs" style={{ flexGrow: 1 }}>
-                  <Text size="sm" mr="xs" weight={500}>
+                  <Text size="sm" mr="xs" fw={500}>
                     {titleCase(label === 'name' ? 'Source' : label)}
                   </Text>
                   <Code style={{ flex: '1', overflowWrap: 'anywhere', textAlign: 'right' }}>
@@ -256,7 +256,7 @@ export function ImageMeta({
           )}
           {!!metas.external.referenceUrl && (
             <Group gap="xs">
-              <Text size="sm" mr="xs" weight={500}>
+              <Text size="sm" mr="xs" fw={500}>
                 Source URL
               </Text>
               <Code style={{ flex: '1', textAlign: 'right', overflowWrap: 'anywhere' }}>
@@ -266,7 +266,7 @@ export function ImageMeta({
           )}
           {!!metas.external.createUrl && (
             <Group gap="xs">
-              <Text size="sm" mr="xs" weight={500}>
+              <Text size="sm" mr="xs" fw={500}>
                 Create URL
               </Text>
               <Code style={{ flex: '1', textAlign: 'right', overflowWrap: 'anywhere' }}>
@@ -282,7 +282,7 @@ export function ImageMeta({
               <SimpleGrid cols={2} verticalSpacing="xs">
                 {Object.entries(metas.external.details).map(([k, v]) => (
                   <Group key={k} gap="xs">
-                    <Text size="sm" mr="xs" weight={500}>
+                    <Text size="sm" mr="xs" fw={500}>
                       {titleCase(k)}
                     </Text>
                     <Code

@@ -29,7 +29,7 @@ export function OnboardingContentExperience() {
             <Card withBorder className={classes.newsletterCard}>
               <Card.Section withBorder inheritPadding py="xs">
                 <Group justify="space-between">
-                  <Text weight={500}>Send me the Civitai Newsletter!</Text>
+                  <Text fw={500}>Send me the Civitai Newsletter!</Text>
                   <NewsletterToggle>
                     {({ subscribed, setSubscribed, isLoading: subscriptionLoading }) => (
                       <Switch

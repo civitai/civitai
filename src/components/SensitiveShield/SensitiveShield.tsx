@@ -47,7 +47,7 @@ export function SensitiveShield({
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="flex flex-col items-center gap-2 p-3">
           <IconEyeOff size={56} />
-          <Text size="xl" weight={500}>
+          <Text size="xl" fw={500}>
             Sensitive Content
           </Text>
           <Text>This content has been marked as NSFW</Text>

@@ -56,7 +56,7 @@ export default function MigrateModelToCollection({ modelId }: { modelId: number 
         <div className="flex flex-col items-center justify-center gap-4 p-8">
           <Loader size={64} />
           <div className="text-center">
-            <Text size="md" weight={600}>
+            <Text size="md" fw={600}>
               Migrating...
             </Text>
             <Text size="sm" c="dimmed">

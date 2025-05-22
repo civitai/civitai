@@ -64,7 +64,7 @@ function ContestBanUserModal() {
     <Modal {...dialog} size="sm" withCloseButton={false} radius="md">
       <Stack>
         <Stack gap="xs">
-          <Text size="md" weight={500}>
+          <Text size="md" fw={500}>
             Select user to ban
           </Text>
           <Text size="sm" c="dimmed">

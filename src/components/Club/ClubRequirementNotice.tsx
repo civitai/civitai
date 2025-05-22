@@ -89,7 +89,7 @@ export const ClubRequirementNotice = ({
         <ThemeIcon radius="xl">
           <IconClubs />
         </ThemeIcon>
-        <Text size="sm" weight="bold">
+        <Text size="sm" fw="bold">
           This {getDisplayName(entityType)} is exclusive to club supporters.
         </Text>
         {clubs.length > 0 && (

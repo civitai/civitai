@@ -251,7 +251,7 @@ export function QueueItem({
                     <IconAlertTriangleFilled size={20} />
                   </Text>
                   <Text size="xs" lh={1.2} color="yellow">
-                    <Text weight={500} component="span">
+                    <Text fw={500} component="span">
                       This is taking longer than usual.
                     </Text>
                     {` Don't want to wait? Cancel this job to get refunded for any undelivered images. If we aren't done by ${formatDateMin(
@@ -425,7 +425,7 @@ const ProgressIndicator = ({
       thickness={8}
       sections={[{ value, color }]}
       label={
-        <Text c="blue" weight={700} align="center">
+        <Text c="blue" fw={700} align="center">
           {value.toFixed(0)}%
         </Text>
       }

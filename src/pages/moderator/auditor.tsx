@@ -105,7 +105,7 @@ export default function MetadataTester() {
         <Group grow align="flex-start">
           {Object.entries(results).map(([key, values]) => (
             <Box key={key} w="50%" px="xs">
-              <Text size="lg" weight={500} tt="uppercase" mb="sm">
+              <Text size="lg" fw={500} tt="uppercase" mb="sm">
                 {key}
               </Text>
               <Stack gap="xs">

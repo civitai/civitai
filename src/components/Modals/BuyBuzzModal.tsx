@@ -38,7 +38,7 @@ export default function BuyBuzzModal({
     >
       <Stack gap="lg">
         <Group justify="space-between" wrap="nowrap">
-          <Text size="lg" weight={700}>
+          <Text size="lg" fw={700}>
             Buy Buzz
           </Text>
           <Group gap="sm" wrap="nowrap">

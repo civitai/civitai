@@ -404,7 +404,7 @@ export function PostDetailContent({ postId }: Props) {
                           style={{ cursor: 'pointer' }}
                           variant={colorScheme === 'dark' ? 'filled' : 'light'}
                         >
-                          <Text size="xs" transform="capitalize" weight={500}>
+                          <Text size="xs" tt="capitalize" fw={500}>
                             {item.name}
                           </Text>
                         </Badge>

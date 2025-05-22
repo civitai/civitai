@@ -40,7 +40,7 @@ export function SocialProfileCard() {
         <Card.Section withBorder p="sm">
           <Group justify="space-between">
             <Title order={5}>{type} Links</Title>
-            <Button size="compact-md" onClick={() => setSelectedLink({ type })}>
+            <Button size="compact-sm" onClick={() => setSelectedLink({ type })}>
               Add Link
             </Button>
           </Group>

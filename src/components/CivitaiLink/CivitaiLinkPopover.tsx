@@ -284,7 +284,7 @@ function InstancesManager() {
   return (
     <Stack gap={0}>
       <Group justify="space-between" p="xs">
-        <Text weight={500}>Stable Diffusion Instances</Text>
+        <Text fw={500}>Stable Diffusion Instances</Text>
         {showControls && (
           <Button
             size="compact-xs"
@@ -385,7 +385,7 @@ function GetReconnected() {
       <Stack p="sm" gap={4}>
         {instance?.key && (
           <Stack gap={0} align="center" mb="md">
-            <Text size="md" weight={700}>
+            <Text size="md" fw={700}>
               Link Key
             </Text>
             <CopyButton value={instance.key}>
@@ -405,7 +405,7 @@ function GetReconnected() {
             </CopyButton>
           </Stack>
         )}
-        <Text size="md" weight={500}>
+        <Text size="md" fw={500}>
           Troubleshooting
         </Text>
         <List type="unordered">
@@ -486,7 +486,7 @@ function LinkActivity({ id, ...props }: { id: string } & GroupProps) {
     <Group align="center" wrap="nowrap" gap="xs" {...props}>
       {isAdd ? <IconDownload /> : <IconTrash />}
       <Stack style={{ flex: 1 }} gap={0}>
-        <Text lineClamp={1} size="md" weight={500} style={{ lineHeight: 1 }}>
+        <Text lineClamp={1} size="md" fw={500} style={{ lineHeight: 1 }}>
           {activity.resource.modelName || (isAdd ? activity.resource.name : undefined)}
         </Text>
         {isAdd && activity.status === 'processing' ? (

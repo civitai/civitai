@@ -50,7 +50,7 @@ export function CosmeticSelect<TData extends CosmeticItem>({
             <UnstyledButton p="sm" className={classes.decoration} onClick={onShopClick}>
               <Stack gap={4} align="center" justify="center">
                 <IconBuildingStore size={24} />
-                <Text size="sm" weight={500}>
+                <Text size="sm" fw={500}>
                   Shop
                 </Text>
               </Stack>

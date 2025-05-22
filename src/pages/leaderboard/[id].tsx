@@ -140,7 +140,7 @@ export default function Leaderboard() {
         p={itemSize}
         label={
           <Group justify="space-between">
-            <Text weight={500}>{item.title}</Text>
+            <Text fw={500}>{item.title}</Text>
             <UserPosition
               position={leaderboardPositions[item.id]}
               loading={loadingLeaderboardPositions}
@@ -217,7 +217,7 @@ export default function Leaderboard() {
                   <Popover.Dropdown>
                     {board === 'season' ? (
                       <Stack gap={4}>
-                        <Text weight={500}>Rank is calculated based on:</Text>
+                        <Text fw={500}>Rank is calculated based on:</Text>
                         <Code block color="blue">
                           {selectedLeaderboard?.scoringDescription}
                         </Code>
@@ -227,7 +227,7 @@ export default function Leaderboard() {
                       </Stack>
                     ) : board === 'legend' ? (
                       <Stack gap={4}>
-                        <Text weight={500}>Score is calculated based on:</Text>
+                        <Text fw={500}>Score is calculated based on:</Text>
                         <Code block color="blue">
                           {`Diamond - 1st place: ${
                             constants.leaderboard.legendScoring.diamond * 100
@@ -279,7 +279,7 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
         onClose={close}
         size="full"
         title={
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Leaderboards
           </Text>
         }

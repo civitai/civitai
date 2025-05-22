@@ -1,4 +1,4 @@
-import { Group, Paper, Switch, Text, Stack, Checkbox } from '@mantine/core';
+import { Text, Stack, Checkbox } from '@mantine/core';
 import { useQueryHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { toggleableBrowsingCategories } from '~/shared/constants/browsingLevel.constants';
 
@@ -26,7 +26,11 @@ export function BrowsingCategories() {
             checked={checked}
             onChange={(e) => toggle(e.target.checked, category.relatedTags)}
             disabled={isLoading}
-            label={<Text weight={500}>{category.title}</Text>}
+            label={
+              <Text size="sm" fw={500}>
+                {category.title}
+              </Text>
+            }
           />
         );
       })}
@@ -49,7 +53,7 @@ export function BrowsingCategories() {
   //           px="md"
   //           onClick={() => toggle(!checked, category.relatedTags)}
   //         >
-  //           <Text weight={500}>{category.title}</Text>
+  //           <Text fw={500}>{category.title}</Text>
   //           <Switch
   //             checked={checked}
   //             onChange={(e) => toggle(e.target.checked, category.relatedTags)}

@@ -66,7 +66,7 @@ export function NewsletterToggle({
             </Popover.Target>
             <Popover.Dropdown>
               <Stack gap="xs">
-                <Text size="sm" weight={500}>
+                <Text size="sm" fw={500}>
                   {`What's the Civitai Newsletter?`}
                 </Text>
                 <Text size="xs" lh={1.3}>

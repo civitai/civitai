@@ -230,7 +230,7 @@ export default function PaddleTransactionModal({
       <Modal {...dialog} {...modalProps}>
         <Stack>
           <Group justify="space-between" wrap="nowrap">
-            <Text size="lg" weight={700}>
+            <Text size="lg" fw={700}>
               Complete your transaction
             </Text>
           </Group>
@@ -258,7 +258,7 @@ export default function PaddleTransactionModal({
     <Modal {...dialog} {...modalProps}>
       <Stack gap="md">
         <Group justify="space-between" wrap="nowrap">
-          <Text size="lg" weight={700}>
+          <Text size="lg" fw={700}>
             Complete your transaction
           </Text>
           <CloseButton onClick={dialog.onClose} />
@@ -278,13 +278,13 @@ export default function PaddleTransactionModal({
           >
             <Group gap="sm" align="center">
               <Group gap={8} justify="space-between" style={{ flexGrow: 1 }}>
-                <Text fz={20} weight={510} color="yellow.6">
+                <Text fz={20} fw={510} color="yellow.6">
                   {numberWithCommas(unitAmount * 10)} Buzz
                 </Text>
                 <Text
                   color={colorScheme === 'dark' ? 'gray.0' : 'dark'}
                   fz={20}
-                  weight="bold"
+                  fw="bold"
                   style={{ fontVariantNumeric: 'tabular-nums' }}
                 >
                   ${formatPriceForDisplay(unitAmount)} {currency}

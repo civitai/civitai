@@ -249,7 +249,7 @@ export const FeatureCard = ({ title, description, icon, btnProps, withCTA }: Fea
     <Paper withBorder className={classes.featureCard} h="100%">
       <Stack gap={4} p="md" align="center" h="100%">
         <Center>{icon}</Center>
-        <Text weight={500} size="xl" align="center" transform="capitalize">
+        <Text fw={500} size="xl" align="center" tt="capitalize">
           {title}
         </Text>
         <Text c="dimmed" align="center">
@@ -271,7 +271,7 @@ export const FeatureList = ({ data }: { data: FeatureCardProps[] }) => {
       {data.map((item, index) => (
         <List.Item key={index}>
           <Stack gap={0}>
-            <Text weight={590} transform="capitalize">
+            <Text fw={590} tt="capitalize">
               {item.title}
               {item.btnProps.disabled ? ' (Coming Soon)' : ''}
             </Text>

@@ -113,7 +113,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           <Group gap={8}>
             {categories.map((category) => (
               <FilterChip key={category.id} value={category.name}>
-                <Text component="span" transform="capitalize">
+                <Text component="span" tt="capitalize">
                   {getDisplayName(category.name)}
                 </Text>
               </FilterChip>
@@ -131,7 +131,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           <Group gap={8}>
             {constants.baseModels.map((baseModel) => (
               <FilterChip key={baseModel} value={baseModel}>
-                <Text component="span" transform="capitalize">
+                <Text component="span" tt="capitalize">
                   {baseModel}
                 </Text>
               </FilterChip>

@@ -47,7 +47,7 @@ export function GenerationStatusBadge({
       >
         <div className="flex items-center gap-1">
           <IconPhoto size={16} />
-          <Text size="sm" inline weight={500}>
+          <Text size="sm" inline fw={500}>
             {status !== 'succeeded' ? `${complete}/${quantity}` : complete}
           </Text>
           {progress && status === 'processing' && (

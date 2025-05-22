@@ -818,7 +818,7 @@ export function Collection({
                                   })}
                               </Progress.Root>
                               <Tooltip label="Rejected entries do not count toward the allowed count.">
-                                <Text size="xs" weight="bold">
+                                <Text size="xs" fw="bold">
                                   Max entries per participant: {entryCountDetails.max}
                                 </Text>
                               </Tooltip>
@@ -874,7 +874,7 @@ export function Collection({
                 {!collectionType && !isLoading && (
                   <Center py="xl">
                     <Stack gap="xs">
-                      <Text size="lg" weight="700" align="center">
+                      <Text size="lg" fw="700" align="center">
                         Whoops!
                       </Text>
                       <Text align="center">This collection type is not supported</Text>

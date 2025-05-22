@@ -412,7 +412,7 @@ function NeedsReviewBadge({
         <HoverCard.Target>{Badge}</HoverCard.Target>
         <HoverCard.Dropdown p={8}>
           <Stack gap={0}>
-            <Text weight="bold" size="xs">
+            <Text fw="bold" size="xs">
               Flagged for review
             </Text>
             <Text size="xs">

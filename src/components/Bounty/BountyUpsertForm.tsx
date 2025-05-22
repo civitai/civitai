@@ -561,13 +561,13 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                       />
                     </Group>
                     {expiresAt && (
-                      <Text weight={590}>
+                      <Text fw={590}>
                         With the selected dates, your bounty will expire{' '}
-                        <Text weight="bold" color="red.5" span>
+                        <Text fw="bold" color="red.5" span>
                           <DaysFromNow date={stripTime(expiresAt)} inUtc />
                         </Text>
                         . All times are in{' '}
-                        <Text weight="bold" color="red.5" span>
+                        <Text fw="bold" color="red.5" span>
                           UTC
                         </Text>
                         .
@@ -710,14 +710,14 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         <Anchor
                           href={`/api/download/attachments/${file.url}`}
                           size="sm"
-                          weight={500}
+                          fw={500}
                           lineClamp={1}
                           download
                         >
                           {file.name}
                         </Anchor>
                       ) : (
-                        <Text size="sm" weight={500} lineClamp={1}>
+                        <Text size="sm" fw={500} lineClamp={1}>
                           {file.name}
                         </Text>
                       )}

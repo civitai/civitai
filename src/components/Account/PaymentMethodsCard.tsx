@@ -52,11 +52,11 @@ export const PaymentMethodItem = ({
               Card
             </Text>
             <Text size="sm">
-              <Text component="span" weight="bold" transform="capitalize">
+              <Text component="span" fw="bold" tt="capitalize">
                 {paymentMethod.card?.brand}
               </Text>{' '}
               ending in{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {paymentMethod.card?.last4}
               </Text>
             </Text>
@@ -74,7 +74,7 @@ export const PaymentMethodItem = ({
             </Text>
             <Text size="sm">
               Ending in{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {paymentMethod.sepa_debit?.last4}
               </Text>
             </Text>
@@ -92,7 +92,7 @@ export const PaymentMethodItem = ({
             </Text>
             <Text size="sm">
               Email:{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {paymentMethod.link?.email}
               </Text>
             </Text>
@@ -105,7 +105,7 @@ export const PaymentMethodItem = ({
       return (
         <Group {...groupProps}>
           <Stack gap={0}>
-            <Text size="xs" transform="capitalize" c="dimmed">
+            <Text size="xs" tt="capitalize" c="dimmed">
               {type.replace(/_/gi, ' ')}
             </Text>
             <Text size="sm">Created on: {formatDate(new Date(paymentMethod.created * 1000))}</Text>
@@ -202,7 +202,7 @@ const StripePaymentMethods = () => {
             <Accordion.Control py={8} px={0}>
               <Group gap={8}>
                 <IconCreditCard size={24} />
-                <Text size="lg" weight={700}>
+                <Text size="lg" fw={700}>
                   Add new payment method
                 </Text>
               </Group>
@@ -273,7 +273,7 @@ const PaddlePaymentMethods = () => {
           </Center>
         )}
         {managementUrls?.updatePaymentMethod && (
-          <Button component="a" href={managementUrls?.updatePaymentMethod}>
+          <Button component="a" classNames={{ label: 'text-white' }} href={managementUrls?.updatePaymentMethod}>
             Update your default payment method
           </Button>
         )}

@@ -50,10 +50,9 @@ export function ApiKeysCard() {
           <Group align="start" justify="space-between">
             <Title order={2}>API Keys</Title>
             <Button
-              variant="outline"
+              size="compact-sm"
               leftSection={<IconPlus size={14} stroke={1.5} />}
               onClick={() => toggle()}
-              size="compact-md"
             >
               Add API key
             </Button>
@@ -67,23 +66,21 @@ export function ApiKeysCard() {
           <LoadingOverlay visible={isLoading} />
           {apiKeys.length > 0 ? (
             <Table highlightOnHover withTableBorder>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Created at</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Created at</Table.Th>
+                  <Table.Th />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {apiKeys.map((apiKey, index) => (
-                  <tr key={index}>
-                    <td>
-                      <Group gap={4}>
-                        <Text>{apiKey.name}</Text>
-                      </Group>
-                    </td>
-                    <td>{formatDate(apiKey.createdAt)}</td>
-                    <td>
+                  <Table.Tr key={index}>
+                    <Table.Td>
+                      <Text size="sm">{apiKey.name}</Text>
+                    </Table.Td>
+                    <Table.Td>{formatDate(apiKey.createdAt)}</Table.Td>
+                    <Table.Td>
                       <Group justify="flex-end">
                         <LegacyActionIcon
                           variant="subtle"
@@ -93,16 +90,16 @@ export function ApiKeysCard() {
                           <IconTrash size="16" stroke={1.5} />
                         </LegacyActionIcon>
                       </Group>
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 ))}
-              </tbody>
+              </Table.Tbody>
             </Table>
           ) : (
             <Paper radius="md" mt="lg" p="lg" style={{ position: 'relative' }} withBorder>
               <Center>
                 <Stack gap={2}>
-                  <Text weight="bold">There are no API keys in your account</Text>
+                  <Text fw="bold">There are no API keys in your account</Text>
                   <Text size="sm" c="dimmed">
                     Start by creating your first API Key to connect your apps.
                   </Text>

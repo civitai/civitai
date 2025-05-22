@@ -13,7 +13,7 @@ export function RankUp({ className }: { className?: string }) {
           style: { marginTop: -210 },
         }}
       />
-      <Text fz={48} ta="center" weight={500} mt={-72} mb={10} lh={1}>
+      <Text fz={48} ta="center" fw={500} mt={-72} mb={10} lh={1}>
         Rank up!
       </Text>
     </Card>

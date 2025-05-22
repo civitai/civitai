@@ -123,7 +123,7 @@ export function NotificationList({
                   </ThemeIcon>
                 )}
                 <Stack gap={0}>
-                  <Text size={textSize} weight="bold" lineClamp={truncate ? 3 : undefined}>
+                  <Text size={textSize} fw="bold" lineClamp={truncate ? 3 : undefined}>
                     {details.message}
                   </Text>
                   <Group gap={2} wrap="nowrap">

@@ -122,7 +122,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
                 {index !== 0 && <Divider />}
                 <Input.Wrapper
                   label={
-                    <Text c="dark.2" weight={590}>
+                    <Text c="dark.2" fw={590}>
                       {group.label}
                     </Text>
                   }

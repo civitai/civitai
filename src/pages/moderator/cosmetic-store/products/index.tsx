@@ -153,7 +153,7 @@ export default function CosmeticStoreProducts() {
                     <tr key={shopItem.id}>
                       <td>
                         <Stack gap={0} maw={350}>
-                          <Text weight="bold">{shopItem.title}</Text>
+                          <Text fw="bold">{shopItem.title}</Text>
                           {shopItem.description && (
                             <ContentClamp maxHeight={200}>
                               <RenderHtml html={shopItem.description} />

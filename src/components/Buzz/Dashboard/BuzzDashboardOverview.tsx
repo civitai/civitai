@@ -168,7 +168,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                       <Stack>
                         <Group wrap="nowrap">
                           <Text>
-                            <Text component="span" weight="bold" color="yellow.7">
+                            <Text component="span" fw="bold" color="yellow.7">
                               <IconBolt
                                 color="yellow.7"
                                 style={{ fill: theme.colors.yellow[7], display: 'inline' }}
@@ -188,7 +188,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                           <List.Item>Bounties</List.Item>
                         </List>
                         <Text>
-                          <Text component="span" weight="bold" color="blue.4">
+                          <Text component="span" fw="bold" color="blue.4">
                             <IconBolt
                               color="blue.4"
                               style={{ fill: theme.colors.blue[4], display: 'inline' }}
@@ -300,7 +300,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                       <Stack key={index + '@' + date.toISOString()} gap={4}>
                         <Group justify="space-between" wrap="nowrap" align="flex-start">
                           <Stack gap={0}>
-                            <Text size="sm" weight="500" lh={1.2}>
+                            <Text size="sm" fw="500" lh={1.2}>
                               {INCLUDE_DESCRIPTION.includes(transaction.type) &&
                               transaction.description ? (
                                 <>{transaction.description}</>

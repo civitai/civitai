@@ -37,7 +37,7 @@ const { openModal, Modal } = createContextModal<{
             <Group gap={8} justify="space-between" wrap="nowrap">
               <Stack gap={0}>
                 <Group gap={8} wrap="nowrap">
-                  <Text weight={600}>Include AI recommendations</Text>
+                  <Text fw={600}>Include AI recommendations</Text>
                   <Badge radius="xl" size="sm" color="yellow">
                     Beta
                   </Badge>

@@ -88,7 +88,7 @@ function ModerationTagsInput({ value = [], onChange, type, ...props }: Moderatio
               <Accordion.Item key={category.value} value={category.value}>
                 <Accordion.Control py="xs">
                   <Group justify="space-between">
-                    <Text weight={500}>{category.label}</Text>
+                    <Text fw={500}>{category.label}</Text>
                     {count && <Badge>{count}</Badge>}
                   </Group>
                 </Accordion.Control>

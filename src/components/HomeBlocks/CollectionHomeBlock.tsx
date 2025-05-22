@@ -124,7 +124,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
                 </Box>
               </Popover.Target>
               <Popover.Dropdown maw="100%">
-                <Text weight={500} size="lg" mb="xs">
+                <Text fw={500} size="lg" mb="xs">
                   {metadata.title ?? collection?.name ?? 'Collection'}
                 </Text>
                 {metadata.description && (

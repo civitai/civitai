@@ -150,7 +150,7 @@ function AIRecommendedIndicator() {
         </ThemeIcon>
       </HoverCard.Target>
       <HoverCard.Dropdown px="md" py={8}>
-        <Text size="sm" weight={600} color="white">
+        <Text size="sm" fw={600} color="white">
           AI Recommended
         </Text>
         <Text size="xs">This resource has been recommended by Civitai AI</Text>

@@ -28,7 +28,7 @@ function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
   return (
     <ToggleList.Item checked={isSelected} onChange={() => toggleBrowsingLevel(level)}>
       <Group wrap="nowrap">
-        <Text weight={700} w={50} ta="center">
+        <Text fw={700} w={50} ta="center">
           {browsingLevelLabels[level]}
         </Text>
         <Text lh={1.2} size="sm" ta="left" style={{ flex: '1 1' }}>

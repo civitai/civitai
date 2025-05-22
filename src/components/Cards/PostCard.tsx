@@ -50,13 +50,7 @@ export function PostCard({ data }: Props) {
           <div className="flex flex-col gap-2">
             <UserAvatarSimple {...data.user} />
             {data.title && (
-              <Text
-                className={cardClasses.dropShadow}
-                size="xl"
-                weight={700}
-                lineClamp={2}
-                lh={1.2}
-              >
+              <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} lh={1.2}>
                 {data.title}
               </Text>
             )}

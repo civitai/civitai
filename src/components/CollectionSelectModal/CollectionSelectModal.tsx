@@ -234,7 +234,7 @@ function CollectionSelectCard({ data }: { data: SearchIndexDataMap['collections'
         <div
           className={clsx('flex flex-col gap-2', cardClasses.contentOverlay, cardClasses.bottom)}
         >
-          <Text className={cardClasses.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
+          <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} lh={1.2}>
             {data.name}
           </Text>
           <div className="flex flex-nowrap gap-1">

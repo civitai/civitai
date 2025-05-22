@@ -11,7 +11,6 @@ import {
   Tooltip,
 } from '@mantine/core';
 import produce from 'immer';
-import { StoreMutatorIdentifier } from 'zustand';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -147,7 +146,9 @@ export function SettingsCard() {
                   <Select
                     label={
                       <Group mb={4} gap="xs">
-                        <Text>Personality</Text>
+                        <Text size="sm" fw={500}>
+                          Personality
+                        </Text>
                         {new Date() < new Date('2025-04-21') && <Badge color="green">New</Badge>}
                       </Group>
                     }

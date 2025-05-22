@@ -100,7 +100,7 @@ export const ModelVersionEarlyAccessPurchase = ({
             The creator of this {resourceLabel} has set this version to early access, You can{' '}
             {userCanDoLabel} with this {resourceLabel} by purchasing it during the early access
             period or just waiting until it becomes public. The remaining time for early access is{' '}
-            <Text component="span" weight="bold">
+            <Text component="span" fw="bold">
               <Countdown endTime={earlyAccessEndsAt ?? new Date()} />
             </Text>
           </Text>

@@ -250,7 +250,7 @@ export default function UserMembership() {
                       )}
                       <Stack gap={0}>
                         {product && (
-                          <Text weight={600} size="20px">
+                          <Text fw={600} size="20px">
                             {isFree ? 'Free' : product.name}
                           </Text>
                         )}

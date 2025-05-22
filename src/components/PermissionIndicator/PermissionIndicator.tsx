@@ -87,7 +87,7 @@ export const PermissionIndicator = ({
         </Group>
       </Popover.Target>
       <Popover.Dropdown>
-        <Text weight={500}>This model permits users to:</Text>
+        <Text fw={500}>This model permits users to:</Text>
         <List
           size="xs"
           styles={{

@@ -64,7 +64,7 @@ export const ProfileSection = ({ children, title, icon, action }: Props) => {
           </ThemeIcon>
           <Text
             className={classes.title}
-            weight={590}
+            fw={590}
             color={colorScheme === 'dark' ? 'white' : 'black'}
           >
             {title}

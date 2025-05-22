@@ -174,7 +174,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
             <Center my="auto" h={250}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
             </Center>
-            <Text className="text-black dark:text-white" mt="auto" weight="bold" size="lg">
+            <Text className="text-black dark:text-white" mt="auto" fw="bold" size="lg">
               {shopItem.title}
             </Text>
             {isLoading && (

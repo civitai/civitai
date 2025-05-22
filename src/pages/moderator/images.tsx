@@ -225,10 +225,10 @@ export default function Images() {
                     style={{ cursor: 'pointer' }}
                     onClick={() => setActiveNameTag(isActive ? null : tag.id)}
                   >
-                    <Text component="span" size="xs" weight={500}>
+                    <Text component="span" size="xs" fw={500}>
                       {tag.name}
                     </Text>{' '}
-                    <Text component="span" size="xs" c="dimmed" weight={500}>
+                    <Text component="span" size="xs" c="dimmed" fw={500}>
                       {tag.count}
                     </Text>
                   </Badge>
@@ -421,7 +421,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               {image.report?.details
                 ? Object.entries(image.report.details).map(([key, value]) => (
                     <Text key={key} size="sm">
-                      <Text weight="bold" span className="capitalize">
+                      <Text fw="bold" span className="capitalize">
                         {splitUppercase(key)}:
                       </Text>{' '}
                       {value}

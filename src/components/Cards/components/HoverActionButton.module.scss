@@ -2,7 +2,14 @@
   position: relative;
   height: var(--size);
   width: var(--size);
+  border: none;
+  background-color: transparent;
+  padding: 0;
   z-index: 0;
+
+  &.white {
+    color: var(--mantine-color-dark-6);
+  }
 
   &:hover {
     .label {
@@ -20,8 +27,7 @@
   position: relative;
   z-index: 1;
 
-  &.white {
-    background-color: var(--mantine-color-gray-3);
+  .white & {
     /* Replace with Mantine's gray[3] */
     color: var(--mantine-color-dark-6);
     /* Replace with Mantine's dark[6] */
@@ -36,8 +42,8 @@
   transition: opacity 200ms ease;
   z-index: 2;
 
-  &.white {
-    background-color: var(--mantine-color-gray-3);
+  .white & {
+    // background-color: var(--mantine-color-gray-3);
     /* Replace with Mantine's gray[3] */
     color: var(--mantine-color-dark-6);
     /* Replace with Mantine's dark[6] */
@@ -67,8 +73,8 @@
   /* Replace with Mantine's spacing.md */
   opacity: 0;
 
-  &.white {
-    background-color: var(--mantine-color-gray-3);
+  .white & {
+    // background-color: var(--mantine-color-gray-3);
     /* Replace with Mantine's gray[3] */
     color: var(--mantine-color-dark-6);
     /* Replace with Mantine's dark[6] */

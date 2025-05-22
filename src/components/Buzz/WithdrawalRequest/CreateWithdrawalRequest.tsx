@@ -71,7 +71,7 @@ export const CreateWithdrawalRequest = () => {
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="md">
       <Group justify="space-between" mb="md">
-        <Text size="lg" weight="bold">
+        <Text size="lg" fw="bold">
           Get Paid
         </Text>
         <Group gap="sm" wrap="nowrap">
@@ -104,7 +104,7 @@ export const CreateWithdrawalRequest = () => {
               <Stack>
                 <Group gap="xs">
                   <IconMoodDollar />
-                  <Text weight="bold">Enter Buzz amount</Text>
+                  <Text fw="bold">Enter Buzz amount</Text>
                 </Group>
                 <Stack>
                   <InputNumber
@@ -125,7 +125,7 @@ export const CreateWithdrawalRequest = () => {
 
                   {amount && (
                     <Stack gap={4}>
-                      <Text weight="bold">Payment</Text>
+                      <Text fw="bold">Payment</Text>
                       <Divider variant="dashed" />
                       <Group justify="space-between">
                         <Text c="dimmed">USD</Text>
@@ -140,10 +140,10 @@ export const CreateWithdrawalRequest = () => {
                       </Group>
                       <Divider variant="dashed" />
                       <Group justify="space-between">
-                        <Text c="green.4" weight="bold">
+                        <Text c="green.4" fw="bold">
                           You&rsquo;ll receive
                         </Text>
-                        <Text c="green.4" weight="bold">
+                        <Text c="green.4" fw="bold">
                           ${formatCurrencyForDisplay(payoutAmount, Currency.USD)}
                         </Text>
                       </Group>
@@ -156,7 +156,7 @@ export const CreateWithdrawalRequest = () => {
             {status?.maxAmount && (
               <Text size="xs" color="yellow.6">
                 You can request up to{' '}
-                <Text size="xs" component="span" weight="bold">
+                <Text size="xs" component="span" fw="bold">
                   {numberWithCommas(status.maxAmount * constants.buzz.buzzDollarRatio)}{' '}
                 </Text>{' '}
                 Buzz

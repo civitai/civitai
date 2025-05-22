@@ -46,32 +46,30 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
     <Card withBorder>
       {withTitle && (
         <Card.Section withBorder inheritPadding py="xs">
-          <Text weight={500}>Hidden Tags</Text>
+          <Text fw={500}>Hidden Tags</Text>
         </Card.Section>
       )}
       <Card.Section withBorder style={{ marginTop: -1 }}>
-        <Portal reuseTargetNode>
-          <Autocomplete
-            name="tag"
-            ref={searchInputRef}
-            placeholder="Search tags to hide"
-            data={modelTags}
-            value={search}
-            onChange={setSearch}
-            leftSection={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
-            onOptionSubmit={(value: string) => {
-              const record = modelTags.find((x) => x.value === value);
-              if (!record) return;
-              handleToggleBlockedTag({ id: record.id, name: record.value });
-              searchInputRef.current?.focus();
-            }}
-            variant="unstyled"
-            style={{
-              zIndex: 400,
-            }}
-            limit={10}
-          />
-        </Portal>
+        <Autocomplete
+          name="tag"
+          ref={searchInputRef}
+          placeholder="Search tags to hide"
+          data={modelTags}
+          value={search}
+          onChange={setSearch}
+          leftSection={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
+          onOptionSubmit={(value: string) => {
+            const record = modelTags.find((x) => x.value === value);
+            if (!record) return;
+            handleToggleBlockedTag({ id: record.id, name: record.value });
+            searchInputRef.current?.focus();
+          }}
+          variant="unstyled"
+          style={{
+            zIndex: 400,
+          }}
+          limit={10}
+        />
       </Card.Section>
       <Card.Section inheritPadding py="md">
         <Stack gap={5}>

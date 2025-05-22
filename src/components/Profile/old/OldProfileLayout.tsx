@@ -434,7 +434,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                               className={classes.username}
 //                               order={2}
 //                               size={24}
-//                               weight={600}
+//                               fw={600}
 //                               lh={1.5}
 //                             >
 //                               <Username {...user} size="md" inherit />

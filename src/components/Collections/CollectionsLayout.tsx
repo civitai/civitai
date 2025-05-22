@@ -64,7 +64,7 @@ const MyCollectionsDrawer = ({
         onClose={close}
         size="full"
         title={
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             My Collections
           </Text>
         }
@@ -132,7 +132,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
           </Tooltip>
           <Card.Section py="md" inheritPadding>
             <Group justify="space-between" wrap="nowrap">
-              <Text weight={500}>My Collections</Text>
+              <Text fw={500}>My Collections</Text>
               <Button
                 onClick={() => {
                   dialogStore.trigger({

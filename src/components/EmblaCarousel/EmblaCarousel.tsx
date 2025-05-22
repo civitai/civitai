@@ -79,7 +79,7 @@ function EmblaCarouselWrapper({
       {withIndicators && (
         <EmblaIndicators
           className="absolute inset-x-0 bottom-4 flex justify-center gap-2"
-          indicatorClassName="h-[5px] w-[25px] rounded-sm bg-white opacity-60 shadow-sm data-[active]:opacity-100"
+          indicatorClassName="h-[5px] w-[25px] rounded-sm bg-white opacity-60 shadow-sm border-none data-[active]:opacity-100"
         />
       )}
     </div>

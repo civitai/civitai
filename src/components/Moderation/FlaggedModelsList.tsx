@@ -292,7 +292,7 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
             />
             <Paper radius="md" p="xl" withBorder>
               <Stack gap="xs">
-                <Text size="md" weight={500}>
+                <Text size="md" fw={500}>
                   This resource:
                 </Text>
                 <InputCheckbox
@@ -339,7 +339,7 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
         </Form>
 
         <div className="w-64 flex-none">
-          <Text size="md" weight={600} className="mb-2">
+          <Text size="md" fw={600} className="mb-2">
             Scan Details
           </Text>
           <JsonInput value={JSON.stringify(details, null, 2)} minRows={4} formatOnBlur autosize />

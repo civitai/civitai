@@ -93,7 +93,7 @@ export function URNExplanation({ size }: { size?: number }) {
       </Popover.Target>
       <Popover.Dropdown>
         <Stack gap="xs">
-          <Text size="sm" weight={500}>
+          <Text size="sm" fw={500}>
             What is an AIR?
           </Text>
           <Text size="xs" lh={1.3}>

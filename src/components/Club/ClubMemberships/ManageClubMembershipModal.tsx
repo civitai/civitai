@@ -44,7 +44,7 @@ export const ManageClubMembershipModal = ({ clubId, clubTierIds }: Props) => {
         <Stack gap="md">
           <Text>
             Manage your club membership on club{' '}
-            <Text component="span" weight="bold">
+            <Text component="span" fw="bold">
               {club.name}
             </Text>
           </Text>

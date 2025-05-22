@@ -91,11 +91,11 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
             cannot be reverted.
           </Text>
           <Text size="sm">
-            <Text weight="bold" component="span">
+            <Text fw="bold" component="span">
               {membership.user.username}
             </Text>{' '}
             will be removed from this club and refunded the last payment of{' '}
-            <Text weight="bold" component="span">
+            <Text fw="bold" component="span">
               <CurrencyBadge
                 unitAmount={membership.unitAmount}
                 currency={membership.currency ?? Currency.BUZZ}

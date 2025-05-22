@@ -517,7 +517,7 @@ export function GenerationFormContent() {
                     Model
                   </Input.Label>
                   <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                    <Text weight={400}>
+                    <Text fw={400}>
                       Models are the resources you&apos;re generating with. Using a different base
                       model can drastically alter the style and composition of images, while adding
                       additional resource can change the characters, concepts and objects
@@ -606,7 +606,7 @@ export function GenerationFormContent() {
                                 >
                                   <div className="flex flex-col gap-1">
                                     <div className="flex items-center gap-1">
-                                      <Text size="sm" weight={590}>
+                                      <Text size="sm" fw={590}>
                                         Additional Resources
                                       </Text>
                                       {resources.length > 0 && (
@@ -642,7 +642,7 @@ export function GenerationFormContent() {
                                         classNames={{ inner: 'flex gap-1' }}
                                       >
                                         <IconPlus size={16} />
-                                        <Text size="sm" weight={500}>
+                                        <Text size="sm" fw={500}>
                                           Add
                                         </Text>
                                       </Button>
@@ -789,7 +789,7 @@ export function GenerationFormContent() {
                                 py={0}
                               >
                                 <Stack gap={0} h="100%">
-                                  <Text weight="bold" size="sm" mt={2}>
+                                  <Text fw="bold" size="sm" mt={2}>
                                     Remixing
                                   </Text>
                                   {remixSimilarity >= 0.75 && (
@@ -1072,7 +1072,7 @@ export function GenerationFormContent() {
                   >
                     <Accordion.Item value="advanced">
                       <Accordion.Control>
-                        <Text size="sm" weight={590}>
+                        <Text size="sm" fw={590}>
                           Advanced
                         </Text>
                       </Accordion.Control>
@@ -1086,7 +1086,7 @@ export function GenerationFormContent() {
                             m={-8}
                             radius="md"
                             loader={
-                              <Text c="yellow" weight={500}>
+                              <Text c="yellow" fw={500}>
                                 Not available in Draft Mode
                               </Text>
                             }

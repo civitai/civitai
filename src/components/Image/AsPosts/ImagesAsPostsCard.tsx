@@ -577,7 +577,7 @@ function PinnedIndicator({
         </ThemeIcon>
       </HoverCard.Target>
       <HoverCard.Dropdown px="md" py={8}>
-        <Text size="sm" weight={600} color="white">
+        <Text size="sm" fw={600} color="white">
           Pinned Post
         </Text>
         <Text size="xs">

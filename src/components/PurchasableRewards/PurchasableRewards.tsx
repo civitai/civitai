@@ -100,7 +100,7 @@ const RewardDetailsModal = ({
     <Modal {...dialog} size="md" withCloseButton={false} radius="md">
       <Stack gap="sm">
         <Group justify="space-between">
-          <Text size="lg" weight="bold">
+          <Text size="lg" fw="bold">
             Reward Details
           </Text>
 
@@ -147,7 +147,7 @@ const RewardDetailsModal = ({
                   <ThemeIcon color="teal" radius="xl" size="sm">
                     <IconCheck size={14} />
                   </ThemeIcon>
-                  <Text c="teal" size="sm" weight="bold">
+                  <Text c="teal" size="sm" fw="bold">
                     Purchased
                   </Text>
                 </Group>
@@ -165,7 +165,7 @@ const RewardDetailsModal = ({
                   <ThemeIcon color="red" radius="xl" size="sm">
                     <IconCircleCheckFilled size={14} />
                   </ThemeIcon>
-                  <Text c="red" size="sm" weight="bold">
+                  <Text c="red" size="sm" fw="bold">
                     Not available
                   </Text>
                 </Group>

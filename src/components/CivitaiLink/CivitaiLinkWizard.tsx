@@ -102,7 +102,7 @@ const { openModal, Modal } = createContextModal({
                 mt="lg"
                 mb={5}
                 label={
-                  <Text weight={500} size="sm">
+                  <Text fw={500} size="sm">
                     Supported Activities:
                   </Text>
                 }
@@ -131,7 +131,7 @@ const { openModal, Modal } = createContextModal({
                 mt="lg"
                 mb={5}
                 label={
-                  <Text weight={500} size="sm">
+                  <Text fw={500} size="sm">
                     Supported Stable Diffusion UIs:
                   </Text>
                 }

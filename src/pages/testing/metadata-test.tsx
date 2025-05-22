@@ -81,7 +81,7 @@ export default function MetadataTester() {
                 {(meta.resources as any[]).map((resource) => (
                   <Card.Section key={resource.id} inheritPadding py="xs" withBorder>
                     <Group gap={4}>
-                      <Text size="sm" weight={500}>
+                      <Text size="sm" fw={500}>
                         {resource.name}
                       </Text>
                       <Badge color="blue" size="xs">
@@ -102,7 +102,7 @@ export default function MetadataTester() {
         {nodeJson && (
           <Card withBorder p="sm">
             <Card.Section p="sm" py="xs" withBorder>
-              <Text weight={500}>Node JSON</Text>
+              <Text fw={500}>Node JSON</Text>
             </Card.Section>
             <Card.Section p="sm">
               <pre className="text-xs">{JSON.stringify(nodeJson, null, 2)}</pre>
@@ -112,7 +112,7 @@ export default function MetadataTester() {
         {exif && (
           <Card withBorder p="sm">
             <Card.Section p="sm" py="xs" withBorder>
-              <Text weight={500}>EXIF</Text>
+              <Text fw={500}>EXIF</Text>
             </Card.Section>
             <Card.Section p="sm">
               <pre className="text-xs">{JSON.stringify(exif, null, 2)}</pre>

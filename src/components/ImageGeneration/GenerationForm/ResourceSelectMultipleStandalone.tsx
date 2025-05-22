@@ -43,7 +43,7 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
         <Accordion.Control>
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-1">
-              <Text size="sm" weight={590}>
+              <Text size="sm" fw={590}>
                 Additional Resources
               </Text>
               {!!resources?.length && (
@@ -78,7 +78,7 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
                 classNames={{ inner: 'flex gap-1' }}
               >
                 <IconPlus size={16} />
-                <Text size="sm" weight={500}>
+                <Text size="sm" fw={500}>
                   Add
                 </Text>
               </Button>

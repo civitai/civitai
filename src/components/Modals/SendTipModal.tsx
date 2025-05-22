@@ -136,7 +136,7 @@ export default function SendTipModal({
     <Modal {...dialog} fullScreen={isMobile} withCloseButton={false} radius="lg" centered>
       <Stack gap="md">
         <Group justify="space-between" wrap="nowrap">
-          <Text size="lg" weight={700}>
+          <Text size="lg" fw={700}>
             Tip
           </Text>
           <Group gap="sm" wrap="nowrap">
@@ -151,7 +151,7 @@ export default function SendTipModal({
               }}
             >
               <Group gap={4} wrap="nowrap">
-                <Text size="xs" c="dimmed" transform="capitalize" weight={600}>
+                <Text size="xs" c="dimmed" tt="capitalize" fw={600}>
                   Available Buzz
                 </Text>
                 <UserBuzz iconSize={16} textSize="sm" accountType="user" withTooltip />

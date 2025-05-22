@@ -397,7 +397,7 @@ export function ModelCategoryCard({
                     </HoverCard.Target>
                     <HoverCard.Dropdown>
                       <Stack gap={4}>
-                        <Text size="sm" weight="bold">
+                        <Text size="sm" fw="bold">
                           Available for generation
                         </Text>
                         <Text size="sm" c="dimmed">
@@ -414,7 +414,7 @@ export function ModelCategoryCard({
                   transitionProps={{ transition: 'slide-left' }}
                   variant="smallRounded"
                   label={
-                    <Text size="xs" weight={500}>
+                    <Text size="xs" fw={500}>
                       {data.user.username}
                     </Text>
                   }

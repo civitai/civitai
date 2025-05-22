@@ -4,8 +4,6 @@ import {
   BadgeProps,
   Button,
   Text,
-  useComputedColorScheme,
-  useMantineTheme,
 } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -167,15 +165,12 @@ function ImageGuardContentInner({
   children: React.ReactNode;
   inView?: boolean;
 }) {
-  const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme('dark');
-
   return (
     <>
       {(inView === undefined || inView) && !show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-[60%] flex-col items-center gap-2 text-white">
+            <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 flex flex-col items-center gap-2 text-white" style={{ transform: 'translate(-50%, -60%)' }}>
               <Text size="sm" className="shadow-black/50 text-shadow-sm">
                 This image is rated
               </Text>
@@ -323,7 +318,7 @@ function toggleShow({
       component: ConfirmDialog,
       props: {
         message: (
-          <Text size="sm" weight={500} style={{ flex: 1 }}>
+          <Text size="sm" fw={500} style={{ flex: 1 }}>
             Login now to continue viewing mature content and unblur everything.
           </Text>
         ),

@@ -87,13 +87,13 @@ const DonationGoalItem = ({
     >
       <Stack gap="xs">
         {donationGoal.isEarlyAccess && progress < 100 && modelVersionIsEarlyAccess && (
-          <Text c="yellow" size="xs" weight={500}>
+          <Text c="yellow" size="xs" fw={500}>
             The creator of this {resourceLabel} has set a donation goal! You can donate to make this
             resource available to everyone before the end of Early Access.
           </Text>
         )}
         <Group justify="space-between" wrap="nowrap" align="start">
-          <Text size="sm" weight={500}>
+          <Text size="sm" fw={500}>
             {donationGoal.title}
           </Text>
           <Group gap={0} justify="left" align="center" wrap="nowrap">

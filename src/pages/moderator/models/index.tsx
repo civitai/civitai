@@ -204,7 +204,7 @@ export default function ModeratorModels() {
                           )}
                           {unpublishedReason && (
                             <Text size="sm">
-                              <Text weight={500} size="sm" span>
+                              <Text fw={500} size="sm" span>
                                 Reason initially unpublished:
                               </Text>{' '}
                               {`${unpublishReasons[unpublishedReason].optionLabel}${

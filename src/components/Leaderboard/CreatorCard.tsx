@@ -85,13 +85,13 @@ export function CreatorCard({
                       style={{ fill: iconColor }}
                     />
                   )}
-                  <Text size="lg" weight="bold">
+                  <Text size="lg" fw="bold">
                     {position}
                   </Text>
                   {delta && delta.position !== 0 && (
                     <Text
                       size="xs"
-                      weight="bold"
+                      fw="bold"
                       color={delta.position > 0 ? 'red' : 'green'}
                       className={classes.delta}
                     >

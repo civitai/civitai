@@ -153,7 +153,7 @@ export default function Auctions({
     <Stack>
       <NavLink
         p={itemSize}
-        label={<Text weight={500}>My Bids</Text>}
+        label={<Text fw={500}>My Bids</Text>}
         onClick={() => {
           chooseAuction(undefined);
         }}
@@ -177,7 +177,7 @@ export default function Auctions({
               p={itemSize}
               label={
                 <Group justify="space-between">
-                  <Text weight={500} className="shrink basis-2/3">
+                  <Text fw={500} className="shrink basis-2/3">
                     {a.auctionBase.name}
                   </Text>
                   <Tooltip label="Min bid currently required to place">
@@ -257,7 +257,7 @@ export default function Auctions({
           close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
         }}
         title={
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Auctions
           </Text>
         }

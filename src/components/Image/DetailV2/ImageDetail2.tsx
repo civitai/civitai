@@ -182,7 +182,7 @@ export function ImageDetail2() {
       )}
       <Button {...sharedButtonProps} onClick={handleSaveClick}>
         <IconBookmark {...sharedIconProps} />
-        <Text c="white" size="xs" align="center" weight={500}>
+        <Text c="white" size="xs" align="center" fw={500}>
           Save
         </Text>
       </Button>
@@ -196,7 +196,7 @@ export function ImageDetail2() {
         >
           <Button {...sharedButtonProps}>
             <IconPhoto {...sharedIconProps} />
-            <Text c="white" size="xs" align="center" weight={500}>
+            <Text c="white" size="xs" align="center" fw={500}>
               View Post
             </Text>
           </Button>
@@ -263,7 +263,7 @@ export function ImageDetail2() {
                               {/* Disable view count  */}
                               {/* <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
-                        <Text c="white" size="xs" align="center" weight={500}>
+                        <Text c="white" size="xs" align="center" fw={500}>
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge> */}

@@ -44,7 +44,7 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
       {playAnimation ? (
         <Stack>
           <SuccessAnimation gap={8} lottieProps={{ width: 120 }} align="center" justify="center">
-            <Text size="xl" weight={500}>
+            <Text size="xl" fw={500}>
               Code redeemed successfully
             </Text>
           </SuccessAnimation>

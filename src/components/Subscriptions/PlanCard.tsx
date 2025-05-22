@@ -406,7 +406,7 @@ export const getPlanDetails: (
           metadata.badgeType === 'animated' ? (
             <Text lh={1}>
               Unique{' '}
-              <Text lh={1} weight={700} component="span">
+              <Text lh={1} fw={700} component="span">
                 Animated
               </Text>{' '}
               Supporter Badge each month

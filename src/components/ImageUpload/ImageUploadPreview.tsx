@@ -110,7 +110,7 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
                     </Popover.Target>
                     <Popover.Dropdown style={{ maxWidth: 400 }} pb={14}>
                       <Stack gap={0}>
-                        <Text size="xs" weight={500}>
+                        <Text size="xs" fw={500}>
                           Blocked for
                         </Text>
                         <Code color="red">{image.blockedFor?.join(', ')}</Code>

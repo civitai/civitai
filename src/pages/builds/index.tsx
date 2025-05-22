@@ -68,7 +68,7 @@ export default function BuildPage() {
             </Text>
             <Group justify="space-between" gap={8}>
               <Stack gap={8}>
-                <Text size="lg" weight={500} c="dimmed">
+                <Text size="lg" fw={500} c="dimmed">
                   Select your budget
                 </Text>
                 <Chip.Group
@@ -95,7 +95,7 @@ export default function BuildPage() {
                 </Chip.Group>
               </Stack>
               <Stack gap={8}>
-                <Text size="lg" weight={500} c="dimmed">
+                <Text size="lg" fw={500} c="dimmed">
                   Processor
                 </Text>
                 <Chip.Group
@@ -139,7 +139,7 @@ export default function BuildPage() {
                       <HoverCard.Target>
                         <Stack gap={8}>
                           <Group gap={8} wrap="nowrap">
-                            <Text size="xl" weight={600}>
+                            <Text size="xl" fw={600}>
                               Generation Speed
                             </Text>
                             <IconBrandSpeedtest size={32} />
@@ -152,7 +152,7 @@ export default function BuildPage() {
                         </Stack>
                       </HoverCard.Target>
                       <HoverCard.Dropdown>
-                        <Text c="yellow" weight={500}>
+                        <Text c="yellow" fw={500}>
                           About Generation Speed
                         </Text>
                         <Text size="sm">
@@ -200,7 +200,7 @@ export default function BuildPage() {
                       <Group gap="lg" align="start" wrap="nowrap">
                         {data?.user && <UserAvatar user={data.user} avatarSize={64} />}
                         <Stack gap={8}>
-                          <Text size="lg" weight="bold">
+                          <Text size="lg" fw="bold">
                             {data?.user.username}
                           </Text>
                           <ContentClamp maxHeight={60}>
@@ -230,7 +230,7 @@ export default function BuildPage() {
                             <Badge color="orange" radius="sm" tt="capitalize">
                               {component.type}
                             </Badge>
-                            <Text size="lg" weight={600} lineClamp={2} lh={1.2}>
+                            <Text size="lg" fw={600} lineClamp={2} lh={1.2}>
                               {component.name}
                             </Text>
                           </Stack>
@@ -307,10 +307,10 @@ function PriceTag({
 
   return (
     <Group className={className} gap={4} align="start" wrap="nowrap">
-      <Text fz={size} weight={600} c={color} inline>
+      <Text fz={size} fw={600} c={color} inline>
         ${intPart}
       </Text>
-      <Text fz={decimalFontSize} weight={600} c={color ?? 'dimmed'} inline>
+      <Text fz={decimalFontSize} fw={600} c={color ?? 'dimmed'} inline>
         {decimalPart}
       </Text>
     </Group>

@@ -207,7 +207,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
         {versionFile.isUploading ? (
           <>
             <Stack gap={0}>
-              <Text size="sm" weight="bold">
+              <Text size="sm" fw="bold">
                 File Type
               </Text>
               <Text size="sm" c="dimmed">
@@ -221,7 +221,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
             {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' ? (
               <>
                 <Stack gap={0}>
-                  <Text size="sm" weight="bold">
+                  <Text size="sm" fw="bold">
                     Model size
                   </Text>
                   <Text size="sm" c="dimmed">
@@ -229,7 +229,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
                   </Text>
                 </Stack>
                 <Stack gap={0}>
-                  <Text size="sm" weight="bold">
+                  <Text size="sm" fw="bold">
                     Floating point
                   </Text>
                   <Text size="sm" c="dimmed">
@@ -238,7 +238,7 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
                 </Stack>
                 {versionFile.name.endsWith('.zip') && (
                   <Stack gap={0}>
-                    <Text size="sm" weight="bold">
+                    <Text size="sm" fw="bold">
                       Format
                     </Text>
                     <Text size="sm" c="dimmed">

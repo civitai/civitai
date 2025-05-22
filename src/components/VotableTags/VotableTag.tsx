@@ -275,14 +275,14 @@ export function VotableTag({
       <HoverCard withArrow width={300} shadow="md" openDelay={500}>
         <HoverCard.Target>{badge}</HoverCard.Target>
         <HoverCard.Dropdown>
-          <Text c="yellow" weight={500}>
+          <Text c="yellow" fw={500}>
             Up for consideration
           </Text>
           <Text size="sm">
             {`Someone has started a vote for this tag. It must reach a score of ${constants.tagVoting.upvoteThreshold} before it will be applied to this image.`}
           </Text>
           <Text size="sm">
-            <Text weight={500} component="span">
+            <Text fw={500} component="span">
               Current Score
             </Text>
             : {score}
@@ -295,7 +295,7 @@ export function VotableTag({
             }
             mt="sm"
           />
-          <Text weight={500} size="sm" c="dimmed">
+          <Text fw={500} size="sm" c="dimmed">
             <Countdown endTime={votingEnds} />
           </Text>
         </HoverCard.Dropdown>

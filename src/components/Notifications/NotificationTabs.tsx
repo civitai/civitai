@@ -63,7 +63,7 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
                   ) : undefined
                 }
               >
-                <Text tt="capitalize" weight={590} inline>
+                <Text tt="capitalize" fw={590} inline>
                   {getCategoryDisplayName(tab as NotificationCategory)}
                 </Text>
               </Tabs.Tab>

@@ -290,7 +290,7 @@ function TagPicker() {
       <Popover.Dropdown p={0}>
         <Box style={{ width: 300 }} ref={setDropdown}>
           <Group justify="space-between" px="sm" py="xs">
-            <Text weight={500}>{label} Tags</Text>
+            <Text fw={500}>{label} Tags</Text>
             {isFetching && <Loader variant="dots" />}
           </Group>
           <Divider />

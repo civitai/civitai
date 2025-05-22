@@ -17,7 +17,7 @@ export function DescriptionTable({
     if (item.visible === false) continue;
 
     let labelEl =
-      typeof item.label === 'string' ? <Text weight="500">{item.label}</Text> : item.label;
+      typeof item.label === 'string' ? <Text fw="500">{item.label}</Text> : item.label;
     if (item.info) {
       labelEl = (
         <Group gap={4}>
@@ -50,7 +50,7 @@ export function DescriptionTable({
   return (
     <Paper radius="sm" {...paperProps} withBorder={withBorder}>
       {title && typeof title === 'string' ? (
-        <Text size="md" weight="500" p="xs">
+        <Text size="md" fw="500" p="xs">
           {title}
         </Text>
       ) : (

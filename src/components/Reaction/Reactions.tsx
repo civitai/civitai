@@ -60,7 +60,7 @@ export function PostReactions({
       {imageCount && (
         <Group gap={4} align="center">
           <IconPhoto size={20} strokeWidth={2} />
-          <Text size="sm" weight={500}>
+          <Text size="sm" fw={500}>
             {imageCount}
           </Text>
         </Group>
@@ -68,7 +68,7 @@ export function PostReactions({
       {total > 0 && (
         <Group gap={4} align="center">
           <IconHeart size={20} strokeWidth={2} />
-          <Text size="sm" weight={500} pr={2}>
+          <Text size="sm" fw={500} pr={2}>
             {total}
           </Text>
         </Group>

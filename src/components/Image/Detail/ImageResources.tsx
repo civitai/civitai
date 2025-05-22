@@ -143,7 +143,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                 >
                   <Stack gap="xs">
                     <Group gap={4} justify="space-between" wrap="nowrap">
-                      <Text size="sm" weight={500} lineClamp={1}>
+                      <Text size="sm" fw={500} lineClamp={1}>
                         {resource.modelName ?? resource.name}
                       </Text>
                       {!isAvailable && (

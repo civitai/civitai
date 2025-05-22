@@ -113,7 +113,7 @@ export function QueueSnackbar() {
               </Popover.Target>
               <Popover.Dropdown>
                 <div className="flex flex-col items-center">
-                  <Text weight={600}>Generation Buzz Credit </Text>
+                  <Text fw={600}>Generation Buzz Credit </Text>
                   <Text component={Link} variant="link" href="/articles/7012" target="_blank">
                     Learn more
                   </Text>
@@ -123,7 +123,7 @@ export function QueueSnackbar() {
           ) : null}
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-1 py-2">
-          <Text weight={500} className="flex items-center gap-1 text-sm">
+          <Text fw={500} className="flex items-center gap-1 text-sm">
             {!!queued.length && queueStatus ? (
               dictionary[queueStatus]()
             ) : includeQueueLink ? (

@@ -406,7 +406,7 @@ export default function BountyEntryDetailsPage({
                                     {file.name}
                                   </Anchor>
                                 ) : (
-                                  <Text size="sm" weight={500} lineClamp={1}>
+                                  <Text size="sm" fw={500} lineClamp={1}>
                                     {file.name}
                                   </Text>
                                 )}

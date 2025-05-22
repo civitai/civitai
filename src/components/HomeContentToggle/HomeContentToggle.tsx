@@ -137,7 +137,7 @@ export function HomeTabs() {
   const options = filterHomeOptions(features);
 
   return (
-    <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden text-black dark:text-white">
+    <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden @md:overflow-visible text-black dark:text-white">
       {options.map(({ key, ...value }) => {
         return (
           <Button
@@ -145,7 +145,7 @@ export function HomeTabs() {
             variant="default"
             component={Link}
             href={value.url}
-            className={clsx('h-8 rounded-full border-none py-2 pl-3 pr-4', {
+            className={clsx('h-8 rounded-full border-none py-2 pl-3 pr-4 overflow-visible', {
               ['bg-gray-4 dark:bg-dark-4']:
                 activePath === key || (activePath === 'changelog' && key === 'updates'),
               [classes.groupedOptions]: value.grouped,

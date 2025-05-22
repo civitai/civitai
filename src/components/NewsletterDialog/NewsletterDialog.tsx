@@ -91,7 +91,7 @@ export function NewsletterDialog() {
       />
       <Stack gap="md" p="md">
         <Stack gap={4}>
-          <Text size="md" weight={600}>
+          <Text size="md" fw={600}>
             Stay in the loop!
           </Text>
           <Text size="sm" lh={1.1}>

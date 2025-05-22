@@ -65,7 +65,7 @@ export function EventRewards({ event }: { event: string }) {
                   alt={`Event reward: ${reward.name}`}
                 />
               </div>
-              <Text align="center" size="lg" weight={590} w="100%" tt="capitalize">
+              <Text align="center" size="lg" fw={590} w="100%" tt="capitalize">
                 {reward.name}
               </Text>
               <Text size="xs" c="dimmed" align="center">

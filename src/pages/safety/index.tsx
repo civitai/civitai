@@ -91,7 +91,7 @@ export default function Safety({
             <Box pos="sticky" top={0}>
               <Group>
                 <IconList size={20} />
-                <Text weight={500}>Table of Contents</Text>
+                <Text fw={500}>Table of Contents</Text>
               </Group>
               <TableOfContent headings={headings} />
             </Box>
@@ -397,7 +397,7 @@ function AdditionalContent({ content }: { content: string }) {
     >
       <Accordion.Item value="additional-content">
         <Accordion.Control>
-          <Text weight={500}>View the full policy</Text>
+          <Text fw={500}>View the full policy</Text>
         </Accordion.Control>
         <Accordion.Panel>
           <CustomMarkdown rehypePlugins={[rehypeRaw, remarkGfm]}>{content}</CustomMarkdown>

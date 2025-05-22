@@ -215,7 +215,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                     />
                     {metadata?.inviteUrlEnabled && (
                       <Stack gap={4}>
-                        <Text weight={500} size="sm">
+                        <Text fw={500} size="sm">
                           Here is your Invite Link:
                         </Text>
                         <CopyButton value={joinUrl}>

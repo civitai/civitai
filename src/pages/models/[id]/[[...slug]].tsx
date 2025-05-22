@@ -1184,7 +1184,7 @@ export default function ModelDetailsV2({
               <Group gap={8} wrap="nowrap">
                 Suggested Resources{' '}
                 <InfoPopover>
-                  <Text size="sm" weight={400}>
+                  <Text size="sm" fw={400}>
                     These are resources suggested by the creator of this model. They may be related
                     to this model or created by the same user.
                   </Text>

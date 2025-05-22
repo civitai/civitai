@@ -376,7 +376,7 @@ export function InteractiveTipBuzzButton({
             </LegacyActionIcon>
           )}
           <Stack gap={2} align="center">
-            <Text c="yellow.7" weight={500} size="xs" opacity={0.8}>
+            <Text c="yellow.7" fw={500} size="xs" opacity={0.8}>
               Tipping
             </Text>
             <Group gap={0} ml={-8}>

@@ -174,7 +174,7 @@ export default function EarnPotential() {
           </Stack>
           <Card p={0} withBorder shadow="xs">
             <Card.Section withBorder p="xs">
-              <Text weight={500} size="lg">
+              <Text fw={500} size="lg">
                 Generation Earning Potential
               </Text>
             </Card.Section>
@@ -193,7 +193,7 @@ export default function EarnPotential() {
           </Card>
           <Card p={0} withBorder shadow="xs">
             <Card.Section withBorder p="xs">
-              <Text weight={500} size="lg">
+              <Text fw={500} size="lg">
                 Early Access Earning Potential
               </Text>
             </Card.Section>
@@ -211,7 +211,7 @@ export default function EarnPotential() {
             />
           </Card>
           <Group>
-            <Text size="xl" weight={900}>
+            <Text size="xl" fw={900}>
               Total Potential Earnings:
             </Text>
             <CurrencyBadge

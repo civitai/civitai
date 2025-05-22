@@ -312,7 +312,7 @@ function UploadedImage({
           <Overlay blur={2} zIndex={10} color="#000" />
           <Stack gap="xs" style={{ zIndex: 11 }} align="center">
             <Loader size="lg" />
-            {image.message && <Text weight={600}>{image.message}...</Text>}
+            {image.message && <Text fw={600}>{image.message}...</Text>}
           </Stack>
         </Center>
       )}
@@ -334,14 +334,14 @@ function UploadedImage({
             >
               <Group gap={4} wrap="nowrap" justify="center">
                 <IconAlertTriangle size={20} strokeWidth={2.5} />
-                <Text style={{ lineHeight: 1.1 }} weight={500}>
+                <Text style={{ lineHeight: 1.1 }} fw={500}>
                   Will be reviewed
                 </Text>
               </Group>
             </Alert>
           </HoverCard.Target>
           <HoverCard.Dropdown>
-            <Text size="sm" weight={500}>
+            <Text size="sm" fw={500}>
               Flagged for review
             </Text>
             <Text size="sm" style={{ lineHeight: 1.2 }}>

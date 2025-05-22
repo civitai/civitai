@@ -118,7 +118,7 @@ export default function UserLists() {
                       <List.Item>
                         <Paper p="xl" style={{ width: '100%' }} withBorder>
                           <Center>
-                            <Text size="lg" weight="bold">
+                            <Text size="lg" fw="bold">
                               There are no following to show
                             </Text>
                           </Center>
@@ -150,7 +150,7 @@ export default function UserLists() {
                       <List.Item>
                         <Paper p="xl" style={{ width: '100%' }} withBorder>
                           <Center>
-                            <Text size="lg" weight="bold">
+                            <Text size="lg" fw="bold">
                               There are no followers to show
                             </Text>
                           </Center>
@@ -184,7 +184,7 @@ export default function UserLists() {
                           <List.Item>
                             <Paper p="xl" style={{ width: '100%' }} withBorder>
                               <Center>
-                                <Text size="lg" weight="bold">
+                                <Text size="lg" fw="bold">
                                   There are no hidden users to show
                                 </Text>
                               </Center>
@@ -216,7 +216,7 @@ export default function UserLists() {
                           <List.Item>
                             <Paper p="xl" style={{ width: '100%' }} withBorder>
                               <Center>
-                                <Text size="lg" weight="bold">
+                                <Text size="lg" fw="bold">
                                   There are no blocked users to show
                                 </Text>
                               </Center>

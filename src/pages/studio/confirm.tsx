@@ -54,7 +54,7 @@ export default function Confirm() {
   const confirmEmail = (
     <Container size="xs">
       <Stack>
-        <Text size="xl" weight={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
+        <Text size="xl" fw={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
         <Text>{`To complete your application, please enter the email that you used when you applied for the Artist in Residence program`}</Text>
         <Stack gap={5}>
           <TextInput
@@ -82,13 +82,16 @@ export default function Confirm() {
   const confirmed = (
     <Container size="xs">
       <Stack>
-        <Text size="xl" weight={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
+        <Text size="xl" fw={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
         <Alert color="green" my="lg">
           <Group wrap="nowrap">
             <ThemeIcon size={46} color="green">
               <IconCircleCheck size={30} />
             </ThemeIcon>
-            <Text size="xl" style={{ lineHeight: 1.2 }}>{`Your membership has been confirmed`}</Text>
+            <Text
+              size="xl"
+              style={{ lineHeight: 1.2 }}
+            >{`Your membership has been confirmed`}</Text>
           </Group>
         </Alert>
         <Button
@@ -106,7 +109,7 @@ export default function Confirm() {
   const subscriptionsLoading = subscriptionLoading || productsLoading;
   const notMember = (
     <Stack>
-      <Text size="xl" weight={500} ta="center">{`Become a Member today!`}</Text>
+      <Text size="xl" fw={500} ta="center">{`Become a Member today!`}</Text>
       {subscriptionsLoading ? (
         <Loader />
       ) : (

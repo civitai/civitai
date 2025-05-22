@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Avatar,
   Badge,
   Button,
@@ -72,12 +71,15 @@ export function UserMenu() {
     <Popover width={isMobile ? '100%' : 260} position="bottom-end" opened={open} onChange={setOpen}>
       <Popover.Target>
         <UnstyledButton
-          className="flex items-center @md:rounded-[32px]"
+          className={clsx(
+            'flex items-center hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
+            { ['bg-gray-1 dark:bg-dark-5']: open }
+          )}
           type="button"
           onClick={() => setOpen((o) => !o)}
         >
           <div
-            className={clsx('@max-md:hidden flex items-center gap-2', {
+            className={clsx('flex items-center gap-2 @max-md:hidden', {
               ['hidden']: !currentUser,
             })}
           >
@@ -87,7 +89,7 @@ export function UserMenu() {
           <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
         </UnstyledButton>
       </Popover.Target>
-      <Popover.Dropdown className="@max-md:mt-2 @max-md:h-[calc(100%-var(--header-height))] flex flex-col p-0">
+      <Popover.Dropdown className="flex flex-col p-0 @max-md:mt-2 @max-md:h-[calc(100%-var(--header-height))]">
         <UserMenuCtx.Provider value={{ handleClose: () => setOpen(false) }}>
           <PopoverContent />
         </UserMenuCtx.Provider>
@@ -403,7 +405,7 @@ function MenuItemButton({
 }: React.HTMLAttributes<HTMLButtonElement>) {
   const { handleClose } = useUserMenuContext();
   return (
-    <button
+    <UnstyledButton
       className={clsx(
         'flex items-center gap-2.5 px-4 py-3 hover:bg-gray-1 @md:px-3 @md:py-2.5 hover:dark:bg-dark-4',
         className
@@ -412,7 +414,7 @@ function MenuItemButton({
       {...props}
     >
       {children}
-    </button>
+    </UnstyledButton>
   );
 }
 

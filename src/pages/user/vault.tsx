@@ -808,7 +808,7 @@ export default function CivitaiVault() {
                           </Group>
                         </td>
                         <td>
-                          <Text transform="capitalize">{getDisplayName(item.category)}</Text>
+                          <Text tt="capitalize">{getDisplayName(item.category)}</Text>
                         </td>
                         <td>
                           {formatKBytes(

@@ -20,7 +20,7 @@ import { trpc } from '~/utils/trpc';
 type NextAuthProviders = AsyncReturnType<typeof getProviders>;
 
 export function AccountsCard() {
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const { error } = useRouter().query;
   const { data: accounts = [] } = trpc.account.getAll.useQuery();
@@ -28,7 +28,7 @@ export function AccountsCard() {
   const [providers, setProviders] = useState<NextAuthProviders | null>(null);
   useEffect(() => {
     if (!providers) getProviders().then((providers) => setProviders(providers));
-  }, []);
+  }, [providers]);
 
   const { mutate: deleteAccount, isLoading: deletingAccount } = trpc.account.delete.useMutation({
     onSuccess: async () => {
@@ -51,7 +51,7 @@ export function AccountsCard() {
         {error && (
           <Alert color="yellow">
             <Stack gap={4}>
-              <Text c="yellow" weight={500}>
+              <Text c="yellow" fw={500}>
                 Account not linked
               </Text>
               <Text size="sm" lh={1.2}>
@@ -64,23 +64,23 @@ export function AccountsCard() {
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={deletingAccount} />
           <Table striped withTableBorder>
-            <tbody>
+            <Table.Tbody>
               {Object.values(providers)
                 .filter((provider) => provider.type === 'oauth')
                 .map((provider) => {
                   const account = accounts.find((account) => account.provider === provider.id);
                   return (
-                    <tr key={provider.id}>
-                      <td>
+                    <Table.Tr key={provider.id}>
+                      <Table.Td>
                         <Group justify="space-between">
                           <SocialLabel
                             key={provider.id}
                             type={provider.id as BuiltInProviderType}
                           />
                           {!account ? (
-                            <Text
-                              variant="link"
-                              style={{ cursor: 'pointer' }}
+                            <Button
+                              variant="transparent"
+                              size="compact-sm"
                               onClick={() =>
                                 signIn(provider.id, {
                                   callbackUrl: '/user/account?connect=true#accounts',
@@ -88,23 +88,23 @@ export function AccountsCard() {
                               }
                             >
                               Connect
-                            </Text>
+                            </Button>
                           ) : canRemoveAccounts ? (
-                            <Text
-                              variant="link"
+                            <Button
+                              variant="transparent"
+                              size="compact-sm"
                               color="red"
-                              style={{ cursor: 'pointer' }}
                               onClick={() => deleteAccount({ id: account.id })}
                             >
                               Remove
-                            </Text>
+                            </Button>
                           ) : null}
                         </Group>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   );
                 })}
-            </tbody>
+            </Table.Tbody>
           </Table>
         </div>
       </Stack>

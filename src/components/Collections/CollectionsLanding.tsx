@@ -50,7 +50,7 @@ export function CollectionsLanding() {
           >
             <Card withBorder shadow="sm">
               <Card.Section withBorder inheritPadding mb="sm">
-                <Text size="lg" weight={500} py="xs">
+                <Text size="lg" fw={500} py="xs">
                   What are Collections?
                 </Text>
               </Card.Section>

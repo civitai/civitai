@@ -88,7 +88,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
                 </Box>
               </Popover.Target>
               <Popover.Dropdown maw="100%">
-                <Text weight={500} size="lg" mb="xs">
+                <Text fw={500} size="lg" mb="xs">
                   {metadata.title}
                 </Text>
                 {metadata.description && (

@@ -90,7 +90,7 @@ export const CosmeticPreview = ({
 
       return (
         <Stack gap="xl">
-          <Text weight="bold" align="center">
+          <Text fw="bold" align="center">
             Preview
           </Text>
           <CreatorCardV2 user={userWithEquippedCosmetics} cosmeticOverwrites={[cosmetic]} />
@@ -104,7 +104,7 @@ export const CosmeticPreview = ({
       return (
         <Stack>
           <Stack gap="xl">
-            <Text weight="bold" align="center">
+            <Text fw="bold" align="center">
               Preview
             </Text>
             <Text size="sm" c="dimmed" align="center">

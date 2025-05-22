@@ -89,7 +89,7 @@ export const DowngradeFeedbackModal = ({
               </Text>
               <Text>
                 If you have created{' '}
-                <Text component="span" weight="bold">
+                <Text component="span" fw="bold">
                   private models
                 </Text>{' '}
                 during your time with your membership, you will have 10 days to make these public or
@@ -384,11 +384,11 @@ export const VaultStorageDowngrade = ({
           <Stack gap={0}>
             <Text align="center">
               You have{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {formatKBytes(vault?.usedStorageKb ?? 0)}
               </Text>{' '}
               of storage used and{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {pagination?.totalItems ?? 0} models
               </Text>{' '}
               stored on your Vault. After downgrading, your Vault will be frozen.
@@ -465,7 +465,7 @@ export const MembershipUpgradeModal = ({
           <Stack>
             <Text>
               Please note there will be up to{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 an hour
               </Text>{' '}
               delay from when you upgrade to when you receive your Buzz &amp; get charged. All other

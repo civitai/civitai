@@ -46,7 +46,7 @@ function EventHomeBlockContent({ metadata }: Props) {
         <Group align="start" justify="center" gap={40}>
           <Stack className="justify-center @md:flex-1 @md:justify-start" gap="xl">
             <Stack gap={0}>
-              <Text size="sm" weight={500} tt="uppercase" inline>
+              <Text size="sm" fw={500} tt="uppercase" inline>
                 Holiday Event
               </Text>
               <div className="text-nowrap text-2xl font-bold">{eventData.title}</div>
@@ -101,7 +101,7 @@ function EventHomeBlockContent({ metadata }: Props) {
               <Stack align="end" gap={0}>
                 <Group gap={4} wrap="nowrap">
                   <CurrencyIcon currency={Currency.BUZZ} />
-                  <Text size="xl" lh={1} weight={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  <Text size="xl" lh={1} fw={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {abbreviateNumber(totalTeamScores)}
                   </Text>
                 </Group>
@@ -111,7 +111,7 @@ function EventHomeBlockContent({ metadata }: Props) {
                 <Stack align="end" gap={0}>
                   <Group gap={4} wrap="nowrap">
                     <Lightbulb color={userTeam} size={24} transform="rotate(180)" animated />
-                    <Text size="xl" lh={1} weight={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    <Text size="xl" lh={1} fw={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
                       {abbreviateNumber(teamScore.score ?? 0)}
                     </Text>
                   </Group>

@@ -29,7 +29,7 @@ export function TourPopover(props: TooltipRenderProps) {
       maw="375px"
     >
       <Group justify="space-between" wrap="nowrap">
-        <Text className={clsx(step.showProgress && 'hidden')} size="lg" weight={600} lineClamp={2}>
+        <Text className={clsx(step.showProgress && 'hidden')} size="lg" fw={600} lineClamp={2}>
           {step.title}
         </Text>
         <Text className={clsx(!step.showProgress && 'hidden')} size="sm" c="dimmed">
@@ -39,7 +39,7 @@ export function TourPopover(props: TooltipRenderProps) {
       </Group>
       <div className="flex flex-col gap-1">
         {step.title && step.showProgress && (
-          <Text size="lg" weight={600} lineClamp={2}>
+          <Text size="lg" fw={600} lineClamp={2}>
             {step.title}
           </Text>
         )}

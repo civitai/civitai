@@ -437,7 +437,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
               <HoverCard.Target>
                 <Text
-                  weight="bold"
+                  fw="bold"
                   style={{
                     border: `1px solid ${
                       colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
@@ -455,7 +455,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Text>
               </HoverCard.Target>
               <HoverCard.Dropdown>
-                <Text size="sm" color="yellow" weight={500}>
+                <Text size="sm" color="yellow" fw={500}>
                   Pro-tip: Quick search faster!
                 </Text>
                 <Text size="xs" lh={1.2}>

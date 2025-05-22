@@ -77,7 +77,7 @@ function CheckpointInfo({
           <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
             <Group gap={4}>
               <IconAlertTriangle size={16} strokeWidth={3} />
-              <Text size="xs" weight={500}>
+              <Text size="xs" fw={500}>
                 Unavailable
               </Text>
             </Group>
@@ -107,7 +107,7 @@ function CheckpointInfo({
             rel="nofollow noindex"
             c="initial"
             lineClamp={1}
-            weight={590}
+            fw={590}
           >
             {resource.model.name}
           </Text>
@@ -133,7 +133,7 @@ function CheckpointInfo({
         <Button variant="light" radius="xl" onClick={onSwap} size="compact-sm">
           <Group gap={4} wrap="nowrap">
             <IconReplace size={16} />
-            <Text size="sm" weight={500}>
+            <Text size="sm" fw={500}>
               Swap
             </Text>
           </Group>
@@ -157,7 +157,7 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
               <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
                 <Group gap={4}>
                   <IconAlertTriangle size={16} strokeWidth={3} />
-                  <Text size="xs" weight={500}>
+                  <Text size="xs" fw={500}>
                     Unavailable
                   </Text>
                 </Group>
@@ -171,7 +171,7 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
               rel="nofollow noindex"
               size="sm"
               lineClamp={1}
-              weight={590}
+              fw={590}
             >
               {resource.model.name}
             </Text>

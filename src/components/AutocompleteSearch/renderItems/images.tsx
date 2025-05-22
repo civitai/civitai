@@ -85,7 +85,7 @@ export const ImagesSearchItem = forwardRef<
       <Stack gap={8} style={{ flex: '1 !important' }}>
         {!hit.hideMeta && hit.prompt && (
           <Text lineClamp={2} size="sm" inline>
-            <Text weight={600} ml={1} span>
+            <Text fw={600} ml={1} span>
               Positive prompt:{' '}
             </Text>
 

@@ -178,7 +178,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         <Stack>
           <Group gap={4}>
             {!!relatedPosts?.items.length && (
-              <Text size="md" mr="xs" weight={500} lh="1.1">
+              <Text size="md" mr="xs" fw={500} lh="1.1">
                 Related posts
               </Text>
             )}

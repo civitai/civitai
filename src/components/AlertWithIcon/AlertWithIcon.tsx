@@ -30,7 +30,7 @@ export const AlertWithIcon = ({
           {title && (
             <Text
               size={titleSize[size]}
-              weight={500}
+              fw={500}
               color={props.color ?? 'blue'}
               style={{ lineHeight: 1.1 }}
             >

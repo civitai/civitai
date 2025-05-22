@@ -4,7 +4,6 @@ import {
   Checkbox,
   Group,
   Loader,
-  Portal,
   ScrollArea,
   Select,
   Stack,
@@ -200,7 +199,7 @@ function CollectionListForm({
       <Stack gap="xl">
         <Stack gap={4}>
           <Group gap="xs" justify="space-between" wrap="nowrap">
-            <Text size="sm" weight="bold">
+            <Text size="sm" fw="bold">
               Your collections
             </Text>
             <Button
@@ -264,34 +263,32 @@ function CollectionListForm({
                             }
                           />
                           {selectedItem && availableTags?.length > 0 && (
-                            <Portal>
-                              <Select
-                                withAsterisk
-                                placeholder="Select a tag for your entry in the contest"
-                                size="xs"
-                                label="Tag your entry"
-                                value={selectedItem.tagId?.toString() ?? null}
-                                onChange={(value) => {
-                                  setSelectedCollections((curr) =>
-                                    curr.map((c) => {
-                                      if (c.collectionId === collection.id) {
-                                        return { ...c, tagId: value ? parseInt(value, 10) : null };
-                                      }
-                                      return c;
-                                    })
-                                  );
-                                }}
-                                clearable
-                                autoFocus
-                                data={availableTags.map((tag) => ({
-                                  value: tag.id.toString(),
-                                  label: tag.name,
-                                }))}
-                                style={{
-                                  zIndex: 400,
-                                }}
-                              />
-                            </Portal>
+                            <Select
+                              withAsterisk
+                              placeholder="Select a tag for your entry in the contest"
+                              size="xs"
+                              label="Tag your entry"
+                              value={selectedItem.tagId?.toString() ?? null}
+                              onChange={(value) => {
+                                setSelectedCollections((curr) =>
+                                  curr.map((c) => {
+                                    if (c.collectionId === collection.id) {
+                                      return { ...c, tagId: value ? parseInt(value, 10) : null };
+                                    }
+                                    return c;
+                                  })
+                                );
+                              }}
+                              clearable
+                              autoFocus
+                              data={availableTags.map((tag) => ({
+                                value: tag.id.toString(),
+                                label: tag.name,
+                              }))}
+                              style={{
+                                zIndex: 400,
+                              }}
+                            />
                           )}
                         </Stack>
                       );
@@ -307,7 +304,7 @@ function CollectionListForm({
               </ScrollArea.Autosize>
               {contributingCollections.length > 0 && (
                 <>
-                  <Text size="sm" weight="bold" mt="md">
+                  <Text size="sm" fw="bold" mt="md">
                     Collections you contribute to
                   </Text>
                   <ScrollArea.Autosize mah={200}>
@@ -357,37 +354,35 @@ function CollectionListForm({
                               }
                             />
                             {selectedItem && availableTags?.length > 0 && (
-                              <Portal>
-                                <Select
-                                  withAsterisk
-                                  placeholder="Select a tag for your entry in the contest"
-                                  size="xs"
-                                  label="Tag your entry"
-                                  value={selectedItem.tagId?.toString() ?? null}
-                                  style={{
-                                    zIndex: 400,
-                                  }}
-                                  onChange={(value) => {
-                                    setSelectedCollections((curr) =>
-                                      curr.map((c) => {
-                                        if (c.collectionId === collection.id) {
-                                          return {
-                                            ...c,
-                                            tagId: value ? parseInt(value, 10) : null,
-                                          };
-                                        }
-                                        return c;
-                                      })
-                                    );
-                                  }}
-                                  clearable
-                                  autoFocus
-                                  data={availableTags.map((tag) => ({
-                                    value: tag.id.toString(),
-                                    label: tag.name,
-                                  }))}
-                                />
-                              </Portal>
+                              <Select
+                                withAsterisk
+                                placeholder="Select a tag for your entry in the contest"
+                                size="xs"
+                                label="Tag your entry"
+                                value={selectedItem.tagId?.toString() ?? null}
+                                style={{
+                                  zIndex: 400,
+                                }}
+                                onChange={(value) => {
+                                  setSelectedCollections((curr) =>
+                                    curr.map((c) => {
+                                      if (c.collectionId === collection.id) {
+                                        return {
+                                          ...c,
+                                          tagId: value ? parseInt(value, 10) : null,
+                                        };
+                                      }
+                                      return c;
+                                    })
+                                  );
+                                }}
+                                clearable
+                                autoFocus
+                                data={availableTags.map((tag) => ({
+                                  value: tag.id.toString(),
+                                  label: tag.name,
+                                }))}
+                              />
                             )}
                           </Stack>
                         );
@@ -488,7 +483,7 @@ function NewCollectionForm({
       <Stack gap="xl">
         <Stack gap={4}>
           <Group justify="space-between">
-            <Text size="sm" weight="bold">
+            <Text size="sm" fw="bold">
               New Collection
             </Text>
             <Button

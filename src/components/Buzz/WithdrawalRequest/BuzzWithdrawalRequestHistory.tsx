@@ -21,7 +21,7 @@ const BuzzWithdrawalRequestHistory = ({
       </Popover.Target>
       <Popover.Dropdown>
         <Stack gap="xs">
-          <Text size="sm" weight={500}>
+          <Text size="sm" fw={500}>
             History
           </Text>
           {history.map((record) => (
@@ -35,7 +35,7 @@ const BuzzWithdrawalRequestHistory = ({
                     withUsername
                   />
                 ) : (
-                  <Text size="xs" weight={500}>
+                  <Text size="xs" fw={500}>
                     On {formatDate(record.createdAt)}
                   </Text>
                 )}
@@ -46,7 +46,7 @@ const BuzzWithdrawalRequestHistory = ({
               </Group>
               {record.note && (
                 <Text size="xs">
-                  <Text weight={500}>Note:</Text> {record.note}
+                  <Text fw={500}>Note:</Text> {record.note}
                 </Text>
               )}
               <Divider />

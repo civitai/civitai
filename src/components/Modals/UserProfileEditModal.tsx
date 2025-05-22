@@ -403,7 +403,7 @@ const { openModal, Modal } = createContextModal({
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
           <Group justify="space-between">
-            <Text fz={24} weight={590}>
+            <Text fz={24} fw={590}>
               Customize Profile
             </Text>
 

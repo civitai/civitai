@@ -87,7 +87,7 @@ export function UserReferralCodesCard() {
                 <Paper radius="md" p="lg" style={{ position: 'relative' }} withBorder>
                   <Center>
                     <Stack gap={2}>
-                      <Text weight="bold">You have not created any referral codes</Text>
+                      <Text fw="bold">You have not created any referral codes</Text>
                       <Text size="sm" c="dimmed">
                         Start by creating your first referral code to invite friends.
                       </Text>

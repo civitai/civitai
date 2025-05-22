@@ -77,12 +77,12 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
       <Stack>
         <Text size="xs">
           The creator of this {getDisplayName(modelType)} has set this version to{' '}
-          <Text weight="bold" component="span">
+          <Text fw="bold" component="span">
             Early Access
           </Text>{' '}
           and as such it is only available for people who purchase it. This{' '}
           {getDisplayName(modelType)} will be available for free in{' '}
-          <Text weight="bold" component="span">
+          <Text fw="bold" component="span">
             <Countdown endTime={deadline} />
           </Text>{' '}
           {earlyAccessDonationGoal ? ' or once the donation goal is met' : ''}. If you want to know

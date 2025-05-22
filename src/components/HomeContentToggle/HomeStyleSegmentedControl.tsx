@@ -45,7 +45,7 @@ export function HomeStyleSegmentedControl({
                   colorScheme === 'dark' || activePath === key ? theme.white : theme.colors.dark[7],
               })}
             </ThemeIcon>
-            <Text size="sm" transform="capitalize" inline>
+            <Text size="sm" tt="capitalize" inline>
               {value.label ?? key}
             </Text>
             {/* Ideally this is a temporary solution. We should be using the `canViewNsfw` feature flag to return the correct numbers to the users */}

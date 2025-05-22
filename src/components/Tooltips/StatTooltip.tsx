@@ -23,7 +23,7 @@ export function StatTooltip({ value, label }: Props) {
         mx={-8}
         px={5}
         pb={2}
-        weight={500}
+        fw={500}
       >
         {label}
       </Text>

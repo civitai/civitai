@@ -40,7 +40,7 @@ export function CivitaiTooltip({ variant, ...props }: CivitaiTooltipProps) {
   const variantProps = variant ? variants[variant] : {};
   if (variant === 'smallRounded')
     props.label = (
-      <Text size="xs" weight={500}>
+      <Text size="xs" fw={500}>
         {props.label}
       </Text>
     );

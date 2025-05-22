@@ -391,7 +391,7 @@ function Rater() {
   //                 style: { marginTop: -210 },
   //               }}
   //             />
-  //             <Text size={48} ta="center" weight={500} mt={-90} mb={10} lh={1}>
+  //             <Text size={48} ta="center" fw={500} mt={-90} mb={10} lh={1}>
   //               Level up!
   //             </Text>
   //           </Card>
@@ -399,7 +399,7 @@ function Rater() {
   //         <Box className={classes.image}>
   //           {!isSane ? (
   //             <Card withBorder shadow="sm" radius="sm" className={classes.gameover}>
-  //               <Text c="orange" weight={500} size={36}>
+  //               <Text c="orange" fw={500} size={36}>
   //                 Game Over
   //               </Text>
   //               <Text>You failed 3 rating challenges.</Text>
@@ -481,18 +481,18 @@ function Rater() {
   //               <HoverCard.Dropdown px="xs" py={3} color="gray">
   //                 <Stack gap={0}>
   //                   <Group gap={4}>
-  //                     <Text size="xs" color="blue.4" weight="bold" tt="uppercase">
+  //                     <Text size="xs" color="blue.4" fw="bold" tt="uppercase">
   //                       next level
   //                     </Text>
-  //                     <Text size="xs" weight={500}>
+  //                     <Text size="xs" fw={500}>
   //                       {progression.ratingsInLevel} / {progression.ratingsForNextLevel}
   //                     </Text>
   //                   </Group>
   //                   <Group gap={4}>
-  //                     <Text size="xs" color="blue.4" weight="bold" tt="uppercase">
+  //                     <Text size="xs" color="blue.4" fw="bold" tt="uppercase">
   //                       Total ratings
   //                     </Text>
-  //                     <Text size="xs" weight={500}>
+  //                     <Text size="xs" fw={500}>
   //                       {totalRated}
   //                     </Text>
   //                   </Group>
@@ -539,7 +539,7 @@ function Rater() {
   //         {isSane && !loading && (
   //           <>
   //             <Group ml="auto" gap={4} className={classes.browsing}>
-  //               <Text weight="bold" size="xs">
+  //               <Text fw="bold" size="xs">
   //                 Show:{' '}
   //               </Text>
   //               {Object.entries(NsfwLevel)
@@ -619,7 +619,7 @@ function Rater() {
   //                     </LegacyActionIcon>
   //                   </Popover.Target>
   //                   <Popover.Dropdown>
-  //                     <Text c="orange" weight={500}>
+  //                     <Text c="orange" fw={500}>
   //                       What is this?
   //                     </Text>
   //                     <Text

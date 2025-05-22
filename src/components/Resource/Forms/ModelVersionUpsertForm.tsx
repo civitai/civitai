@@ -474,7 +474,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   <Input.Wrapper
                     label={
                       <Group gap="xs">
-                        <Text weight="bold">Early Access Time Frame</Text>
+                        <Text fw="bold">Early Access Time Frame</Text>
                         <Popover width={300} withArrow withinPortal shadow="sm">
                           <Popover.Target>
                             <IconInfoCircle size={16} />
@@ -543,7 +543,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         <Card.Section withBorder>
                           <Group py="sm" px="md" justify="space-between" wrap="nowrap">
                             <div>
-                              <Text weight={500} size="sm">
+                              <Text fw={500} size="sm">
                                 Allow users to pay for download (Includes ability to generate)
                               </Text>
                               <Text size="xs">
@@ -582,7 +582,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       <Card.Section withBorder>
                         <Group py="sm" px="md" justify="space-between" wrap="nowrap">
                           <div>
-                            <Text weight={500} size="sm">
+                            <Text fw={500} size="sm">
                               Allow users to pay for generation only - no download.
                             </Text>
                             <Text size="xs">
@@ -641,7 +641,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           <Card.Section withBorder>
                             <Group py="sm" px="md" justify="space-between" wrap="nowrap">
                               <div>
-                                <Text weight={500} size="sm">
+                                <Text fw={500} size="sm">
                                   Enable donation goal
                                 </Text>
                                 <Text size="xs">

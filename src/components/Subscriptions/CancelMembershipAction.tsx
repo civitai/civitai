@@ -128,11 +128,11 @@ export const VaultStorageDowngrade = () => {
           <div className="flex flex-col gap-0">
             <Text align="center">
               You have{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {formatKBytes(vault?.usedStorageKb ?? 0)}
               </Text>{' '}
               of storage used and{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {pagination?.totalItems?.toLocaleString() ?? 0} models
               </Text>{' '}
               stored on your Vault. After downgrading, your Vault will be frozen.

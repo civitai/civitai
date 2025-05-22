@@ -181,7 +181,7 @@ export const CollectionSelectDropdown = () => {
             <Stack gap={0}>
               <Text size="sm">
                 This post has been created for the{' '}
-                <Text component="span" weight="bold">
+                <Text component="span" fw="bold">
                   {selectedCollection.name}
                 </Text>{' '}
                 collection.
@@ -226,7 +226,7 @@ export const CollectionSelectDropdown = () => {
                 <Text size="sm">
                   We could not find a link to the entry record for this post. This post might have
                   been removed from the{' '}
-                  <Text weight="bold" component="span">
+                  <Text fw="bold" component="span">
                     {selectedCollection.name}
                   </Text>{' '}
                   collection.

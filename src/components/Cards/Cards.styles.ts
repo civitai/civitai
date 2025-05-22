@@ -108,7 +108,7 @@ import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector'
 //         borderRadius: theme.radius.sm,
 //         backgroundColor: theme.fn.rgba('#000', 0.31),
 //         color: theme.white,
-//         [`.mantine-Badge-inner`]: {
+//         [`.mantine-Badge-label`]: {
 //           display: 'flex',
 //           overflow: 'visible',
 //         },
@@ -138,7 +138,7 @@ import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector'
 //         borderRadius: theme.radius.sm,
 //         backgroundColor: theme.fn.rgba('#000', 0.31),
 //         alignSelf: 'flex-start',
-//         [`.mantine-Badge-inner`]: {
+//         [`.mantine-Badge-label`]: {
 //           display: 'flex',
 //           overflow: 'visible',
 //           gap: theme.spacing.xs,

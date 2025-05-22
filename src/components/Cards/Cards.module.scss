@@ -1,7 +1,7 @@
 /* Root styles */
 .root {
   height: 100%;
-  color: white;
+  color: var(--mantine-color-white);
 
   &:hover {
     .image {
@@ -91,7 +91,7 @@
 
 /* Icon badge */
 .iconBadge {
-  color: white;
+  color: var(--mantine-color-white);
   background-color: rgba(0, 0, 0, 0.31);
 }
 
@@ -99,9 +99,9 @@
 .infoChip {
   border-radius: var(--mantine-radius-sm);
   background-color: rgba(0, 0, 0, 0.31);
-  color: white;
+  color: var(--mantine-color-white);
 
-  .mantine-Badge-inner {
+  & .mantine-Badge-label {
     display: flex;
     overflow: visible;
   }
@@ -119,7 +119,7 @@
 .forMod {
   background-color: rgba(224, 187, 228, 0.8);
   /* Light violet color */
-  color: white;
+  color: var(--mantine-color-white);
 }
 
 /* Reactions */
@@ -136,14 +136,15 @@
   border-radius: var(--mantine-radius-sm);
   background-color: rgba(0, 0, 0, 0.31);
   align-self: flex-start;
+  color: var(--mantine-color-white);
 
-  .mantine-Badge-inner {
+  & .mantine-Badge-label {
     display: flex;
     overflow: visible;
     gap: var(--mantine-spacing-xs);
   }
 
-  &[data-reviewed='true'] {
+  &[data-reviewed="true"] {
     background-color: rgba(var(--mantine-color-success-5), 0.2);
   }
 }

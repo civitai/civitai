@@ -111,7 +111,7 @@ export function ShareButton({
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown>
         <Stack>
-          <Text weight={500}>Share</Text>
+          <Text fw={500}>Share</Text>
           <SimpleGrid cols={3}>
             {shareLinks.map(({ type, onClick, render }) => (
               <Button

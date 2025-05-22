@@ -32,7 +32,7 @@ export function SelectMenu<T extends string | number>({
           className="flex cursor-pointer items-center gap-1.5"
           style={disabled ? { opacity: 0.3, cursor: 'default', userSelect: 'none' } : {}}
         >
-          <Text weight={700} transform="uppercase" suppressHydrationWarning>
+          <Text fw={700} tt="uppercase" suppressHydrationWarning>
             {label}
           </Text>
           <IconChevronDown size={16} stroke={3} />
@@ -43,10 +43,10 @@ export function SelectMenu<T extends string | number>({
           {options.map((option) => (
             <Menu.Item key={option.value.toString()} onClick={() => onClick(option.value)}>
               <Text
-                transform="uppercase"
+                tt="uppercase"
                 ta="center"
                 c={option.value === value ? theme.primaryColor : undefined}
-                weight={option.value === value ? 700 : undefined}
+                fw={option.value === value ? 700 : undefined}
               >
                 {option.label}
               </Text>

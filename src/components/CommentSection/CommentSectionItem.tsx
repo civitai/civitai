@@ -158,7 +158,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             <Group gap={8} align="center">
               {!comment.user.deletedAt ? (
                 <Link legacyBehavior href={`/user/${comment.user.username}`} passHref>
-                  <Anchor variant="text" size="sm" weight="bold">
+                  <Anchor variant="text" size="sm" fw="bold">
                     <Username {...comment.user} />
                   </Anchor>
                 </Link>

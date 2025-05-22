@@ -28,7 +28,7 @@ export function HeroCard({
         />
       </Card.Section>
       <Stack gap={32} justify="center">
-        <Text className={classes.title} weight={600} inline>
+        <Text className={classes.title} fw={600} inline>
           {title}
         </Text>
         <CustomMarkdown allowedElements={['a', 'p']}>{description}</CustomMarkdown>
@@ -37,7 +37,7 @@ export function HeroCard({
             component="a"
             href={externalLink}
             size="xl"
-            weight="bold"
+            fw="bold"
             target="_blank"
             rel="nofollow noreferrer"
           >

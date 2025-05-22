@@ -81,7 +81,7 @@ function AlertContentInner({
         {icon}
         <Stack gap={0}>
           {title && (
-            <Text size={size} weight={500} style={styles.title} mb={4}>
+            <Text size={size} fw={500} style={styles.title} mb={4}>
               {title}
             </Text>
           )}

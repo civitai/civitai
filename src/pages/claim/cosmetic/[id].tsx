@@ -161,7 +161,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
             <Center>
               <Alert radius="sm" color="blue" className="z-10">
                 <Group gap="xs" wrap="nowrap" justify="center">
-                  <Text size="md" weight={500}>{`🎉 You've received a cosmetic! 🎉`}</Text>
+                  <Text size="md" fw={500}>{`🎉 You've received a cosmetic! 🎉`}</Text>
                 </Group>
               </Alert>
             </Center>

@@ -54,7 +54,7 @@ export function ToolCard({ data }: Props) {
               </ThemeIcon>
             )}
             <div className="flex flex-col">
-              <Text size="lg" weight={600}>
+              <Text size="lg" fw={600}>
                 {data.name}
               </Text>
               <Text size="sm" c="dimmed">

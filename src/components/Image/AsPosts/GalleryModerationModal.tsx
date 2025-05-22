@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Autocomplete,
   Badge,
   Button,
@@ -8,7 +7,6 @@ import {
   Loader,
   Modal,
   Paper,
-  Portal,
   Stack,
   Text,
 } from '@mantine/core';
@@ -105,27 +103,25 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
   return (
     <Card withBorder>
       <Card.Section withBorder inheritPadding py="xs">
-        <Text weight={500}>Hidden Tags</Text>
+        <Text fw={500}>Hidden Tags</Text>
       </Card.Section>
       <Card.Section withBorder style={{ marginTop: -1 }}>
-        <Portal reuseTargetNode>
-          <Autocomplete
-            name="tag"
-            ref={searchInputRef}
-            placeholder="Search tags to hide"
-            data={options}
-            value={search}
-            onChange={setSearch}
-            leftSection={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
-            onOptionSubmit={(value: string) => {
-              const item = options.find((o) => o.value === value);
-              if (!item) return;
-              handleToggleBlockedTag({ id: item.id, name: item.value });
-              searchInputRef.current?.focus();
-            }}
-            variant="unstyled"
-          />
-        </Portal>
+        <Autocomplete
+          name="tag"
+          ref={searchInputRef}
+          placeholder="Search tags to hide"
+          data={options}
+          value={search}
+          onChange={setSearch}
+          leftSection={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
+          onOptionSubmit={(value: string) => {
+            const item = options.find((o) => o.value === value);
+            if (!item) return;
+            handleToggleBlockedTag({ id: item.id, name: item.value });
+            searchInputRef.current?.focus();
+          }}
+          variant="unstyled"
+        />
       </Card.Section>
       <Card.Section inheritPadding pt="md" pb="xs">
         <Stack gap={5}>
@@ -183,7 +179,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
   return (
     <Card withBorder>
       <Card.Section withBorder inheritPadding py="xs">
-        <Text weight={500}>Hidden Users</Text>
+        <Text fw={500}>Hidden Users</Text>
       </Card.Section>
       <Card.Section withBorder style={{ marginTop: -1 }}>
         <Autocomplete
@@ -280,7 +276,7 @@ function BrowsingLevelsStacked({
               wrap="nowrap"
             >
               <Group wrap="nowrap">
-                <Text weight={700} w={50} ta="center">
+                <Text fw={700} w={50} ta="center">
                   {browsingLevelLabels[level]}
                 </Text>
                 <Text lh={1.2} size="sm" ta="left" style={{ flex: '1 1' }}>

@@ -32,7 +32,7 @@ const theme = createTheme({
     Tooltip: {
       defaultProps: { withArrow: true },
     },
-    Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
+    Popover: { styles: { dropdown: { maxWidth: '100vw' } }, defaultProps: { withinPortal: false } },
     Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
     Switch: {
       styles: {
@@ -49,7 +49,7 @@ const theme = createTheme({
     },
     Badge: {
       styles: { leftSection: { lineHeight: 1 } },
-      defaultProps: { radius: 'sm' },
+      defaultProps: { radius: 'sm', variant: 'light' },
     },
     Checkbox: {
       styles: {
@@ -65,6 +65,11 @@ const theme = createTheme({
     SegmentedControl: {
       defaultProps: {
         transitionDuration: 0,
+      },
+    },
+    Divider: {
+      defaultProps: {
+        labelPosition: 'left',
       },
     },
     // InputWrapper: {

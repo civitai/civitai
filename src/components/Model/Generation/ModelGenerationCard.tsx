@@ -158,7 +158,7 @@ export function ModelGenerationCard({
                     withPlaceholder
                   />
                   <Stack gap={0}>
-                    <Text size="sm" weight="bold">
+                    <Text size="sm" fw="bold">
                       Generated Exploration
                     </Text>
                     <Text size="xs" c="dimmed">

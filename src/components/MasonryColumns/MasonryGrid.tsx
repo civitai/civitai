@@ -102,7 +102,7 @@ export function MasonryGrid<TData>({
                   variant="outline"
                   className="w-24"
                 >
-                  <Text weight={500}>Do It</Text>
+                  <Text fw={500}>Do It</Text>
                   <IconCaretRightFilled size={16} />
                 </Button>
               </div>
@@ -135,7 +135,7 @@ export function MasonryGrid<TData>({
         //               variant="outline"
         //               className="w-24"
         //             >
-        //               <Text weight={500}>Do It</Text>
+        //               <Text fw={500}>Do It</Text>
         //               <IconCaretRightFilled size={16} />
         //             </Button>
         //           </div>

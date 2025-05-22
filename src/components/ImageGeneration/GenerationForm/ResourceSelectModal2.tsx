@@ -1019,7 +1019,7 @@ function ResourceSelectCard({
     {
       label: (
         <Group gap="xs">
-          <Text weight={500}>AIR</Text>
+          <Text fw={500}>AIR</Text>
           <URNExplanation size={20} />
         </Group>
       ),
@@ -1104,7 +1104,7 @@ function ResourceSelectCard({
                             backgroundColor: isUpdated ? '#1EBD8E' : theme.colors.blue[4],
                           }}
                         >
-                          <Text c="white" size="xs" transform="capitalize">
+                          <Text c="white" size="xs" tt="capitalize">
                             {isUpdated ? 'Updated' : 'New'}
                           </Text>
                         </Badge>
@@ -1189,7 +1189,7 @@ function ResourceSelectCard({
           ))}
 
         <div className="flex flex-col gap-2 p-3 text-black dark:text-white">
-          <Text size="sm" weight={700} lineClamp={1} lh={1}>
+          <Text size="sm" fw={700} lineClamp={1} lh={1}>
             {data.name}
           </Text>
           <Group wrap="nowrap" justify="space-between">

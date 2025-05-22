@@ -37,11 +37,11 @@ export function CategoryTags({
       {includeEA && <EarlyAccessBadge />}
       {includeAll && (
         <Button
-          className="uppercase"
+          className="uppercase overflow-visible"
           variant={!_tag ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
           color={!_tag ? 'blue' : 'gray'}
           onClick={() => _setTag(undefined)}
-          size="compact-md"
+          size="compact-sm"
         >
           All
         </Button>
@@ -53,11 +53,11 @@ export function CategoryTags({
           return (
             <Button
               key={tag.id}
-              className="uppercase"
+              className="uppercase overflow-visible"
               variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
               onClick={() => _setTag(!active ? tag.name : undefined)}
-              size="compact-md"
+              size="compact-sm"
             >
               {tag.name}
             </Button>
@@ -78,7 +78,8 @@ function EarlyAccessBadge() {
       variant={earlyAccess ? 'filled' : 'outline'}
       color="success.5"
       onClick={() => setFilters({ earlyAccess: !earlyAccess })}
-      size="compact-md"
+      size="compact-sm"
+      className="overflow-visible"
       leftSection={<IconClock size={16} />}
     >
       Early Access

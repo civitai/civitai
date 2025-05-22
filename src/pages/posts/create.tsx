@@ -180,7 +180,7 @@ export default Page(
                 <>
                   <Card p="sm" withBorder>
                     <Stack gap={8}>
-                      <Text size="md" weight={600}>
+                      <Text size="md" fw={600}>
                         What did you think of this resource?
                       </Text>
                       <ResourceReviewThumbActions

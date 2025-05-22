@@ -38,7 +38,7 @@ export function CreateMenu() {
               radius="sm"
               mode="toggle"
               // Quick hack to avoid svg from going over the button. cc: Justin 👀
-              size="compact-md"
+              size="compact-sm"
               data-activity="create:navbar"
               className="h-auto !px-2 py-2 @md:rounded-r-none @md:pr-1"
             />

@@ -97,7 +97,7 @@ export function CollectionCard({ data }: Props) {
           className={clsx('flex flex-col gap-2', cardClasses.contentOverlay, cardClasses.bottom)}
         >
           {data.user.id !== -1 && <UserAvatarSimple {...data.user} />}
-          <Text className={cardClasses.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
+          <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} lh={1.2}>
             {data.name}
           </Text>
           <div className="flex flex-nowrap gap-1">
@@ -144,7 +144,7 @@ function CollectionCardHeader({
       <Group gap="xs">
         {withinImageGuard && <ImageGuard2.BlurToggle className={cardClasses.chip} radius="xl" />}
         <Badge className={clsx(cardClasses.infoChip, cardClasses.chip)} variant="light" radius="xl">
-          <Text c="white" size="xs" transform="capitalize">
+          <Text c="white" size="xs" tt="capitalize">
             {data.type ? data.type + 's' : 'Mixed'}
           </Text>
         </Badge>

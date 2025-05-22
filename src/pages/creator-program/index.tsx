@@ -84,7 +84,7 @@ function CreatorsClubV1() {
       <Container>
         <Stack gap="lg">
           <Title fz={sizing.header.title} className={classes.highlightColor} lh={1} mb="sm">
-            <Text component="span" fz={32} weight={700}>
+            <Text component="span" fz={32} fw={700}>
               Introducing the
             </Text>
             <br />
@@ -553,7 +553,7 @@ const FAQ = () => {
             <Accordion.Item key={index} value={`q${index}`}>
               <Accordion.Control>
                 <Group gap={8}>
-                  <Text size="lg" weight={700}>
+                  <Text size="lg" fw={700}>
                     {q}
                   </Text>
                 </Group>

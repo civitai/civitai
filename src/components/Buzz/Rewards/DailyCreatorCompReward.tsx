@@ -220,7 +220,7 @@ export function DailyCreatorCompReward() {
                   <Text
                     size="xl"
                     color="yellow.7"
-                    weight="bold"
+                    fw="bold"
                     style={{ fontVariant: 'tabular-nums' }}
                   >
                     {formatCurrencyForDisplay(totalBuzz, Currency.BUZZ)}
@@ -309,7 +309,7 @@ export function DailyCreatorCompReward() {
                           >
                             <Group justify="space-between" gap={8} wrap="nowrap">
                               <Stack gap={0}>
-                                <Text size="sm" weight="bold" lineClamp={1}>
+                                <Text size="sm" fw="bold" lineClamp={1}>
                                   {version.modelName}
                                 </Text>
                                 <Text size="xs" c="dimmed" lineClamp={1}>
@@ -321,7 +321,7 @@ export function DailyCreatorCompReward() {
                                 <Text
                                   size="sm"
                                   color="yellow.7"
-                                  weight="bold"
+                                  fw="bold"
                                   style={{ fontVariant: 'tabular-nums' }}
                                 >
                                   {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}

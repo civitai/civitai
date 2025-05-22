@@ -66,7 +66,7 @@ export const ImageContestCollectionDetails = ({
             <>
               {' '}
               for the{' '}
-              <Text component="span" tt="capitalize" weight="bold">
+              <Text component="span" tt="capitalize" fw="bold">
                 {item?.tag.name}
               </Text>{' '}
               category
@@ -109,7 +109,7 @@ export const ImageContestCollectionDetails = ({
                 <Divider />
                 <Text>
                   This image is part of the{' '}
-                  <Text weight="bold" component="span">
+                  <Text fw="bold" component="span">
                     {item.collection.name}
                   </Text>{' '}
                   contest{tagDisplay}.{' '}
@@ -177,7 +177,7 @@ export const ImageContestCollectionDetails = ({
                 <Divider />
                 <Text>
                   {isOwner ? 'You have' : 'This user has'} submitted this image to the{' '}
-                  <Text weight="bold" component="span">
+                  <Text fw="bold" component="span">
                     {item.collection.name}
                   </Text>{' '}
                   Contest{tagDisplay}.
@@ -186,7 +186,7 @@ export const ImageContestCollectionDetails = ({
                 {!!item.collection.metadata?.votingPeriodStart && (
                   <Text>
                     The ability to react/vote for this film will go live starting at{' '}
-                    <Text weight="bold" component="span">
+                    <Text fw="bold" component="span">
                       {formatDate(item.collection.metadata?.votingPeriodStart)}
                     </Text>{' '}
                     when the Community Voting period begins
@@ -249,7 +249,7 @@ export const ImageContestCollectionDetails = ({
               <Divider />
               <Text>
                 This image is part of the{' '}
-                <Text weight="bold" component="span">
+                <Text fw="bold" component="span">
                   {item.collection.name}
                 </Text>{' '}
                 contest{tagDisplay}.{' '}
@@ -257,7 +257,7 @@ export const ImageContestCollectionDetails = ({
               {!!item.collection.metadata?.votingPeriodStart && (
                 <Text>
                   The ability to react/vote for this film will go live starting at{' '}
-                  <Text weight="bold" component="span">
+                  <Text fw="bold" component="span">
                     {formatDate(item.collection.metadata?.votingPeriodStart)}
                   </Text>{' '}
                   when the Community Voting period begins

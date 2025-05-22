@@ -88,7 +88,7 @@ function RoundPending({ theme, roundNumber }: RoundProps) {
         <Text
           className="absolute top-1/2 -ml-2 -mt-2 -translate-y-1/2 text-center text-8xl font-extrabold uppercase tracking-widest text-white opacity-0 transition-opacity duration-500 ease-in-out"
           fz={48}
-          weight="bold"
+          fw="bold"
           style={{
             opacity: imageLoaded ? 1 : 0,
             textShadow:
@@ -154,7 +154,7 @@ function RoundSubmissions({ theme }: RoundProps) {
     return (
       <Alert radius="sm" color="green" style={{ zIndex: 10 }}>
         <Group gap="xs" wrap="nowrap" justify="center">
-          <Text size="md" weight={500}>
+          <Text size="md" fw={500}>
             Spectating
           </Text>
         </Group>
@@ -175,7 +175,7 @@ function RoundSubmissions({ theme }: RoundProps) {
       {submitted && (
         <Alert radius="sm" color="green" style={{ zIndex: 10 }}>
           <Group gap="xs" wrap="nowrap" justify="center">
-            <Text size="md" weight={500}>{`✅ We've got your submission`}</Text>
+            <Text size="md" fw={500}>{`✅ We've got your submission`}</Text>
           </Group>
         </Alert>
       )}

@@ -549,7 +549,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     value: (
       <Group gap={4} style={{ float: 'right' }}>
         <CurrencyIcon currency={currency} size={20} />
-        <Text weight={590} td={b.awardedToId ? 'line-through' : undefined}>
+        <Text fw={590} td={b.awardedToId ? 'line-through' : undefined}>
           {formatCurrencyForDisplay(b.unitAmount, currency)}
         </Text>
       </Group>
@@ -580,7 +580,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             <Tooltip label="Minimum amount to add">
               <Group gap={2}>
                 <CurrencyIcon currency={currency} size={20} />
-                <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
+                <Text fw={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
               </Group>
             </Tooltip>
             <Button
@@ -616,7 +616,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                   />
                   <Text size="sm">
                     Are you sure you want {isBenefactor ? 'to add' : 'become a supporter'}{' '}
-                    <Text component="span" weight={590}>
+                    <Text component="span" fw={590}>
                       <CurrencyIcon currency={currency} size={16} />{' '}
                       {formatCurrencyForDisplay(addToBountyAmount, currency)}
                     </Text>{' '}

@@ -68,7 +68,7 @@ export function NotificationsCard() {
         <Card withBorder pb={0}>
           <Card.Section withBorder inheritPadding py="xs">
             <Group justify="space-between">
-              <Text weight={500}>On-site Notifications</Text>
+              <Text fw={500}>On-site Notifications</Text>
               <SkeletonSwitch
                 loading={isLoading}
                 checked={hasNotifications ?? false}
@@ -89,7 +89,7 @@ export function NotificationsCard() {
                 <React.Fragment key={category}>
                   <Card.Section withBorder inheritPadding py="xs">
                     <Group justify="space-between">
-                      <Text weight={500}>{category} Notifications</Text>
+                      <Text fw={500}>{category} Notifications</Text>
                       <SkeletonSwitch
                         loading={isLoading}
                         checked={hasCategory[category]}

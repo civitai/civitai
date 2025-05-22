@@ -197,7 +197,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
           {cosmetic && (
             <Paper radius="md" withBorder p="md">
               <Stack>
-                <Text c="dimmed" weight="bold">
+                <Text c="dimmed" fw="bold">
                   The following cosmetic will be made into a shop product
                 </Text>
                 <Divider mx="-md" />

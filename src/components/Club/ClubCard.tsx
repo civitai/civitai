@@ -103,7 +103,7 @@ export function ClubCard({ data }: Props) {
           )}
 
           <Group justify="space-between" align="start" gap={8}>
-            <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+            <Text size="xl" fw={700} lineClamp={2} lh={1.2}>
               {name}
             </Text>
 
@@ -116,7 +116,7 @@ export function ClubCard({ data }: Props) {
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
                   <Stack gap={0}>
-                    <Text c="yellow" weight={590}>
+                    <Text c="yellow" fw={590}>
                       Pending scan
                     </Text>
                     <Text size="sm">

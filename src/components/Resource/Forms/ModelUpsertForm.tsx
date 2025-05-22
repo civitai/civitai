@@ -399,7 +399,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               <ContainerGrid2 gutter="xs">
                 <ContainerGrid2.Col span={{ base: 12, sm: 6 }}>
                   <Stack gap="xs">
-                    <Text size="md" weight={500} style={{ lineHeight: 1.2 }} mb="xs">
+                    <Text size="md" fw={500} style={{ lineHeight: 1.2 }} mb="xs">
                       {`When using this model, I give permission for users to:`}
                     </Text>
                     <InputCheckbox name="allowNoCredit" label="Use without crediting me" />
@@ -427,7 +427,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   <Stack gap="xs">
                     <Stack gap={4}>
                       <Group gap={4} wrap="nowrap">
-                        <Text size="md" weight={500} style={{ lineHeight: 1.2 }}>
+                        <Text size="md" fw={500} style={{ lineHeight: 1.2 }}>
                           Commercial Use
                         </Text>
                         <InfoPopover size="xs" iconProps={{ size: 14 }}>
@@ -492,7 +492,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
             </Paper>
             <Paper radius="md" p="xl" withBorder>
               <Stack gap="xs">
-                <Text size="md" weight={500}>
+                <Text size="md" fw={500}>
                   This resource:
                 </Text>
                 <InputRadioGroup
@@ -659,7 +659,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                         <Chip value={type} {...chipProps}>
                           <Stack gap={4} align="center" w="100%" px="sm">
                             {details.icon}
-                            <Text weight="bold">{details.label}</Text>
+                            <Text fw="bold">{details.label}</Text>
                             <Text className="text-wrap text-center">{details.description}</Text>
                           </Stack>
                         </Chip>
@@ -727,7 +727,7 @@ export const PrivateModelAutomaticSetup = ({
   return (
     <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
       <Group justify="space-between" mb="md">
-        <Text size="lg" weight="bold">
+        <Text size="lg" fw="bold">
           You are about to create a private model
         </Text>
       </Group>

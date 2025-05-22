@@ -49,12 +49,12 @@ export function SupportContent() {
               <Group align="flex-start" wrap="nowrap">
                 <div style={{ minWidth: 32 }}>{option.icon({ size: 32 })}</div>
                 <Stack gap="sm">
-                  <Text size="sm" weight={500}>
+                  <Text size="sm" fw={500}>
                     {option.description}
                   </Text>
                   <Anchor
                     size="sm"
-                    weight={700}
+                    fw={700}
                     href={option.link.href}
                     target="_blank"
                     rel="nofollow noreferrer"

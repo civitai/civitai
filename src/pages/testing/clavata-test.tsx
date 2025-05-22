@@ -125,7 +125,7 @@ export default function MetadataTester() {
 
         {tags.length > 0 ? (
           <Stack gap={4}>
-            <Text size="lg" weight={700}>
+            <Text size="lg" fw={700}>
               Detected Tags
             </Text>
             {tags.map((tag) => (
@@ -139,7 +139,7 @@ export default function MetadataTester() {
           </Stack>
         ) : processed ? (
           <Stack gap={4}>
-            <Text size="lg" weight={700}>
+            <Text size="lg" fw={700}>
               Detected Tags
             </Text>
             <Text size="sm" c="dimmed">

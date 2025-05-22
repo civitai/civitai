@@ -95,7 +95,7 @@ export function Setup() {
     <ChoppedLayout title="New Game" canBack>
       <Stack>
         <Group mb={-12}>
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Rounds
           </Text>
           <Button
@@ -146,7 +146,7 @@ export function Setup() {
         </Card>
 
         <Group mb={-12}>
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Judges
           </Text>
           <Button
@@ -184,7 +184,7 @@ export function Setup() {
                 <Group>
                   <EdgeMedia src={judge.avatar} width={48} />
                   <Stack gap={0}>
-                    <Text weight={500}>{judge.name}</Text>
+                    <Text fw={500}>{judge.name}</Text>
                     <Text size="xs" c="dimmed">
                       {judge.shortDescription}
                     </Text>
@@ -206,7 +206,7 @@ export function Setup() {
         </Card>
 
         <Group mb={-12}>
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Are you going to play?
           </Text>
           <Button
@@ -226,7 +226,7 @@ export function Setup() {
 
         {!newGameState.viewOnly && (
           <>
-            <Text size="lg" weight={500} mb={-12}>
+            <Text size="lg" fw={500} mb={-12}>
               {`What's your name?`}
             </Text>
             <TextInput
@@ -241,7 +241,7 @@ export function Setup() {
         )}
 
         <Group mb={-12}>
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Max Players
           </Text>
         </Group>

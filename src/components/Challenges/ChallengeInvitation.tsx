@@ -89,7 +89,7 @@ function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClos
         }}
       >
         <div className="flex flex-col gap-0 self-end">
-          <Text size="xl" color="white" lineClamp={2} weight={600}>
+          <Text size="xl" color="white" lineClamp={2} fw={600}>
             {props.title}
           </Text>
           <Text size="sm" color="white">

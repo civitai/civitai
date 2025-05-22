@@ -580,7 +580,7 @@ export const AuctionInfo = () => {
                   gap={2}
                   className="absolute inset-x-0 z-20 m-auto h-full"
                 >
-                  <Text weight={500}>Cannot bid on a past auction.</Text>
+                  <Text fw={500}>Cannot bid on a past auction.</Text>
                 </Stack>
               </>
             )}

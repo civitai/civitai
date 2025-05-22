@@ -245,19 +245,19 @@ export default function EventPageDetails({
                       animated
                     />
                     <Stack gap={0} align="center" mt="lg" mb={theme.spacing.lg}>
-                      <Text size="xl" weight={590}>
+                      <Text size="xl" fw={590}>
                         Your Garland
                       </Text>
                       <div className="flex items-end">
                         <Lightbulb color={userTeam} size={48} transform="rotate(180)" animated />
-                        <Text fz={80} weight={590} color={userTeam} lh="70px">
+                        <Text fz={80} fw={590} color={userTeam} lh="70px">
                           {cosmeticData?.lights ?? 0}
                         </Text>
-                        <Text fz={32} weight={590} c="dimmed">
+                        <Text fz={32} fw={590} c="dimmed">
                           / 12
                         </Text>
                       </div>
-                      <Text size="sm" weight={500} color={userTeam} tt="capitalize" mt={5}>
+                      <Text size="sm" fw={500} color={userTeam} tt="capitalize" mt={5}>
                         {userTeam} Team
                       </Text>
                       <Popover withinPortal shadow="md">
@@ -317,22 +317,22 @@ export default function EventPageDetails({
                   >
                     <Stack w="100%">
                       <Stack gap={0} align="center">
-                        <Text size="sm" weight={590}>
+                        <Text size="sm" fw={590}>
                           Total Team Donations
                         </Text>
                         <Group gap={4} wrap="nowrap">
                           <CurrencyIcon currency={Currency.BUZZ} />
-                          <Text fz={32} weight={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                          <Text fz={32} fw={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
                             {numberWithCommas(totalTeamScores)}
                           </Text>
                         </Group>
                       </Stack>
                       <Stack gap={8}>
                         <Group gap={8} className="grow" justify="space-between">
-                          <Text size="sm" weight={590}>
+                          <Text size="sm" fw={590}>
                             Team Rank
                           </Text>
-                          <Text size="sm" weight={590}>
+                          <Text size="sm" fw={590}>
                             Spirit Bank
                           </Text>
                         </Group>
@@ -345,7 +345,7 @@ export default function EventPageDetails({
                             <Fragment key={teamScore.team}>
                               <Group gap={8} className="grow" justify="space-between">
                                 <Group gap={4} wrap="nowrap">
-                                  <Text size="xl" weight={590}>
+                                  <Text size="xl" fw={590}>
                                     {teamScore.rank}
                                   </Text>
                                   <Lightbulb
@@ -354,7 +354,7 @@ export default function EventPageDetails({
                                     size={32}
                                     animated
                                   />
-                                  <Text size="xl" weight={590} tt="capitalize" color={color}>
+                                  <Text size="xl" fw={590} tt="capitalize" color={color}>
                                     {color} Team
                                   </Text>
                                 </Group>
@@ -362,7 +362,7 @@ export default function EventPageDetails({
                                   <CurrencyIcon currency={Currency.BUZZ} />
                                   <Text
                                     size="xl"
-                                    weight={590}
+                                    fw={590}
                                     style={{ fontVariantNumeric: 'tabular-nums' }}
                                   >
                                     {numberWithCommas(teamScore.score)}
@@ -380,7 +380,7 @@ export default function EventPageDetails({
                   <Grid.Col span={12} mt={-40}>
                     <Text size="md" c="dimmed" ta="center">
                       You have{' '}
-                      <Text component="span" weight={500} td="underline">
+                      <Text component="span" fw={500} td="underline">
                         <Countdown endTime={resetTime} />
                       </Text>{' '}
                       to earn your light and to claim the top position for your team for the day.
@@ -399,13 +399,13 @@ export default function EventPageDetails({
                     <Stack align="center" w="100%" gap="lg">
                       <Lightbulb variant="star" color={userTeam} size={80} />
                       <Stack gap={4} align="center">
-                        <Text size={24} weight={600} align="center" inline>
+                        <Text size={24} fw={600} align="center" inline>
                           Your rank in {userTeam} team
                         </Text>
                         {loadingUserRank ? (
                           <Loader variant="bars" />
                         ) : (
-                          <Text size={96} weight="bold" align="center" color={userTeam} inline>
+                          <Text size={96} fw="bold" align="center" color={userTeam} inline>
                             {userRank?.toLocaleString()}
                           </Text>
                         )}
@@ -477,19 +477,13 @@ export default function EventPageDetails({
                             <Text
                               size="xs"
                               color={teamScore.team.toLowerCase()}
-                              transform="uppercase"
-                              weight={500}
+                              tt="uppercase"
+                              fw={500}
                               lineClamp={1}
                             >
                               {teamScore.team}
                             </Text>
-                            <Text
-                              size="xs"
-                              c="dimmed"
-                              transform="uppercase"
-                              weight={500}
-                              lineClamp={1}
-                            >
+                            <Text size="xs" c="dimmed" tt="uppercase" fw={500} lineClamp={1}>
                               {abbreviateNumber(teamScore.score, { decimals: 2 })}
                             </Text>
                           </Group>
@@ -623,7 +617,7 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
                 <EdgeMedia src={partner.image} alt={`${partner.title} logo`} width={120} />
               </div>
               <Stack gap={0} align="center">
-                <Text fz={20} weight={600}>
+                <Text fz={20} fw={600}>
                   {partner.title}
                 </Text>
                 <Text size="xs" c="dimmed">

@@ -41,7 +41,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
         <Card radius="lg" h="100%" className="bg-gray-0 p-32 dark:bg-dark-6">
           <Stack gap="xl">
             <Stack gap={0}>
-              <Text fz={32} weight="bold">
+              <Text fz={32} fw="bold">
                 Top Donors All Time
               </Text>
               {!ended && (
@@ -73,7 +73,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                   </Group>
                   <Group gap={4}>
                     <CurrencyIcon currency={Currency.BUZZ} />
-                    <Text size="xl" weight={500} c="dimmed">
+                    <Text size="xl" fw={500} c="dimmed">
                       {abbreviateNumber(contributor.amount ?? 0)}
                     </Text>
                   </Group>
@@ -101,7 +101,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
           <Card p={32} radius="lg" h="100%" className="bg-gray-0 dark:bg-dark-6">
             <Stack gap="xl">
               <Stack gap={0}>
-                <Text fz={32} weight="bold">
+                <Text fz={32} fw="bold">
                   Top Donors Today
                 </Text>
                 {!ended && (
@@ -131,7 +131,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                     />
                     <Group gap={4}>
                       <CurrencyIcon currency={Currency.BUZZ} />
-                      <Text size="xl" weight={500} c="dimmed">
+                      <Text size="xl" fw={500} c="dimmed">
                         {abbreviateNumber(contributor.amount ?? 0)}
                       </Text>
                     </Group>
@@ -160,7 +160,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
           <Grid gutter="xl">
             <Grid.Col span={12}>
               <Stack gap={0}>
-                <Text fz={32} weight="bold">
+                <Text fz={32} fw="bold">
                   Top Donors by Team
                 </Text>
                 <Text size="xs" c="dimmed">
@@ -179,7 +179,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
               topTeamContributors.map(([team, contributors]) => (
                 <Grid.Col key={team} span={{ base: 12, sm: 'auto' }}>
                   <Stack gap="xl" className="h-full">
-                    <Text fz={24} weight="bold">
+                    <Text fz={24} fw="bold">
                       {team} Team
                     </Text>
 

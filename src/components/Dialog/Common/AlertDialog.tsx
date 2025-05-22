@@ -45,7 +45,7 @@ export default function AlertDialog({ type, size, ...props }: Props) {
           <Group gap="xs">
             {icon}
             {typeof title === 'string' ? (
-              <Text size="lg" weight="bold">
+              <Text size="lg" fw="bold">
                 {title}
               </Text>
             ) : (

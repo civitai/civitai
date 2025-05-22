@@ -630,7 +630,7 @@ const ImageGridMedia = ({
             onClick={onChange}
           >
             <Group wrap="nowrap" justify="space-between">
-              <Text size="sm" weight={700}>
+              <Text size="sm" fw={700}>
                 {img.modelVersion.model.name} ({img.modelVersion.name})
               </Text>
               <Button variant={isSelected ? 'light' : 'filled'}>

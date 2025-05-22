@@ -64,7 +64,7 @@ export function ApiKeyModal({ ...props }: Props) {
     >
       {apiKey ? (
         <Stack gap={4}>
-          <Text weight={500}>Here is your API Key:</Text>
+          <Text fw={500}>Here is your API Key:</Text>
           <CopyButton value={apiKey}>
             {({ copied, copy }) => (
               <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>

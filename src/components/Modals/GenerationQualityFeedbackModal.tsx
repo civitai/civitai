@@ -52,7 +52,7 @@ export function TextToImageQualityFeedbackModal({
             <ThemeIcon size="lg" color="red" radius="xl">
               <IconThumbDown size={18} />
             </ThemeIcon>
-            <Text size="lg" weight={700}>
+            <Text size="lg" fw={700}>
               Provide further feedback
             </Text>
           </Group>

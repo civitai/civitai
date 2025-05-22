@@ -63,7 +63,7 @@ export const ClubMembershipStatus = ({ clubId }: { clubId: number }) => {
             <Text size="sm">
               Your membership was cancelled on {formatDate(membership.cancelledAt)} and will be
               active until{' '}
-              <Text weight="bold" component="span">
+              <Text fw="bold" component="span">
                 {formatDate(membership.expiresAt)}
               </Text>
               .
@@ -87,7 +87,7 @@ export const ClubMembershipStatus = ({ clubId }: { clubId: number }) => {
               <>
                 <Text size="sm">
                   Your next billing date is{' '}
-                  <Text weight="bold" component="span">
+                  <Text fw="bold" component="span">
                     {formatDate(membership.nextBillingAt)}
                   </Text>
                   .
@@ -195,7 +195,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
         <Center>
           <Stack>
             <TierCoverImage clubTier={clubTier} />
-            <Text align="center" weight={800}>
+            <Text align="center" fw={800}>
               {clubTier.name}
             </Text>
             {clubTier.unitAmount > 0 ? (
@@ -250,7 +250,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
             //   props: {
             //     redirectUrl: router.asPath,
             //     title: (
-            //       <Text size="lg" weight={700}>
+            //       <Text size="lg" fw={700}>
             //         You are now a member of this club! Enjoy your stay
             //       </Text>
             //     ),
@@ -264,7 +264,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
             //           payment method. Doing so is the ideal way to keep supporting the creators you
             //           care about.
             //         </Text>
-            //         <Text weight="bold">
+            //         <Text fw="bold">
             //           Your card will only be charged if you do not have the amount of buzz at the
             //           time of renewal to continue your membership. A minimum of{' '}
             //           <CurrencyBadge
@@ -324,12 +324,12 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
           <Center>
             <Stack>
               <TierCoverImage clubTier={clubTier} />
-              <Text align="center" weight={800}>
+              <Text align="center" fw={800}>
                 {clubTier.name}
               </Text>
               <Text align="center">
                 You will be charged the membership fee{' '}
-                <Text component="span" weight="bold">
+                <Text component="span" fw="bold">
                   immediately
                 </Text>{' '}
                 and get access to this tier&rsquo;s benefits.
@@ -337,19 +337,19 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
 
               {clubTier.oneTimeFee ? (
                 <Stack mt="md">
-                  <Text align="center" weight="bold">
+                  <Text align="center" fw="bold">
                     This is a one time payment and you will not be charged again unless leave the
                     club.
                   </Text>
                 </Stack>
               ) : (
                 <Stack mt="md">
-                  <Text align="center" weight="bold">
+                  <Text align="center" fw="bold">
                     Your next billing date will be on {formatDate(nextBillingDate)}.
                   </Text>
                   <Text c="dimmed" align="center" size="sm">
                     An additional{' '}
-                    <Text component="span" weight="bold">
+                    <Text component="span" fw="bold">
                       {addedDaysFromCurrentTier} days
                     </Text>{' '}
                     will be added to your new membership period to account for the remaining days in
@@ -373,7 +373,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
           <Center>
             <Stack>
               <TierCoverImage clubTier={clubTier} />
-              <Text align="center" weight={800}>
+              <Text align="center" fw={800}>
                 {clubTier.name}
               </Text>
               <Text align="center">
@@ -533,7 +533,7 @@ export const useToggleClubMembershipCancelStatus = ({ clubId }: { clubId: number
         <Center>
           <Stack>
             <TierCoverImage clubTier={clubTier} />
-            <Text align="center" weight={800}>
+            <Text align="center" fw={800}>
               {clubTier.name}
             </Text>
             {clubTier.unitAmount > 0 && !clubTier.oneTimeFee ? (

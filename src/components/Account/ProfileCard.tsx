@@ -74,8 +74,7 @@ export function ProfileCard() {
                 openUserProfileEditModal({});
               }}
               style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
-              radius="xl"
-              size="compact-md"
+              size="compact-sm"
             >
               Customize profile
             </Button>
@@ -94,7 +93,9 @@ export function ProfileCard() {
                 value={currentUser?.email ?? ''}
                 label={
                   <Group gap="sm">
-                    <Text size="sm">Account Email</Text>
+                    <Text className="font-medium" size="sm">
+                      Account Email
+                    </Text>
                     <Popover width={300} withArrow withinPortal shadow="sm">
                       <Popover.Target>
                         <IconInfoSquareRounded
@@ -104,7 +105,7 @@ export function ProfileCard() {
                       </Popover.Target>
                       <Popover.Dropdown>
                         <Stack gap="xs">
-                          <Text size="sm" weight={500}>
+                          <Text size="sm" fw={500}>
                             What is this email?
                           </Text>
                           <Text size="xs" lh={1.3}>
