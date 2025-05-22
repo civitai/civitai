@@ -72,6 +72,7 @@ const BuzzPurchasePaymentButton = ({
   priceId?: string;
   onValidate: () => boolean;
 }) => {
+  const features = useFeatureFlags();
   const paymentProvider = usePaymentProvider();
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
@@ -174,13 +175,9 @@ const BuzzPurchasePaymentButton = ({
     });
   };
 
-  if (!paymentProvider) {
-    return null;
-  }
-
   return (
     <Button
-      disabled={disabled}
+      disabled={disabled || features.disablePayments}
       onClick={
         paymentProvider === 'Paddle'
           ? handlePaddleSubmit
@@ -191,10 +188,16 @@ const BuzzPurchasePaymentButton = ({
       radius="xl"
       fullWidth
     >
-      Pay Now{' '}
-      {!!unitAmount
-        ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
-        : ''}
+      {features.disablePayments ? (
+        <Text>Paddle Payments are currently disabled</Text>
+      ) : (
+        <>
+          Pay Now{' '}
+          {!!unitAmount
+            ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
+            : ''}
+        </>
+      )}
     </Button>
   );
 };

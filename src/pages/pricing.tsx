@@ -152,6 +152,26 @@ export default function Pricing() {
       </Container>
       <Container size="xl">
         <Stack>
+          {features.disablePayments && (
+            <Center>
+              <AlertWithIcon
+                color="red"
+                iconColor="red"
+                icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
+                iconSize={28}
+                py={11}
+                maw="calc(50% - 8px)"
+              >
+                <Stack spacing={0}> 
+                  <Text lh={1.2}>
+                    Payments are currently disabled in our platform due to some internal issues.
+                    We are working hard to resolve this and will notify you when it is back up.
+                    You can still manage your active membership, and your benefits will be active until your membership expiration date.
+                  </Text>
+                </Stack>
+              </AlertWithIcon>
+            </Center>
+          )}
           {subscription?.isBadState && (
             <AlertWithIcon
               color="red"
@@ -165,7 +185,7 @@ export default function Pricing() {
                   Uh oh! It looks like there was an issue with your membership. You can update your
                   payment method or renew your membership now by clicking{' '}
                   <SubscribeButton priceId={subscription.price.id}>
-                    <Anchor component="button" type="button">
+                    <Anchor component="button" type="button" disabled={features.disablePayments}>
                       here
                     </Anchor>
                   </SubscribeButton>
