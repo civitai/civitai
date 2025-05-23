@@ -55,8 +55,14 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
                 className="flex px-3 py-2"
                 rightSection={
                   !!countValue ? (
-                    <Badge color="red" variant="filled" radius="xl" circle>
-                      <Text size="xs" span inherit>
+                    <Badge
+                      color="red"
+                      size="xs"
+                      variant="filled"
+                      radius="xl"
+                      classNames={{ label: 'flex' }}
+                    >
+                      <Text fz={12} fw={500} lh={1} span>
                         {abbreviateNumber(countValue)}
                       </Text>
                     </Badge>

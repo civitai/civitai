@@ -19,7 +19,10 @@
   &:hover {
     /* // The background color is dynamic based on the `color` prop and theme.
     // For blue: */
-    background: alpha(var(--mantine-color-blue-6), 0.4);
+    background: light-dark(
+      alpha(var(--mantine-color-dark-1), 0.2),
+      alpha(var(--mantine-color-dark-3), 0.4)
+    );
     /* // For gray:
     // background: alpha(var(--mantine-color-gray-6), 0.4); */
   }

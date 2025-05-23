@@ -88,7 +88,7 @@ export function ImageSelectFiltersTrainingDropdown({
         color="gray"
         radius="xl"
         variant={colorScheme === 'dark' ? 'filled' : 'light'}
-        rightIcon={<IconChevronDown className={opened ? classes.opened : undefined} size={16} />}
+        rightSection={<IconChevronDown className={opened ? classes.opened : undefined} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
         size="compact-md"
@@ -291,7 +291,7 @@ export function ImageSelectFiltersProfileDropdown({
         color="gray"
         radius="xl"
         variant={colorScheme === 'dark' ? 'filled' : 'light'}
-        rightIcon={<IconChevronDown className={opened ? classes.opened : undefined} size={16} />}
+        rightSection={<IconChevronDown className={opened ? classes.opened : undefined} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
         compact

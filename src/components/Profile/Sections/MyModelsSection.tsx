@@ -53,12 +53,13 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
     <div
       ref={ref}
       className={isNullState ? undefined : classes.profileSection}
-      style={{
-        // @ts-ignore
-        '--count': models.length,
-        '--row-count': 2,
-        '--width-grid': '280px',
-      }}
+      style={
+        {
+          '--count': models.length,
+          '--row-count': 2,
+          '--width-grid': '280px',
+        } as React.CSSProperties
+      }
     >
       {inView &&
         (isLoading ? (
@@ -78,7 +79,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
                     h={34}
                     component="a"
                     variant="subtle"
-                    rightIcon={<IconArrowRight size={16} />}
+                    rightSection={<IconArrowRight size={16} />}
                   >
                     <Text inherit> View all models</Text>
                   </Button>

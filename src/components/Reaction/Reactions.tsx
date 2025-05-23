@@ -320,13 +320,12 @@ function BuzzTippingBadge({
     <Badge
       size="md"
       radius="xs"
-      py={10}
-      px={3}
       color="yellow.7"
       variant="light"
       {...(buttonStyling ? buttonStyling('BuzzTip') : {})}
-      className="cursor-pointer hover:bg-yellow-5/20"
+      className="cursor-pointer px-1 py-2 hover:bg-yellow-5/20"
       classNames={{ label: 'flex gap-0.5 items-center flex-nowrap' }}
+      styles={{ root: { paddingBlock: 0 } }}
     >
       <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
       <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>

@@ -634,7 +634,7 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
             variant="light"
             radius="xl"
             style={{ alignSelf: 'flex-start' }}
-            rightIcon={<IconChevronRight />}
+            rightSection={<IconChevronRight />}
             href="/forms/matching-partner"
             target="_blank"
           >

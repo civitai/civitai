@@ -88,7 +88,7 @@ export function WelcomeCard({
             <Button
               radius="xl"
               size={mobile ? 'sm' : 'xl'}
-              rightIcon={!equipping ? <IconChevronRight /> : undefined}
+              rightSection={!equipping ? <IconChevronRight /> : undefined}
               onClick={handleEquipCosmetic}
               loading={equipping}
               fullWidth

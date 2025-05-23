@@ -54,12 +54,13 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     <div
       ref={ref}
       className={isNullState ? undefined : classes.profileSection}
-      style={{
-        // @ts-ignore
-        '--count': showcaseItems.length,
-        '--row-count': 2,
-        '--width-grid': '280px',
-      }}
+      style={
+        {
+          '--count': showcaseItems.length,
+          '--row-count': 2,
+          '--width-grid': '280px',
+        } as React.CSSProperties
+      }
     >
       {inView &&
         (isLoading ? (

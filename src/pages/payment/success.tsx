@@ -65,7 +65,7 @@ export default function PaymentSuccess() {
               component={Link}
               href="/user/account"
               size="md"
-              rightIcon={<IconRosette />}
+              rightSection={<IconRosette />}
             >
               Customize Profile
             </Button>

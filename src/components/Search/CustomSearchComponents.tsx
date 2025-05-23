@@ -240,7 +240,7 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
 
   return (
     <Button
-      rightIcon={<IconTrash size={16} />}
+      rightSection={<IconTrash size={16} />}
       color="gray"
       variant="filled"
       size="md"

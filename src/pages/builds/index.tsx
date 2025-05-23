@@ -243,7 +243,7 @@ export default function BuildPage() {
                             rel="nofollow noreferrer"
                             target="_blank"
                             tt="uppercase"
-                            rightIcon={<IconArrowUpRight size={16} />}
+                            rightSection={<IconArrowUpRight size={16} />}
                           >
                             {showPrices && component.price ? 'Buy' : 'Check Price'}
                           </Button>
@@ -264,7 +264,7 @@ export default function BuildPage() {
                         rel="nofollow noreferrer"
                         target="_blank"
                         tt="uppercase"
-                        rightIcon={<IconArrowUpRight size={16} />}
+                        rightSection={<IconArrowUpRight size={16} />}
                       >
                         {component.price ? 'Buy' : 'Check Price'}
                       </Button>

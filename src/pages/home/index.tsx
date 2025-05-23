@@ -135,7 +135,7 @@ export function Home() {
                             h={34}
                             component="a"
                             variant="subtle"
-                            rightIcon={<IconArrowRight size={16} />}
+                            rightSection={<IconArrowRight size={16} />}
                           >
                             View all
                           </Button>
@@ -190,7 +190,7 @@ export function Home() {
                             h={34}
                             component="a"
                             variant="subtle"
-                            rightIcon={<IconArrowRight size={16} />}
+                            rightSection={<IconArrowRight size={16} />}
                           >
                             View all
                           </Button>

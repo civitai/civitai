@@ -64,7 +64,7 @@ export default function Downloads() {
         <Title order={1}>Downloads</Title>
         <Group gap={8}>
           <Button
-            rightIcon={<IconTrash size={16} />}
+            rightSection={<IconTrash size={16} />}
             variant="subtle"
             size="compact-xs"
             onClick={() => handleHide({ all: true })}

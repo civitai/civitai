@@ -59,12 +59,13 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
     <div
       ref={ref}
       className={isNullState ? undefined : classes.profileSection}
-      style={{
-        // @ts-ignore
-        '--count': images.length,
-        '--row-count': 2,
-        '--width-grid': '280px',
-      }}
+      style={
+        {
+          '--count': images.length,
+          '--row-count': 2,
+          '--width-grid': '280px',
+        } as React.CSSProperties
+      }
     >
       {inView &&
         (isLoading ? (
@@ -84,7 +85,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
                     h={34}
                     component="a"
                     variant="subtle"
-                    rightIcon={<IconArrowRight size={16} />}
+                    rightSection={<IconArrowRight size={16} />}
                   >
                     <Text inherit> View all images</Text>
                   </Button>

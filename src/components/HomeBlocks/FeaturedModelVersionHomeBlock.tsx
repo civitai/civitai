@@ -72,13 +72,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
   const useGrid = metadata.description && !currentUser;
 
   const MetaDataTop = (
-    <Stack
-      gap="sm"
-      style={{
-        '--count': items.length ?? 0,
-        '--rows': ROWS,
-      }}
-    >
+    <Stack gap="sm">
       <Group gap="xs" justify="space-between" className={classes.header}>
         <Group wrap="nowrap">
           <Title className={classes.title} order={1} lineClamp={1}>
@@ -135,7 +129,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
             className={classes.expandButton}
             component="a"
             variant="subtle"
-            rightIcon={<IconArrowRight size={16} />}
+            rightSection={<IconArrowRight size={16} />}
           >
             Explore all models
           </Button>
@@ -176,7 +170,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
               component="a"
               variant="light"
               color="gray"
-              rightIcon={<IconArrowRight size={16} />}
+              rightSection={<IconArrowRight size={16} />}
             >
               Explore all models
             </Button>
@@ -188,7 +182,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
                 component="a"
                 variant="light"
                 color="gray"
-                rightIcon={<IconArrowRight size={16} />}
+                rightSection={<IconArrowRight size={16} />}
               >
                 View auctions
               </Button>
@@ -200,7 +194,14 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
   );
 
   return (
-    <>
+    <div
+      style={
+        {
+          '--count': items.length ?? 0,
+          '--rows': ROWS,
+        } as React.CSSProperties
+      }
+    >
       <Box mb="md" className={clsx({ [classes.meta]: useGrid })}>
         {MetaDataTop}
       </Box>
@@ -232,6 +233,6 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
           </ImagesProvider>
         </div>
       )}
-    </>
+    </div>
   );
 };

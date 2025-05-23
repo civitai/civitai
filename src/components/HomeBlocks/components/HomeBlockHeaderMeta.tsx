@@ -28,7 +28,7 @@ const HomeBlockHeaderMeta = ({ metadata, htmlMode }: Props) => {
                 className={homeBlockClasses.expandButton}
                 component="a"
                 variant="subtle"
-                rightIcon={<IconArrowRight size={16} />}
+                rightSection={<IconArrowRight size={16} />}
               >
                 {metadata.linkText ?? 'View All'}
               </Button>

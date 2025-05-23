@@ -67,7 +67,7 @@ export function TourPopover(props: TooltipRenderProps) {
               <Button
                 {...primaryProps}
                 size="xs"
-                rightIcon={!isLastStep ? <IconChevronRight size={16} /> : null}
+                rightSection={!isLastStep ? <IconChevronRight size={16} /> : null}
               >
                 {isLastStep ? 'Done' : primaryProps.title}
               </Button>

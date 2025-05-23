@@ -63,7 +63,7 @@ export function CosmeticsFiltersDropdown({ filters, setFilters, ...buttonProps }
         radius="xl"
         variant={colorScheme === 'dark' ? 'filled' : 'light'}
         {...buttonProps}
-        rightIcon={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
+        rightSection={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >

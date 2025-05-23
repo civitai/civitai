@@ -1,11 +1,11 @@
 import { MantineSpacing } from '@mantine/core';
 
 export const mantineContainerSizes: Record<MantineSpacing, number> = {
-  xs: 576,
+  xs: 480,
   sm: 768,
-  md: 992,
-  lg: 1200,
-  xl: 1400,
+  md: 1024,
+  lg: 1184,
+  xl: 1440,
 };
 
 export const containerQuery = {

@@ -1,4 +1,3 @@
-import { ActionIcon } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
@@ -17,10 +16,6 @@ export function ImageCard({ data }: Props) {
 
   return (
     <AspectRatioImageCard
-      // @ts-ignore
-      style={{
-        '--aspect-ratio': data.width && data.height ? data.width / data.height : 1,
-      }}
       image={data}
       cosmetic={data.cosmetic?.data}
       routedDialog={{ name: 'imageDetail', state: { imageId: data.id, ...context } }}

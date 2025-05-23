@@ -30,11 +30,6 @@ export function ArticleCard({ data, aspectRatio }: Props) {
 
   return (
     <AspectRatioImageCard
-      // @ts-ignore
-      style={{
-        // @ts-ignore
-        '--aspect-ratio': 1,
-      }}
       href={`/articles/${id}/${slugit(title)}`}
       aspectRatio={aspectRatio}
       contentType="article"

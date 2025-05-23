@@ -1,0 +1,31 @@
+.imageContainer {
+  height: calc(100vh / 3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  & > img {
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--mantine-radius-md);
+  }
+}
+
+.imageContainerAspectRatio {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  height: 0;
+  border-radius: var(--mantine-radius-md);
+  padding-bottom: var(--aspect-ratio, 100%);
+
+  & > img {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    height: auto;
+    object-fit: cover;
+    border-radius: var(--mantine-radius-md);
+  }
+}

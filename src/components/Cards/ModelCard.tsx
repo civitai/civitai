@@ -81,10 +81,6 @@ export function ModelCard({ data }: Props) {
 
   return (
     <AspectRatioImageCard
-      // @ts-ignore
-      style={{
-        '--aspect-ratio': aspectRatio,
-      }}
       href={href}
       cosmetic={data.cosmetic?.data}
       contentType="model"
@@ -171,7 +167,7 @@ export function ModelCard({ data }: Props) {
               </Badge>
             )}
           </div>
-          <div className="flex items-center flex-col gap-2">
+          <div className="flex flex-col items-center gap-2">
             <ModelCardContextMenu data={data} />
             <RemixButton type="modelVersion" id={data.version.id} canGenerate={data.canGenerate} />
 
@@ -212,21 +208,27 @@ export function ModelCard({ data }: Props) {
                 !!data.rank.tippedAmountCount) && (
                 <Badge
                   className={clsx(cardClasses.statChip, cardClasses.chip)}
-                  classNames={{ label: 'flex flex-nowrap gap-2'}}
+                  classNames={{ label: 'flex flex-nowrap gap-2' }}
                   variant="light"
                   radius="xl"
                 >
                   <Group gap={2}>
                     <IconDownload size={14} strokeWidth={2.5} />
-                    <Text size="xs" lh={1} fw="bold">{abbreviateNumber(data.rank.downloadCount)}</Text>
+                    <Text size="xs" lh={1} fw="bold">
+                      {abbreviateNumber(data.rank.downloadCount)}
+                    </Text>
                   </Group>
                   <Group gap={2}>
                     <IconBookmark size={14} strokeWidth={2.5} />
-                    <Text size="xs" lh={1} fw="bold">{abbreviateNumber(data.rank.collectedCount)}</Text>
+                    <Text size="xs" lh={1} fw="bold">
+                      {abbreviateNumber(data.rank.collectedCount)}
+                    </Text>
                   </Group>
                   <Group gap={2}>
                     <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                    <Text size="xs" lh={1} fw="bold">{abbreviateNumber(data.rank.commentCount)}</Text>
+                    <Text size="xs" lh={1} fw="bold">
+                      {abbreviateNumber(data.rank.commentCount)}
+                    </Text>
                   </Group>
                   {!isPOI && (
                     <InteractiveTipBuzzButton

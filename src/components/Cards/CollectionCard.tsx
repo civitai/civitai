@@ -63,9 +63,6 @@ export function CollectionCard({ data }: Props) {
 
   return (
     <FeedCard
-      style={{
-        '--aspect-ratio': 7 / 9,
-      }}
       className={coverImages.length === 0 ? cardClasses.noImage : undefined}
       href={`/collections/${data.id}`}
     >
@@ -133,9 +130,6 @@ function CollectionCardHeader({
 }) {
   return (
     <Group
-      style={{
-        '--aspect-ratio': 7 / 9,
-      }}
       gap={4}
       justify="space-between"
       className={clsx(cardClasses.contentOverlay, cardClasses.top)}
@@ -175,8 +169,7 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
   const coverImagesCount = coverImages.length;
 
   return (
-    // @ts-ignore
-    <div style={{ '--aspect-ratio': 7 / 9 }}>
+    <>
       {coverImages.map((image, i) => (
         <ImageGuard2 key={image.id} image={image} connectType="collection" connectId={data.id}>
           {(safe) => (
@@ -223,14 +216,13 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
           This collection has no images
         </Text>
       )}
-    </div>
+    </>
   );
 }
 
 export function ImageSrcCover({ data, coverSrcs }: { data: HeaderData; coverSrcs: string[] }) {
   return (
-    // @ts-ignore
-    <div style={{ '--aspect-ratio': 7 / 9 }}>
+    <>
       {coverSrcs.map((src) => (
         <EdgeMedia
           src={src}
@@ -244,7 +236,7 @@ export function ImageSrcCover({ data, coverSrcs }: { data: HeaderData; coverSrcs
         />
       ))}
       <CollectionCardHeader data={data} withinImageGuard={false} />
-    </div>
+    </>
   );
 }
 

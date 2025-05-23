@@ -19,7 +19,8 @@
 .image {
   height: 100% !important;
   object-fit: cover;
-  object-position: var(--aspect-ratio, 1);
+  // TODO: Mantine7: this needs to be set based on the aspect ratio
+  object-position: top center;
   transition: transform 400ms ease;
   min-width: 100%;
 }

@@ -60,7 +60,7 @@ FilterButton.displayName = 'FilterButton';
 //     return (
 //       <Button
 //         ref={ref}
-//         rightIcon={
+//         rightSection={
 //           <IconChevronDown
 //             className={clsx(
 //               'transition-transform',

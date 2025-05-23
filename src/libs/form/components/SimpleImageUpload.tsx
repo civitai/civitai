@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Group,
   Input,
   InputWrapperProps,
@@ -14,7 +13,7 @@ import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
 
-import styles from './SimpleImageUpload.module.scss';
+import classes from './SimpleImageUpload.module.scss';
 
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -132,12 +131,14 @@ export function SimpleImageUpload({
 
           <div
             // TODO: Mantine7: Not sure if this will work :^)
-            style={{ '--aspect-ratio': aspectRatio } as React.CSSProperties}
-            className={
+            style={
               aspectRatio
-                ? `${styles.imageContainer} ${styles.aspectRatio}`
-                : `${styles.imageContainer} ${styles.default}`
+                ? ({
+                    '--aspect-ratio': `${(aspectRatio * 100).toFixed(3)}%`,
+                  } as React.CSSProperties)
+                : undefined
             }
+            className={aspectRatio ? classes.imageContainerAspectRatio : classes.imageContainer}
           >
             {withNsfwLevel && !!value && typeof value !== 'string' && (
               <BrowsingLevelBadge

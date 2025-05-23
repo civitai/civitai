@@ -42,11 +42,12 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
   // How we can go to town:
   return (
     <div
-      style={{
-        // @ts-ignore
-        '--count': items.length ?? 0,
-        '--rows': 2,
-      }}
+      style={
+        {
+          '--count': items.length ?? 0,
+          '--rows': 2,
+        } as React.CSSProperties
+      }
     >
       <HomeBlockHeaderMeta
         metadata={{

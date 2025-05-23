@@ -639,7 +639,7 @@ export default function CivitaiVault() {
                       onClick={() => {
                         setSelectedItems([]);
                       }}
-                      rightIcon={<IconX size={14} />}
+                      rightSection={<IconX size={14} />}
                     >
                       {selectedItems.length} selected
                     </Button>

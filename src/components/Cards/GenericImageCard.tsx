@@ -63,7 +63,6 @@ export function GenericImageCard({
     <FeedCard
       style={{
         cursor: disabled ? 'initial' : undefined,
-        '--aspect-ratio': image.width && image.height ? image.width / image.height : 1,
       }}
       href={disabled ? undefined : url}
       frameDecoration={image.cosmetic}

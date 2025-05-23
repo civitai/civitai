@@ -753,10 +753,6 @@ export const ModelPlacementCard = ({
 
   return (
     <div
-      style={{
-        // @ts-ignore
-        '--aspect-ratio': 1,
-      }}
       className={clsx({
         [cardClasses.winnerFirst]: aboveThreshold && data.position === 1,
         [cardClasses.winnerSecond]: aboveThreshold && data.position === 2,

@@ -3,7 +3,7 @@
     justify-content: space-between;
     align-items: stretch;
 
-    @container (max-width: $mantine-breakpoint-sm) {
+    @container (max-width: theme('screens.sm')) {
       justify-content: center;
     }
   }

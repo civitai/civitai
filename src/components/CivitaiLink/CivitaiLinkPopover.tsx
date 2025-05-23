@@ -166,7 +166,7 @@ function AboutCivitaiLink() {
         >
           Video Demo
         </Button>
-        <Button rightIcon={<IconHeart size={18} />} radius={0} component={Link} href="/pricing">
+        <Button rightSection={<IconHeart size={18} />} radius={0} component={Link} href="/pricing">
           Become a Supporter
         </Button>
       </Group>
@@ -396,7 +396,7 @@ function GetReconnected() {
                     variant="default"
                     size="lg"
                     px="sm"
-                    rightIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                    rightSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
                   >
                     {!copied ? instance.key : 'Copied'}
                   </Button>

@@ -40,11 +40,12 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
     <div
       ref={ref}
       className={isNullState ? undefined : classes.profileSection}
-      style={{
-        // @ts-ignore
-        '--count': articles.length,
-        '--row-count': 1,
-      }}
+      style={
+        {
+          '--count': articles.length,
+          '--row-count': 1,
+        } as React.CSSProperties
+      }
     >
       {inView &&
         (isLoading ? (
@@ -63,7 +64,7 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
                   h={34}
                   component="a"
                   variant="subtle"
-                  rightIcon={<IconArrowRight size={16} />}
+                  rightSection={<IconArrowRight size={16} />}
                 >
                   <Text inherit> View all Articles</Text>
                 </Button>

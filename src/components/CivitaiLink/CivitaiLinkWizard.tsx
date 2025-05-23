@@ -182,7 +182,10 @@ const { openModal, Modal } = createContextModal({
               <Button variant="default" onClick={context.close}>
                 Eh, nevermind...
               </Button>
-              <Button onClick={nextStep} rightIcon={<IconChevronRight />}>{`Let's do it!`}</Button>
+              <Button
+                onClick={nextStep}
+                rightSection={<IconChevronRight />}
+              >{`Let's do it!`}</Button>
             </Group>
           </Stack>
         </Stepper.Step>
@@ -205,7 +208,7 @@ const { openModal, Modal } = createContextModal({
               </Button>
               <Button
                 onClick={handleCreateInstance}
-                rightIcon={<IconChevronRight />}
+                rightSection={<IconChevronRight />}
               >{`Ok, it's installed`}</Button>
             </Group>
           </Stack>
@@ -231,7 +234,7 @@ const { openModal, Modal } = createContextModal({
                           onClick={copy}
                           size="lg"
                           px="sm"
-                          rightIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                          rightSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
                         >
                           {!copied ? instance.key : 'Copied'}
                         </Button>

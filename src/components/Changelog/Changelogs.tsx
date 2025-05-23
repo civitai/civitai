@@ -292,7 +292,7 @@ const ChangelogItem = ({
                 href={item.link}
                 color="gray"
                 variant="light"
-                rightIcon={<IconExternalLink size={14} />}
+                rightSection={<IconExternalLink size={14} />}
               >
                 More Info
               </Button>

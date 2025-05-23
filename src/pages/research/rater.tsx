@@ -427,7 +427,7 @@ function Rater() {
   //                   component={Link}
   //                   color="yellow"
   //                   variant="light"
-  //                   rightIcon={<IconCrown />}
+  //                   rightSection={<IconCrown />}
   //                   href="/leaderboard/rater"
   //                 >
   //                   Check the Leaderboard

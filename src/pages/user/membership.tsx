@@ -280,7 +280,10 @@ export default function UserMembership() {
                                 priceId={price.id}
                                 disabled={features.disablePayments}
                               >
-                                <Button radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
+                                <Button
+                                  radius="xl"
+                                  rightSection={<IconRotateClockwise size={16} />}
+                                >
                                   Resume
                                 </Button>
                               </SubscribeButton>

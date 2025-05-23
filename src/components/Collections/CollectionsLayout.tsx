@@ -141,7 +141,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                 }}
                 variant="subtle"
                 size="compact-sm"
-                rightIcon={<IconPlus size={14} />}
+                rightSection={<IconPlus size={14} />}
               >
                 Create
               </Button>

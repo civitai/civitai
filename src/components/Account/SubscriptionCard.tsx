@@ -30,7 +30,7 @@ export function SubscriptionCard() {
             size="compact-md"
             radius="xl"
             color="gray"
-            rightIcon={<IconSettings size={16} />}
+            rightSection={<IconSettings size={16} />}
             component={Link}
             href="/user/membership"
           >

@@ -97,7 +97,7 @@ export default function Confirm() {
         <Button
           component="a"
           href="https://studio.civitai.com/cohort-application/success"
-          rightIcon={<IconArrowRight />}
+          rightSection={<IconArrowRight />}
           size="lg"
         >
           Return to Studio Cohort Application

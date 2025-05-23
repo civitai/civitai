@@ -102,7 +102,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
                         <Button
                           component={Link}
                           href={`/leaderboard/${leaderboard.id}`}
-                          rightIcon={<IconArrowRight size={16} />}
+                          rightSection={<IconArrowRight size={16} />}
                           variant="subtle"
                           size="compact-xs"
                         >

@@ -333,7 +333,10 @@ export const TrainingImagesTagViewer = ({
               </Button>
               <Menu withArrow>
                 <Menu.Target>
-                  <Button disabled={!selectedTagsNonBlank.length} rightIcon={<IconChevronDown />}>
+                  <Button
+                    disabled={!selectedTagsNonBlank.length}
+                    rightSection={<IconChevronDown />}
+                  >
                     Actions
                   </Button>
                 </Menu.Target>

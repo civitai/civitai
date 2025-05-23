@@ -210,10 +210,6 @@ export const PreviewCard = ({
   return (
     <MasonryCard height={cardHeight} frameDecoration={decoration}>
       <EdgeMedia2
-        style={{
-          // @ts-ignore
-          '--aspect-ratio': originalAspectRatio,
-        }}
         src={image.url}
         type={image.type}
         className={cardClasses.image}

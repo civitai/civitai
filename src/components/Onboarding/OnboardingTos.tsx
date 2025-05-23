@@ -55,7 +55,7 @@ export function OnboardingTos() {
         <Group justify="space-between" align="flex-start">
           <OnboardingAbortButton showWarning>Decline</OnboardingAbortButton>
           <Button
-            rightIcon={<IconCheck />}
+            rightSection={<IconCheck />}
             size="lg"
             onClick={handleStepComplete}
             loading={isLoading}

@@ -223,7 +223,7 @@ export default function ManageCategories({
                           <Menu.Target>
                             <Button
                               size="xs"
-                              rightIcon={<IconChevronDown size={18} />}
+                              rightSection={<IconChevronDown size={18} />}
                               loading={isLoading}
                             >
                               Set Category {selection.length > 0 && `(${selection.length})`}

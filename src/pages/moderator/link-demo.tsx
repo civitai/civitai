@@ -139,7 +139,7 @@ function Home() {
                       onClick={copy}
                       size="lg"
                       px="sm"
-                      rightIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                      rightSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
                     >
                       {!copied ? instance.key : 'Copied'}
                     </Button>

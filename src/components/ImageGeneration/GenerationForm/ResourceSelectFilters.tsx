@@ -110,7 +110,7 @@ export function ResourceSelectFiltersDropdown() {
         color="gray"
         radius="xl"
         variant={colorScheme === 'dark' ? 'filled' : 'light'}
-        rightIcon={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
+        rightSection={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
         size="compact-md"

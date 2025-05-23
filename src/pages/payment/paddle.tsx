@@ -115,7 +115,7 @@ export default function CompletePaddlePaymentTransaction() {
                   component={Link}
                   href="/user/account"
                   size="md"
-                  rightIcon={<IconRosette />}
+                  rightSection={<IconRosette />}
                 >
                   Customize Profile
                 </Button>

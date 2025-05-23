@@ -88,7 +88,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
             )}
             <Group justify="flex-end">
               <Link href={`/leaderboard/${event}:all-time`}>
-                <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
+                <Button variant="subtle" size="xs" rightSection={<IconArrowRight size={16} />}>
                   View All
                 </Button>
               </Link>
@@ -146,7 +146,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
               )}
               <Group justify="flex-end">
                 <Link href={`/leaderboard/${event}:day`}>
-                  <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
+                  <Button variant="subtle" size="xs" rightSection={<IconArrowRight size={16} />}>
                     View All
                   </Button>
                 </Link>
@@ -205,7 +205,11 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
 
                     <Group justify="flex-end" mt="auto">
                       <Link href={`/leaderboard/${event}:${team.toLowerCase()}`}>
-                        <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
+                        <Button
+                          variant="subtle"
+                          size="xs"
+                          rightSection={<IconArrowRight size={16} />}
+                        >
                           View All
                         </Button>
                       </Link>
