@@ -241,7 +241,9 @@ export function GenerationFormContent() {
     delete params.engine;
     if (model.id === fluxModelId && fluxUltraRaw && params.fluxMode === fluxUltraAir)
       params.engine = 'flux-pro-raw';
-    if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+    if (model.id === generationConfig.OpenAI.checkpoint.id) {
+      params.engine = 'openai';
+    }
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
@@ -250,10 +252,8 @@ export function GenerationFormContent() {
         modelClone.id = version;
       }
     } else {
-      const keys = ['fluxMode', 'fluxUltraAspectRatio'];
-      for (const key in params) {
-        if (keys.includes(key)) delete params[key as keyof typeof params];
-      }
+      delete params.fluxMode;
+      delete params.fluxUltraAspectRatio;
     }
 
     if (workflowDefinition?.type === 'txt2img') params.sourceImage = null;
@@ -872,7 +872,7 @@ export function GenerationFormContent() {
                   <Input.Wrapper
                     label={
                       <div className="mb-1 flex items-center gap-1">
-                        <Input.Label required>Prompt</Input.Label>
+                        <Input.Label required={!isImg2Img}>Prompt</Input.Label>
                         <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
                           Type out what you&apos;d like to generate in the prompt, add aspects
                           you&apos;d like to avoid in the negative prompt

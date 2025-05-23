@@ -58,7 +58,7 @@ const baseSchema = textToImageParamsSchema
     remixPrompt: z.string().optional(),
     remixNegativePrompt: z.string().optional(),
     aspectRatio: z.string(),
-    fluxUltraAspectRatio: z.string(),
+    fluxUltraAspectRatio: z.string().optional(),
     fluxUltraRaw: z.boolean().optional(),
   });
 const partialSchema = baseSchema.partial();
@@ -380,6 +380,13 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         watchedValues.fluxMode !== fluxStandardAir
       ) {
         form.setValue('fluxMode', fluxStandardAir);
+      }
+
+      if (watchedValues.model?.id === generationConfig.OpenAI.checkpoint.id) {
+        if (watchedValues.sourceImage && watchedValues.workflow !== 'img2img')
+          form.setValue('workflow', 'img2img');
+        else if (!watchedValues.sourceImage && watchedValues.workflow !== 'txt2img')
+          form.setValue('workflow', 'txt2img');
       }
     });
     return () => {
