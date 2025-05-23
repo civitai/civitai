@@ -1,16 +1,19 @@
 import { env } from 'process';
 import { logToAxiom } from '../logging/client';
 import { TransactionType } from '../schema/buzz.schema';
-import { createBuzzTransaction } from './buzz.service';
+import { createBuzzTransaction, getMultipliersForUser } from './buzz.service';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import Decimal from 'decimal.js';
 import { CreatePaymentInvoiceInput } from '~/server/schema/nowpayments.schema';
-import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
+import { NOW_PAYMENTS_FIXED_FEE, specialCosmeticRewards } from '~/server/common/constants';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
+import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { grantCosmetics } from '~/server/services/cosmetic.service';
 
-const log = (data: MixedObject) => {
-  logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
+const log = async (data: MixedObject) => {
+  await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
 };
 
 export const createBuzzOrder = async (input: CreatePaymentInvoiceInput & { userId: number }) => {
@@ -48,7 +51,7 @@ export const processBuzzOrder = async (paymentId: string | number) => {
   const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
 
   if (!payment) {
-    log({
+    await log({
       message: 'Failed to retrieve payment status',
       paymentId,
     });
@@ -58,38 +61,21 @@ export const processBuzzOrder = async (paymentId: string | number) => {
   const isPaid = payment.payment_status === 'finished';
   const isPartiallyPaid = payment.payment_status === 'partially_paid';
   const [userId, buzzAmount] = payment.order_id.split('-').map((x) => parseInt(x));
+
+  let toPay: number | undefined = undefined;
+  let isPartial = false;
+
+  if (!buzzAmount || !userId) {
+    await log({
+      message: 'Buzz amount or user ID not found in order ID',
+      payment,
+    });
+
+    throw new Error('Invalid order ID format. Please contact support.');
+  }
+
   if (isPaid) {
-    try {
-      if (!buzzAmount || !userId) {
-        await log({
-          message: 'Buzz amount or user ID not found in order ID',
-          payment,
-        });
-
-        throw new Error('Invalid order ID format. Please contact support.');
-      }
-
-      // Give user the buzz assuming it hasn't been given
-      const { transactionId } = await createBuzzTransaction({
-        fromAccountId: 0,
-        toAccountId: userId,
-        amount: buzzAmount,
-        type: TransactionType.Purchase,
-        externalTransactionId: payment.order_id,
-        description: 'Buzz purchase',
-        details: { invoiceId: payment.invoice_id, paymentId: payment.payment_id },
-      });
-
-      if (!transactionId) {
-        throw new Error('Failed to create Buzz transaction');
-      }
-    } catch (error) {
-      log({
-        message: 'Failed to process payment',
-        payment,
-        error,
-      });
-    }
+    toPay = buzzAmount;
   } else if (isPartiallyPaid) {
     try {
       const estimate = await nowpaymentsCaller.getPriceEstimate({
@@ -110,40 +96,98 @@ export const processBuzzOrder = async (paymentId: string | number) => {
 
       const buzzAmount = Number(payment?.order_id.split('-')[1] as string);
       const estimateToBuzz = Math.floor(buzzValueUsd.mul(1000).toNumber());
-      const toPay = Math.min(estimateToBuzz, buzzAmount);
+      toPay = Math.min(estimateToBuzz, buzzAmount);
+      isPartial = toPay < buzzAmount;
+    } catch (error) {
+      await log({
+        message: 'Failed to process partial payment',
+        payment,
+        error,
+        isPartiallyPaid,
+      });
+    }
+  }
 
-      const isPartial = toPay < buzzAmount;
+  try {
+    if (toPay && toPay > 0) {
+      const { purchasesMultiplier } = await getMultipliersForUser(userId);
+      const { blueBuzzAdded, totalYellowBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
+        buzzAmount: toPay,
+        purchasesMultiplier,
+      });
+
       // Give user the buzz assuming it hasn't been given
       const { transactionId } = await createBuzzTransaction({
         fromAccountId: 0,
         toAccountId: userId,
-        amount: toPay,
+        amount: totalYellowBuzz,
         type: TransactionType.Purchase,
-        externalTransactionId: `${payment.order_id}-${payment.payment_id}`,
+        externalTransactionId: payment.order_id,
         description: !isPartial
-          ? 'Buzz purchase'
+          ? `Purchase of ${toPay} Buzz. ${
+              purchasesMultiplier && purchasesMultiplier > 1
+                ? 'Multiplier applied due to membership. '
+                : ''
+            }A total of ${numberWithCommas(totalYellowBuzz)} Buzz was added to your account.`
           : 'Buzz purchase (partial). You’ve been credited Buzz based on the amount received.',
-        details: { invoiceId: payment.invoice_id, paymentId: payment.payment_id },
+        details: {
+          nowpayments: true,
+          invoiceId: payment.invoice_id,
+          paymentId: payment.payment_id,
+        },
       });
 
       if (!transactionId) {
         throw new Error('Failed to create Buzz transaction');
       }
 
-      await createNotification({
-        type: 'partially-paid',
-        userId,
-        category: NotificationCategory.Buzz,
-        key: payment.order_id,
-        details: {},
-      });
-    } catch (error) {
-      log({
-        message: 'Failed to process payment',
-        payment,
-        error,
-        isPartiallyPaid,
-      });
+      if (blueBuzzAdded > 0) {
+        await createBuzzTransaction({
+          amount: blueBuzzAdded,
+          fromAccountId: 0,
+          toAccountId: userId,
+          toAccountType: 'generation',
+          externalTransactionId: `${transactionId}-bulk-reward`,
+          type: TransactionType.Purchase,
+          description: `A total of ${numberWithCommas(
+            blueBuzzAdded
+          )} Blue Buzz was added to your account for Bulk purchase.`,
+          details: {
+            nowpayments: true,
+            invoiceId: payment.invoice_id,
+            paymentId: payment.payment_id,
+          },
+        });
+      }
+
+      if (bulkBuzzMultiplier > 1) {
+        const cosmeticIds = specialCosmeticRewards.bulkBuzzRewards;
+        await grantCosmetics({
+          userId,
+          cosmeticIds,
+        });
+      }
+
+      if (isPartial) {
+        await createNotification({
+          type: 'partially-paid',
+          userId,
+          category: NotificationCategory.Buzz,
+          key: payment.order_id,
+          details: {},
+        });
+      }
+
+      if (!transactionId) {
+        throw new Error('Failed to create Buzz transaction');
+      }
     }
+  } catch (error) {
+    await log({
+      message: 'Failed at payment',
+      payment,
+      error,
+      toPay,
+    });
   }
 };
