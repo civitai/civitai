@@ -120,7 +120,7 @@ export const processBuzzOrder = async (paymentId: string | number) => {
         amount: toPay,
         type: TransactionType.Purchase,
         externalTransactionId: `${payment.order_id}-${payment.payment_id}`,
-        description: isPartial
+        description: !isPartial
           ? 'Buzz purchase'
           : 'Buzz purchase (partial). You’ve been credited Buzz based on the amount received.',
         details: { invoiceId: payment.invoice_id, paymentId: payment.payment_id },
