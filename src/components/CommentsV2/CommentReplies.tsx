@@ -1,16 +1,9 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import {
-  CommentsProvider,
-  CreateComment,
-  Comment,
-  CommentV2BadgeProps,
-  useCommentsContext,
-  useCommentStyles,
-} from '~/components/CommentsV2';
+import { CommentsProvider, Comment, useCommentsContext } from '~/components/CommentsV2';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 
 export function CommentReplies({ commentId, userId }: { commentId: number; userId?: number }) {
   const { level, badges } = useCommentsContext();
-  const { classes } = useCommentStyles();
 
   return (
     <Stack mt="md" className={classes.replyInset}>
@@ -33,8 +26,8 @@ export function CommentReplies({ commentId, userId }: { commentId: number; userI
               {!!remaining && !showMore && (
                 <Divider
                   label={
-                    <Group spacing="xs" align="center">
-                      <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                    <Group gap="xs" align="center">
+                      <Text variant="link" style={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                         Show {remaining} More
                       </Text>
                     </Group>

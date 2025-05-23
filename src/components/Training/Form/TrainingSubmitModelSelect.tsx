@@ -2,7 +2,6 @@ import {
   Anchor,
   Badge,
   Card,
-  createStyles,
   Group,
   Indicator,
   Input,
@@ -45,25 +44,6 @@ import {
 import { stringifyAIR } from '~/utils/string-helpers';
 import { type TrainingBaseModelType, trainingModelInfo } from '~/utils/training';
 
-const useStyles = createStyles((theme) => ({
-  // TODO is this working?
-  segControl: {
-    root: {
-      border: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-      }`,
-      background: 'none',
-      flexWrap: 'wrap',
-    },
-    label: {
-      paddingLeft: theme.spacing.sm,
-      paddingRight: theme.spacing.sm,
-    },
-  },
-}));
-
-const badgeWidth = 115;
-
 const ModelSelector = ({
   selectedRun,
   color,
@@ -85,15 +65,13 @@ const ModelSelector = ({
   isCustom?: boolean;
   isVideo?: boolean;
 }) => {
-  const { classes } = useStyles();
-
   const versions = Object.entries(trainingModelInfo).filter(
     ([, v]) => v.type === baseType && v.disabled !== true
   );
   if (!versions.length) return null;
 
   return (
-    <Group spacing="lg">
+    <Group gap="lg">
       <Indicator
         disabled={!isNew}
         inline
@@ -102,7 +80,7 @@ const ModelSelector = ({
         size={16}
         styles={{ indicator: { top: '2px !important', right: '10px !important' } }}
       >
-        <Badge color={color} size="lg" radius="xs" px="xs" w={badgeWidth}>
+        <Badge color={color} size="lg" radius="xs" px="xs" w={115}>
           {name}
         </Badge>
       </Indicator>
@@ -111,7 +89,7 @@ const ModelSelector = ({
           data={versions.map(([k, v]) => {
             return {
               label: v.isNew ? (
-                <Group noWrap spacing={6}>
+                <Group wrap="nowrap" gap={6}>
                   <Text>{v.label}</Text>
                   <Badge size="xs" color="green">
                     NEW
@@ -123,7 +101,7 @@ const ModelSelector = ({
               value: k,
             };
           })}
-          value={value!} // TODO undefined vs null?
+          value={value ?? undefined} // TODO undefined vs null?
           onChange={(value) => {
             makeDefaultParams({
               base: value,
@@ -133,7 +111,7 @@ const ModelSelector = ({
           }}
           color="blue"
           size="xs"
-          className={classes.segControl}
+          classNames={{ root: 'flex-wrap bg-none border-gray-4 dark:border-dark-4', label: 'px-2' }}
           transitionDuration={0}
         />
       ) : (
@@ -141,8 +119,7 @@ const ModelSelector = ({
           <ResourceSelect
             buttonLabel="Select custom model"
             buttonProps={{
-              size: 'md',
-              compact: true,
+              size: 'compact-md',
               styles: { label: { fontSize: 12 } },
             }}
             options={{
@@ -272,14 +249,14 @@ export const ModelSelect = ({
 
   return (
     <>
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Title mt="md" order={5}>
           Base Model for Training{' '}
           <Text span color="red">
             *
           </Text>
         </Title>
-        <Text color="dimmed" size="sm">
+        <Text c="dimmed" size="sm">
           Not sure which one to choose? Read our{' '}
           <Anchor
             href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
@@ -294,7 +271,7 @@ export const ModelSelect = ({
       <Input.Wrapper>
         <Card withBorder mt={8} p="sm">
           <Card.Section inheritPadding withBorder py="sm">
-            <Stack spacing="xs">
+            <Stack gap="xs">
               {mediaType === 'image' && (
                 <>
                   <ModelSelector

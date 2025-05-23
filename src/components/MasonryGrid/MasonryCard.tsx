@@ -5,12 +5,13 @@ import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrap
 import { TwCard } from '~/components/TwCard/TwCard';
 import clsx from 'clsx';
 
-type MasonryCardProps = CardProps & {
-  height?: number;
-  uniform?: boolean;
-  frameDecoration?: ContentDecorationCosmetic | null;
-  onClick?: () => void;
-};
+type MasonryCardProps = CardProps &
+  Partial<React.HTMLAttributes<HTMLDivElement>> & {
+    height?: number;
+    uniform?: boolean;
+    frameDecoration?: ContentDecorationCosmetic | null;
+    onClick?: () => void;
+  };
 
 // TODO - when children not in view, replace child react nodes with static html
 const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(

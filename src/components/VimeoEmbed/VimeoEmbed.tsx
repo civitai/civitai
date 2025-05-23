@@ -8,7 +8,6 @@ export const VimeoEmbed = ({
   videoId,
   autoplay,
   fallbackContent,
-  sx,
   className,
   ...props
 }: { videoId: string; autoplay?: boolean; fallbackContent?: React.ReactNode } & BoxProps) => {
@@ -39,24 +38,9 @@ export const VimeoEmbed = ({
   return (
     <Box
       {...props}
-      sx={{
-        overflow: 'hidden',
-        position: 'relative',
-        iframe: {
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-
-          body: {
-            background: '#000',
-          },
-        },
-      }}
       id={videoId}
       data-vimeo-id={videoId}
-      className={clsx(className, styles.vimeoWrapper)}
+      className={clsx(styles.vimeoWrapper, className)}
     >
       {data && (
         <iframe

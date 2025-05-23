@@ -12,7 +12,7 @@ export function useCreateReport(options?: Parameters<typeof trpc.report.create.u
       showNotification({
         id: SEND_REPORT_ID,
         loading: true,
-        disallowClose: true,
+        withCloseButton: false,
         autoClose: false,
         message: 'Sending report...',
       });

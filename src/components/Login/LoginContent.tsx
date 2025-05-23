@@ -84,7 +84,7 @@ export function LoginContent(args: {
       {referrer && (
         <Paper withBorder className="p-3">
           <div className="flex flex-col gap-2">
-            <Text color="dimmed" size="sm">
+            <Text c="dimmed" size="sm">
               You have been referred by
             </Text>
             <CreatorCardV2 user={referrer} withActions={false} />
@@ -125,12 +125,12 @@ export function LoginContent(args: {
             wrapper: 'items-center',
           }}
         >
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text
               size="md"
-              // sx={{ lineHeight: 1.1 }}
+              // style={{ lineHeight: 1.1 }}
             >{`Check your email for a special login link`}</Text>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Be sure to check your spam...
             </Text>
           </Stack>

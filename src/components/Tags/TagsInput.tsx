@@ -3,7 +3,6 @@ import {
   Autocomplete,
   Badge,
   Center,
-  createStyles,
   Group,
   Input,
   InputWrapperProps,
@@ -15,6 +14,8 @@ import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconPlus, IconX } from '@tabler/icons-react';
 import { useCallback, useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
+import styles from './TagsInput.module.scss';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 type TagProps = {
   id?: number;
@@ -38,7 +39,6 @@ export function TagsInput({
   ...props
 }: TagsInputProps) {
   value = Array.isArray(value) ? value : value ? [value] : [];
-  const { classes } = useStyles();
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedState(search, 300);
   const [adding, { open, close }] = useDisclosure(false);
@@ -95,14 +95,14 @@ export function TagsInput({
 
   return (
     <Input.Wrapper {...props}>
-      <Group mt={5} spacing={8}>
+      <Group mt={5} gap={8}>
         {value.map((tag, index) => (
           <Badge
             key={tag.id ?? index}
             size="xs"
-            sx={{ paddingRight: 5 }}
+            style={{ paddingRight: 5 }}
             rightSection={
-              <ActionIcon
+              <LegacyActionIcon
                 size="xs"
                 color="blue"
                 radius="xl"
@@ -110,7 +110,7 @@ export function TagsInput({
                 onClick={() => handleRemoveTag(index)}
               >
                 <IconX size={12} />
-              </ActionIcon>
+              </LegacyActionIcon>
             }
           >
             {tag.name}
@@ -119,8 +119,8 @@ export function TagsInput({
         <Badge
           // size="lg"
           // radius="xs"
-          className={classes.badge}
-          classNames={{ inner: classes.inner }}
+          className={styles.badge}
+          classNames={{ label: styles.inner }}
           onClick={!adding ? open : undefined}
           tabIndex={0}
           onKeyDown={
@@ -143,7 +143,7 @@ export function TagsInput({
             autosuggest ? (
               <Autocomplete
                 variant="unstyled"
-                classNames={{ dropdown: classes.dropdown }}
+                classNames={{ dropdown: styles.dropdown }}
                 data={
                   filteredItems
                     .filter((tag) => !selectedTags.includes(tag.name))
@@ -164,24 +164,27 @@ export function TagsInput({
                     },
                   ],
                 ])}
-                nothingFound={
-                  isFetching ? (
-                    'Searching...'
-                  ) : isNewTag ? (
-                    <UnstyledButton
-                      className={classes.createOption}
-                      onClick={() => handleAddTag({ value: search })}
-                    >
-                      {`+ Create tag "${search}"`}
-                    </UnstyledButton>
-                  ) : (
-                    'Nothing found'
-                  )
-                }
+                // TODO: Mantine7
+                // nothingFoundMessage={
+                //   isFetching ? (
+                //     'Searching...'
+                //   ) : isNewTag ? (
+                //     <UnstyledButton
+                //       className={styles.createOption}
+                //       onClick={() => handleAddTag({ value: search })}
+                //     >
+                //       {`+ Create tag "${search}"`}
+                //     </UnstyledButton>
+                //   ) : (
+                //     'Nothing found'
+                //   )
+                // }
                 placeholder="Type to search..."
-                onItemSubmit={handleAddTag}
+                onOptionSubmit={(value) => {
+                  const existing = filteredItems.find((tag) => tag.name === value);
+                  handleAddTag({ id: existing?.id, value: existing?.name ?? search });
+                }}
                 onBlur={handleClose}
-                withinPortal
                 autoFocus
               />
             ) : (
@@ -203,24 +206,24 @@ export function TagsInput({
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  badge: {
-    textTransform: 'none',
-    cursor: 'pointer',
-  },
-  inner: {
-    display: 'flex',
-  },
-  createOption: {
-    fontSize: theme.fontSizes.sm,
-    padding: theme.spacing.xs,
-    borderRadius: theme.radius.sm,
+// const useStyles = createStyles((theme) => ({
+//   badge: {
+//     textTransform: 'none',
+//     cursor: 'pointer',
+//   },
+//   inner: {
+//     display: 'flex',
+//   },
+//   createOption: {
+//     fontSize: theme.fontSizes.sm,
+//     padding: theme.spacing.xs,
+//     borderRadius: theme.radius.sm,
 
-    '&:hover': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[1],
-    },
-  },
-  dropdown: {
-    maxWidth: '300px !important',
-  },
-}));
+//     '&:hover': {
+//       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[1],
+//     },
+//   },
+//   dropdown: {
+//     maxWidth: '300px !important',
+//   },
+// }));

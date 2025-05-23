@@ -43,13 +43,13 @@ const ClubModels = () => {
   return (
     <>
       <Stack mb="sm">
-        <Group position="apart" spacing={0}>
+        <Group justify="space-between" gap={0}>
           <SortFilter
             type="models"
             value={filters.sort as ModelSort}
             onChange={(x) => setFilters((f) => ({ ...f, sort: x as ModelSort }))}
           />
-          <Group spacing="xs">
+          <Group gap="xs">
             <DumbModelFiltersDropdown
               filters={filters}
               setFilters={(updated) => setFilters((f) => ({ ...f, ...updated }))}

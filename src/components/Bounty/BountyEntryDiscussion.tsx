@@ -1,10 +1,6 @@
-import { Stack, Group, Text, Loader, Center, Divider, Paper } from '@mantine/core';
-import {
-  RootThreadProvider,
-  CreateComment,
-  Comment,
-  useCommentStyles,
-} from '~/components/CommentsV2';
+import { Stack, Text, Loader, Center, Divider } from '@mantine/core';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 import { ReturnToRootThread } from '../CommentsV2/ReturnToRootThread';
 
 type Props = {
@@ -14,8 +10,6 @@ type Props = {
 };
 
 export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }: Props) {
-  const { classes } = useCommentStyles();
-
   return (
     <RootThreadProvider
       entityType="bountyEntry"
@@ -32,9 +26,9 @@ export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }:
           <Stack>
             <ReturnToRootThread />
             {activeComment && (
-              <Stack spacing="xl">
+              <Stack gap="xl">
                 <Divider />
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Viewing thread for
                 </Text>
                 <Comment comment={activeComment} viewOnly />

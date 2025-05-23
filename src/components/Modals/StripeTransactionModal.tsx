@@ -8,6 +8,7 @@ import {
   Loader,
   useMantineTheme,
   Title,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -99,8 +100,8 @@ const StripeTransactionModal = ({
   if (success) {
     return (
       <Stack>
-        <Group position="apart" noWrap>
-          <Text size="lg" weight={700}>
+        <Group justify="space-between" wrap="nowrap">
+          <Text size="lg" fw={700}>
             Complete your transaction
           </Text>
         </Group>
@@ -121,15 +122,15 @@ const StripeTransactionModal = ({
   if (successTransactionButError) {
     return (
       <Stack>
-        <Group position="apart" noWrap>
-          <Text size="lg" weight={700}>
+        <Group justify="space-between" wrap="nowrap">
+          <Text size="lg" fw={700}>
             Complete your transaction
           </Text>
         </Group>
         <Divider mx="-lg" />
         <Text>
           Thank you, we have received your payment but something seems to have gone wrong. Please{' '}
-          <Text component="span" weight="bold">
+          <Text component="span" fw="bold">
             DO NOT ATTEMPT TO PURCHASE AGAIN
           </Text>
           . If your Buzz is not delivered within the next few minutes, please contact support.
@@ -159,9 +160,9 @@ const StripeTransactionModal = ({
           }).catch(() => undefined);
       }}
     >
-      <Stack spacing="md">
-        <Group position="apart" noWrap>
-          <Text size="lg" weight={700}>
+      <Stack gap="md">
+        <Group justify="space-between" wrap="nowrap">
+          <Text size="lg" fw={700}>
             Complete your transaction
           </Text>
         </Group>
@@ -171,8 +172,8 @@ const StripeTransactionModal = ({
         {(supportedUserPaymentMethods?.length ?? 0) > 0 && (
           <Stack>
             <Divider mx="-lg" />
-            <Text weight="bold">Saved payment methods</Text>
-            <Stack spacing="sm">
+            <Text fw="bold">Saved payment methods</Text>
+            <Stack gap="sm">
               {supportedUserPaymentMethods.map((paymentMethod) => (
                 <PaymentMethodItem key={paymentMethod.id} paymentMethod={paymentMethod}>
                   <Button
@@ -193,34 +194,34 @@ const StripeTransactionModal = ({
               ))}
             </Stack>
             <Divider mx="-lg" />
-            <Text weight="bold">Add new payment method</Text>
+            <Text fw="bold">Add new payment method</Text>
           </Stack>
         )}
         {setupFuturePayment && (
           <Text size="sm">
             Don&rsquo;t see your payment method?{' '}
-            <Text color="blue.4" component="button" onClick={setupFuturePaymentToggle}>
+            <Text c="blue.4" component="button" onClick={setupFuturePaymentToggle}>
               Click here
             </Text>
           </Text>
         )}
         {!setupFuturePayment && (
           <Text size="sm">
-            <Text color="blue.4" component="button" onClick={setupFuturePaymentToggle}>
+            <Text c="blue.4" component="button" onClick={setupFuturePaymentToggle}>
               Back to default payment methods
             </Text>
           </Text>
         )}
         <PaymentElement id="payment-element" options={paymentElementOptions} />
         {errorMessage && (
-          <Text color="red" size="sm">
+          <Text c="red" size="sm">
             {errorMessage}
           </Text>
         )}
 
         <RecaptchaNotice />
 
-        <Group position="right">
+        <Group justify="flex-end">
           <Button
             variant="filled"
             color="gray"
@@ -281,6 +282,7 @@ const { openModal, Modal } = createContextModal<Props>({
     },
   }) => {
     const theme = useMantineTheme();
+    const colorScheme = useComputedColorScheme('dark');
     const stripePromise = useStripePromise();
 
     const {
@@ -327,7 +329,7 @@ const { openModal, Modal } = createContextModal<Props>({
 
     const options: StripeElementsOptions = {
       clientSecret,
-      appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
+      appearance: { theme: colorScheme === 'dark' ? 'night' : 'stripe' },
       locale: 'en',
     };
 

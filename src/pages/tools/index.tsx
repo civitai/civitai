@@ -28,7 +28,7 @@ function ToolsPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tools`, rel: 'canonical' }]}
       />
       <MasonryContainer>
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <ToolsInfinite />
         </Stack>
       </MasonryContainer>

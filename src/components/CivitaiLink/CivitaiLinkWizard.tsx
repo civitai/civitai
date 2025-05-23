@@ -83,12 +83,13 @@ const { openModal, Modal } = createContextModal({
       </Text>
     );
 
+    // TODO: Mantine7 Confirm this looks ok without the breakpoint.
     return (
-      <Stepper active={active} onStepClick={setActive} breakpoint="sm" allowNextStepsSelect={false}>
+      <Stepper active={active} onStepClick={setActive} allowNextStepsSelect={false}>
         <Stepper.Step label="About Civitai Link" description="Learn what it does">
           <Stack mt="sm">
-            <Stack spacing={4}>
-              <Title order={3} sx={{ lineHeight: 1.1 }}>
+            <Stack gap={4}>
+              <Title order={3} style={{ lineHeight: 1.1 }}>
                 About Civitai Link
               </Title>
               <Text>{`Civitai Link allows you to interact with your Stable Diffusion instance in realtime wherever it is from any device.`}</Text>
@@ -101,7 +102,7 @@ const { openModal, Modal } = createContextModal({
                 mt="lg"
                 mb={5}
                 label={
-                  <Text weight={500} size="sm">
+                  <Text fw={500} size="sm">
                     Supported Activities:
                   </Text>
                 }
@@ -123,14 +124,14 @@ const { openModal, Modal } = createContextModal({
                     content: <>Download resources from {vaultLink}</>,
                     icon: <IconCircleCheck size={18} />,
                     iconColor: 'green',
-                  }
+                  },
                 ]}
               />
               <Divider
                 mt="lg"
                 mb={5}
                 label={
-                  <Text weight={500} size="sm">
+                  <Text fw={500} size="sm">
                     Supported Stable Diffusion UIs:
                   </Text>
                 }
@@ -177,7 +178,7 @@ const { openModal, Modal } = createContextModal({
                 ]}
               />
             </Stack>
-            <Group position="apart" mt="xl">
+            <Group justify="space-between" mt="xl">
               <Button variant="default" onClick={context.close}>
                 Eh, nevermind...
               </Button>
@@ -187,18 +188,18 @@ const { openModal, Modal } = createContextModal({
         </Stepper.Step>
         <Stepper.Step label="Install Link App" description="Install the Link application">
           <Stack mt="sm">
-            <Stack spacing={4}>
-              <Title order={3} mb={0} sx={{ lineHeight: 1 }}>
+            <Stack gap={4}>
+              <Title order={3} mb={0} style={{ lineHeight: 1 }}>
                 Download the Link desktop application
               </Title>
-              <Text mb="md" color="dimmed">
+              <Text mb="md" c="dimmed">
                 Run the installer and head to the next step to get a Link key.
               </Text>
               <Flex justify="center" w="100%">
                 <CivitaiLinkDownloadButton {...buttonData} isMember />
               </Flex>
             </Stack>
-            <Group position="apart" mt="xl">
+            <Group justify="space-between" mt="xl">
               <Button variant="default" onClick={prevStep}>
                 Go Back
               </Button>
@@ -211,15 +212,15 @@ const { openModal, Modal } = createContextModal({
         </Stepper.Step>
         <Stepper.Step label="Connect Link App" description="Link your account">
           <Stack mt="sm">
-            <Stack spacing={4}>
-              <Title order={3} mb={0} sx={{ lineHeight: 1 }}>
+            <Stack gap={4}>
+              <Title order={3} mb={0} style={{ lineHeight: 1 }}>
                 Link your account
               </Title>
-              <Text mb="md" color="dimmed">
+              <Text mb="md" c="dimmed">
                 In your Link application, paste the code below to link your account and finish the
                 setup.
               </Text>
-              <Stack align="center" spacing={5} my="lg">
+              <Stack align="center" gap={5} my="lg">
                 <Title order={4}>Link Key</Title>
                 {instance?.key ? (
                   <CopyButton value={instance.key}>
@@ -239,7 +240,7 @@ const { openModal, Modal } = createContextModal({
                   </CopyButton>
                 ) : (
                   <Button variant="default" size="lg" px="sm">
-                    <Group spacing="xs" align="center">
+                    <Group gap="xs" align="center">
                       <Loader size="sm" />
                       <span>Generating key</span>
                     </Group>
@@ -247,7 +248,7 @@ const { openModal, Modal } = createContextModal({
                 )}
               </Stack>
             </Stack>
-            <Group position="apart" mt="xl">
+            <Group justify="space-between" mt="xl">
               <Button variant="default" onClick={prevStep}>
                 Go Back
               </Button>

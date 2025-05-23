@@ -82,11 +82,12 @@ export function UserAvatarSimple({
               original={anim === false ? false : undefined}
               type="image"
               name="user avatar decoration"
-              className="absolute left-1/2 top-1/2 z-[2] -translate-x-1/2 -translate-y-1/2"
+              className="absolute left-1/2 top-1/2 z-[2]"
               style={{
                 maxWidth: 'none',
                 width: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
                 height: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
+                transform: 'translate(-50%, -50%)',
               }}
             />
           )}
@@ -98,7 +99,7 @@ export function UserAvatarSimple({
         <>
           <Text
             size="sm"
-            weight={500}
+            fw={500}
             lineClamp={1}
             color="white"
             className={classes.username}

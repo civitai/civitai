@@ -7,7 +7,6 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { SortableContext, arrayMove, rectSortingStrategy } from '@dnd-kit/sortable';
-import { ClassNames } from '@emotion/react';
 import {
   Center,
   Container,
@@ -19,10 +18,8 @@ import {
   Title,
   Button,
   Anchor,
-  Table,
   ActionIcon,
   Paper,
-  createStyles,
   Badge,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
@@ -45,32 +42,12 @@ import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRati
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { constants } from '~/server/common/constants';
 import { showSuccessNotification } from '~/utils/notifications';
-
-const useStyles = createStyles((theme) => ({
-  container: {
-    position: 'relative',
-    overflow: 'hidden',
-    minHeight: 100,
-    zIndex: 0,
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-  },
-  backgroundImage: {
-    position: 'absolute',
-    width: '100%',
-    height: 'auto',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%,-50%)',
-    opacity: 0.2,
-    zIndex: -1,
-  },
-}));
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function CosmeticStoreSections() {
   const { cosmeticShopSections, isLoading: isLoadingSections } = useQueryCosmeticShopSections();
   const [sections, setSections] = useState(cosmeticShopSections ?? []);
   const isLoading = isLoadingSections;
-  const { classes } = useStyles();
   const {
     updateShopSectionsOrder,
     updatingShopSectionsOrder,
@@ -128,16 +105,14 @@ export default function CosmeticStoreSections() {
     openConfirmModal({
       title: 'Delete Shop Section',
       children: (
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text size="sm">Are you sure you want to delete this Shop Section?</Text>
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             Shop items will not be deleted by performing this action.
           </Text>
         </Stack>
       ),
-      groupProps: {
-        position: 'center',
-      },
+      groupProps: { justify: 'center' },
       labels: { confirm: 'Delete Shop Section', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => onDelete(),
@@ -148,12 +123,12 @@ export default function CosmeticStoreSections() {
     <>
       <Meta title="Cosmetic Shop Sections" deIndex />
       <Container size="md">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Group>
             <BackButton url="/moderator/cosmetic-store" />
             <Title order={1}>Cosmetic Shop Sections</Title>
           </Group>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You can add and manage shop sections here. Products must be created before hand. If you
             have not created any product, please go{' '}
             <Anchor component={Link} href="/moderator/cosmetic-store/products">
@@ -161,7 +136,7 @@ export default function CosmeticStoreSections() {
             </Anchor>
           </Text>
         </Stack>
-        <Group position="apart" mb="md">
+        <Group justify="space-between" mb="md">
           <Group align="flex-end">
             <Button component={Link} href="/moderator/cosmetic-store/sections/create" radius="xl">
               <IconPlus />
@@ -192,12 +167,17 @@ export default function CosmeticStoreSections() {
                   const image = section.image;
                   return (
                     <SortableItem key={section.id} id={section.id}>
-                      <Paper withBorder radius="md" className={classes.container} p="md">
+                      <Paper
+                        withBorder
+                        radius="md"
+                        className="relative z-0 min-h-[100px] overflow-hidden text-black dark:text-white"
+                        p="md"
+                      >
                         {image && (
                           <ImageCSSAspectRatioWrap
                             aspectRatio={constants.cosmeticShop.sectionImageAspectRatio}
                             style={{ borderRadius: 0 }}
-                            className={classes.backgroundImage}
+                            className="absolute left-1/2 top-1/2 z-[-1] h-auto w-full -translate-x-1/2 -translate-y-1/2 opacity-20"
                           >
                             <ImageGuard2 image={image}>
                               {(safe) => (
@@ -225,10 +205,10 @@ export default function CosmeticStoreSections() {
                             </ImageGuard2>
                           </ImageCSSAspectRatioWrap>
                         )}
-                        <Group position="apart" noWrap pos="relative">
-                          <Stack spacing={0}>
+                        <Group justify="space-between" wrap="nowrap" pos="relative">
+                          <Stack gap={0}>
                             <Group>
-                              <Text size="lg" weight={700}>
+                              <Text size="lg" fw={700}>
                                 {section.title}
                               </Text>
                               <Badge>{section._count.items} Items in section</Badge>
@@ -241,15 +221,18 @@ export default function CosmeticStoreSections() {
                             )}
                           </Stack>
                           <Group>
-                            <ActionIcon
+                            <LegacyActionIcon
                               component={Link}
                               href={`/moderator/cosmetic-store/sections/${section.id}/edit`}
                             >
                               <IconEdit />
-                            </ActionIcon>
-                            <ActionIcon onClick={() => handleDeleteSection(section.id)}>
+                            </LegacyActionIcon>
+                            <LegacyActionIcon
+                              onClick={() => handleDeleteSection(section.id)}
+                              loading={deletingShopSection}
+                            >
                               <IconTrash />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </Group>
                         </Group>
                       </Paper>

@@ -5,7 +5,6 @@ import {
   Button,
   Center,
   ContainerProps,
-  createStyles,
   Divider,
   Group,
   HoverCard,
@@ -17,6 +16,7 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconAlertCircle,
@@ -29,7 +29,7 @@ import {
 import { capitalize, truncate } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { CSSProperties, useState } from 'react';
+import React, { CSSProperties, useState } from 'react';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -96,6 +96,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { Meta } from '../Meta/Meta';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
@@ -158,15 +159,14 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         return items.filter(isDefined);
       }}
     >
-      <Stack spacing="xs">
+      <Stack gap="xs">
         <IsClient>
           {!isContestCollection && (
             <>
-              <Group position="right" spacing={4}>
+              <Group justify="flex-end" gap={4}>
                 <SortFilter
                   type="models"
                   value={sort}
-                  compact={false}
                   onChange={(x) => set({ sort: x as ModelSort })}
                 />
                 <ModelFiltersDropdown
@@ -254,7 +254,7 @@ const ImageCollection = ({
                     <IconPhoto size={16} stroke={1.5} />
                   </ThemeIcon>
                 }
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   updateCollectionCoverImageMutation.mutate(
@@ -292,15 +292,14 @@ const ImageCollection = ({
         );
       }}
     >
-      <Stack spacing="xs">
+      <Stack gap="xs">
         <IsClient>
           {!isContestCollection && (
             <>
-              <Group position="right" spacing={4}>
+              <Group justify="flex-end" gap={4}>
                 <SortFilter
                   type="images"
                   value={sort}
-                  compact={false}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                   options={imageCollectionSortOptions.map((x) => ({ label: x, value: x }))}
                 />
@@ -324,13 +323,13 @@ const ImageCollection = ({
             />
           )}
           {isContestCollection && (
-            <Group position="right">
+            <Group justify="flex-end">
               <AdaptiveFiltersDropdown
                 // Small hack to make the dropdown visible when the dropdown is open
                 dropdownProps={{ className: toolSearchOpened ? '!overflow-visible' : undefined }}
               >
                 <Stack>
-                  <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
+                  <Divider label="Tools" className="text-sm font-bold" />
                   <ToolMultiSelect
                     value={query.tools ?? []}
                     onChange={(tools) => {
@@ -394,15 +393,14 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
 
   // For contest collections, we need to keep the filters clean from outside intervention.
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <IsClient>
         {!isContestCollection && (
           <>
-            <Group position="right" spacing={4}>
+            <Group justify="flex-end" gap={4}>
               <SortFilter
                 type="posts"
                 value={sort}
-                compact={false}
                 onChange={(sort) => replace({ sort: sort as PostSort })}
               />
               <PostFiltersDropdown query={filters} onChange={(value) => replace(value)} />
@@ -447,15 +445,14 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
       };
 
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <IsClient>
         {!isContestCollection && (
           <>
-            <Group position="right" spacing={4}>
+            <Group justify="flex-end" gap={4}>
               <SortFilter
                 type="articles"
                 value={sort}
-                compact={false}
                 onChange={(x) => replace({ sort: x as ArticleSort })}
               />
               <ArticleFiltersDropdown query={filters} onChange={(value) => replace(value)} />
@@ -474,7 +471,7 @@ export function Collection({
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
   const router = useRouter();
-
+  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const { collection, permissions, isLoading } = useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
@@ -484,22 +481,21 @@ export function Collection({
       !!collection?.metadata?.maxItemsPerUser,
   });
 
-  const { classes } = useStyles({ bannerPosition: collection?.metadata?.bannerPosition });
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
 
   if (!isLoading && (!collection || isBlocked)) {
     return (
       <Stack w="100%" align="center">
-        <Stack spacing="md" align="center" maw={800}>
-          <Title order={1} inline>
+        <Stack gap="md" align="center" maw={800}>
+          <Title order={1} className="inline-block">
             Whoops!
           </Title>
-          <Text align="center">
+          <Text className="text-center">
             It looks like you landed on the wrong place.The collection you are trying to access does
             not exist or you do not have the sufficient permissions to see it.
           </Text>
-          <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+          <ThemeIcon size={128} radius={100} style={{ opacity: 0.5 }}>
             <IconCloudOff size={80} />
           </ThemeIcon>
         </Stack>
@@ -527,12 +523,12 @@ export function Collection({
         middlewares={{ flip: true, shift: true }}
       >
         <Popover.Target>
-          <ActionIcon variant="transparent" size="lg">
+          <LegacyActionIcon variant="transparent" size="lg">
             <IconInfoCircle />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Popover.Target>
         <Popover.Dropdown maw={468} p="md" w="100%">
-          <Stack spacing="xs">
+          <Stack gap="xs">
             {metadata.submissionStartDate && (
               <Text size="sm">
                 Submission start date: {formatDate(metadata.submissionStartDate)}
@@ -578,12 +574,12 @@ export function Collection({
             maxSingleColumnWidth={450}
           >
             <MasonryContainer {...containerProps} p={0}>
-              <Stack spacing="xl" w="100%">
-                <Group spacing="xl">
+              <Stack gap="xl" w="100%">
+                <Group gap="xl">
                   {collection?.image && (
                     <Box
                       w={220}
-                      sx={(theme) => ({
+                      styles={{
                         overflow: 'hidden',
                         borderRadius: '8px',
                         boxShadow: theme.shadows.md,
@@ -591,11 +587,13 @@ export function Collection({
                           width: '100%',
                           marginBottom: theme.spacing.xs,
                         },
-                      })}
+                      }}
                     >
                       <AspectRatio ratio={3 / 2}>
                         <EdgeMedia
-                          className={classes.coverImage}
+                          style={{
+                            objectPosition: collection?.metadata?.bannerPosition ?? 'top center',
+                          }}
                           src={collection.image.url}
                           type={collection.image.type}
                           name={collection.image.name ?? collection.image.url}
@@ -612,24 +610,24 @@ export function Collection({
                       </AspectRatio>
                     </Box>
                   )}
-                  <Stack spacing={8} sx={{ flex: 1 }}>
-                    <Stack spacing={0}>
+                  <Stack gap={8} style={{ flex: 1 }}>
+                    <Stack gap={0}>
                       <Group>
                         <Title
                           order={1}
                           lineClamp={1}
-                          sx={() => ({
+                          styles={{
                             [containerQuery.smallerThan('sm')]: {
                               fontSize: '28px',
                             },
-                          })}
+                          }}
                         >
                           {collection?.name ?? 'Loading...'}
                         </Title>
                         {submissionPeriod}
                       </Group>
                       {collection?.description && (
-                        <Text size="xs" color="dimmed">
+                        <Text size="xs" c="dimmed">
                           <CustomMarkdown
                             rehypePlugins={[rehypeRaw, remarkGfm]}
                             allowedElements={['a', 'p', 'strong', 'em', 'code', 'u']}
@@ -641,7 +639,7 @@ export function Collection({
                       )}
                     </Stack>
                     {collection && (
-                      <Group spacing={4} noWrap>
+                      <Group gap={4} wrap="nowrap">
                         {collection.user.id !== -1 && (
                           <UserAvatar user={collection.user} withUsername linkToProfile />
                         )}
@@ -657,7 +655,7 @@ export function Collection({
                   </Stack>
                   {collection && permissions && (
                     <Stack>
-                      <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
+                      <Group gap={4} ml="auto" style={{ alignSelf: 'flex-start' }} wrap="nowrap">
                         {collection.mode === CollectionMode.Contest &&
                         // Respect the submission period:
                         (!metadata.submissionEndDate ||
@@ -721,7 +719,7 @@ export function Collection({
                             />
                             {canAddContent && (
                               <Tooltip label="Add from your library." position="bottom" withArrow>
-                                <ActionIcon
+                                <LegacyActionIcon
                                   color="blue"
                                   variant="subtle"
                                   radius="xl"
@@ -739,7 +737,7 @@ export function Collection({
                                   }}
                                 >
                                   <IconCirclePlus />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Tooltip>
                             )}
                           </>
@@ -750,9 +748,9 @@ export function Collection({
                           permissions={permissions}
                           mode={collection.mode}
                         >
-                          <ActionIcon variant="subtle">
+                          <LegacyActionIcon variant="subtle">
                             <IconDotsVertical size={16} />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </CollectionContextMenu>
                       </Group>
                       {entryCountDetails?.max &&
@@ -775,10 +773,9 @@ export function Collection({
                             );
 
                           return (
-                            <Stack spacing={0}>
-                              <Progress
-                                size="xl"
-                                sections={[
+                            <Stack gap={0}>
+                              <Progress.Root size="xl">
+                                {[
                                   ...statuses.map((status) => {
                                     const color =
                                       status === CollectionItemStatus.REVIEW
@@ -807,10 +804,21 @@ export function Collection({
                                         tooltip: `Remaining: ${remainingEntries}`,
                                       }
                                     : undefined,
-                                ].filter(isDefined)}
-                              />
+                                ]
+                                  .filter(isDefined)
+                                  .map((section) => {
+                                    return (
+                                      <Tooltip key={section.tooltip} label={section.tooltip}>
+                                        <Progress.Section
+                                          value={section.value}
+                                          color={section.color}
+                                        />
+                                      </Tooltip>
+                                    );
+                                  })}
+                              </Progress.Root>
                               <Tooltip label="Rejected entries do not count toward the allowed count.">
-                                <Text size="xs" weight="bold">
+                                <Text size="xs" fw="bold">
                                   Max entries per participant: {entryCountDetails.max}
                                 </Text>
                               </Tooltip>
@@ -865,8 +873,8 @@ export function Collection({
                 )}
                 {!collectionType && !isLoading && (
                   <Center py="xl">
-                    <Stack spacing="xs">
-                      <Text size="lg" weight="700" align="center">
+                    <Stack gap="xs">
+                      <Text size="lg" fw="700" align="center">
                         Whoops!
                       </Text>
                       <Text align="center">This collection type is not supported</Text>
@@ -881,11 +889,3 @@ export function Collection({
     </BrowsingLevelProvider>
   );
 }
-
-const useStyles = createStyles<string, { bannerPosition?: CSSProperties['objectPosition'] }>(
-  (_theme, params) => ({
-    coverImage: {
-      objectPosition: params.bannerPosition ?? 'top center',
-    },
-  })
-);

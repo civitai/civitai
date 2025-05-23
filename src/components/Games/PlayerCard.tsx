@@ -1,4 +1,4 @@
-import { clsx, MantineSize, Paper, PaperProps, ThemeIcon, Tooltip } from '@mantine/core';
+import { MantineSize, Paper, PaperProps, ThemeIcon, Tooltip } from '@mantine/core';
 import { IconFlame, IconHeart, IconMoneybag, IconSword } from '@tabler/icons-react';
 import React from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -13,6 +13,7 @@ import { getLevelProgression } from '~/server/utils/game-helpers';
 import { Currency, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { GetPlayer } from '~/types/router';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
+import clsx from 'clsx';
 
 const MAX_SMITE_COUNT = 3;
 

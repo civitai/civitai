@@ -1,0 +1,7 @@
+.buttonPost {
+  &[data-disabled] {
+    background: var(--mantine-color-blue-6);
+    color: white;
+    opacity: 0.5;
+  }
+}

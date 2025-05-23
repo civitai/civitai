@@ -1,4 +1,4 @@
-import { MantineNumberSize } from '@mantine/core';
+import { MantineSpacing } from '@mantine/core';
 import { useMediaQuery as useMantineMediaQuery } from '@mantine/hooks';
 import { useCallback } from 'react';
 import {
@@ -12,7 +12,7 @@ export function useContainerQuery({
   width,
 }: {
   type: 'min-width' | 'max-width';
-  width: MantineNumberSize;
+  width: MantineSpacing;
 }) {
   const size = typeof width === 'string' ? mantineContainerSizes[width] : width;
   const { nodeRef, ...context } = useContainerContext();
@@ -41,7 +41,7 @@ export function useMediaQuery({
   width,
 }: {
   type: 'min-width' | 'max-width';
-  width: MantineNumberSize;
+  width: MantineSpacing;
 }) {
   const size = typeof width === 'string' ? mantineContainerSizes[width] : width;
   const queryString =

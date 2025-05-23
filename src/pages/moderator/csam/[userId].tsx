@@ -45,7 +45,7 @@ function ReportCsamUserPage() {
     <CsamProvider user={user} type="Image">
       {userCountRef.current > 1 && (
         <Card py={4}>
-          <Group position="center">
+          <Group justify="center">
             <Badge>
               Reporting: {progress + 1} / {userCountRef.current}
             </Badge>

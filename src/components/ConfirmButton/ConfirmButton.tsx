@@ -1,5 +1,5 @@
 import { Button, ButtonProps } from '@mantine/core';
-import { MouseEventHandler, useRef, useState } from 'react';
+import React, { MouseEventHandler, useRef, useState } from 'react';
 
 export const ConfirmButton = ({
   children,
@@ -18,9 +18,10 @@ export const ConfirmButton = ({
   return (
     <Button
       {...props}
-      onClick={(e) => {
+      onClick={(e: React.MouseEvent) => {
         if (confirming) {
           clearTimeout(timeoutRef.current);
+          // @ts-ignore
           onClick(e);
         } else {
           timeoutRef.current = setTimeout(() => {

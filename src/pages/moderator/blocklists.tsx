@@ -44,7 +44,11 @@ function BlocklistsPage() {
   return (
     <div className="container flex max-w-sm flex-col gap-3">
       <Title>Blocklists</Title>
-      <Tabs variant="pills" value={tab} onTabChange={(value) => setTab(value as BlocklistType)}>
+      <Tabs
+        variant="pills"
+        value={tab}
+        onChange={(value) => setTab((value as BlocklistType) ?? tabs[0])}
+      >
         <Tabs.List>
           {tabs.map((tab) => (
             <Tabs.Tab key={tab} value={tab}>

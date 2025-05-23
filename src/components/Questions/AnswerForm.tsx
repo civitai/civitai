@@ -79,7 +79,7 @@ export function AnswerForm({
             </List.Item>
           </List>
         </Alert>
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button variant="default" onClick={onCancel}>
               Cancel

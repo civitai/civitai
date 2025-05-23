@@ -1,4 +1,14 @@
-import { ActionIcon, Badge, Group, Loader, LoadingOverlay, ScrollArea, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Group,
+  Loader,
+  LoadingOverlay,
+  ScrollArea,
+  Text,
+  alpha,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   IconBookmark,
   IconDownload,
@@ -17,6 +27,7 @@ import { useModelShowcaseCollection, UseQueryModelReturn } from '~/components/Mo
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function CollectionShowcase({ modelId, loading }: Props) {
   const {
@@ -31,7 +42,7 @@ export function CollectionShowcase({ modelId, loading }: Props) {
   return (
     <div className="relative">
       <LoadingOverlay visible={isRefetching} zIndex={9} />
-      <ScrollArea.Autosize maxHeight={300}>
+      <ScrollArea.Autosize mah={300}>
         {isLoading || loading ? (
           <div className="flex items-center justify-center p-2">
             <Loader variant="bars" size="sm" />
@@ -55,7 +66,7 @@ export function CollectionShowcase({ modelId, loading }: Props) {
           </>
         ) : (
           <div className="flex items-center justify-center p-2">
-            <Text color="dimmed">There are no items for this collection</Text>
+            <Text c="dimmed">There are no items for this collection</Text>
           </div>
         )}
       </ScrollArea.Autosize>
@@ -68,6 +79,7 @@ type Props = { modelId: number; loading?: boolean };
 function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemProps) {
   const router = useRouter();
   const [image] = images;
+  const theme = useMantineTheme();
 
   const activeItem = router.query.id === id.toString();
 
@@ -88,16 +100,16 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
               <div className="flex size-full items-center justify-center">
                 <ImageGuard2.BlurToggle>
                   {(toggle) => (
-                    <ActionIcon
+                    <LegacyActionIcon
                       color="red"
                       radius="xl"
-                      sx={(theme) => ({
-                        backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.6),
+                      style={{
+                        backgroundColor: alpha(theme.colors.red[9], 0.6),
                         color: 'white',
                         backdropFilter: 'blur(7px)',
                         boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
                         zIndex: 10,
-                      })}
+                      }}
                       onClick={toggle}
                     >
                       {safe ? (
@@ -105,7 +117,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
                       ) : (
                         <IconEye size={14} strokeWidth={2.5} />
                       )}
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   )}
                 </ImageGuard2.BlurToggle>
                 <MediaHash {...image} />
@@ -130,17 +142,17 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
       </ImageGuard2>
       <div className="flex flex-auto flex-col gap-2">
         <div>
-          <Text size="sm" weight={500} lineClamp={1}>
+          <Text size="sm" fw={500} lineClamp={1}>
             {name}
           </Text>
-          <Text size="xs" color="dimmed" weight={500} lineClamp={1}>
+          <Text size="xs" c="dimmed" fw={500} lineClamp={1}>
             {version.name}
           </Text>
         </div>
         {rank && (
-          <Group align="center" position="apart" spacing={4}>
+          <Group align="center" justify="space-between" gap={4}>
             <ModelTypeBadge
-              classNames={{ inner: 'flex gap-2 flex-nowrap' }}
+              classNames={{ root: 'flex gap-2 flex-nowrap' }}
               type={type}
               baseModel={version.baseModel}
             />
@@ -148,17 +160,17 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
               variant="light"
               color="gray"
               radius="xl"
-              classNames={{ inner: 'flex gap-2 flex-nowrap' }}
+              classNames={{ root: 'flex gap-2 flex-nowrap' }}
             >
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconDownload size={14} strokeWidth={2.5} />
                 <Text size="xs">{abbreviateNumber(rank?.downloadCount ?? 0)}</Text>
               </Group>
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconBookmark size={14} strokeWidth={2.5} />
                 <Text size="xs">{abbreviateNumber(rank?.collectedCount ?? 0)}</Text>
               </Group>
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconMessageCircle2 size={14} strokeWidth={2.5} />
                 <Text size="xs">{abbreviateNumber(rank?.commentCount ?? 0)}</Text>
               </Group>

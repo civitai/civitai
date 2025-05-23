@@ -7,6 +7,8 @@ import {
   Text,
   ThemeIcon,
   Title,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconRocketOff, IconSparkles } from '@tabler/icons-react';
@@ -37,8 +39,10 @@ export function AssociatedModels({
   ownerId: number;
   versionId?: number;
 }) {
+  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const colorScheme = useComputedColorScheme();
   const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
 
   const browsingLevel = useBrowsingLevelDebounced();
@@ -67,9 +71,9 @@ export function AssociatedModels({
         my="xl"
         pt="xl"
         pb="xl"
-        sx={(theme) => ({
-          background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-        })}
+        style={{
+          background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+        }}
       >
         {({ columnCount }) => (
           <Stack pb={columnCount > 1 && data.length ? 20 : undefined}>
@@ -115,11 +119,11 @@ export function AssociatedModels({
                 itemId={(x) => x.id}
               />
             ) : (
-              <Group spacing="xs" mt="xs">
+              <Group gap="xs" mt="xs">
                 <ThemeIcon color="gray" size="xl" radius="xl">
                   <IconRocketOff />
                 </ThemeIcon>
-                <Text size="lg" color="dimmed">
+                <Text size="lg" c="dimmed">
                   {`You aren't suggesting any other resources yet...`}
                 </Text>
               </Group>
@@ -146,7 +150,7 @@ function AIRecommendedIndicator() {
         </ThemeIcon>
       </HoverCard.Target>
       <HoverCard.Dropdown px="md" py={8}>
-        <Text size="sm" weight={600} color="white">
+        <Text size="sm" fw={600} color="white">
           AI Recommended
         </Text>
         <Text size="xs">This resource has been recommended by Civitai AI</Text>

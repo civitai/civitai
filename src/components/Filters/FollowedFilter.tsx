@@ -7,7 +7,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 
 type FollowFilterButtonProps = {
   variant: 'button';
-  buttonProps?: ButtonProps;
+  buttonProps?: Omit<ButtonProps, 'style'>;
 };
 type FollowFilterComponentProps = FollowFilterButtonProps;
 

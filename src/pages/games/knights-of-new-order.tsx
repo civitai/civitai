@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ActionIcon, Button, Card, Loader, Select, ThemeIcon } from '@mantine/core';
+import { Button, Card, Loader, Select, ThemeIcon } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
@@ -34,6 +34,7 @@ import { RankUp } from '~/components/Games/LevelProgress/RankUp';
 import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderBetaBanner } from '~/components/Games/NewOrder/NewOrderBetaBanner';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 let levelUpTimer: NodeJS.Timeout | null = null;
 let rankUpTimer: NodeJS.Timeout | null = null;
@@ -206,7 +207,7 @@ export default Page(
                             contain
                           />
                           {currentUser?.isModerator && (
-                            <ActionIcon
+                            <LegacyActionIcon
                               component={Link}
                               href={`/images/${currentImage.id}`}
                               target="_blank"
@@ -217,7 +218,7 @@ export default Page(
                               className="absolute bottom-2 right-2 text-white"
                             >
                               <IconExternalLink size={16} color="currentColor" />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           )}
                         </div>
                       )}

@@ -4,6 +4,7 @@ import { useCommentsContext } from '~/components/CommentsV2';
 import { useCommentV2Context } from '~/components/CommentsV2/Comment/CommentProvider';
 import { DeleteComment } from '~/components/CommentsV2/Comment/DeleteComment';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReportEntity } from '~/server/schema/report.schema';
 
@@ -24,9 +25,9 @@ export function ModelDiscussionContextMenu() {
   return (
     <Menu>
       <Menu.Target>
-        <ActionIcon size="xs" variant="subtle">
+        <LegacyActionIcon size="xs" variant="subtle">
           <IconDotsVertical size={14} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         {canDelete && (

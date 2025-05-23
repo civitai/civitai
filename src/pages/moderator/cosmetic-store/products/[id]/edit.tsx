@@ -75,7 +75,7 @@ export default function ProductEdit({
   return (
     <Container size="md">
       <Stack>
-        <Group spacing="md" noWrap>
+        <Group gap="md" wrap="nowrap">
           <BackButton url="/moderator/cosmetic-store/products" />
           <Title>Update shop product {cosmeticShopItem.title}</Title>
         </Group>

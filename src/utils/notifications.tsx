@@ -1,5 +1,5 @@
 import { Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
-import { NotificationProps, showNotification } from '@mantine/notifications';
+import { NotificationData, showNotification } from '@mantine/notifications';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -97,13 +97,13 @@ export function showBuzzNotification({
   message,
   title,
   ...notificationProps
-}: NotificationProps & {
+}: NotificationData & {
   message: React.ReactNode;
 }) {
   showNotification({
     color: 'yellow.4',
     message: (
-      <Group spacing={4} noWrap>
+      <Group gap={4} wrap="nowrap">
         {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
         <ThemeIcon color={notificationProps.color ?? 'yellow.4'} variant="transparent">
           <IconBolt size={18} fill="currentColor" />
@@ -144,7 +144,7 @@ export function showConfirmNotification({
     message: (
       <Stack>
         {message}
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button onClick={onCancel} variant="outline" color="red">
               Cancel
@@ -160,7 +160,7 @@ export function showConfirmNotification({
     ),
     title,
     autoClose,
-    disallowClose: true,
+    withCloseButton: false,
   });
 }
 

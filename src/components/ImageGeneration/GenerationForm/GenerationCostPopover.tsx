@@ -1,13 +1,5 @@
 import { WorkflowCost } from '@civitai/client';
-import {
-  ActionIcon,
-  createStyles,
-  Group,
-  NumberInput,
-  Popover,
-  PopoverProps,
-  Text,
-} from '@mantine/core';
+import { ActionIcon, Group, NumberInput, Popover, PopoverProps, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React from 'react';
@@ -19,6 +11,9 @@ import {
 } from '~/components/DescriptionTable/DescriptionTable';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useTipStore } from '~/store/tip.store';
+import classes from './GenerationCostPopover.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const getEmojiByValue = (value: number) => {
   if (value === 0) return '😢';
@@ -28,23 +23,6 @@ const getEmojiByValue = (value: number) => {
   if (value < 35) return '😍';
   return '😇';
 };
-
-const useStyles = createStyles((theme) => ({
-  tableCell: {
-    height: '50px !important',
-    backgroundColor:
-      theme.colorScheme === 'dark'
-        ? `${theme.colors.dark[6]} !important`
-        : `${theme.white} !important`,
-  },
-
-  baseCostCell: {
-    backgroundColor:
-      theme.colorScheme === 'dark'
-        ? `${theme.colors.dark[4]} !important`
-        : `${theme.colors.gray[1]} !important`,
-  },
-}));
 
 export function GenerationCostPopover({
   workflowCost,
@@ -60,9 +38,15 @@ export function GenerationCostPopover({
     <Popover shadow="md" {...popoverProps} withinPortal>
       <Popover.Target>
         {variant === 'info-circle' ? (
-          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={disabled}>
+          <LegacyActionIcon
+            variant="subtle"
+            size="xs"
+            color="yellow.7"
+            radius="xl"
+            disabled={disabled}
+          >
             <IconInfoCircle stroke={2.5} />
-          </ActionIcon>
+          </LegacyActionIcon>
         ) : (
           <CurrencyBadge
             unitAmount={totalCost}
@@ -85,7 +69,6 @@ export function GenerationCostPopover({
 }
 
 function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCreatorTip }: Props) {
-  const { classes, cx } = useStyles();
   const { civitaiTip, creatorTip } = useTipStore((state) => ({
     creatorTip: state.creatorTip * 100,
     civitaiTip: state.civitaiTip * 100,
@@ -146,17 +129,17 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
     {
       label: <div className="font-bold">Base Cost</div>,
       value: (
-        <Group spacing={4} position="right" className="font-bold" noWrap>
+        <Group gap={4} justify="flex-end" className="font-bold" wrap="nowrap">
           {baseCost ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
-      className: cx(classes.tableCell, classes.baseCostCell),
+      className: clsx(classes.tableCell, classes.baseCostCell),
     },
     {
       label: 'Additional Resource Cost',
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {workflowCost.fixed?.additionalNetworks}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -167,7 +150,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
     {
       label: 'Priority Pricing',
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {workflowCost.fixed?.priority}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -181,24 +164,20 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
           Creator Tip{' '}
           <NumberInput
             value={creatorTip}
-            onChange={(value = 0) => useTipStore.setState({ creatorTip: value / 100 })}
+            onChange={(value = 0) => useTipStore.setState({ creatorTip: Number(value) / 100 })}
             min={0}
             max={100}
             w={110}
             step={5}
             classNames={{ input: 'pr-[30px] text-end' }}
-            icon={getEmojiByValue(creatorTip)}
-            formatter={(value) => {
-              if (!value) return '0%';
-              const parsedValue = parseFloat(value);
-
-              return !Number.isNaN(parsedValue) ? `${parsedValue}%` : '0%';
-            }}
+            leftSection={getEmojiByValue(creatorTip)}
+            suffix="%"
+            allowDecimal={false}
           />
         </div>
       ),
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {`${Math.ceil((baseCost * creatorTip) / 100)}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -209,7 +188,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
     {
       label: 'Creator Tip',
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {`${workflowCost.tips?.creators}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -223,25 +202,21 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
           Civitai Tip{' '}
           <NumberInput
             value={civitaiTip}
-            onChange={(value = 0) => useTipStore.setState({ civitaiTip: value / 100 })}
+            onChange={(value = 0) => useTipStore.setState({ civitaiTip: Number(value) / 100 })}
             min={0}
             max={100}
             w={110}
             step={5}
             defaultValue={0}
             classNames={{ input: 'pr-[30px] text-end' }}
-            icon={getEmojiByValue(civitaiTip ?? 0)}
-            formatter={(value) => {
-              if (!value) return '%';
-              const parsedValue = parseFloat(value);
-
-              return !Number.isNaN(parsedValue) ? `${parsedValue}%` : '%';
-            }}
+            leftSection={getEmojiByValue(civitaiTip ?? 0)}
+            suffix="%"
+            allowDecimal={false}
           />
         </div>
       ),
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {`${Math.ceil((baseCost * civitaiTip) / 100)}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -252,7 +227,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
     {
       label: 'Civitai Tip',
       value: (
-        <Group spacing={4} position="right" noWrap>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {baseCost ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
@@ -265,11 +240,11 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
   return (
     <DescriptionTable
       title={
-        <div className={cx(classes.baseCostCell, 'flex items-center justify-between gap-4 p-2')}>
+        <div className={clsx(classes.baseCostCell, 'flex items-center justify-between gap-4 p-2')}>
           <div className="font-semibold">Generation Cost Breakdown</div>
-          <ActionIcon variant="subtle" radius="xl" onClick={handleShowExplanationClick}>
+          <LegacyActionIcon variant="subtle" radius="xl" onClick={handleShowExplanationClick}>
             <IconInfoCircle size={18} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </div>
       }
       items={items}

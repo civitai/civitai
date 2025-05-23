@@ -1,6 +1,5 @@
 import {
   Accordion,
-  Anchor,
   Button,
   Center,
   Chip,
@@ -12,11 +11,11 @@ import {
   Table,
   Text,
   ThemeIcon,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
-import { useBuzzButtonStyles } from '~/components/Buzz/styles';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
@@ -44,6 +43,9 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
+import classes from '~/components/Buzz/buzz.module.scss';
+import clsx from 'clsx';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -209,8 +211,8 @@ export const BuzzPurchase = ({
   ...props
 }: BuzzPurchaseProps) => {
   const features = useFeatureFlags();
-  const { classes, cx, theme } = useBuzzButtonStyles();
-  const canUpgradeMembership = false; // useCanUpgrade();
+  const colorScheme = useComputedColorScheme('dark');
+  const canUpgradeMembership = false;
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
@@ -294,14 +296,14 @@ export const BuzzPurchase = ({
 
   return (
     <Grid>
-      <Grid.Col span={12} md={canUpgradeMembership ? 6 : 12}>
-        <Stack spacing="md">
+      <Grid.Col span={{ base: 12, md: canUpgradeMembership ? 6 : 12 }}>
+        <Stack gap="md">
           {message && (
             <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" size="md">
               {message}
             </AlertWithIcon>
           )}
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text>Buy Buzz as a one-off purchase. No commitment, no strings attached.</Text>
           </Stack>
           {isLoading || processing ? (
@@ -310,11 +312,14 @@ export const BuzzPurchase = ({
             </Center>
           ) : (
             <Input.Wrapper error={error}>
-              <Stack spacing="md" mb={error ? 5 : undefined}>
+              <Stack gap="md" mb={error ? 5 : undefined}>
                 <Chip.Group
-                  className={classes.chipGroup}
                   value={selectedPrice?.id ?? ''}
-                  onChange={(priceId: string) => {
+                  onChange={(priceId: string | string[]) => {
+                    if (Array.isArray(priceId)) {
+                      return;
+                    }
+
                     const selectedPackage = packages.find((p) => p.id === priceId);
                     setCustomAmount(undefined);
                     setError('');
@@ -322,52 +327,54 @@ export const BuzzPurchase = ({
                     setActiveControl(null);
                   }}
                 >
-                  {packages.map((buzzPackage, index) => {
-                    if (!buzzPackage.unitAmount) return null;
+                  <Group className={classes.chipGroup}>
+                    {packages.map((buzzPackage, index) => {
+                      if (!buzzPackage.unitAmount) return null;
 
-                    const price = buzzPackage.unitAmount / 100;
-                    const buzzAmount = buzzPackage.buzzAmount ?? buzzPackage.unitAmount * 10;
-                    const disabled = !!minBuzzAmount ? buzzAmount < minBuzzAmount : false;
+                      const price = buzzPackage.unitAmount / 100;
+                      const buzzAmount = buzzPackage.buzzAmount ?? buzzPackage.unitAmount * 10;
+                      const disabled = !!minBuzzAmount ? buzzAmount < minBuzzAmount : false;
 
-                    return (
-                      <Chip
-                        key={buzzPackage.id}
-                        value={buzzPackage.id}
-                        variant="filled"
-                        classNames={{
-                          root: cx(disabled && classes.chipDisabled),
-                          label: classes.chipLabel,
-                          iconWrapper: classes.chipCheckmark,
-                        }}
-                        disabled={disabled}
-                      >
-                        <Group spacing="sm" align="center">
-                          <Text color="accent.5">
-                            <BuzzTierIcon tier={index + 1} />
-                          </Text>
-                          {price ? (
-                            <Group spacing={8} position="apart" sx={{ flexGrow: 1 }}>
-                              <Text size={20} weight={510} color="accent.5">
-                                {buzzAmount.toLocaleString()} Buzz
-                              </Text>
-                              <Text
-                                color={theme.colorScheme === 'dark' ? 'gray.0' : 'dark'}
-                                size={20}
-                                weight="bold"
-                                sx={{ fontVariantNumeric: 'tabular-nums' }}
-                              >
-                                ${price}
-                              </Text>
-                            </Group>
-                          ) : (
-                            <Text size="md" color="dimmed">
-                              I&apos;ll enter my own amount
+                      return (
+                        <Chip
+                          key={buzzPackage.id}
+                          value={buzzPackage.id}
+                          variant="filled"
+                          classNames={{
+                            root: clsx(disabled && classes.chipDisabled),
+                            label: classes.chipLabel,
+                            iconWrapper: classes.chipCheckmark,
+                          }}
+                          disabled={disabled}
+                        >
+                          <Group gap="sm" align="center">
+                            <Text c="accent.5">
+                              <BuzzTierIcon tier={index + 1} />
                             </Text>
-                          )}
-                        </Group>
-                      </Chip>
-                    );
-                  })}
+                            {price ? (
+                              <Group gap={8} justify="space-between" style={{ flexGrow: 1 }}>
+                                <Text fz={20} fw={510} color="accent.5">
+                                  {buzzAmount.toLocaleString()} Buzz
+                                </Text>
+                                <Text
+                                  color={colorScheme === 'dark' ? 'gray.0' : 'dark'}
+                                  fz={20}
+                                  fw="bold"
+                                  style={{ fontVariantNumeric: 'tabular-nums' }}
+                                >
+                                  ${price}
+                                </Text>
+                              </Group>
+                            ) : (
+                              <Text size="md" c="dimmed">
+                                I&apos;ll enter my own amount
+                              </Text>
+                            )}
+                          </Group>
+                        </Chip>
+                      );
+                    })}
+                  </Group>
                 </Chip.Group>
 
                 <Accordion
@@ -381,20 +388,17 @@ export const BuzzPurchase = ({
                 >
                   <Accordion.Item value="customAmount">
                     <Accordion.Control px="md" py={8}>
-                      <Group spacing={8}>
+                      <Group gap={8}>
                         <IconMoodDollar size={24} />
                         <Text>I&apos;ll enter my own amount</Text>
                       </Group>
                     </Accordion.Control>
                     <Accordion.Panel>
                       <Group
-                        spacing={8}
+                        gap={8}
                         align="flex-end"
-                        sx={{
-                          ['& > *']: { flexGrow: 1 },
-                        }}
-                        className="flex-col items-center"
-                        noWrap
+                        className="flex-col items-center *:grow"
+                        wrap="nowrap"
                       >
                         <NumberInputWrapper
                           label="Buzz"
@@ -402,13 +406,13 @@ export const BuzzPurchase = ({
                           placeholder={`Minimum ${Number(
                             minBuzzAmountPrice * 10
                           ).toLocaleString()}`}
-                          icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+                          leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                           value={customAmount ? customAmount * 10 : undefined}
                           min={1000}
                           max={constants.buzz.maxChargeAmount * 10}
-                          onChange={(value) => {
+                          onChange={(value: string | number) => {
                             setError('');
-                            setCustomAmount(Math.ceil((value ?? 0) / 10));
+                            setCustomAmount(Math.ceil(Number(value ?? 0) / 10));
                           }}
                           step={100}
                           w="80%"
@@ -421,25 +425,27 @@ export const BuzzPurchase = ({
                           label="USD ($)"
                           labelProps={{ sx: { fontSize: 12, fontWeight: 590 } }}
                           placeholder={`Minimum $${formatPriceForDisplay(minBuzzAmountPrice)}`}
-                          icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
+                          leftSection={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
                           value={customAmount}
                           min={100}
                           step={100}
                           max={constants.buzz.maxChargeAmount}
-                          precision={2}
+                          allowDecimal
+                          fixedDecimalScale
+                          decimalScale={2}
                           rightSection={null}
                           rightSectionWidth="auto"
                           format="currency"
                           currency="USD"
-                          onChange={(value) => {
+                          onChange={(value: string | number) => {
                             setError('');
-                            setCustomAmount(value ?? 0);
+                            setCustomAmount(Number(value ?? 0));
                           }}
                           w="80%"
                           mt={-24}
                         />
                       </Group>
-                      <Text size="xs" color="dimmed" mt="xs">
+                      <Text size="xs" c="dimmed" mt="xs">
                         {`Minimum amount ${Number(
                           constants.buzz.minChargeAmount * 10
                         ).toLocaleString()} Buzz or $${formatPriceForDisplay(
@@ -452,7 +458,7 @@ export const BuzzPurchase = ({
               </Stack>
             </Input.Wrapper>
           )}
-          <Stack spacing="md">
+          <Stack gap="md">
             <Accordion
               variant="contained"
               classNames={{ item: classes.accordionItem }}
@@ -460,7 +466,7 @@ export const BuzzPurchase = ({
             >
               <Accordion.Item value="buyBulk">
                 <Accordion.Control px="md" py={8}>
-                  <Group spacing={8}>
+                  <Group gap={8}>
                     <Text>Buy In Bulk!</Text>
                   </Group>
                 </Accordion.Control>
@@ -480,30 +486,30 @@ export const BuzzPurchase = ({
                           return (
                             <tr key={min}>
                               <td>
-                                <Group noWrap spacing={0}>
+                                <Group wrap="nowrap" gap={0}>
                                   <CurrencyIcon size={16} currency={Currency.BUZZ} />
-                                  <Text size="sm" color="dimmed">
+                                  <Text size="sm" c="dimmed">
                                     {numberWithCommas(min)}
                                   </Text>
                                 </Group>
                               </td>
                               <td>
-                                <Group noWrap spacing={0}>
+                                <Group wrap="nowrap" gap={0}>
                                   <CurrencyIcon size={16} currency={Currency.BUZZ} />
-                                  <Text size="sm" color="dimmed">
+                                  <Text size="sm" c="dimmed">
                                     {numberWithCommas(min * multiplier)}
                                   </Text>
                                 </Group>
                               </td>
                               <td>
-                                <Text size="sm" color="dimmed">
+                                <Text size="sm" c="dimmed">
                                   {Math.round((multiplier - 1) * 100)}%
                                 </Text>
                               </td>
                               <td>
-                                <Group noWrap spacing={0}>
+                                <Group wrap="nowrap" gap={0}>
                                   <CurrencyIcon size={16} currency={Currency.BUZZ} />
-                                  <Text size="sm" color="dimmed">
+                                  <Text size="sm" c="dimmed">
                                     {numberWithCommas(Math.floor(1000 * multiplier))}
                                   </Text>
                                 </Group>
@@ -513,7 +519,7 @@ export const BuzzPurchase = ({
                         })}
                       </tbody>
                     </Table>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       * Bulk bonus is Blue Buzz. It is not transferable to other users.
                     </Text>
                   </Stack>
@@ -522,7 +528,7 @@ export const BuzzPurchase = ({
             </Accordion>
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
 
-            <Stack spacing="xs" mt="md">
+            <Stack gap="xs" mt="md">
               <BuzzPurchasePaymentButton
                 unitAmount={unitAmount}
                 buzzAmount={buzzAmount}
@@ -533,10 +539,10 @@ export const BuzzPurchase = ({
                 purchaseSuccessMessage={purchaseSuccessMessage}
               />
 
-              <Stack spacing={0} align="center" my={4}>
+              <Stack gap={0} align="center" my={4}>
                 <p className="mb-0 text-xs opacity-50">
                   By clicking Pay Now, you agree to our{' '}
-                  <Anchor href="/content/tos">Terms of Service</Anchor>
+                  <Link href="/content/tos">Terms of Service</Link>
                 </p>
                 <p className="text-xs opacity-50">
                   Transactions will appear as CIVIT AI INC on your billing statement
@@ -573,7 +579,7 @@ export const BuzzPurchase = ({
         </Stack>
       </Grid.Col>
       {canUpgradeMembership && (
-        <Grid.Col span={12} md={6}>
+        <Grid.Col span={{ base: 12, md: 6 }}>
           <MembershipUpsell buzzAmount={buzzAmount ?? 0} />
         </Grid.Col>
       )}
@@ -584,10 +590,8 @@ export const BuzzPurchase = ({
 const iconSizesRatio = [1, 1.3, 1.6];
 
 const BuzzTierIcon = ({ tier }: { tier: number }) => {
-  const { classes } = useBuzzButtonStyles();
-
   return (
-    <Group spacing={-4} noWrap>
+    <Group gap={-4} wrap="nowrap">
       {Array.from({ length: 3 }).map((_, i) => (
         <IconBolt
           key={i}

@@ -1,4 +1,4 @@
-import { Badge, createStyles, Tabs, TabsProps, Text } from '@mantine/core';
+import { Badge, Tabs, TabsProps, Text } from '@mantine/core';
 import {
   getCategoryDisplayName,
   useNotificationSettings,
@@ -13,14 +13,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 const categoryTabs: string[] = Object.values(NotificationCategory);
 const tabs = ['all', 'announcements', ...categoryTabs];
 
-const useStyles = createStyles(() => ({
-  tab: {
-    padding: '8px 12px',
-  },
-}));
-
 export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: Props) {
-  const { classes } = useStyles();
   const count = useQueryNotificationsCount();
   const { isLoading, hasCategory } = useNotificationSettings(enabled);
   const currentUser = useCurrentUser();
@@ -44,15 +37,14 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
   return (
     <TwScrollX>
       <Tabs
-        classNames={classes}
         variant="pills"
         radius="xl"
         color="gray"
         defaultValue="all"
-        onTabChange={handleTabChange}
+        onChange={handleTabChange}
         {...tabsProps}
       >
-        <Tabs.List sx={{ flexWrap: 'nowrap' }}>
+        <Tabs.List style={{ flexWrap: 'nowrap' }}>
           {allTabs.map((tab) => {
             const countValue = count[tab.toLowerCase() as keyof typeof count];
 
@@ -60,15 +52,18 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
               <Tabs.Tab
                 key={tab}
                 value={tab}
+                className="flex px-3 py-2"
                 rightSection={
                   !!countValue ? (
-                    <Badge color="red" variant="filled" size="xs" radius="xl" px={4}>
-                      <Text size="xs">{abbreviateNumber(countValue)}</Text>
+                    <Badge color="red" variant="filled" radius="xl" circle>
+                      <Text size="xs" span inherit>
+                        {abbreviateNumber(countValue)}
+                      </Text>
                     </Badge>
                   ) : undefined
                 }
               >
-                <Text tt="capitalize" weight={590} inline>
+                <Text tt="capitalize" fw={590} inline>
                   {getCategoryDisplayName(tab as NotificationCategory)}
                 </Text>
               </Tabs.Tab>
@@ -82,4 +77,5 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
 
 type Props = Omit<TabsProps, 'children'> & {
   enabled?: boolean;
+  onTabChange: TabsProps['onChange'];
 };

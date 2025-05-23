@@ -6,6 +6,7 @@ import { IconCheck, IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { getDisplayName } from '../../utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = {
   resource: ClubResourceGetPaginatedItem;
@@ -104,7 +105,7 @@ export const ClubResourcePagedUpdateForm = ({
         </td>
       ))}
       <td align="right">
-        <Group position="right">
+        <Group justify="flex-end">
           <Button
             size="xs"
             color="blue"
@@ -117,7 +118,7 @@ export const ClubResourcePagedUpdateForm = ({
             Save
           </Button>
           <Tooltip label="Remove">
-            <ActionIcon
+            <LegacyActionIcon
               size="sm"
               color="red"
               variant="outline"
@@ -125,7 +126,7 @@ export const ClubResourcePagedUpdateForm = ({
               onClick={handleRemove}
             >
               <IconTrash size={16} stroke={1.5} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
         </Group>
       </td>

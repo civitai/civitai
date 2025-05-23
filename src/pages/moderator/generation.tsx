@@ -4,6 +4,7 @@ import { MantineReactTable, MRT_ColumnDef, MRT_PaginationState } from 'mantine-r
 import { useCallback, useMemo, useState } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { useUnsupportedResources } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { GenerationGetResources } from '~/types/router';
@@ -60,9 +61,9 @@ export default function GenerationPage() {
         mantineTableBodyCellProps: { align: 'right' },
         size: 80,
         Cell: ({ row: { original } }) => (
-          <ActionIcon color="red" onClick={() => handleRemoveResource(original.id)}>
+          <LegacyActionIcon color="red" onClick={() => handleRemoveResource(original.id)}>
             <IconTrash />
-          </ActionIcon>
+          </LegacyActionIcon>
         ),
       },
     ],
@@ -73,14 +74,14 @@ export default function GenerationPage() {
     <>
       <Meta title="Generation" deIndex />
       <Container size="md">
-        <Stack spacing="xl">
-          <Group position="apart">
-            <Stack spacing={0}>
+        <Stack gap="xl">
+          <Group justify="space-between">
+            <Stack gap={0}>
               <Title>Unavailable Resources</Title>
-              <Text color="dimmed">List of temporarily unavailable resources</Text>
+              <Text c="dimmed">List of temporarily unavailable resources</Text>
             </Stack>
             <Button
-              leftIcon={<IconPlus />}
+              leftSection={<IconPlus />}
               onClick={() =>
                 openResourceSelectModal({ onSelect: (resource) => handleAddResource(resource.id) })
               }
@@ -101,7 +102,7 @@ export default function GenerationPage() {
             enableStickyHeader
             manualPagination
             mantineTableProps={{
-              sx: { tableLayout: 'fixed' },
+              style: { tableLayout: 'fixed' },
             }}
             initialState={{ density: 'xs' }}
             state={{

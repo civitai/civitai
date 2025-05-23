@@ -61,7 +61,6 @@ export function ToolSelect({
       )}
       searchable
       clearable
-      withinPortal
     />
   );
 }

@@ -1,19 +1,32 @@
-import { Stack, Text, MantineSize, Group, ActionIcon } from '@mantine/core';
+import {
+  Stack,
+  Text,
+  MantineSize,
+  Group,
+  ActionIcon,
+  lighten,
+  darken,
+  useMantineTheme,
+  useComputedColorScheme,
+} from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import dayjs from 'dayjs';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import { DownloadGetAll } from '~/types/router';
 import { slugit } from '~/utils/string-helpers';
 
 export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
+  const theme = useMantineTheme();
+
   return (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       {items.map((download) => {
         const downloadDate = dayjs(download.downloadAt);
 
         return (
-          <Group key={download.modelVersion.id} noWrap>
+          <Group key={download.modelVersion.id} wrap="nowrap">
             <Link
               href={`/models/${download.modelVersion.model.id}/${slugit(
                 download.modelVersion.model.name
@@ -21,32 +34,20 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
               passHref
               legacyBehavior
             >
-              <Text
-                component="a"
-                sx={(theme) => ({
-                  flex: '1 !important',
-                  padding: theme.spacing.sm,
-                  ':hover': {
-                    backgroundColor:
-                      theme.colorScheme === 'dark'
-                        ? theme.fn.lighten(theme.colors.dark[4], 0.05)
-                        : theme.fn.darken(theme.colors.gray[0], 0.05),
-                  },
-                })}
-              >
-                <Stack spacing={0}>
-                  <Text size={textSize} weight={500} lineClamp={2} sx={{ lineHeight: 1 }}>
+              <Text component="a" className="flex p-8 hover:bg-gray-1 dark:hover:bg-dark-4">
+                <Stack gap={0}>
+                  <Text size={textSize} fw={500} lineClamp={2} style={{ lineHeight: 1 }}>
                     {download.modelVersion.model.name}: {download.modelVersion.name}
                   </Text>
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     <abbr title={downloadDate.format()}>{downloadDate.fromNow()}</abbr>
                   </Text>
                 </Stack>
               </Text>
             </Link>
-            <ActionIcon onClick={() => onHideClick(download)} radius="xl" color="red">
+            <LegacyActionIcon onClick={() => onHideClick(download)} radius="xl" color="red">
               <IconTrash size={16} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Group>
         );
       })}

@@ -12,7 +12,6 @@ import {
   Title,
   Text,
   Paper,
-  createStyles,
   UnstyledButton,
   Modal,
   CloseButton,
@@ -49,22 +48,14 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import classes from './PurchasableRewards.module.scss';
+import clsx from 'clsx';
 
 const chipProps: Partial<ChipProps> = {
   size: 'sm',
   radius: 'xl',
   variant: 'filled',
 };
-
-export const useStyles = createStyles((theme) => ({
-  rewardCard: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-    padding: `${theme.spacing.sm}px ${theme.spacing.sm}px`,
-    height: '100%',
-    width: '100%',
-  },
-}));
 
 const RewardDetailsModal = ({
   purchasableReward,
@@ -77,7 +68,6 @@ const RewardDetailsModal = ({
   const isPurchased = purchasedRewards.find(
     (pr) => pr.purchasableReward?.id === purchasableReward.id
   );
-  const { classes } = useStyles();
   const { purchasePurchasableReward, purchasingPurchasableReward } = useMutatePurchasableReward();
   const isAvailable = isPurchasableRewardActive(purchasableReward);
   const terms = purchasableReward.termsOfUse == '<p>N/A</p>' ? null : purchasableReward.termsOfUse;
@@ -108,9 +98,9 @@ const RewardDetailsModal = ({
 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="md">
-      <Stack spacing="sm">
-        <Group position="apart">
-          <Text size="lg" weight="bold">
+      <Stack gap="sm">
+        <Group justify="space-between">
+          <Text size="lg" fw="bold">
             Reward Details
           </Text>
 
@@ -121,7 +111,7 @@ const RewardDetailsModal = ({
         </Group>
         <Divider mx="-lg" />
         <Paper key={purchasableReward.id} className={classes.rewardCard} my="sm">
-          <Stack spacing="sm">
+          <Stack gap="sm">
             {image && (
               <ImageCSSAspectRatioWrap
                 aspectRatio={constants.purchasableRewards.coverImageAspectRatio}
@@ -153,11 +143,11 @@ const RewardDetailsModal = ({
             <Text size="lg">{purchasableReward.title}</Text>
             <div>
               {isPurchased ? (
-                <Group spacing={8}>
+                <Group gap={8}>
                   <ThemeIcon color="teal" radius="xl" size="sm">
                     <IconCheck size={14} />
                   </ThemeIcon>
-                  <Text color="teal" size="sm" weight="bold">
+                  <Text c="teal" size="sm" fw="bold">
                     Purchased
                   </Text>
                 </Group>
@@ -171,11 +161,11 @@ const RewardDetailsModal = ({
                   size="md"
                 />
               ) : (
-                <Group spacing={8}>
+                <Group gap={8}>
                   <ThemeIcon color="red" radius="xl" size="sm">
                     <IconCircleCheckFilled size={14} />
                   </ThemeIcon>
-                  <Text color="red" size="sm" weight="bold">
+                  <Text c="red" size="sm" fw="bold">
                     Not available
                   </Text>
                 </Group>
@@ -187,7 +177,7 @@ const RewardDetailsModal = ({
           variant="pills"
           radius="xl"
           value={selectedTab}
-          onTabChange={setSelectedTab}
+          onChange={setSelectedTab}
           color="gray"
           styles={{
             tab: {
@@ -205,24 +195,15 @@ const RewardDetailsModal = ({
           <Tabs.Panel value="about" pt="sm">
             <RenderHtml
               html={purchasableReward.about}
-              sx={(theme) => ({
-                fontSize: theme.fontSizes.sm,
-                '[data-youtube-video] iframe': { width: '100% !important', minHeight: 225 },
-              })}
+              className={clsx(classes.renderHtmlYoutube, 'text-sm')}
             />
           </Tabs.Panel>
           <Tabs.Panel value="redeemDetails" pt="sm">
-            <RenderHtml
-              html={purchasableReward.redeemDetails}
-              sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-            />
+            <RenderHtml html={purchasableReward.redeemDetails} className="text-sm" />
           </Tabs.Panel>
           {terms && (
             <Tabs.Panel value="termsOfUse" pt="sm">
-              <RenderHtml
-                html={purchasableReward.termsOfUse}
-                sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-              />
+              <RenderHtml html={purchasableReward.termsOfUse} className="text-sm" />
             </Tabs.Panel>
           )}
           {isPurchased && (
@@ -248,7 +229,6 @@ const PurchasableRewardListItem = ({
 }: {
   purchasableReward: PurchasableRewardGetPaged;
 }) => {
-  const { classes } = useStyles();
   const { purchasedRewards } = useUserPurchasedRewards();
   const isPurchased = purchasedRewards.some(
     (pr) => pr.purchasableReward?.id === purchasableReward.id
@@ -266,7 +246,7 @@ const PurchasableRewardListItem = ({
         });
       }}
     >
-      <Group spacing="xl" align="start">
+      <Group gap="xl" align="start">
         {image && (
           <ImageCSSAspectRatioWrap
             aspectRatio={constants.purchasableRewards.coverImageAspectRatio}
@@ -295,9 +275,9 @@ const PurchasableRewardListItem = ({
             </ImageGuard2>
           </ImageCSSAspectRatioWrap>
         )}
-        <Stack style={{ flex: 1 }} spacing={0}>
-          <Group noWrap position="apart">
-            <Text size="xs" color="dimmed">
+        <Stack style={{ flex: 1 }} gap={0}>
+          <Group wrap="nowrap" justify="space-between">
+            <Text size="xs" c="dimmed">
               Added on {formatDate(purchasableReward.createdAt)}
             </Text>
             {isPurchased ? (
@@ -310,13 +290,13 @@ const PurchasableRewardListItem = ({
           </Group>
           <Text size="xl">{purchasableReward.title}</Text>
           {purchasableReward.availableCount && (
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               {purchasableReward.availableCount - purchasableReward._count.purchases} out of{' '}
               {purchasableReward.availableCount} available
             </Text>
           )}
           {purchasableReward.availableFrom && purchasableReward.availableTo && (
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Available from {formatDate(purchasableReward.availableFrom)} to{' '}
               {formatDate(purchasableReward.availableTo)}
             </Text>
@@ -332,7 +312,6 @@ const PurchasableRewardCard = ({
 }: {
   purchasableReward: PurchasableRewardGetPaged;
 }) => {
-  const { classes } = useStyles();
   const { purchasedRewards } = useUserPurchasedRewards();
   const isPurchased = purchasedRewards.some(
     (pr) => pr.purchasableReward?.id === purchasableReward.id
@@ -341,7 +320,13 @@ const PurchasableRewardCard = ({
   const image = purchasableReward.coverImage;
 
   return (
-    <Grid.Col xs={12} sm={6} md={3}>
+    <Grid.Col
+      span={{
+        base: 12,
+        sm: 6,
+        md: 3,
+      }}
+    >
       <UnstyledButton
         className={classes.rewardCard}
         onClick={() => {
@@ -380,21 +365,21 @@ const PurchasableRewardCard = ({
               </ImageGuard2>
             </ImageCSSAspectRatioWrap>
           )}
-          <Stack spacing={0}>
-            <Text size="xs" color="dimmed">
+          <Stack gap={0}>
+            <Text size="xs" c="dimmed">
               Added on {formatDate(purchasableReward.createdAt)}
             </Text>
             <Text size="xl">{purchasableReward.title}</Text>
           </Stack>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             {purchasableReward.availableCount && (
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 {purchasableReward.availableCount - purchasableReward._count.purchases} out of{' '}
                 {purchasableReward.availableCount} available
               </Text>
             )}
             {purchasableReward.availableFrom && purchasableReward.availableTo && (
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 Available from {formatDate(purchasableReward.availableFrom)} to{' '}
                 {formatDate(purchasableReward.availableTo)}
               </Text>
@@ -441,25 +426,26 @@ export function PurchasableRewards() {
 
   return (
     <Stack>
-      <Stack spacing={4}>
+      <Stack gap={4}>
         <Title order={2}>Deals &amp; Coupons</Title>
         <Text>{`Spend some Buzz to get special deals and coupons`}</Text>
       </Stack>
       <Chip.Group
-        spacing={8}
         value={filters.mode}
-        onChange={(mode: PurchasableRewardViewMode) => {
+        onChange={(mode) => {
           setFilters((f) => ({
             ...f,
-            mode,
+            mode: mode as PurchasableRewardViewMode,
           }));
         }}
       >
-        {Object.values(PurchasableRewardViewMode).map((type, index) => (
-          <Chip key={index} value={type} {...chipProps}>
-            <span>{getDisplayName(type)}</span>
-          </Chip>
-        ))}
+        <Group gap={8}>
+          {Object.values(PurchasableRewardViewMode).map((type, index) => (
+            <Chip key={index} value={type} {...chipProps}>
+              <span>{getDisplayName(type)}</span>
+            </Chip>
+          ))}
+        </Group>
       </Chip.Group>
       {isLoading ? (
         <Center p="xl">
@@ -482,7 +468,7 @@ export function PurchasableRewards() {
           )}
 
           {filters.mode === PurchasableRewardViewMode.Purchased && (
-            <Stack sx={{ maxWidth: 800 }}>
+            <Stack style={{ maxWidth: 800 }}>
               {purchasableRewards.map((purchasableReward) => {
                 return (
                   <PurchasableRewardListItem
@@ -495,10 +481,10 @@ export function PurchasableRewards() {
           )}
 
           {pagination && pagination.totalPages > 1 && (
-            <Group position="apart">
+            <Group justify="space-between">
               <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
               <Pagination
-                page={filters.page}
+                value={filters.page}
                 onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                 total={pagination.totalPages}
               />

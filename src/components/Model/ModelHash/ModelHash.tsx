@@ -2,6 +2,7 @@ import { ActionIcon, Badge, CopyButton, Group, MantineColor, Tooltip } from '@ma
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelHashType } from '~/shared/utils/prisma/enums';
 
 export const ModelHash = ({
@@ -30,12 +31,12 @@ export const ModelHash = ({
   };
 
   return (
-    <Group spacing={0} noWrap sx={{ userSelect: 'none' }}>
+    <Group gap={0} wrap="nowrap" style={{ userSelect: 'none' }}>
       <Badge
         variant="outline"
         color={color}
         px={6}
-        sx={{
+        style={{
           // width: 60,
           borderTopRightRadius: 0,
           borderBottomRightRadius: 0,
@@ -52,7 +53,7 @@ export const ModelHash = ({
               px={6}
               variant="outline"
               color={copied ? 'teal' : color}
-              sx={{
+              style={{
                 cursor: 'pointer',
                 overflow: 'hidden',
                 width,
@@ -61,7 +62,7 @@ export const ModelHash = ({
                 borderTopRightRadius: hasMore ? 0 : undefined,
                 borderBottomRightRadius: hasMore ? 0 : undefined,
               }}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.stopPropagation();
                 copy();
               }}
@@ -72,24 +73,24 @@ export const ModelHash = ({
         )}
       </CopyButton>
       {hasMore && (
-        <ActionIcon
+        <LegacyActionIcon
           px={2}
           size={20}
           variant="outline"
           color={color}
-          sx={{
+          style={{
             borderTopLeftRadius: 0,
             borderBottomLeftRadius: 0,
             borderLeft: 0,
             cursor: 'pointer',
           }}
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
             handleNext();
           }}
         >
           <IconChevronRight />
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
     </Group>
   );

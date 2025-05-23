@@ -46,32 +46,28 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
       <Stack>
         {modelTags.length > 0 ? (
           <>
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               Select the tags you want to add to your blocking list
             </Text>
-            <Chip.Group
-              spacing={4}
-              position="center"
-              value={selectedTags}
-              onChange={setSelectedTags}
-              multiple
-            >
-              {modelTags.map((tag) => {
-                const selected = selectedTags.includes(String(tag.id));
+            <Chip.Group value={selectedTags} onChange={setSelectedTags} multiple>
+              <Group gap={4} justify="center">
+                {modelTags.map((tag) => {
+                  const selected = selectedTags.includes(String(tag.id));
 
-                return (
-                  <Chip
-                    key={tag.id}
-                    color={selected ? 'red' : undefined}
-                    radius="xs"
-                    value={String(tag.id)}
-                  >
-                    <span>{tag.name}</span>
-                  </Chip>
-                );
-              })}
+                  return (
+                    <Chip
+                      key={tag.id}
+                      color={selected ? 'red' : undefined}
+                      radius="xs"
+                      value={String(tag.id)}
+                    >
+                      <span>{tag.name}</span>
+                    </Chip>
+                  );
+                })}
+              </Group>
             </Chip.Group>
-            <Group position="apart">
+            <Group justify="space-between">
               <Button variant="default" onClick={context.close}>
                 Cancel
               </Button>
@@ -83,7 +79,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
         ) : (
           <>
             <Text>{`This model doesn't have any tags`}</Text>
-            <Group position="right">
+            <Group justify="flex-end">
               <Button variant="default" onClick={context.close}>
                 Close
               </Button>

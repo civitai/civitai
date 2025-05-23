@@ -1,7 +1,7 @@
 import {
   MultiSelect,
   MultiSelectProps,
-  SelectItem,
+  ComboboxItem,
   ScrollArea,
   ScrollAreaProps,
   Divider,
@@ -11,7 +11,7 @@ import {
 import { IconSearch } from '@tabler/icons-react';
 import React, { useMemo, forwardRef } from 'react';
 
-type SelectItemProps<T extends string | number> = Omit<SelectItem, 'value'> & {
+type SelectItemProps<T extends string | number> = Omit<ComboboxItem, 'value'> & {
   value: T;
 };
 
@@ -41,12 +41,12 @@ export function MultiSelectWrapper<T extends string | number>({
   const initialType =
     !data.length || (typeof data[0] !== 'object' ? typeof data[0] : typeof data[0].value);
 
-  const parsedData = data.map((x): string | SelectItem => {
+  const parsedData = data.map((x): string | ComboboxItem => {
     if (typeof x === 'string') return x;
     return {
       ...x,
       value: String(x.value),
-    } as SelectItem;
+    } as ComboboxItem;
   });
 
   const parsedValue = useMemo(() => (value ? value?.map(String) : undefined), [value]);
@@ -70,7 +70,7 @@ export function MultiSelectWrapper<T extends string | number>({
   return (
     <MultiSelectContext.Provider value={{ limit: props.limit }}>
       <MultiSelect
-        data={parsedData as (string | SelectItem)[]}
+        data={parsedData as (string | ComboboxItem)[]}
         value={parsedValue}
         onChange={handleChange}
         onPaste={
@@ -83,11 +83,11 @@ export function MultiSelectWrapper<T extends string | number>({
               }
             : undefined
         }
-        dropdownComponent={
-          props.searchable && (!props.limit || props.limit > data.length)
-            ? undefined
-            : OverflowScrollArea
-        }
+        // dropdownComponent={
+        //   props.searchable && (!props.limit || props.limit > data.length)
+        //     ? undefined
+        //     : OverflowScrollArea
+        // }
         defaultValue={parsedDefaultValue}
         {...props}
         rightSection={loading ? <Loader size={16} /> : null}
@@ -96,6 +96,7 @@ export function MultiSelectWrapper<T extends string | number>({
   );
 }
 
+// TODO: Mantine7: Consider removing this
 export const OverflowScrollArea = forwardRef<HTMLDivElement, ScrollAreaProps>(
   ({ style, ...others }: ScrollAreaProps, ref) => {
     const { limit } = useMultiSelectContext();

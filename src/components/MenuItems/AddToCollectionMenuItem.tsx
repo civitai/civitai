@@ -4,14 +4,13 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function AddToCollectionMenuItem({ onClick }: Props) {
-  const theme = useMantineTheme();
   const features = useFeatureFlags();
 
   return (
     <LoginRedirect reason="add-to-collection">
       <Menu.Item
         icon={<IconBookmark size={14} stroke={1.5} />}
-        onClick={(e) => {
+        onClick={(e: React.MouseEvent) => {
           e.preventDefault();
           e.stopPropagation();
           onClick();

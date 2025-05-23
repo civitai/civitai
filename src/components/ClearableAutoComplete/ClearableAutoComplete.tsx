@@ -39,4 +39,5 @@ ClearableAutoComplete.displayName = 'ClearableAutoComplete';
 type Props = AutocompleteProps & {
   clearable?: boolean;
   onClear?: () => void;
+  className?: string;
 };

@@ -15,7 +15,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: n
   name: 'unpublishModel',
   title: 'Unpublish as Violation',
   Element: ({ context, props: { modelId, versionId } }) => {
-    const queryUtils = trpc.useContext();
+    const queryUtils = trpc.useUtils();
     const [reason, setReason] = useState<UnpublishReason | undefined>();
     const [customMessage, setCustomMessage] = useState<string>('');
     const [error, setError] = useState<string>('');
@@ -63,14 +63,12 @@ const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: n
 
     return (
       <Stack>
-        <Radio.Group
-          orientation="vertical"
-          value={reason}
-          onChange={(value: UnpublishReason) => setReason(value)}
-        >
-          {reasonOptions.map((reason) => (
-            <Radio key={reason.value} value={reason.value} label={reason.label} />
-          ))}
+        <Radio.Group value={reason} onChange={(value) => setReason(value as UnpublishReason)}>
+          <Stack>
+            {reasonOptions.map((reason) => (
+              <Radio key={reason.value} value={reason.value} label={reason.label} />
+            ))}
+          </Stack>
         </Radio.Group>
         {reason && (
           <>
@@ -84,7 +82,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: n
               error={error}
               withAsterisk={reason === 'other'}
             />
-            <Group position="right">
+            <Group justify="flex-end">
               <Button onClick={handleUnpublish} loading={loading}>
                 Unpublish
               </Button>

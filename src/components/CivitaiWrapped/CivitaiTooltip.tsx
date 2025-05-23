@@ -4,7 +4,9 @@ const variants: Record<string, Partial<TooltipProps>> = {
   smallRounded: {
     offset: 5,
     radius: 'lg',
-    transitionDuration: 500,
+    transitionProps: {
+      duration: 500,
+    },
     openDelay: 100,
     closeDelay: 250,
     styles: {
@@ -20,7 +22,9 @@ const variants: Record<string, Partial<TooltipProps>> = {
   roundedOpaque: {
     // offset: 5,
     radius: 'lg',
-    transitionDuration: 200,
+    transitionProps: {
+      duration: 500,
+    },
     styles: {
       tooltip: {
         maxWidth: 500,
@@ -36,7 +40,7 @@ export function CivitaiTooltip({ variant, ...props }: CivitaiTooltipProps) {
   const variantProps = variant ? variants[variant] : {};
   if (variant === 'smallRounded')
     props.label = (
-      <Text size="xs" weight={500}>
+      <Text size="xs" fw={500}>
         {props.label}
       </Text>
     );

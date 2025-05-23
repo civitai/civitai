@@ -1,4 +1,4 @@
-import { Input, Text, useMantineTheme } from '@mantine/core';
+import { Input, Text, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import dayjs from 'dayjs';
@@ -27,6 +27,7 @@ export function MediaDropzone({
   // #region [state]
   const settings = useMediaUploadSettingsContext();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   // Replaces image/* and video/* with .jpg, .png, .mp4, etc.
   // zips do not show up correctly without these extra 2 "zip" files, but we don't want to show them
   const fileExtensions = accept
@@ -76,14 +77,14 @@ export function MediaDropzone({
             <IconUpload
               size={50}
               stroke={1.5}
-              color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Accept>
           <Dropzone.Reject>
             <IconX
               size={50}
               stroke={1.5}
-              color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Reject>
           <Dropzone.Idle>
@@ -94,17 +95,17 @@ export function MediaDropzone({
               {label ?? 'Drag images here or click to select files'}
             </Text>
             {description}
-            <Text size="sm" color="dimmed" mt={7} inline>
+            <Text size="sm" c="dimmed" mt={7} inline>
               {settings?.maxItems
                 ? `Attach up to ${settings?.maxItems} files`
                 : 'Attach as many files as you like'}
             </Text>
 
-            {/* <Text size="sm" color="dimmed" inline>
+            {/* <Text size="sm" c="dimmed" inline>
               {`Images cannot exceed ${formatBytes(maxSize)} `}
             </Text> */}
             {allowsVideo && (
-              <Text size="sm" color="dimmed" align="center" inline>
+              <Text size="sm" c="dimmed" align="center" inline>
                 {`Videos cannot exceed ${formatBytes(
                   maxVideoSize
                 )}, 4K resolution, or ${durationLabel} in duration`}

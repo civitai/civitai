@@ -1,17 +1,8 @@
-import {
-  ButtonProps,
-  Popover,
-  Text,
-  DefaultMantineColor,
-  Group,
-  ThemeIcon,
-  createStyles,
-} from '@mantine/core';
+import { ButtonProps, Popover, Text, DefaultMantineColor, Group, ThemeIcon } from '@mantine/core';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import dayjs from 'dayjs';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type VerifiedFile = {
   virusScanResult: ScanResultCode;
@@ -43,7 +34,6 @@ const statusMessage: Record<ScanResultCode, string> = {
 const StatusCodeOrder = ['Pending', 'Danger', 'Error', 'Success'] as const;
 
 export function VerifiedText({ file, iconOnly }: Props) {
-  const { classes } = useStyles();
   if (!file) return null;
 
   const { virusScanResult, virusScanMessage, pickleScanResult, pickleScanMessage, scannedAt } =
@@ -59,16 +49,16 @@ export function VerifiedText({ file, iconOnly }: Props) {
   const scannedDate = !scannedAt ? null : dayjs(scannedAt);
 
   return (
-    <Group spacing={4} noWrap>
+    <Group gap={4} wrap="nowrap">
       <ThemeIcon color={color} size="xs">
         {icon}
       </ThemeIcon>
       {!iconOnly ? (
-        <Text color="dimmed" size="xs">
+        <Text c="dimmed" size="xs">
           <Text component="span">{verified ? 'Verified' : 'Unverified'}: </Text>
           <Popover withArrow width={350} position="bottom" withinPortal>
             <Popover.Target>
-              <Text component="a" sx={{ cursor: 'pointer' }}>
+              <Text component="a" style={{ cursor: 'pointer' }}>
                 {scannedDate ? (
                   <abbr title={scannedDate.format()}>{scannedDate.fromNow()}</abbr>
                 ) : (
@@ -77,7 +67,7 @@ export function VerifiedText({ file, iconOnly }: Props) {
               </Text>
             </Popover.Target>
             <Popover.Dropdown>
-              <Text weight={500} size="md" color={verified ? 'green' : 'red'} pb={5}>
+              <Text fw={500} size="md" color={verified ? 'green' : 'red'} pb={5}>
                 File {verified ? 'Verified' : 'Unverified'}
               </Text>
               <Text pb={5}>{defaultMessage}</Text>
@@ -93,7 +83,7 @@ export function VerifiedText({ file, iconOnly }: Props) {
                 target="_blank"
                 rel="nofollow noreferrer"
                 size="xs"
-                color="dimmed"
+                c="dimmed"
                 td="underline"
               >
                 What does this mean?
@@ -105,11 +95,3 @@ export function VerifiedText({ file, iconOnly }: Props) {
     </Group>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  hideSm: {
-    [containerQuery.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-}));

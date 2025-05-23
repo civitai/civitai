@@ -29,7 +29,7 @@ export function PostControls({
   const isOwnerOrModerator = isOwner || isModerator;
 
   return (
-    <Menu position="bottom-end" transition="pop-top-right">
+    <Menu position="bottom-end" transitionProps={{ transition: 'pop-top-right' }} withArrow>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
         {/* TODO.posts - reports */}

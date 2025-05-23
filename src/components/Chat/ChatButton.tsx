@@ -4,6 +4,7 @@ import { useChatContext } from '~/components/Chat/ChatProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function ChatButton() {
   const { state, setState } = useChatContext();
@@ -27,24 +28,26 @@ export function ChatButton() {
         disabled={unreadLoading || !totalUnread}
         // processing={unreadLoading} (this doesn't work)
         label={totalUnread}
-        inline
         size={16}
         offset={4}
-        withBorder
+        className="flex items-center"
         styles={{
           indicator: {
             height: '20px !important',
             '> span': { marginBottom: '2px' },
           },
         }}
+        withBorder
+        inline
       >
-        <ActionIcon
-          variant={state.open ? 'filled' : undefined}
+        <LegacyActionIcon
+          variant={state.open ? 'filled' : 'subtle'}
+          color="gray"
           onClick={() => setState((prev) => ({ ...prev, open: !state.open }))}
           data-testid="open-chat"
         >
           <IconMessage2 />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Indicator>
     </>
   );

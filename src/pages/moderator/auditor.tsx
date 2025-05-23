@@ -81,7 +81,7 @@ export default function MetadataTester() {
       <Stack>
         <Group align="flex-end">
           <Title>Prompt Tester</Title>
-          <Group spacing={4} ml="auto">
+          <Group gap={4} ml="auto">
             <Badge color="red" variant="light">
               Blocked Word
             </Badge>
@@ -105,10 +105,10 @@ export default function MetadataTester() {
         <Group grow align="flex-start">
           {Object.entries(results).map(([key, values]) => (
             <Box key={key} w="50%" px="xs">
-              <Text size="lg" weight={500} tt="uppercase" mb="sm">
+              <Text size="lg" fw={500} tt="uppercase" mb="sm">
                 {key}
               </Text>
-              <Stack spacing="xs">
+              <Stack gap="xs">
                 {values.map(({ highlighted, tags, replaced }) => (
                   <Card withBorder key={highlighted}>
                     <div dangerouslySetInnerHTML={{ __html: highlighted }} />
@@ -117,13 +117,13 @@ export default function MetadataTester() {
                         <Divider label="Cleaned" mt="xs" />
                         <Text>{replaced.prompt}</Text>
                         {replaced.negativePrompt && (
-                          <Text color="dimmed">{replaced.negativePrompt}</Text>
+                          <Text c="dimmed">{replaced.negativePrompt}</Text>
                         )}
                       </>
                     )}
                     <div></div>
                     {tags.length > 0 && (
-                      <Group spacing={4} mt="sm">
+                      <Group gap={4} mt="sm">
                         {tags.map((tag) => (
                           <Badge size="xs" key={tag}>
                             {tag}

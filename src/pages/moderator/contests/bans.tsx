@@ -19,6 +19,7 @@ import { BackButton } from '~/components/BackButton/BackButton';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditorComponent';
@@ -42,7 +43,7 @@ function ContestBanUserModal() {
       await queryUtils.user.getAll.invalidate({ contestBanned: true });
       dialog.onClose();
     },
-    onError(_error, _vars, context) {
+    onError() {
       showErrorNotification({
         error: new Error('Unable to ban user, please try again.'),
       });
@@ -62,11 +63,11 @@ function ContestBanUserModal() {
   return (
     <Modal {...dialog} size="sm" withCloseButton={false} radius="md">
       <Stack>
-        <Stack spacing="xs">
-          <Text size="md" weight={500}>
+        <Stack gap="xs">
+          <Text size="md" fw={500}>
             Select user to ban
           </Text>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Banning will be immediate. The user will not be able to participate in any future
             contests until unbanned. This will not affect current submissions.
           </Text>
@@ -97,7 +98,7 @@ function ContestBanUserModal() {
 
         <Button
           color="red"
-          leftIcon={<IconBan size={14} />}
+          leftSection={<IconBan size={14} />}
           disabled={!selectedUser || !banReason}
           loading={toggleBanMutation.isLoading}
           onClick={onToggleBanUser}
@@ -114,19 +115,17 @@ export default function ContestsBans() {
     data: users = [],
     isLoading,
     isFetching,
-  } = trpc.user.getAll.useQuery(
-    {
-      contestBanned: true,
-    },
-  );
+  } = trpc.user.getAll.useQuery({
+    contestBanned: true,
+  });
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onSuccess() {
       await queryUtils.user.getAll.invalidate({ contestBanned: true });
     },
-    onError(_error, _vars, context) {
+    onError() {
       showErrorNotification({
         error: new Error('Unable to ban user, please try again.'),
       });
@@ -149,14 +148,14 @@ export default function ContestsBans() {
             <BackButton url="/moderator/contests" />
             <Title order={1}>Contest - Banned Users</Title>
           </Group>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You can add or remove banned users from contests. Banning a user from contests will
             prevent them from participating in any future contests. They will still be able to view
             the contests, but will not be able to submit entries.
           </Text>
           <Button
             color="red"
-            leftIcon={<IconBan size={14} />}
+            leftSection={<IconBan size={14} />}
             onClick={() => {
               dialogStore.trigger({
                 component: ContestBanUserModal,
@@ -174,7 +173,7 @@ export default function ContestsBans() {
             </Center>
           ) : users?.length ?? 0 ? (
             <Stack>
-              <Table highlightOnHover withBorder>
+              <Table highlightOnHover withTableBorder>
                 <thead>
                   <tr>
                     <th>Username</th>
@@ -187,7 +186,7 @@ export default function ContestsBans() {
                   {users.map((user) => (
                     <tr key={user.id}>
                       <td>
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           <Text>{user.username}</Text>
                         </Group>
                       </td>
@@ -195,7 +194,7 @@ export default function ContestsBans() {
                         {user.meta?.contestBanDetails?.detailsInternal ? (
                           <RenderHtml
                             html={user.meta?.contestBanDetails?.detailsInternal}
-                            sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                            style={(theme) => ({ fontSize: theme.fontSizes.sm })}
                           />
                         ) : (
                           'N/A'
@@ -208,7 +207,7 @@ export default function ContestsBans() {
                       </td>
 
                       <td>
-                        <ActionIcon
+                        <LegacyActionIcon
                           onClick={() => {
                             onToggleBanUser(user.id);
                           }}
@@ -217,7 +216,7 @@ export default function ContestsBans() {
                           <Tooltip label="Unban">
                             <IconTrashOff size={16} />
                           </Tooltip>
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </td>
                     </tr>
                   ))}

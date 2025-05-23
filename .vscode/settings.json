@@ -16,6 +16,24 @@
     "@prisma/client"
   ],
   "makefile.configureOnOpen": false,
+  "chat.agent.enabled": true,
+  "mcp": {
+    "servers": {
+      "Context7": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@upstash/context7-mcp@latest"]
+      }
+    }
+  },
+  "github.copilot.chat.codeGeneration.instructions": [
+    {
+      "file": ".vscode/rules/mantine-migration.md"
+    },
+    {
+      "file": ".vscode/rules/migrate-createStyles.md"
+    }
+  ],
   "sqltools.connections": [
     {
       "previewLimit": 50,

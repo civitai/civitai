@@ -2,7 +2,6 @@ import {
   Box,
   Button,
   Center,
-  createStyles,
   Group,
   Input,
   InputWrapperProps,
@@ -31,7 +30,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import classes from './ShowcaseItemsInput.module.scss';
 
 type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ShowcaseItemSchema[];
@@ -40,30 +39,6 @@ type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> 
   limit?: number;
 };
 
-const useStyles = createStyles((theme) => ({
-  selectedItemsGrid: {
-    display: 'grid',
-    gridTemplateColumns: `repeat(5, 1fr)`,
-    gridGap: 4,
-
-    [containerQuery.smallerThan('sm')]: {
-      gridTemplateColumns: `repeat(3, 1fr)`,
-    },
-  },
-  selectedItemRemove: {
-    position: 'absolute',
-    top: '-10px',
-    left: '-10px',
-    width: '30px',
-    height: '30px',
-    borderRadius: '50%',
-    padding: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-}));
-
 export const ShowcaseItemsInput = ({
   value,
   onChange,
@@ -71,7 +46,6 @@ export const ShowcaseItemsInput = ({
   limit = 15,
   ...props
 }: ShowcaseItemsInputProps) => {
-  const { classes } = useStyles();
   const [showcaseItems, setShowcaseItems] = useState<ShowcaseItemSchema[]>(value || []);
   const [error, setError] = useState('');
   // Sort them so that we don't retrigger a query when the order changes.
@@ -152,7 +126,7 @@ export const ShowcaseItemsInput = ({
 
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
-      <Stack spacing="xs" mt="sm">
+      <Stack gap="xs" mt="sm">
         {username && (
           <QuickSearchDropdown
             supportedIndexes={['models', 'images']}
@@ -226,7 +200,7 @@ export const ShowcaseItemsInput = ({
                 </Box>
               ) : (
                 <Center>
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     You have not selected any items to showcase.
                   </Text>
                 </Center>

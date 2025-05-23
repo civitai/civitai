@@ -5,6 +5,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { trpc } from '~/utils/trpc';
+import classes from './NotFound.module.scss';
 
 export function NotFound() {
   const isClient = useIsClient();
@@ -25,26 +26,14 @@ export function NotFound() {
       <Meta title="Page Not Found" deIndex />
 
       <Container size="md">
-        <Stack align="center" spacing={0}>
+        <Stack align="center" gap={0}>
           <Title order={1} lh={1}>
             404
           </Title>
           <Text size="lg">The page you are looking for doesn&apos;t exist</Text>
 
-          <Stack spacing={4} my="xl">
-            <Box
-              sx={(theme) => ({
-                height: 400,
-                display: 'flex',
-                img: {
-                  margin: '0 auto',
-                  height: '100%',
-                  width: 'auto',
-                  borderRadius: theme.radius.sm,
-                  boxShadow: theme.shadows.md,
-                },
-              })}
-            >
+          <Stack gap={4} my="xl">
+            <Box classeName={classes.imageContainer}>
               {image ? (
                 <EdgeMedia src={image.url} width={700} alt={image.alt} />
               ) : (

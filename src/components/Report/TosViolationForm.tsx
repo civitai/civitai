@@ -1,4 +1,4 @@
-import { Radio } from '@mantine/core';
+import { Radio, Stack } from '@mantine/core';
 import { createReportForm } from '~/components/Report/create-report-form';
 import { InputRadioGroup, InputTextArea } from '~/libs/form';
 import { reportTosViolationDetailsSchema } from '~/server/schema/report.schema';
@@ -21,10 +21,12 @@ export const TosViolationForm = createReportForm({
 
     return (
       <>
-        <InputRadioGroup name="violation" label="Violation" withAsterisk orientation="vertical">
-          {violations.map((value, index) => (
-            <Radio key={index} value={value} label={value} />
-          ))}
+        <InputRadioGroup name="violation" label="Violation" withAsterisk>
+          <Stack>
+            {violations.map((value, index) => (
+              <Radio key={index} value={value} label={value} />
+            ))}
+          </Stack>
         </InputRadioGroup>
         {violation === violations[0] && (
           <InputTextArea

@@ -77,7 +77,7 @@ export function PostEditForm() {
         styles={{ input: { fontWeight: 600, padding: 0 } }}
         autosize
       />
-      <Group spacing="sm">{post && <EditPostTags post={post} autosuggest={false} />}</Group>
+      <Group gap="sm">{post && <EditPostTags post={post} autosuggest={false} />}</Group>
       <CollectionSelectDropdown />
       <InputRTE
         name="detail"

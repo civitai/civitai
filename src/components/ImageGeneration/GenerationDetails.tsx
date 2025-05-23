@@ -51,7 +51,7 @@ export function GenerationDetails({
     >
       <Accordion.Item value="details">
         <Accordion.Control {...controlProps}>
-          <Text size="sm" weight={500}>
+          <Text size="sm" fw={500}>
             {label}
           </Text>
         </Accordion.Control>

@@ -1,0 +1,54 @@
+.section {
+  @mixin dark {
+    background-color: var(--mantine-color-dark-6);
+  }
+  
+  @container (max-width: theme('screens.sm')) {
+    padding: var(--mantine-spacing-md, 16px);
+  }
+}
+
+.component {
+  &:not(:first-of-type) {
+    padding-top: var(--mantine-spacing-sm, 8px);
+    border-top: light-dark(
+      1px solid var(--mantine-color-gray-2),
+      1px solid var(--mantine-color-dark-4)
+    );
+  }
+}
+
+.componentTitleWrapper {
+  @container (max-width: theme('screens.sm')) {
+    flex-direction: row-reverse;
+    width: 100%;
+  }
+}
+
+.chipLabel {
+  &[data-variant="filled"] {
+    &[data-checked] {
+      &, &:hover {
+        color: var(--mantine-color-blue-4);
+        background-color: alpha(var(--mantine-color-blue-6), 0.2);
+        padding: 0 var(--mantine-spacing-lg);
+      }
+    }
+  }
+}
+
+.chipIconWrapper {
+  display: none;
+}
+
+.hideMobile {
+  @container (max-width: theme('screens.sm')) {
+    display: none;
+  }
+}
+
+.hideDesktop {
+  @container (min-width: theme('screens.sm')) {
+    display: none;
+  }
+}

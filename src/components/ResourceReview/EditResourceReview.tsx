@@ -103,15 +103,15 @@ export function EditResourceReview({
 
   return (
     <Card p={8} data-tour="post:rate-resource" withBorder>
-      <Stack spacing="xs">
+      <Stack gap="xs">
         {modelId && modelVersionId ? (
-          <Stack spacing={4}>
-            <Group align="center" position="apart">
+          <Stack gap={4}>
+            <Group align="center" justify="space-between">
               <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} target="_blank">
-                <Stack spacing={0} sx={{ cursor: 'pointer' }}>
+                <Stack gap={0} style={{ cursor: 'pointer' }}>
                   {modelName && <Text lineClamp={1}>{modelName}</Text>}
                   {modelVersionName && (
-                    <Text lineClamp={1} size="xs" color="dimmed">
+                    <Text lineClamp={1} size="xs" c="dimmed">
                       {modelVersionName}
                     </Text>
                   )}
@@ -119,7 +119,7 @@ export function EditResourceReview({
               </Link>
             </Group>
             {createdAt && (
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 Reviewed <DaysFromNow date={createdAt} />
               </Text>
             )}
@@ -133,8 +133,8 @@ export function EditResourceReview({
                 onClick={() => (!isThumbsUp ? handleRatingChange(true) : undefined)}
                 fullWidth
               >
-                <Text color="success.5" size="xs" inline>
-                  <Group spacing={4} noWrap>
+                <Text c="success.5" size="xs" inline>
+                  <Group gap={4} wrap="nowrap">
                     <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
                   </Group>
                 </Text>
@@ -147,7 +147,7 @@ export function EditResourceReview({
                 onClick={() => (!isThumbsDown ? handleRatingChange(false) : undefined)}
                 fullWidth
               >
-                <Text color="red" inline>
+                <Text c="red" inline>
                   <ThumbsDownIcon size={20} filled={isThumbsDown} />
                 </Text>
               </Button>
@@ -163,14 +163,14 @@ export function EditResourceReview({
           <Stack>
             {!editDetail ? (
               <Text variant="link" onClick={toggleEditDetail} size="sm">
-                <Group spacing={4} sx={{ cursor: 'pointer' }}>
+                <Group gap={4} style={{ cursor: 'pointer' }}>
                   <IconChevronDown size={16} />{' '}
                   <span>{!details ? 'Add' : 'Edit'} Review Comments</span>
                 </Group>
               </Text>
             ) : (
               <Form form={form} onSubmit={handleSubmit}>
-                <Stack spacing={4}>
+                <Stack gap={4}>
                   <InputRTE
                     name="details"
                     includeControls={['formatting', 'link']}
@@ -196,7 +196,7 @@ export function EditResourceReview({
                     hideToolbar
                     autoFocus
                   />
-                  <Group grow spacing={4}>
+                  <Group grow gap={4}>
                     <Button
                       size="xs"
                       variant="default"
@@ -216,7 +216,7 @@ export function EditResourceReview({
             )}
           </Stack>
         ) : (
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             What did you think of this resource?
           </Text>
         )}

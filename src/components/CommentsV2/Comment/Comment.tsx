@@ -7,7 +7,6 @@ import {
   Text,
   Button,
   Box,
-  createStyles,
   UnstyledButton,
   Divider,
   ThemeIcon,
@@ -47,6 +46,9 @@ import { openReportModal } from '~/components/Dialog/dialog-registry';
 import type { Comment } from '~/server/services/commentsv2.service';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import classes from './Comment.module.css';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Store = {
   id?: number;
@@ -90,8 +92,6 @@ export function CommentContent({
     entityType: 'comment',
   });
 
-  const { classes, cx } = useCommentStyles();
-
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
 
@@ -130,14 +130,14 @@ export function CommentContent({
     <Group
       id={`comment-${comment.id}`}
       align="flex-start"
-      noWrap
+      wrap="nowrap"
       {...groupProps}
-      spacing="sm"
-      className={cx(groupProps.className, classes.groupWrap, {
+      gap="sm"
+      className={clsx(groupProps.className, classes.groupWrap, {
         [classes.highlightedComment]: highlightProp || isHighlighted,
       })}
     >
-      <Group spacing="xs">
+      <Group gap="xs">
         {/* {replyCount > 0 && !viewOnly && !isExpanded && (
           <UnstyledButton onClick={onToggleReplies}>
             <IconArrowsMaximize size={16} />
@@ -146,10 +146,10 @@ export function CommentContent({
         <UserAvatar user={comment.user} size="sm" linkToProfile />
       </Group>
 
-      <Stack spacing={0} style={{ flex: 1 }}>
-        <Group position="apart">
+      <Stack gap={0} style={{ flex: 1 }}>
+        <Group justify="space-between">
           {/* AVATAR */}
-          <Group spacing={8} align="center">
+          <Group gap={8} align="center">
             <UserAvatar
               user={comment.user}
               size="md"
@@ -158,7 +158,7 @@ export function CommentContent({
               withUsername
               badge={badge ? <CommentBadge {...badge} /> : null}
             />
-            <Text color="dimmed" size="xs" mt={2}>
+            <Text c="dimmed" size="xs" mt={2}>
               <DaysFromNow date={comment.createdAt} />
             </Text>
             {comment.pinnedAt && (
@@ -171,9 +171,9 @@ export function CommentContent({
           {/* CONTROLS */}
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
-              <ActionIcon size="xs" variant="subtle">
+              <LegacyActionIcon size="xs" variant="subtle">
                 <IconDotsVertical size={14} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
               {canDelete && (
@@ -246,31 +246,30 @@ export function CommentContent({
           </Menu>
         </Group>
         {/* COMMENT / EDIT COMMENT */}
-        <Stack style={{ flex: 1 }} spacing={4}>
+        <Stack style={{ flex: 1 }} gap={4}>
           {!editing ? (
             <>
               <Box my={5}>
                 <LineClamp lineClamp={3}>
                   <RenderHtml
                     html={comment.content}
-                    sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                    className="text-sm"
                     allowCustomStyles={false}
                   />
                 </LineClamp>
               </Box>
               {/* COMMENT INTERACTION */}
-              <Group spacing={4}>
+              <Group gap={4}>
                 <CommentReactions comment={comment} />
                 {canReply && !viewOnly && (
                   <Button
                     variant="subtle"
-                    size="xs"
                     radius="xl"
                     onClick={() => setReplying(true)}
-                    compact
+                    size="compact-xs"
                     color="gray"
                   >
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <IconArrowBackUp size={14} />
                       Reply
                     </Group>
@@ -297,8 +296,8 @@ export function CommentContent({
         {replyCount > 0 && !viewOnly && !isExpanded && (
           <Divider
             label={
-              <Group spacing="xs" align="center">
-                <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onToggleReplies}>
+              <Group gap="xs" align="center">
+                <Text variant="link" style={{ cursor: 'pointer' }} onClick={onToggleReplies}>
                   Show {replyCount} More
                 </Text>
               </Group>
@@ -314,34 +313,3 @@ export function CommentContent({
     </Group>
   );
 }
-
-export const useCommentStyles = createStyles((theme) => ({
-  highlightedComment: {
-    background: theme.fn.rgba(theme.colors.blue[5], 0.2),
-    margin: `-${theme.spacing.xs}px`,
-    padding: `${theme.spacing.xs}px`,
-    borderRadius: theme.radius.sm,
-  },
-  groupWrap: {
-    position: 'relative',
-  },
-  repliesIndicator: {
-    position: 'absolute',
-    top: 26 + 8,
-    width: 2,
-    height: 'calc(100% - 26px - 8px)',
-    background: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.31)',
-    // Size of the image / 2, minus the size of the border / 2
-    left: 26 / 2 - 2 / 2,
-    '&:hover': {
-      background: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)',
-    },
-  },
-  replyInset: {
-    // Size of the image / 2, minus the size of the border / 2
-    marginLeft: -12,
-  },
-  rootCommentReplyInset: {
-    paddingLeft: 46,
-  },
-}));

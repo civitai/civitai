@@ -1,10 +1,8 @@
 import {
-  Box,
   Button,
   ButtonProps,
   Card,
   Center,
-  createStyles,
   Group,
   Select,
   Stack,
@@ -47,7 +45,6 @@ import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schem
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { SubscriptionPlan, UserSubscription } from '~/server/services/subscriptions.service';
 import { isHolidaysTime } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -80,7 +77,6 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const features = useFeatureFlags();
   const hasActiveSubscription = subscription?.status === 'active';
   const _isActivePlan = hasActiveSubscription && subscription?.product?.id === product.id;
-  const { classes } = useStyles();
   const meta = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const subscriptionMeta = (subscription?.product.metadata ?? {}) as SubscriptionProductMetadata;
   const defaultPriceId = _isActivePlan
@@ -132,45 +128,45 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     !isActivePlan && appliesForFounderDiscount(metadata?.tier) && features.membershipsV2;
 
   return (
-    <Card className={classes.card}>
+    <Card className="h-full rounded-md bg-gray-0 p-5 dark:bg-dark-8">
       <Stack justify="space-between" style={{ height: '100%' }}>
         <Stack>
-          <Stack spacing="md" mb="md">
-            <Title className={classes.title} order={2} align="center" mb="sm">
+          <Stack gap="md" mb="md">
+            <Title className="text-center text-xl @sm:text-2xl" order={2} mb="sm">
               {product.name}
             </Title>
             {image && (
               <Center>
-                <Box w={128} h={128}>
-                  <EdgeMedia src={image} className={classes.image} />
-                </Box>
+                <div className="mb-[10px] w-24 @sm:mb-0 @sm:w-32">
+                  <EdgeMedia src={image} className="size-full object-cover" />
+                </div>
               </Center>
             )}
-            <Stack spacing={0} align="center">
+            <Stack gap={0} align="center">
               {appliesForDiscount ? (
-                <Stack spacing={0} align="center">
+                <Stack gap={0} align="center">
                   <Text td="line-through" color="gray" component="span" align="center" lh={1}>
                     {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                   </Text>
-                  <Group position="center" spacing={4} align="flex-end">
-                    <Text className={classes.price} align="center" lh={1}>
+                  <Group justify="center" gap={4} align="flex-end">
+                    <Text className="text-5xl font-bold" align="center" lh={1}>
                       {getStripeCurrencyDisplay(
                         price.unitAmount *
                           (constants.memberships.founderDiscount.discountPercent / 100),
                         price.currency
                       )}
                     </Text>
-                    <Text align="center" color="dimmed">
+                    <Text align="center" c="dimmed">
                       / {shortenPlanInterval(price.interval)}
                     </Text>
                   </Group>
                 </Stack>
               ) : (
-                <Group position="center" spacing={4} align="flex-end">
-                  <Text className={classes.price} align="center" lh={1}>
+                <Group justify="center" gap={4} align="flex-end">
+                  <Text className="text-5xl font-bold" align="center" lh={1}>
                     {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                   </Text>
-                  <Text align="center" color="dimmed">
+                  <Text align="center" c="dimmed">
                     / {shortenPlanInterval(price.interval)}
                   </Text>
                 </Group>
@@ -183,26 +179,12 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                 w={50}
                 rightSection={<IconChevronDown size={14} />}
                 rightSectionWidth={20}
-                styles={(theme) => ({
-                  root: {
-                    marginTop: 2,
-                    borderBottom: `2px solid ${theme.colors.blue[theme.fn.primaryShade()]}`,
-                  },
-                  input: {
-                    textTransform: 'uppercase',
-                    textAlign: 'left',
-                    height: 20,
-                    minHeight: 20,
-                  },
-                  item: {
-                    textTransform: 'uppercase',
-                    padding: '0 4px',
-                    textAlign: 'center',
-                  },
-                  rightSection: {
-                    marginRight: 0,
-                  },
-                })}
+                classNames={{
+                  root: 'mt-[2px] border-b-2 border-b-blue-9',
+                  input: 'h-[20px] min-h-[20px] text-start uppercase',
+                  option: 'px-[4px] text-center uppercase',
+                  section: 'mr-0',
+                }}
               />
             </Stack>
 
@@ -427,7 +409,7 @@ export const getPlanDetails: (
           metadata.badgeType === 'animated' ? (
             <Text lh={1}>
               Unique{' '}
-              <Text lh={1} weight={700} component="span">
+              <Text lh={1} fw={700} component="span">
                 Animated
               </Text>{' '}
               Supporter Badge each month
@@ -490,27 +472,3 @@ export type PlanMeta = {
   image: string;
   benefits: BenefitItem[];
 };
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.lg,
-  },
-  image: {
-    [containerQuery.smallerThan('sm')]: {
-      width: 96,
-      marginBottom: theme.spacing.xs,
-    },
-  },
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: 20,
-    },
-  },
-  price: {
-    fontSize: 48,
-    fontWeight: 'bold',
-  },
-}));

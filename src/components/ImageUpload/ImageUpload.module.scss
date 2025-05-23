@@ -1,0 +1,47 @@
+.sortItem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.draggableIcon {
+  position: absolute;
+  top: 4px;
+  right: 0;
+}
+
+.checkbox {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+}
+
+.meta {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+}
+
+.fullWidth {
+  width: 100%;
+}
+
+.disabled {
+  background-color: var(--mantine-color-dark-6, #f0f0f0); // Replace with Mantine's dark[6] or gray[0]
+  border-color: var(--mantine-color-dark-5, #e0e0e0); // Replace with Mantine's dark[5] or gray[2]
+  cursor: not-allowed;
+
+  & * {
+    color: var(--mantine-color-dark-3, #c0c0c0); // Replace with Mantine's dark[3] or gray[5]
+  }
+}
+
+.overlayGroup {
+  position: absolute;
+  background: rgba(var(--mantine-color-dark-9), 0.6); // Replace with Mantine's dark[9] RGBA variable
+  border-bottom-left-radius: var(--mantine-radius-sm); // Replace with Mantine's small radius variable
+  top: 0;
+  right: 0;
+  z-index: 11;
+}

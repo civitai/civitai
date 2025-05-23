@@ -1,11 +1,6 @@
 import { Button, ButtonProps, HoverCard, Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import {
-  IconChevronRight,
-  IconChristmasBall,
-  IconChristmasTree,
-  IconHeart,
-} from '@tabler/icons-react';
+import { IconChevronRight, IconChristmasBall, IconHeart } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useAppContext } from '~/providers/AppProvider';
 import { constants } from '~/server/common/constants';
@@ -24,19 +19,19 @@ const options: SupportButtonOption[] = [
     variant: 'outline',
     color: 'green',
     href: '/pricing?utm_campaign=doit',
-    children: <Text weight={500}>Do It</Text>,
+    children: <Text fw={500}>Do It</Text>,
   },
   {
     variant: 'light',
     color: 'green',
     href: '/pricing?utm_campaign=emoji_money',
-    children: <Text size={24}>💸</Text>,
+    children: <Text size="xl">💸</Text>,
   },
   {
     variant: 'light',
     color: 'green',
     href: '/pricing?utm_campaign=emoji_kiss',
-    children: <Text size={24}>😘</Text>,
+    children: <Text size="xl">😘</Text>,
   },
   {
     variant: 'light',

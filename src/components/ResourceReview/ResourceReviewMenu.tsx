@@ -1,4 +1,4 @@
-import { ActionIcon, Loader, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
+import { ActionIcon, Loader, Menu, MenuProps, Text } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconCalculator,
@@ -19,6 +19,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ResourceReviewPagedModel } from '~/types/router';
 import { openReportModal, openResourceReviewEditModal } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ResourceReviewMenu({
   reviewId,
@@ -29,7 +30,7 @@ export function ResourceReviewMenu({
 }: {
   reviewId: number;
   userId: number;
-  size?: MantineNumberSize;
+  size?: MantineSpacing;
   review: Pick<
     ResourceReviewPagedModel,
     | 'id'
@@ -111,9 +112,9 @@ export function ResourceReviewMenu({
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
-        <ActionIcon size={size} variant="subtle">
+        <LegacyActionIcon size={size} variant="subtle">
           <IconDotsVertical size={16} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         {(isOwner || isMod) && (

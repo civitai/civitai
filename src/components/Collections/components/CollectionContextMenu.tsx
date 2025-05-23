@@ -133,7 +133,7 @@ export function CollectionContextMenu({
               py={0}
               h={14}
               w="100%"
-              align="left"
+              justify="flex-start"
               style={{
                 display: 'flex',
                 alignItems: 'start',
@@ -147,7 +147,7 @@ export function CollectionContextMenu({
             <Menu.Item
               color="red"
               icon={<IconTrash size={14} stroke={1.5} />}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 handleDeleteClick();
@@ -157,7 +157,7 @@ export function CollectionContextMenu({
             </Menu.Item>
             <Menu.Item
               icon={<IconEdit size={14} stroke={1.5} />}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 triggerRoutedDialog({ name: 'collectionEdit', state: { collectionId } });
@@ -170,7 +170,7 @@ export function CollectionContextMenu({
         {currentUser && permissions?.read && (
           <Menu.Item
             icon={<IconHome size={14} stroke={1.5} />}
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent) => {
               e.preventDefault();
               e.stopPropagation();
               onToggleCollectionHomeBlock();

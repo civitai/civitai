@@ -1,15 +1,9 @@
-import {
-  ActionIcon,
-  ActionIconProps,
-  Group,
-  Popover,
-  PopoverProps,
-  TextInput,
-} from '@mantine/core';
+import { ActionIconProps, Group, Popover, PopoverProps, TextInput } from '@mantine/core';
 import { getHotkeyHandler, useClickOutside } from '@mantine/hooks';
 import { useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-export function ActionIconInput<T>({
+export function ActionIconInput({
   onSubmit,
   actionIconProps,
   children,
@@ -37,14 +31,15 @@ export function ActionIconInput<T>({
   return (
     <Popover opened={editing} position="bottom-start" shadow="lg" {...popoverProps}>
       <Popover.Target>
-        <ActionIcon
+        <LegacyActionIcon
+          color="gray"
           variant="outline"
           {...actionIconProps}
           ref={setToggle}
           onClick={() => setEditing((x) => !x)}
         >
           {children}
-        </ActionIcon>
+        </LegacyActionIcon>
       </Popover.Target>
       <Popover.Dropdown p={0}>
         <Group>

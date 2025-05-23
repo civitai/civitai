@@ -41,7 +41,7 @@ export const FavoriteBadge = ({
   return (
     <ReactionBadge
       color={hasReacted ? 'pink' : undefined}
-      leftIcon={
+      leftSection={
         <IconHeart
           size={18}
           color={hasReacted ? theme.colors.red[6] : undefined}

@@ -36,7 +36,7 @@ export function RemoveAccountCard() {
       <Form form={form}>
         <Stack>
           <InputText name="username" description="Enter your username exactly" />
-          <Group position="right">
+          <Group justify="flex-end">
             <Button color="red">Remove Account</Button>
           </Group>
         </Stack>

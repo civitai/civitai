@@ -8,7 +8,6 @@ import {
   Center,
   Checkbox,
   Code,
-  createStyles,
   Divider,
   Group,
   Image as MImage,
@@ -30,8 +29,12 @@ import {
 } from '@mantine/core';
 import type { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
-import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
-import type { NotificationProps } from '@mantine/notifications/lib/types';
+import {
+  hideNotification,
+  NotificationData,
+  showNotification,
+  updateNotification,
+} from '@mantine/notifications';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -105,6 +108,9 @@ import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
+import styles from './TrainingImages.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+
 const TrainingImagesCaptions = dynamic(() =>
   import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
     (x) => x.TrainingImagesCaptions
@@ -126,39 +132,6 @@ export const blankTagStr = '@@none@@';
 
 const limit = pLimit(10);
 
-const useStyles = createStyles((theme) => ({
-  imgOverlay: {
-    borderBottom: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
-    }`,
-    position: 'relative',
-    '&:hover .trashIcon': {
-      display: 'flex',
-    },
-  },
-  badLabel: {
-    // more border
-    border: '1px solid red',
-    boxShadow: '0 0 10px red',
-  },
-  trash: {
-    display: 'none',
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    zIndex: 10,
-    margin: 4,
-  },
-  source: {
-    display: 'none',
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    zIndex: 10,
-    margin: 4,
-  },
-}));
-
 // TODO [bw] is this enough? do we want jfif?
 const imageExts: { [key: string]: string } = {
   png: MIME_TYPES.png,
@@ -178,7 +151,7 @@ const maxHeight = 2048;
 
 export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
   tag: (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       <Text>Short, comma-separated descriptions.</Text>
       <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
       <Text mt="sm">
@@ -188,7 +161,7 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
     </Stack>
   ),
   caption: (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       <Text>Natural language, long-form sentences.</Text>
       <Text fs="italic">
         Ex: &quot;There is a dolphin in the ocean. It is jumping out against a gorgeous backdrop of
@@ -242,21 +215,21 @@ const LabelSelectModal = ({
       size="md"
       radius="md"
       title={
-        <Group spacing="xs">
+        <Group gap="xs">
           <IconInfoCircle />
           <Text size="lg">Found labels</Text>
         </Group>
       }
     >
       <Stack>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text>You&apos;ve included some labeling.</Text> <Text>Which type are they?</Text>
         </Stack>
-        <Group spacing="xs">
+        <Group gap="xs">
           <Text size="sm">Current type: </Text>
           <Badge>{labelType}</Badge>
         </Group>
-        <Group spacing="xs">
+        <Group gap="xs">
           <Text size="sm">Estimated type: </Text>
           <Badge color={labelType === estimatedType ? 'blue' : 'red'}>{estimatedType}</Badge>
         </Group>
@@ -273,7 +246,7 @@ const LabelSelectModal = ({
         <Paper shadow="xs" radius="xs" p="md" withBorder>
           <Text>{labelDescriptions[labelValue]}</Text>
         </Paper>
-        <Group position="right" mt="xl">
+        <Group justify="flex-end" mt="xl">
           <Button onClick={handleSelect}>OK</Button>
         </Group>
       </Stack>
@@ -337,7 +310,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const showImgResizeUp = useRef<number>(0);
 
   const theme = useMantineTheme();
-  const { classes, cx } = useStyles();
   const queryUtils = trpc.useUtils();
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { connected } = useSignalContext();
@@ -346,7 +318,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const existingMetadata = existingDataFile?.metadata as FileMetadata | null;
 
   const notificationId = `${thisModelVersion.id}-uploading-data-notification`;
-  const notificationFailBase: NotificationProps & { id: string } = {
+  const notificationFailBase: NotificationData & { id: string } = {
     id: notificationId,
     icon: <IconX size={18} />,
     color: 'red',
@@ -611,7 +583,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       id: importNotifId,
       loading: true,
       autoClose: false,
-      disallowClose: true,
+      withCloseButton: false,
       message: `Importing ${assets.length} ${source === 'training' ? 'dataset' : 'asset'}${
         assets.length !== 1 ? 's' : ''
       }...`,
@@ -772,7 +744,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         title: 'Upload complete!',
         message: '',
         autoClose: 3000,
-        disallowClose: false,
+        withCloseButton: false,
       });
 
       setInitialImageList(model.id, thisMediaType, imageList);
@@ -1003,7 +975,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         id: notificationId,
         loading: true,
         autoClose: false,
-        disallowClose: true,
+        withCloseButton: false,
         title: 'Creating and uploading archive',
         message: `Packaging ${imageList.length} file${imageList.length !== 1 ? 's' : ''}...`,
       });
@@ -1205,7 +1177,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       if (imageList.filter((i) => i.label.length > 0).length === 0 && !triggerWord.length) {
         return openConfirmModal({
           title: (
-            <Group spacing="xs">
+            <Group gap="xs">
               <IconAlertTriangle color="gold" />
               <Text size="lg">Missing labels</Text>
             </Group>
@@ -1287,7 +1259,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       for more info.
                     </Text>
 
-                    <Group mt="xs" position="center" grow>
+                    <Group mt="xs" justify="center" grow>
                       <Button
                         variant="light"
                         onClick={() => {
@@ -1362,7 +1334,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         isVideo ? 'Drag images, zips, or videos' : 'Drag images or zips'
                       } here (or click to select files)`}
                       description={
-                        <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
+                        <Text mt="xs" fz="sm" c={theme.colors.red[5]}>
                           Changes made here are not permanently saved until you hit &quot;Next&quot;
                         </Text>
                       }
@@ -1385,20 +1357,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             <Divider />
 
             {imageList.length > 0 && (
-              <Group my="md" position="apart">
-                <Paper
-                  shadow="xs"
-                  radius="sm"
-                  px={8}
-                  py={2}
-                  style={{
-                    backgroundColor:
-                      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-                  }}
-                >
+              <Group my="md" justify="space-between">
+                <Paper className="bg-gray-0 dark:bg-dark-6" shadow="xs" radius="sm" px={8} py={2}>
                   <Text
                     style={{ lineHeight: '22px' }}
-                    color={
+                    c={
                       totalLabeled === 0
                         ? theme.colors.red[5]
                         : totalLabeled < imageList.length
@@ -1409,8 +1372,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     {`${totalLabeled} / ${imageList.length} labeled`}
                   </Text>
                 </Paper>
-                <Group spacing="xs">
-                  <Button compact color="indigo" onClick={() => setIsZoomed((z) => !z)}>
+                <Group gap="xs">
+                  <Button size="compact-md" color="indigo" onClick={() => setIsZoomed((z) => !z)}>
                     {isZoomed ? <IconZoomOut size={16} /> : <IconZoomIn size={16} />}
                     <Text inline ml={4}>
                       Zoom {isZoomed ? 'Out' : 'In'}
@@ -1421,7 +1384,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     disabled={connected}
                   >
                     <Button
-                      compact
+                      size="compact-md"
                       color="violet"
                       disabled={autoLabeling.isRunning || !connected}
                       style={!connected ? { pointerEvents: 'initial' } : undefined}
@@ -1432,7 +1395,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         })
                       }
                     >
-                      <Group spacing={4}>
+                      <Group gap={4}>
                         <IconTags size={16} />
                         <Text>Auto Label</Text>
                         {Date.now() < new Date('2024-09-27').getTime() && (
@@ -1444,7 +1407,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     </Button>
                   </Tooltip>
                   <Button
-                    compact
+                    size="compact-md"
                     color="cyan"
                     loading={zipping}
                     onClick={() => handleNextAfterCheck(true)}
@@ -1456,7 +1419,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   </Button>
 
                   <Button
-                    compact
+                    size="compact-md"
                     color="red"
                     disabled={autoLabeling.isRunning}
                     onClick={() => {
@@ -1484,47 +1447,39 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               <Pagination
                 withEdges
                 mb="md"
-                page={page}
+                value={page}
                 onChange={setPage}
                 total={Math.ceil(filteredImages.length / maxImgPerPage)}
               />
             )}
             {autoLabeling.isRunning && (
-              <Paper
-                my="lg"
-                p="md"
-                withBorder
-                style={{
-                  backgroundColor:
-                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-                }}
-              >
+              <Paper className="bg-gray-0 dark:bg-dark-6" my="lg" p="md" withBorder>
                 <Stack>
                   <Text>Running auto labeling...</Text>
                   {autoLabeling.successes + autoLabeling.fails.length > 0 ? (
-                    <Progress
-                      value={
-                        ((autoLabeling.successes + autoLabeling.fails.length) /
-                          autoLabeling.total) *
-                        100
-                      }
-                      label={`${autoLabeling.successes + autoLabeling.fails.length} / ${
-                        autoLabeling.total
-                      }`}
-                      size="xl"
-                      radius="xl"
-                      striped
-                      animate
-                    />
+                    <Progress.Root size="xl" radius="xl">
+                      <Progress.Section
+                        value={
+                          ((autoLabeling.successes + autoLabeling.fails.length) /
+                            autoLabeling.total) *
+                          100
+                        }
+                        striped
+                        animated
+                      >
+                        <Progress.Label>
+                          {`${autoLabeling.successes + autoLabeling.fails.length} / ${
+                            autoLabeling.total
+                          }`}
+                        </Progress.Label>
+                      </Progress.Section>
+                    </Progress.Root>
                   ) : (
-                    <Progress
-                      value={100}
-                      label="Waiting for data..."
-                      size="xl"
-                      radius="xl"
-                      striped
-                      animate
-                    />
+                    <Progress.Root size="xl" radius="xl">
+                      <Progress.Section value={100} striped animated>
+                        <Progress.Label>Waiting for data...</Progress.Label>
+                      </Progress.Section>
+                    </Progress.Root>
                   )}
                 </Stack>
               </Paper>
@@ -1532,7 +1487,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             {imageList.length > 0 && (
               <Paper px="md" py="xs" shadow="xs" radius="sm" withBorder>
                 <Group>
-                  <Group spacing={4} noWrap>
+                  <Group gap={4} wrap="nowrap">
                     <Text>Trigger Word</Text>
                     <InfoPopover size="xs" iconProps={{ size: 16 }}>
                       Word that serves as an &quot;activator&quot; for your LoRA during generation.
@@ -1568,16 +1523,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       }
                     }}
                     style={{ flexGrow: 1 }}
-                    className={cx({ [classes.badLabel]: triggerWordInvalid })}
+                    className={clsx({ [styles.badLabel]: triggerWordInvalid })}
                     rightSection={
-                      <ActionIcon
+                      <LegacyActionIcon
                         onClick={() => {
                           setTriggerWord(model.id, thisMediaType, '');
                         }}
                         disabled={!triggerWord.length}
                       >
                         <IconX size={16} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     }
                   />
                 </Group>
@@ -1624,13 +1579,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 <ThemeIcon size={64} radius={100}>
                   <IconCloudOff size={64 / 1.6} />
                 </ThemeIcon>
-                <Text size={20} align="center">
+                <Text size="lg" align="center">
                   No files found
                 </Text>
               </Stack>
             ) : (
               // nb: if we want to break out of container, add margin: 0 calc(50% - 45vw);
-              <SimpleGrid cols={isZoomed ? 1 : 3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
+              <SimpleGrid cols={{ base: 1, sm: isZoomed ? 1 : 3 }}>
                 {filteredImages
                   .slice((page - 1) * maxImgPerPage, (page - 1) * maxImgPerPage + maxImgPerPage)
                   .map((imgData, index) => {
@@ -1641,13 +1596,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         p={4}
                         radius="sm"
                         withBorder
-                        className={cx({ [classes.badLabel]: imgData.invalidLabel })}
+                        className={clsx({ [styles.badLabel]: imgData.invalidLabel })}
                       >
                         <Card.Section mb="xs">
-                          <div className={classes.imgOverlay}>
-                            <Group spacing={4} className={cx(classes.trash, 'trashIcon')}>
+                          <div className={styles.imgOverlay}>
+                            <Group gap={4} className={clsx(styles.trash, 'trashIcon')}>
                               <Tooltip label="Remove labels">
-                                <ActionIcon
+                                <LegacyActionIcon
                                   color="violet"
                                   variant="filled"
                                   size="md"
@@ -1660,10 +1615,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                   }}
                                 >
                                   <IconTagsOff />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Tooltip>
                               <Tooltip label="Remove file">
-                                <ActionIcon
+                                <LegacyActionIcon
                                   color="red"
                                   variant="filled"
                                   size="md"
@@ -1687,11 +1642,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                   }}
                                 >
                                   <IconTrash />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Tooltip>
                             </Group>
                             {imgData.source?.type && (
-                              <div className={cx(classes.source, 'trashIcon')}>
+                              <div className={clsx(styles.source, 'trashIcon')}>
                                 <Badge
                                   variant="filled"
                                   className="px-1"
@@ -1763,7 +1718,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               <Pagination
                 withEdges
                 mt="md"
-                page={page}
+                value={page}
                 onChange={setPage}
                 total={Math.ceil(filteredImages.length / maxImgPerPage)}
               />
@@ -1834,7 +1789,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           </div>
         </Paper>
       </Stack>
-      <Group position="right">
+      <Group justify="flex-end">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
         </Button>

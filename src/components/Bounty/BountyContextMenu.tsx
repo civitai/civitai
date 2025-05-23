@@ -27,7 +27,7 @@ export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) 
         key="delete"
         color="red"
         icon={<IconTrash size={14} stroke={1.5} />}
-        onClick={(e) => {
+        onClick={(e: React.MouseEvent) => {
           e.stopPropagation();
           e.preventDefault();
 
@@ -111,7 +111,7 @@ export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) 
     <Menu {...menuProps}>
       <Menu.Target>
         <ActionIconDotsVertical
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             e.preventDefault();
             e.stopPropagation();
           }}

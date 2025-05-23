@@ -7,7 +7,7 @@ export const AnchorNoTravel = (props: NextLinkProps & AnchorProps) => {
       variant="text"
       component={Link}
       {...props}
-      onClick={(e) => {
+      onClick={(e: React.MouseEvent) => {
         if (e.target !== e.currentTarget) {
           const target = e.target as HTMLAnchorElement;
           if (target.tagName === 'A') {

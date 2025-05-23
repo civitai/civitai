@@ -117,7 +117,11 @@ export default function DuplicatHashesPage({
   return (
     <div className="container max-w-sm">
       <h1 className="text-4xl font-bold">Duplicate Model Hashes</h1>
-      <SegmentedControl data={['All', 'Draft']} onChange={handleSetStatus} value={filters.status} />
+      <SegmentedControl
+        data={['All', 'Draft']}
+        onChange={(status) => handleSetStatus(status as 'All' | 'Draft')}
+        value={filters.status}
+      />
       <ul role="list" className="divide-y divide-gray-4 dark:divide-dark-5">
         {pageItems.map(({ hash, items }) => (
           <li key={hash} className="flex flex-col gap-1 p-1 py-2">
@@ -146,7 +150,7 @@ export default function DuplicatHashesPage({
           </li>
         ))}
       </ul>
-      <Pagination total={pages} page={filters.page} onChange={handleSetPage} />
+      <Pagination total={pages} value={filters.page} onChange={handleSetPage} />
     </div>
   );
 }

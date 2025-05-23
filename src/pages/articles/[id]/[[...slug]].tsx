@@ -6,7 +6,6 @@ import {
   Box,
   Center,
   Container,
-  createStyles,
   Divider,
   Grid,
   Group,
@@ -14,6 +13,8 @@ import {
   Stack,
   Text,
   Title,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import { ArticleEngagementType, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
@@ -67,6 +68,8 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { isDefined } from '~/utils/type-guards';
+import classes from './[[...slug]].module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -92,7 +95,8 @@ export const getServerSideProps = createServerSideProps({
 const MAX_WIDTH = 1320;
 
 function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { classes, theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const currentUser = useCurrentUser();
   const mobile = useContainerSmallerThan('sm');
   const { setImages, onSetImage, images } = useImageViewerCtx();
@@ -148,11 +152,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const tags = article.tags.filter((tag) => !tag.isCategory);
 
   const actionButtons = (
-    <Group spacing={4} align="center" noWrap>
+    <Group gap={4} align="center" wrap="nowrap">
       <InteractiveTipBuzzButton toUserId={article.user.id} entityType="Article" entityId={id}>
         <IconBadge
           radius="sm"
-          sx={{ cursor: 'pointer' }}
+          style={{ cursor: 'pointer' }}
           color="gray"
           size="lg"
           h={28}
@@ -179,7 +183,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     style={{ fill: isFavorite ? theme.colors.gray[2] : undefined }}
                   />
                 }
-                sx={{ cursor: 'pointer' }}
+                style={{ cursor: 'pointer' }}
                 onClick={() => toggle(ArticleEngagementType.Favorite)}
               >
                 <Text className={classes.badgeText}>
@@ -191,9 +195,9 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         </ToggleArticleEngagement>
       </LoginRedirect>
       <ShareButton url={`/articles/${article.id}/${slugit(article.title)}`} title={article.title}>
-        <ActionIcon variant="subtle" color="gray">
+        <LegacyActionIcon variant="subtle" color="gray">
           <IconShare3 />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ShareButton>
     </Group>
   );
@@ -226,20 +230,20 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
         <Container size="xl" pos="relative">
           <LoadingOverlay visible={isRefetching || upsertArticleMutation.isLoading} />
-          <Stack spacing={8} mb="xl">
-            <Group position="apart" noWrap>
-              <Title weight="bold" className={classes.title} order={1}>
+          <Stack gap={8} mb="xl">
+            <Group justify="space-between" wrap="nowrap">
+              <Title fw="bold" className={classes.title} order={1}>
                 {article.title}
               </Title>
-              <Group align="center" className={classes.titleWrapper} noWrap>
+              <Group align="center" className={classes.titleWrapper} wrap="nowrap">
                 {!mobile && actionButtons}
                 <ArticleContextMenu article={article} />
               </Group>
             </Group>
-            <Group spacing={8}>
+            <Group gap={8}>
               <UserAvatar user={article.user} withUsername linkToProfile />
               <Divider orientation="vertical" />
-              <Text color="dimmed" size="sm">
+              <Text c="dimmed" size="sm">
                 {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
               </Text>
               {category && (
@@ -251,7 +255,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                       size="sm"
                       variant="gradient"
                       gradient={{ from: 'cyan', to: 'blue' }}
-                      sx={{ cursor: 'pointer' }}
+                      style={{ cursor: 'pointer' }}
                     >
                       {category.name}
                     </Badge>
@@ -273,8 +277,8 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                         <Badge
                           component="a"
                           color="gray"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
-                          sx={{ cursor: 'pointer' }}
+                          variant={colorScheme === 'dark' ? 'filled' : undefined}
+                          style={{ cursor: 'pointer' }}
                         >
                           {tag.name}
                         </Badge>
@@ -296,8 +300,8 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             )}
           </Stack>
           <Grid gutter="xl">
-            <Grid.Col xs={12} md={8}>
-              <Stack spacing="xs">
+            <Grid.Col span={{ base: 12, md: 8 }}>
+              <Stack gap="xs">
                 {image && (
                   <AspectRatio
                     ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
@@ -310,7 +314,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                         ['Enter', handleOpenCoverImage(image.id)],
                         ['Space', handleOpenCoverImage(image.id)],
                       ])}
-                      sx={{ cursor: 'pointer' }}
+                      style={{ cursor: 'pointer' }}
                     >
                       <Center className="size-full">
                         <div className="relative size-full">
@@ -353,7 +357,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </article>
                 )}
                 <Divider />
-                <Group position="apart">
+                <Group justify="space-between">
                   <Reactions
                     entityType="article"
                     reactions={article.reactions}
@@ -371,7 +375,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </Group>
               </Stack>
             </Grid.Col>
-            <Grid.Col xs={12} md={4}>
+            <Grid.Col span={{ base: 12, md: 4 }}>
               <Sidebar
                 creator={article.user}
                 attachments={article.attachments}
@@ -391,29 +395,3 @@ export default Page(ArticleDetailsPage, {
     return <ImageViewer>{children}</ImageViewer>;
   },
 });
-
-const useStyles = createStyles((theme) => ({
-  titleWrapper: {
-    gap: theme.spacing.xs,
-
-    [containerQuery.smallerThan('md')]: {
-      gap: theme.spacing.xs * 0.4,
-    },
-  },
-
-  title: {
-    wordBreak: 'break-word',
-    [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.xs * 2.4, // 24px
-      width: '100%',
-      paddingBottom: 0,
-    },
-  },
-
-  badgeText: {
-    fontSize: theme.fontSizes.md,
-    [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.sm,
-    },
-  },
-}));

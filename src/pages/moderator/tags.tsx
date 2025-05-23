@@ -5,7 +5,7 @@ import {
   Group,
   Stack,
   Title,
-  SelectItem,
+  ComboboxItem,
   MantineColor,
   Tooltip,
   Text,
@@ -36,6 +36,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { openConfirmModal } from '@mantine/modals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const tagColor: Record<TagsOnTagsType, MantineColor> = {
   Parent: 'gray',
@@ -152,7 +153,7 @@ export default function Tags() {
         filterVariant: 'select',
         mantineFilterSelectProps: {
           data: Object.values(TagType).map(
-            (x) => ({ label: getDisplayName(x), value: getDisplayName(x) } as SelectItem)
+            (x) => ({ label: getDisplayName(x), value: getDisplayName(x) } as ComboboxItem)
           ) as any,
         },
       },
@@ -165,7 +166,7 @@ export default function Tags() {
         Cell: ({ row }) => {
           const tag = row.original;
           return (
-            <Group noWrap spacing={5}>
+            <Group wrap="nowrap" gap={5}>
               {tag.target.includes(TagTarget.Image) && (
                 <Link href={`/images?tags=${row.id}&view=feed`} target="_blank">
                   <IconBadge icon={<IconPhoto size={14} />}>
@@ -203,7 +204,7 @@ export default function Tags() {
         Cell: ({ row }) => {
           const tag = row.original;
           return (
-            <Group spacing={5}>
+            <Group gap={5}>
               {tag.tags.map((t) => (
                 <Badge
                   key={t.id ?? t.name}
@@ -211,15 +212,15 @@ export default function Tags() {
                   color={tagColor[t.relationship]}
                   pr={0}
                 >
-                  <Group spacing={0}>
+                  <Group gap={0}>
                     {t.name}
-                    <ActionIcon
+                    <LegacyActionIcon
                       size="sm"
                       variant="transparent"
                       onClick={() => handleDisableTagOnEntity(tag.id, t.id ?? t.name)}
                     >
                       <IconX strokeWidth={3} size=".75rem" />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </Group>
                 </Badge>
               ))}
@@ -243,7 +244,7 @@ export default function Tags() {
   return (
     <Container size="xl">
       <Stack>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Title order={1}>Tags</Title>
         </Stack>
 
@@ -251,18 +252,16 @@ export default function Tags() {
           columns={columns}
           data={tags}
           enableSelectAll
-          rowVirtualizerProps={{ overscan: 2 }} //optionally customize the row virtualizer
+          rowVirtualizerOptions={{ overscan: 2 }} //optionally customize the row virtualizer
           enableRowSelection
           enableHiding={false}
           enableBottomToolbar={false}
           enableGlobalFilter={false}
           enablePagination={false}
           enableRowVirtualization
-          mantineTableContainerProps={{ sx: { maxHeight: 'calc(100vh - 360px)' } }}
+          mantineTableContainerProps={{ className: 'max-h-[calc(100vh-360px)]' }}
           onSortingChange={setSorting}
-          initialState={{
-            density: 'sm',
-          }}
+          initialState={{ density: 'md' }}
           state={{ isLoading, sorting }}
           getRowId={(x) => x.id?.toString()}
           renderTopToolbarCustomActions={({ table }) => {
@@ -307,7 +306,7 @@ export default function Tags() {
               });
 
             return (
-              <Group noWrap spacing="xs">
+              <Group wrap="nowrap" gap="xs">
                 <Tooltip label="Add parent">
                   <div>
                     <ActionIconSelect
@@ -361,9 +360,9 @@ export default function Tags() {
                       withArrow
                       withinPortal
                     >
-                      <ActionIcon variant="outline" color="red">
+                      <LegacyActionIcon variant="outline" color="red">
                         <IconTrash size="1.25rem" />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </PopConfirm>
                   </div>
                 </Tooltip>

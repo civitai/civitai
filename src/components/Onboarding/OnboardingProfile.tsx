@@ -109,7 +109,7 @@ export function OnboardingProfile() {
                 {error.data?.code === 'CONFLICT' ? 'That username is already taken' : error.message}
               </Alert>
             )}
-            <Group position="apart">
+            <Group justify="space-between">
               <OnboardingAbortButton size="lg">Sign Out</OnboardingAbortButton>
               <Button disabled={buttonDisabled} size="lg" type="submit" loading={isLoading}>
                 Save

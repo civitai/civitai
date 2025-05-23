@@ -43,13 +43,13 @@ const ClubArticles = () => {
   return (
     <>
       <Stack mb="sm">
-        <Group position="apart" spacing={0}>
+        <Group justify="space-between" gap={0}>
           <SortFilter
             type="articles"
             value={filters.sort as ArticleSort}
             onChange={(x) => setFilters((f) => ({ ...f, sort: x as ArticleSort }))}
           />
-          <Group spacing="xs">
+          <Group gap="xs">
             <ArticleFiltersDropdown
               query={filters}
               // @ts-ignore: These are compatible.

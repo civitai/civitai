@@ -156,7 +156,7 @@ export function SignalStatusNotification({
       // onClose={dismiss}
       color={signalStatusDictionary[status]}
       title={title?.(status)}
-      disallowClose
+      withCloseButton={false}
     >
       {children(status)}
     </Notification>

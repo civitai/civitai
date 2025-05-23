@@ -1,4 +1,5 @@
-import { Box, Group, Paper, PaperProps, Table, TableProps, Text } from '@mantine/core';
+import { Group, Paper, PaperProps, Table, TableProps, Text } from '@mantine/core';
+import clsx from 'clsx';
 import React from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 
@@ -16,10 +17,10 @@ export function DescriptionTable({
     if (item.visible === false) continue;
 
     let labelEl =
-      typeof item.label === 'string' ? <Text weight="500">{item.label}</Text> : item.label;
+      typeof item.label === 'string' ? <Text fw="500">{item.label}</Text> : item.label;
     if (item.info) {
       labelEl = (
-        <Group spacing={4}>
+        <Group gap={4}>
           {labelEl}
           <InfoPopover size="xs" withArrow iconProps={{ size: 16 }}>
             {item.info}
@@ -29,30 +30,27 @@ export function DescriptionTable({
     }
 
     rows.push(
-      <Box component="tr" key={i} {...item.rowProps}>
-        <Box
-          component="td"
-          className={item.className}
-          sx={(theme) => ({
-            backgroundColor:
-              theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+      <Table.Tr key={i} {...item.rowProps}>
+        <Table.Td
+          className={clsx('bg-gray-0 dark:bg-dark-6', item.className)}
+          style={{
             width: labelWidth,
             padding: '7px 7px !important',
-          })}
+          }}
         >
           {labelEl}
-        </Box>
-        <Box component="td" className={item.className} sx={{ padding: '7px 7px !important' }}>
+        </Table.Td>
+        <Table.Td className={item.className} style={{ padding: '7px 7px !important' }}>
           {item.value}
-        </Box>
-      </Box>
+        </Table.Td>
+      </Table.Tr>
     );
   }
 
   return (
     <Paper radius="sm" {...paperProps} withBorder={withBorder}>
       {title && typeof title === 'string' ? (
-        <Text size="md" weight="500" p="xs">
+        <Text size="md" fw="500" p="xs">
           {title}
         </Text>
       ) : (
@@ -61,15 +59,9 @@ export function DescriptionTable({
       <Table
         withColumnBorders
         {...props}
-        sx={(theme) => ({
-          borderTop: title
-            ? `1px ${
-                theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-              } solid`
-            : undefined,
-        })}
+        className={clsx(title && 'border-t-gray-3 dark:border-t-dark-4', props.className)}
       >
-        <Box component="tbody">{rows}</Box>
+        <Table.Tbody>{rows}</Table.Tbody>
       </Table>
     </Paper>
   );

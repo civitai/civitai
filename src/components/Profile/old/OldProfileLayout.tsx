@@ -1,4 +1,4 @@
-import { ActionIcon, Menu, useMantineTheme } from '@mantine/core';
+import { Menu, useComputedColorScheme } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification, updateNotification } from '@mantine/notifications';
@@ -36,6 +36,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
@@ -132,7 +133,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     },
   });
 
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const handleToggleMute = () => {
     if (user) toggleMuteMutation.mutate({ id: user.id });
@@ -219,16 +220,16 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   return (
     <Menu position="left-start" withinPortal>
       <Menu.Target>
-        <ActionIcon
+        <LegacyActionIcon
           loading={removeContentMutation.isLoading}
           size={30}
           radius="xl"
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           ml="auto"
         >
           <IconDotsVertical size={16} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         <>
@@ -398,7 +399,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //           <>
 //             <Box className={classes.banner} mb="md">
 //               <Container size="sm" p={0}>
-//                 <Stack className={classes.wrapper} spacing="md" align="center">
+//                 <Stack className={classes.wrapper} gap="md" align="center">
 //                   {user.image && (
 //                     <div className={classes.outsideImage}>
 //                       <AspectRatio ratio={1} className={classes.image}>
@@ -412,7 +413,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                     </div>
 //                   )}
 //                   <Card radius="sm" className={classes.card} withBorder shadow="sm">
-//                     <Group noWrap>
+//                     <Group wrap="nowrap">
 //                       {user.image && (
 //                         <div className={classes.insideImage}>
 //                           <AspectRatio ratio={1} className={classes.image}>
@@ -425,30 +426,30 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                           </AspectRatio>
 //                         </div>
 //                       )}
-//                       <Stack spacing="xs" sx={{ flexGrow: 1 }}>
-//                         <Group position="apart" spacing={8} align="flex-start">
-//                           <Stack spacing={0}>
+//                       <Stack gap="xs" style={{ flexGrow: 1 }}>
+//                         <Group justify="space-between" gap={8} align="flex-start">
+//                           <Stack gap={0}>
 //                             <Title
 //                               className={classes.username}
 //                               order={2}
 //                               size={24}
-//                               weight={600}
+//                               fw={600}
 //                               lh={1.5}
 //                             >
 //                               <Username {...user} size="md" inherit />
 //                             </Title>
-//                             <Text className={classes.joinedDate} size="md" color="dimmed">
+//                             <Text className={classes.joinedDate} size="md" c="dimmed">
 //                               {`Joined ${formatDate(user.createdAt)}`}
 //                             </Text>
 //                           </Stack>
-//                           <Group className={classes.userActions} spacing={8} noWrap>
+//                           <Group className={classes.userActions} gap={8} wrap="nowrap">
 //                             <TipBuzzButton toUserId={user.id} size="md" compact />
 //                             <ChatUserButton user={user} size="md" compact />
 //                             <FollowUserButton userId={user.id} size="md" compact />
 //                             {user.username && <UserContextMenu username={user.username} />}
 //                           </Group>
 //                         </Group>
-//                         <Group spacing={8}>
+//                         <Group gap={8}>
 //                           <RankBadge rank={user.rank} size="lg" />
 //                           {stats && (
 //                             <UserStatBadges
@@ -461,9 +462,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                           )}
 //                         </Group>
 //                         {!!user.links?.length && (
-//                           <Group spacing={4}>
+//                           <Group gap={4}>
 //                             {sortDomainLinks(user.links).map((link, index) => (
-//                               <ActionIcon
+//                               <LegacyActionIcon
 //                                 key={index}
 //                                 component="a"
 //                                 href={link.url}
@@ -472,14 +473,14 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                                 size={32}
 //                               >
 //                                 <DomainIcon domain={link.domain} size={22} />
-//                               </ActionIcon>
+//                               </LegacyActionIcon>
 //                             ))}
 //                           </Group>
 //                         )}
 //                       </Stack>
 //                     </Group>
 //                   </Card>
-//                   <Tabs.List position="center">
+//                   <Tabs.List justify="center">
 //                     <Tabs.Tab value="/models" icon={<IconCategory size="1rem" />}>
 //                       Models
 //                     </Tabs.Tab>

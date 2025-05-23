@@ -53,14 +53,14 @@ export function VerifiedShield({ file, ...props }: Props) {
       <Popover.Target>
         <Button
           color={color}
-          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+          style={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
           {...props}
         >
           {icon}
         </Button>
       </Popover.Target>
       <Popover.Dropdown>
-        <Text weight={500} size="md" color={verified ? 'green' : 'red'} pb={5}>
+        <Text fw={500} size="md" color={verified ? 'green' : 'red'} pb={5}>
           File {verified ? 'Verified' : 'Unverified'}
         </Text>
         <Text pb={5}>{defaultMessage}</Text>
@@ -70,9 +70,9 @@ export function VerifiedShield({ file, ...props }: Props) {
         {pickleScanMessage && (
           <CustomMarkdown className="popover-markdown">{pickleScanMessage}</CustomMarkdown>
         )}
-        <Group position="apart">
+        <Group justify="space-between">
           {scannedDate && (
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Scanned: <abbr title={scannedDate.format()}>{scannedDate.fromNow()}</abbr>
             </Text>
           )}
@@ -82,7 +82,7 @@ export function VerifiedShield({ file, ...props }: Props) {
             target="_blank"
             rel="nofollow noreferrer"
             size="xs"
-            color="dimmed"
+            c="dimmed"
             td="underline"
           >
             What does this mean?

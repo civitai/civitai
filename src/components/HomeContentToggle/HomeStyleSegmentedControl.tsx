@@ -6,74 +6,35 @@ import {
   SegmentedControlProps,
   Text,
   ThemeIcon,
-  createStyles,
   Badge,
   Loader,
+  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconProps } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-
-const useStyles = createStyles((theme, _, getRef) => ({
-  label: {
-    paddingTop: 6,
-    paddingBottom: 6,
-    paddingLeft: 6,
-    paddingRight: 10,
-  },
-  container: {
-    position: 'relative',
-    '&:hover': {
-      [`& .${getRef('scrollArea')}`]: {
-        '&::-webkit-scrollbar': {
-          opacity: 1,
-        },
-        '&::-webkit-scrollbar-thumb': {
-          backgroundColor:
-            theme.colorScheme === 'dark'
-              ? theme.fn.rgba(theme.white, 0.5)
-              : theme.fn.rgba(theme.black, 0.5),
-        },
-      },
-    },
-  },
-  root: {
-    ref: getRef('scrollArea'),
-    overflow: 'auto',
-    scrollSnapType: 'x mandatory',
-    '&::-webkit-scrollbar': {
-      background: 'transparent',
-      opacity: 0,
-      height: 8,
-    },
-    '&::-webkit-scrollbar-thumb': {
-      borderRadius: 4,
-    },
-    backgroundColor: 'transparent',
-    gap: 8,
-    maxWidth: '100%',
-  },
-  control: { border: 'none !important' },
-}));
+import classes from './HomeStyleSegmentedControl.module.css';
 
 export function HomeStyleSegmentedControl({
   data,
   value: activePath,
   onChange,
   size,
-  sx,
   loading,
+  style,
   ...props
 }: Props) {
-  const { classes, theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { canViewNsfw } = useFeatureFlags();
 
   const options: SegmentedControlItem[] = Object.entries(data).map(([key, value]) => ({
     label: (
       <Link legacyBehavior href={value.url} passHref>
         <Anchor variant="text">
-          <Group align="center" spacing={8} noWrap>
+          <Group align="center" gap={8} wrap="nowrap">
             <ThemeIcon
               size={30}
               color={activePath === key ? theme.colors.dark[7] : 'transparent'}
@@ -81,17 +42,15 @@ export function HomeStyleSegmentedControl({
             >
               {value.icon({
                 color:
-                  theme.colorScheme === 'dark' || activePath === key
-                    ? theme.white
-                    : theme.colors.dark[7],
+                  colorScheme === 'dark' || activePath === key ? theme.white : theme.colors.dark[7],
               })}
             </ThemeIcon>
-            <Text size="sm" transform="capitalize" inline>
+            <Text size="sm" tt="capitalize" inline>
               {value.label ?? key}
             </Text>
             {/* Ideally this is a temporary solution. We should be using the `canViewNsfw` feature flag to return the correct numbers to the users */}
             {canViewNsfw && value.count != null && (
-              <Badge>
+              <Badge classNames={{ label: 'overflow-visible' }}>
                 {loading ? <Loader size="xs" variant="dots" /> : value.count.toLocaleString()}
               </Badge>
             )}
@@ -107,9 +66,7 @@ export function HomeStyleSegmentedControl({
     <div className={classes.container}>
       <SegmentedControl
         {...props}
-        sx={(theme) => ({
-          ...(typeof sx === 'function' ? sx(theme) : sx),
-        })}
+        style={style}
         size="md"
         classNames={classes}
         value={activePath}

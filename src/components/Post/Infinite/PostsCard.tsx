@@ -1,6 +1,6 @@
-import { AspectRatio, createStyles } from '@mantine/core';
+import { AspectRatio } from '@mantine/core';
 
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
@@ -15,6 +15,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { PostsInfiniteModel } from '~/server/services/post.service';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
+import classes from './PostsCard.module.scss';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user },
@@ -26,8 +27,6 @@ export function PostsCard({
   const currentUser = useCurrentUser();
   const image = images[0];
   const { ref, inView } = useInView({ key: cosmetic ? 1 : 0 });
-  const { classes } = useStyles();
-  const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
 
   const isOwner = currentUser?.id === user.id;
 
@@ -68,7 +67,7 @@ export function PostsCard({
                     <EdgeMedia2
                       metadata={image.metadata}
                       src={image.url}
-                      className={sharedClasses.image}
+                      className={cardClasses.image}
                       name={image.name ?? image.id.toString()}
                       alt={image.name ?? undefined}
                       skip={getSkipValue(image)}
@@ -97,26 +96,3 @@ export function PostsCard({
     </MasonryCard>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  title: {
-    lineHeight: 1.1,
-    fontSize: 14,
-    color: 'white',
-    fontWeight: 500,
-  },
-  reactions: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    borderRadius: theme.radius.sm,
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
-        : theme.colors.gray[0],
-    color: theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[4],
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    padding: 4,
-  },
-}));

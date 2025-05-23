@@ -160,7 +160,7 @@ export default function IntentAvatar() {
           </Alert>
         </Stack>
       ) : (
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Title order={1}>Update Avatar</Title>
           <Text mt="lg" size="lg">
             Preview:
@@ -176,7 +176,7 @@ export default function IntentAvatar() {
               withUsername
             />
           </Paper>
-          <Group mt="xl" position="right">
+          <Group mt="xl" justify="flex-end">
             <Button variant="default" onClick={() => router.push('/')}>
               Cancel
             </Button>

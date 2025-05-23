@@ -9,6 +9,7 @@ import {
   Card,
   Group,
   Divider,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
@@ -22,6 +23,7 @@ import { auditMetaData } from '~/utils/metadata/audit';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const [meta, setMeta] = useState<ImageMetaProps | undefined>();
   const [nsfw, setNsfw] = useState<boolean>(false);
   const nodeJson = useGlobalValue('nodeJson');
@@ -49,14 +51,14 @@ export default function MetadataTester() {
             <IconUpload
               size={50}
               stroke={1.5}
-              color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Accept>
           <Dropzone.Reject>
             <IconX
               size={50}
               stroke={1.5}
-              color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Reject>
           <Dropzone.Idle>
@@ -67,7 +69,7 @@ export default function MetadataTester() {
             <Text size="xl" inline>
               Drag images here or click to select files
             </Text>
-            <Text size="sm" color="dimmed" inline mt={7}>
+            <Text size="sm" c="dimmed" inline mt={7}>
               Attach as many files as you like, each file should not exceed 5mb
             </Text>
           </div>
@@ -78,15 +80,15 @@ export default function MetadataTester() {
               <Card withBorder p="sm">
                 {(meta.resources as any[]).map((resource) => (
                   <Card.Section key={resource.id} inheritPadding py="xs" withBorder>
-                    <Group spacing={4}>
-                      <Text size="sm" weight={500}>
+                    <Group gap={4}>
+                      <Text size="sm" fw={500}>
                         {resource.name}
                       </Text>
                       <Badge color="blue" size="xs">
                         {resource.type}
                         {resource.weight && <> {resource.weight}</>}
                       </Badge>
-                      <Text size="xs" color="dimmed" ml="auto">
+                      <Text size="xs" c="dimmed" ml="auto">
                         {resource.hash}
                       </Text>
                     </Group>
@@ -100,7 +102,7 @@ export default function MetadataTester() {
         {nodeJson && (
           <Card withBorder p="sm">
             <Card.Section p="sm" py="xs" withBorder>
-              <Text weight={500}>Node JSON</Text>
+              <Text fw={500}>Node JSON</Text>
             </Card.Section>
             <Card.Section p="sm">
               <pre className="text-xs">{JSON.stringify(nodeJson, null, 2)}</pre>
@@ -110,7 +112,7 @@ export default function MetadataTester() {
         {exif && (
           <Card withBorder p="sm">
             <Card.Section p="sm" py="xs" withBorder>
-              <Text weight={500}>EXIF</Text>
+              <Text fw={500}>EXIF</Text>
             </Card.Section>
             <Card.Section p="sm">
               <pre className="text-xs">{JSON.stringify(exif, null, 2)}</pre>

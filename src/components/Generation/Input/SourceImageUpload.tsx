@@ -116,9 +116,9 @@ export function SourceImageUpload({
   return (
     <>
       <Input.Wrapper {...inputWrapperProps} className={className}>
-        {/* <ActionIcon size="xs">
+        {/* <LegacyActionIcon size="xs">
             <IconHistory />
-          </ActionIcon> */}
+          </LegacyActionIcon> */}
         {!_value ? (
           <div className="flex size-full flex-col rounded-md">
             <ImageDropzone

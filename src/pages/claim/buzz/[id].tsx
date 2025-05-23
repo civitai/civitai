@@ -16,7 +16,6 @@ import { z } from 'zod';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { enterFall, jelloVertical } from '~/libs/animations';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CurrencyConfig } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -25,6 +24,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import animationClasses from '~/libs/animations.module.scss';
 
 const querySchema = z.object({ id: z.string() });
 
@@ -66,8 +66,8 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
   // const color = claim.accountType === 'generation' ? config.
 
   const claimMutation = trpc.buzz.claim.useMutation({
-    onSuccess: async (result) => {
-      await queryUtils.buzz.getClaimStatus.setData({ id }, result);
+    onSuccess: (result) => {
+      queryUtils.buzz.getClaimStatus.setData({ id }, result);
     },
     onError: (error) => {
       showErrorNotification({
@@ -90,28 +90,19 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
     <>
       <Meta title={`Claim Buzz | Civitai`} deIndex />
       <Container size="xs" mb="lg">
-        <Stack spacing={0}>
+        <Stack gap={0}>
           {claim.status !== 'unavailable' && (
             <Center>
-              <Alert radius="sm" color="blue" sx={{ zIndex: 10 }}>
-                <Group spacing="xs" noWrap position="center">
-                  <Text size="md" weight={500}>{`🎉 You've received a Buzz Reward! 🎉`}</Text>
+              <Alert radius="sm" color="blue" className="z-10">
+                <Group gap="xs" wrap="nowrap" justify="center">
+                  <Text size="md" fw={500}>{`🎉 You've received a Buzz Reward! 🎉`}</Text>
                 </Group>
               </Alert>
             </Center>
           )}
-          <Center
-            sx={{
-              animationName: `${enterFall}, ${jelloVertical}`,
-              animationDuration: `1.5s, 2s`,
-              animationDelay: `0s, 1.5s`,
-              animationIterationCount: '1, 1',
-            }}
-            h={120}
-            my="lg"
-          >
-            <Stack spacing={0}>
-              <Text size={64} weight={500} ml={-30} color={color} component="span">
+          <Center className={animationClasses.jelloFall} h={120} my="lg">
+            <Stack gap={0}>
+              <Text fz={64} fw={500} ml={-30} c={color} span>
                 <Icon
                   color={color}
                   fill={color}
@@ -122,9 +113,9 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
               </Text>
 
               {claim.details.useMultiplier && rewardsMultiplier > 1 && (
-                <Text size="sm" color={color}>
+                <Text size="sm" c={color}>
                   Originally{' '}
-                  <Text component="span" weight="bold">
+                  <Text fw="bold" span>
                     {numberWithCommas(claim.details.amount)}{' '}
                   </Text>{' '}
                   Buzz
@@ -132,7 +123,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
               )}
             </Stack>
           </Center>
-          <Title order={1} align="center" mb={5}>
+          <Title order={1} ta="center" mb={5}>
             {claim.details.title}
           </Title>
           <Text size="lg" align="center">
@@ -141,8 +132,8 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
 
           <Center mt="xl">
             {claim.status === 'unavailable' ? (
-              <Alert radius="sm" color="red" sx={{ zIndex: 10 }}>
-                <Group spacing="xs" noWrap position="center">
+              <Alert radius="sm" color="red" className="z-10">
+                <Group gap="xs" wrap="nowrap" justify="center">
                   <Text size="lg">🥲 {claim.reason}</Text>
                 </Group>
               </Alert>
@@ -153,8 +144,8 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
                 </Button>
               </Center>
             ) : claim.status === 'claimed' ? (
-              <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-                <Group spacing="xs" noWrap position="center">
+              <Alert radius="sm" color="green" className="z-10">
+                <Group gap="xs" wrap="nowrap" justify="center">
                   <ThemeIcon color="green" size="lg">
                     <IconCircleCheck />
                   </ThemeIcon>

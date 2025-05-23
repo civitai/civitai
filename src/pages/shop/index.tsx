@@ -29,6 +29,7 @@ import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdo
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ShopItem } from '~/components/Shop/ShopItem';
 import { ShopSection } from '~/components/Shop/ShopSection';
 import Image from 'next/image';
@@ -98,26 +99,26 @@ export default function CosmeticShopMain() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]}
       />
       <Container size="xl" p="sm">
-        <Stack spacing="xl">
-          <Stack spacing={0}>
-            <Group noWrap position="apart">
+        <Stack gap="xl">
+          <Stack gap={0}>
+            <Group wrap="nowrap" justify="space-between">
               <Title>Civitai Cosmetic Shop</Title>
 
               <Group>
                 <Button
-                  leftIcon={<IconPencilMinus size={16} />}
+                  leftSection={<IconPencilMinus size={16} />}
                   onClick={() => {
                     openUserProfileEditModal({});
                   }}
-                  sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+                  style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
                   radius="xl"
-                  compact
+                  size="compact-md"
                 >
                   Customize profile
                 </Button>
                 <NotificationToggle type="cosmetic-shop-item-added-to-section">
                   {({ onToggle, isEnabled, isLoading }) => (
-                    <ActionIcon onClick={onToggle} loading={isLoading}>
+                    <LegacyActionIcon onClick={onToggle} loading={isLoading}>
                       <Tooltip
                         w={200}
                         multiline
@@ -128,12 +129,12 @@ export default function CosmeticShopMain() {
                       >
                         {isEnabled ? <IconBellOff /> : <IconBell />}
                       </Tooltip>
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   )}
                 </NotificationToggle>
               </Group>
             </Group>
-            <Text size="sm" color="dimmed" mb="sm">
+            <Text size="sm" c="dimmed" mb="sm">
               Any cosmetic purchases directly contributes to Civitai ❤️
             </Text>
           </Stack>
@@ -219,23 +220,16 @@ function MerchShowcaseSection({
         />
       </div>
       {/* <div className="flex flex-col lg:px-11">
-        <Text size={32} weight={600}>
+        <Text size={32} fw={600}>
           The backstory
         </Text>
-        <Text size={24} lh="40px" color="dimmed">
+        <Text size={24} lh="40px" c="dimmed">
           Civitai AiR is proud to present this limited edition t-shirt set by Artist Anne Horel,
           featuring her AI generated masks. Part of her upcoming exhibition at Julie Caredda Gallery
           in Paris, each unique design is limited to an edition of 25.
         </Text>
       </div> */}
-      <SimpleGrid
-        spacing="md"
-        breakpoints={[
-          { minWidth: 'xs', cols: 1 },
-          { minWidth: 'sm', cols: 3 },
-          { minWidth: 'lg', cols: 4 },
-        ]}
-      >
+      <SimpleGrid spacing="md" cols={{ base: 1, sm: 3, lg: 4 }}>
         {displayedItems.map((product) => (
           <ProductItem key={product.imageUrl} {...product} />
         ))}
@@ -278,11 +272,11 @@ function ProductItem({
         )}
       </div>
       <div className="flex flex-col gap-2">
-        <Text size={22} weight="bold">
+        <Text size="22px" lh={1.2} fw="bold">
           {name}
         </Text>
         {description && (
-          <Text size={16} lineClamp={3}>
+          <Text size="md" lineClamp={3}>
             {description}
           </Text>
         )}

@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   ActionIconProps,
   HoverCard,
   Popover as MantinePopover,
@@ -9,6 +8,7 @@ import {
 import { Icon, IconInfoCircle, IconProps } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { forwardRef } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const InfoPopover = forwardRef<HTMLButtonElement, Props>(
   (
@@ -31,7 +31,7 @@ export const InfoPopover = forwardRef<HTMLButtonElement, Props>(
     return (
       <Popover width={300} {...popoverProps} shadow="sm">
         <Popover.Target>
-          <ActionIcon
+          <LegacyActionIcon
             ref={ref}
             {...buttonProps}
             size={size}
@@ -41,10 +41,10 @@ export const InfoPopover = forwardRef<HTMLButtonElement, Props>(
               ['cursor-help']: !!hideClick,
             })}
           >
-            <Text color="dimmed" inline>
+            <Text c="dimmed" inline>
               <Icon {...iconProps} />
             </Text>
-          </ActionIcon>
+          </LegacyActionIcon>
         </Popover.Target>
         <Popover.Dropdown>{children}</Popover.Dropdown>
       </Popover>
@@ -65,4 +65,5 @@ type Props = PopoverProps & {
   type?: 'hover' | 'click';
   hideClick?: boolean; // TODO consider this behavior if type === hover
   customIcon?: Icon;
+  className?: string;
 };

@@ -1,11 +1,7 @@
 import { Stack, Text, Loader, Center, Divider } from '@mantine/core';
-import {
-  RootThreadProvider,
-  CreateComment,
-  Comment,
-  useCommentStyles,
-} from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 
 type ImageDetailCommentsProps = {
   imageId: number;
@@ -13,8 +9,6 @@ type ImageDetailCommentsProps = {
 };
 
 export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProps) {
-  const { classes } = useCommentStyles();
-
   return (
     <RootThreadProvider
       entityType="image"
@@ -32,9 +26,9 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
           <Stack>
             <ReturnToRootThread />
             {activeComment && (
-              <Stack spacing="xl">
+              <Stack gap="xl">
                 <Divider />
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Viewing thread for
                 </Text>
                 <Comment comment={activeComment} viewOnly />

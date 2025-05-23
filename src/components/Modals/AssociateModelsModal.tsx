@@ -28,21 +28,21 @@ const { openModal, Modal } = createContextModal<{
 
     return (
       <Stack>
-        <Group noWrap position="apart">
+        <Group wrap="nowrap" justify="space-between">
           <Text>{`Manage ${type} Resources`}</Text>
           <CloseButton onClick={context.close} />
         </Group>
         {features.recommenders && (
           <Card withBorder>
-            <Group spacing={8} position="apart" noWrap>
-              <Stack spacing={0}>
-                <Group spacing={8} noWrap>
-                  <Text weight={600}>Include AI recommendations</Text>
+            <Group gap={8} justify="space-between" wrap="nowrap">
+              <Stack gap={0}>
+                <Group gap={8} wrap="nowrap">
+                  <Text fw={600}>Include AI recommendations</Text>
                   <Badge radius="xl" size="sm" color="yellow">
                     Beta
                   </Badge>
                 </Group>
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Use Civitai AI to recommended resources related to your creation
                 </Text>
               </Stack>

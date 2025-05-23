@@ -35,11 +35,11 @@ export default function ModelVersionEditPage() {
 
   return (
     <Container size="sm">
-      <Stack spacing="xl">
+      <Stack gap="xl">
         <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to edit your model version. Please try again later."} />
         <Link legacyBehavior href={`/models/${modelVersion?.model.id}`} passHref shallow>
           <Anchor size="xs">
-            <Group spacing={4}>
+            <Group gap={4}>
               <IconArrowLeft size={18} strokeWidth={1.5} />
               <Text inherit>Back to {modelVersion?.model?.name} page</Text>
             </Group>
@@ -52,7 +52,7 @@ export default function ModelVersionEditPage() {
           onSubmit={handleClose}
         >
           {({ loading, canSave }) => (
-            <Group mt="xl" position="right">
+            <Group mt="xl" justify="flex-end">
               <Button variant="default" onClick={handleClose}>
                 Cancel
               </Button>

@@ -39,7 +39,7 @@ export const OwnershipForm = createReportForm({
           onChange={(values) => setUploading(values.some((x) => x.file))}
           withAsterisk
         />
-        <Stack spacing={4}>
+        <Stack gap={4}>
           <InputRadioGroup
             name="establishInterest"
             withAsterisk

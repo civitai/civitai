@@ -25,7 +25,6 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import React, { useEffect, useState } from 'react';
-import { chatListStyles } from '~/components/Chat/ChatList';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -33,6 +32,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from '~/components/Chat/ChatList.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const { openModal: openChatShareModal, Modal } = createContextModal<{ message: string }>({
   name: 'chatShareModal',
@@ -42,7 +44,6 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
     const currentUser = useCurrentUser();
     const { setState } = useChatContext();
     const queryUtils = trpc.useUtils();
-    const { classes, cx } = chatListStyles();
     const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
     const [searchInput, setSearchInput] = useState<string>('');
     const [selectedChat, setSelectedChat] = useState<number | undefined>(undefined);
@@ -133,27 +134,27 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
     };
 
     return (
-      <Stack spacing={0} h="100%">
+      <Stack gap={0} h="100%">
         <Box p="sm" pt={0}>
           <TextInput
-            icon={<IconSearch size={16} />}
+            leftSection={<IconSearch size={16} />}
             placeholder="Filter by user"
             value={searchInput}
             onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
             rightSection={
-              <ActionIcon
+              <LegacyActionIcon
                 onClick={() => {
                   setSearchInput('');
                 }}
                 disabled={!searchInput.length}
               >
                 <IconX size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             }
           />
         </Box>
         <Divider />
-        <Box h="100%" mah={500} sx={{ overflowY: 'auto' }}>
+        <Box h="100%" mah={500} style={{ overflowY: 'auto' }}>
           {isLoading ? (
             <Center h="100%">
               <Loader />
@@ -164,7 +165,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
               <IconCloudOff size={36} />
             </Stack>
           ) : (
-            <Stack p="xs" spacing={4}>
+            <Stack p="xs" gap={4}>
               {filteredData.map((d) => {
                 const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
                 const otherMembers = d.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
@@ -176,8 +177,8 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                 return (
                   <Group
                     key={d.id}
-                    noWrap
-                    className={cx(classes.selectChat, {
+                    wrap="nowrap"
+                    className={clsx(classes.selectChat, {
                       [classes.selectedChat]: d.id === selectedChat,
                     })}
                     onClick={() => {
@@ -193,11 +194,11 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                         <UserAvatar user={otherMembers[0].user} />
                       )}
                     </Box>
-                    <Stack sx={{ overflow: 'hidden' }} spacing={0}>
+                    <Stack style={{ overflow: 'hidden' }} gap={0}>
                       <Highlight
                         size="sm"
                         fw={500}
-                        sx={{
+                        style={{
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -212,7 +213,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <Text
                           size="xs"
-                          sx={{
+                          style={{
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -223,12 +224,12 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
                         </Text>
                       )}
                     </Stack>
-                    <Group sx={{ marginLeft: 'auto' }} noWrap spacing={6}>
+                    <Group style={{ marginLeft: 'auto' }} wrap="nowrap" gap={6}>
                       {isModSender && (
                         <Tooltip
                           withArrow={false}
                           label="Moderator chat"
-                          sx={{ border: '1px solid gray' }}
+                          style={{ border: '1px solid gray' }}
                         >
                           <Image src="/images/civ-c.png" alt="Moderator" width={16} height={16} />
                         </Tooltip>
@@ -251,7 +252,7 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
         <Button
           loading={isSending}
           disabled={!selectedChat}
-          leftIcon={<IconSend />}
+          leftSection={<IconSend />}
           onClick={handleClick}
         >
           Send

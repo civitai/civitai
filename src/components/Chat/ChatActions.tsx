@@ -20,6 +20,7 @@ import { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   const { setState } = useChatContext();
@@ -113,13 +114,13 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   };
 
   return (
-    <Group noWrap spacing={6}>
+    <Group wrap="nowrap" gap={6}>
       {!!chatObj && (
         <Menu withArrow position="bottom-end">
           <Menu.Target>
-            <ActionIcon>
+            <LegacyActionIcon>
               <IconSettings />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
             <>
@@ -172,9 +173,9 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
           </Menu.Dropdown>
         </Menu>
       )}
-      <ActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
+      <LegacyActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
         <IconX />
-      </ActionIcon>
+      </LegacyActionIcon>
     </Group>
   );
 };

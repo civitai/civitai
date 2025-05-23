@@ -32,7 +32,8 @@ import {
   getBuzzWithdrawalDetails,
   numberWithCommas,
 } from '../../../utils/number-helpers';
-import { useBuzzDashboardStyles, WithdrawalRequestBadgeColor } from '../buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
+import { WithdrawalRequestBadgeColor } from '../buzz.styles';
 import {
   useMutateBuzzWithdrawalRequest,
   useQueryOwnedBuzzWithdrawalRequests,
@@ -40,7 +41,6 @@ import {
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
   const { userPaymentConfiguration } = useUserPaymentConfiguration();
-  const { classes } = useBuzzDashboardStyles();
   const [filters, setFilters] = useState<
     Omit<GetPaginatedOwnedBuzzWithdrawalRequestSchema, 'limit'>
   >({
@@ -84,8 +84,8 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
 
   return (
     <Paper withBorder p="lg" radius="md" className={classes.tileCard} id="buzz-withdrawals">
-      <Stack spacing="sm">
-        <Group position="apart">
+      <Stack gap="sm">
+        <Group justify="space-between">
           <Title order={2}>Withdrawal Requests</Title>
           <Button
             onClick={() => {
@@ -138,14 +138,14 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
                       <td>${formatCurrencyForDisplay(dollarAmount, Currency.USD)}</td>
                       <td>${formatCurrencyForDisplay(platformFee, Currency.USD)}</td>
                       <td>
-                        <Stack spacing={0}>
+                        <Stack gap={0}>
                           <Text
                             color={
                               hasReachedStripe
                                 ? WithdrawalRequestBadgeColor[request.status]
                                 : undefined
                             }
-                            weight={hasReachedStripe ? 'bold' : undefined}
+                            fw={hasReachedStripe ? 'bold' : undefined}
                           >
                             ${formatCurrencyForDisplay(payoutAmount, Currency.USD)}{' '}
                           </Text>
@@ -178,10 +178,10 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
                 })}
               </tbody>
               {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                   <Pagination
-                    page={filters.page}
+                    value={filters.page}
                     onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                     total={pagination.totalPages}
                   />

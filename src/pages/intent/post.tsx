@@ -10,7 +10,6 @@ import {
   ThemeIcon,
   Timeline,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
 import { IconCheck, IconMinus, IconX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -88,7 +87,6 @@ type ParseProgress = {
 export default function IntentPost() {
   const router = useRouter();
   const queryUtils = trpc.useUtils();
-  const theme = useMantineTheme();
   const [readyData, setReadyData] = useState<PostQuerySchema | undefined>();
   const [creatingPost, setCreatingPost] = useState<string | undefined>();
   const [previewUrl, setPreviewUrl] = useState<{ url: string; type: 'video' | 'image' }>();
@@ -166,7 +164,7 @@ export default function IntentPost() {
           errors: queryParse.error.issues.map((i, idx) => (
             <Group key={idx}>
               <Code>{i.path.join('.')}</Code>
-              <Text color="dimmed" size="sm">
+              <Text c="dimmed" size="sm">
                 {i.message}
               </Text>
             </Group>
@@ -186,7 +184,7 @@ export default function IntentPost() {
           errors: [
             <Group key="tagfail">
               <Code>tags</Code>
-              <Text color="dimmed" size="sm">
+              <Text c="dimmed" size="sm">
                 Maximum of {POST_TAG_LIMIT} tags allowed (found {data.tags!.length})
               </Text>
             </Group>,
@@ -253,7 +251,7 @@ export default function IntentPost() {
                 status: 'success',
                 errors: [],
                 msg: (
-                  <Stack spacing={6}>
+                  <Stack gap={6}>
                     <Text>Success!</Text>
                     <Text>Found 1 image ({formatBytes(bytes)})</Text>
                   </Stack>
@@ -301,7 +299,7 @@ export default function IntentPost() {
                 status: 'success',
                 errors: [],
                 msg: (
-                  <Stack spacing={6}>
+                  <Stack gap={6}>
                     <Text>Success!</Text>
                     <Text>Found 1 video ({formatBytes(bytes)})</Text>
                   </Stack>
@@ -327,7 +325,7 @@ export default function IntentPost() {
             title: 'Checking media',
             status: 'failed',
             errors: [
-              <Text key={e.message} color="dimmed" size="sm">
+              <Text key={e.message} c="dimmed" size="sm">
                 {e.message.split('. ').map((m, idx) => (
                   <p key={idx}>{m}</p>
                 ))}
@@ -350,14 +348,7 @@ export default function IntentPost() {
       <Container my="lg" size="xs">
         <Stack>
           <Title order={2}>Create New Post</Title>
-          <Paper
-            p="sm"
-            withBorder
-            style={{
-              background:
-                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-            }}
-          >
+          <Paper p="sm" className="bg-gray-1 dark:bg-dark-6" withBorder>
             <Timeline color="green" active={activeStep} bulletSize={22} lineWidth={1}>
               {progress.map((p, idx) => {
                 const Icon =
@@ -391,17 +382,17 @@ export default function IntentPost() {
                     title={p.title}
                     // color={color}
                   >
-                    <Group position="left" align="start">
-                      <Stack mt="xs" spacing={6}>
+                    <Group justify="start" align="start">
+                      <Stack mt="xs" gap={6}>
                         {p.errors.length > 0 ? (
                           p.errors.map((e, idx) => (
-                            <Group noWrap key={idx}>
+                            <Group wrap="nowrap" key={idx}>
                               <IconX color="red" size={16} style={{ flex: '0 0 auto' }} />
                               {e}
                             </Group>
                           ))
                         ) : p.status !== undefined ? (
-                          <Text color="dimmed" size="sm">
+                          <Text c="dimmed" size="sm">
                             {p.msg ?? `${titleCase(p.status)}!`}
                           </Text>
                         ) : (
@@ -409,7 +400,7 @@ export default function IntentPost() {
                         )}
                       </Stack>
                       {p.title === 'Checking media' && !!previewUrl && (
-                        <Group position="center" style={{ flexGrow: 1 }}>
+                        <Group justify="center" style={{ flexGrow: 1 }}>
                           <EdgeMedia
                             width={150}
                             src={previewUrl.url}
@@ -427,7 +418,7 @@ export default function IntentPost() {
               })}
             </Timeline>
           </Paper>
-          <Group position="right">
+          <Group justify="flex-end">
             <Button
               disabled={!readyData || !!hasError}
               loading={!!creatingPost}

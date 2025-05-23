@@ -1,4 +1,4 @@
-import { Button, useMantineTheme } from '@mantine/core';
+import { Button, useComputedColorScheme } from '@mantine/core';
 import { IconClock } from '@tabler/icons-react';
 
 import { useModelQueryParams } from '~/components/Model/model.utils';
@@ -20,7 +20,7 @@ export function CategoryTags({
   includeEA?: boolean;
   includeAll?: boolean;
 }) {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { set, tag: tagQuery } = useModelQueryParams();
 
   const { data: categories } = useCategoryTags({ entityType: TagTarget.Model });
@@ -37,11 +37,11 @@ export function CategoryTags({
       {includeEA && <EarlyAccessBadge />}
       {includeAll && (
         <Button
-          className="uppercase"
-          variant={!_tag ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          className="overflow-visible uppercase"
+          variant={!_tag ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
           color={!_tag ? 'blue' : 'gray'}
           onClick={() => _setTag(undefined)}
-          compact
+          size="compact-sm"
         >
           All
         </Button>
@@ -53,11 +53,11 @@ export function CategoryTags({
           return (
             <Button
               key={tag.id}
-              className="uppercase"
-              variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              className="overflow-visible uppercase"
+              variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
               onClick={() => _setTag(!active ? tag.name : undefined)}
-              compact
+              size="compact-sm"
             >
               {tag.name}
             </Button>
@@ -78,8 +78,9 @@ function EarlyAccessBadge() {
       variant={earlyAccess ? 'filled' : 'outline'}
       color="success.5"
       onClick={() => setFilters({ earlyAccess: !earlyAccess })}
-      compact
-      leftIcon={<IconClock size={16} />}
+      size="compact-sm"
+      className="overflow-visible"
+      leftSection={<IconClock size={16} />}
     >
       Early Access
     </Button>

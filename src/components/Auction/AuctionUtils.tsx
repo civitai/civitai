@@ -17,6 +17,7 @@ import React, { useMemo, useState } from 'react';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import {
   useSignalConnection,
   useSignalContext,
@@ -82,7 +83,7 @@ export function usePurchaseBid() {
         title: 'Created bid successfully!',
         message: '',
         autoClose: 3000,
-        disallowClose: false,
+        withCloseButton: true,
       });
 
       if (!connected || !registeredTopics.includes(`${SignalTopic.Auction}:${auctionId}`)) {
@@ -245,7 +246,7 @@ export const BidModelButton = ({
 
   const actionButton = asButton ? (
     <Button onClick={handle} disabled={!destAuction} {...buttonProps}>
-      <Group spacing={8} noWrap>
+      <Group gap={8} wrap="nowrap">
         <IconGavel size={20} />
         <Text inherit inline className="hide-mobile">
           Bid
@@ -253,15 +254,16 @@ export const BidModelButton = ({
       </Group>
     </Button>
   ) : (
-    <ActionIcon
+    <LegacyActionIcon
       onClick={handle}
       disabled={!destAuction}
+      color="gray"
       size="xl"
       variant="light"
       {...actionIconProps}
     >
       <IconGavel size={30} />
-    </ActionIcon>
+    </LegacyActionIcon>
   );
 
   return (
@@ -290,7 +292,7 @@ export const AuctionViews = () => {
   return (
     <Tooltip label="Currently viewing">
       <Paper radius="sm" shadow="xs" px={8} py={4} withBorder className="bg-gray-0 dark:bg-dark-6">
-        <Group spacing={4} className="min-w-[55px] cursor-default justify-center">
+        <Group gap={4} className="min-w-[55px] cursor-default justify-center">
           <IconUsers size={14} />
           <NumberFlow
             format={{ notation: 'compact' }}

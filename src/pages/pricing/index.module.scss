@@ -1,0 +1,39 @@
+.title {
+  @container (max-width: theme('screens.sm')) {
+    font-size: 24px;
+  }
+}
+
+.introText {
+  @container (max-width: theme('screens.sm')) {
+    font-size: 14px;
+  }
+}
+
+.image {
+  @container (max-width: theme('screens.sm')) {
+    width: 96px;
+    margin-bottom: var(--mantine-spacing-xs);
+  }
+}
+
+.cardTitle {
+  @container (max-width: theme('screens.sm')) {
+    font-size: 20px;
+  }
+}
+
+.card {
+  height: 100%;
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-8)
+  );
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-lg);
+}
+
+.price {
+  font-size: 48px;
+  font-weight: bold;
+}

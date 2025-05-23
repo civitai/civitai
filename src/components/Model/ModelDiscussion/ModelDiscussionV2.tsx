@@ -7,7 +7,7 @@ import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
 import { ReviewSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden }: Props) {
@@ -33,11 +33,11 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
   const hasHiddenComments = hiddenCommentsCount > 0;
 
   return (
-    <ContainerGrid gutter="xl">
-      <ContainerGrid.Col span={12} sx={{ position: 'relative' }}>
+    <ContainerGrid2 gutter="xl">
+      <ContainerGrid2.Col span={12} style={{ position: 'relative' }}>
         <LoadingOverlay visible={isLoading} zIndex={10} />
         {hasItems ? (
-          <Stack spacing={8}>
+          <Stack gap={8}>
             <MasonryGrid2
               data={comments}
               render={CommentDiscussionItem}
@@ -55,8 +55,8 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
                 state={{ modelId }}
                 style={{ display: 'flex', justifyContent: 'center', alignSelf: 'center' }}
               >
-                <Text size="xs" color="dimmed">
-                  <Group spacing={4} position="center">
+                <Text size="xs" c="dimmed">
+                  <Group gap={4} justify="center">
                     <IconMessageCancel size={16} />
                     <Text inherit inline>
                       {`See ${hiddenCommentsCount} more hidden ${
@@ -71,18 +71,18 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
         ) : (
           <Paper
             p="xl"
-            sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}
           >
             <Stack>
               <Text size="xl">There are no comments for this model yet.</Text>
-              <Text color="dimmed">
+              <Text c="dimmed">
                 Be the first to let the people know about this model by leaving your comment.
               </Text>
             </Stack>
           </Paper>
         )}
-      </ContainerGrid.Col>
-    </ContainerGrid>
+      </ContainerGrid2.Col>
+    </ContainerGrid2>
   );
 }
 

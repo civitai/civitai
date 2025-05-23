@@ -50,6 +50,7 @@ import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureInt
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -190,11 +191,15 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this entry."} />
-      <Stack spacing="xl">
-        <Group spacing="md">
+      <ReadOnlyAlert
+        message={
+          "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this entry."
+        }
+      />
+      <Stack gap="xl">
+        <Group gap="md">
           <BackButton url={`/bounties/${bounty.id}`} />
-          <Title inline>{bountyEntry ? 'Update' : 'Submit new'} entry</Title>
+          <Title className="inline-block">{bountyEntry ? 'Update' : 'Submit new'} entry</Title>
           <FeatureIntroductionHelpButton
             feature="bounty-submit-entry"
             contentSlug={['feature-introduction', 'bounty-submit-entry']}
@@ -227,18 +232,18 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
         {images.length > 0 && (
           <SimpleGrid
             spacing="sm"
-            breakpoints={[
-              { minWidth: 'xs', cols: 1 },
-              { minWidth: 'sm', cols: 3 },
-              { minWidth: 'md', cols: 4 },
-            ]}
+            cols={{
+              base: 1,
+              sm: 2,
+              md: 4,
+            }}
           >
             {bountyEntryImages.map((image) => (
               <Paper
                 key={image.id}
                 radius="sm"
                 p={0}
-                sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                style={{ position: 'relative', overflow: 'hidden', height: 332 }}
                 withBorder
               >
                 <EdgeMedia
@@ -248,7 +253,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   style={{ objectFit: 'cover', height: '100%' }}
                 />
                 <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                  <ActionIcon
+                  <LegacyActionIcon
                     variant="filled"
                     size="lg"
                     color="red"
@@ -259,14 +264,14 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     }}
                   >
                     <IconTrash size={26} strokeWidth={2.5} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </div>
                 {image.meta && (
                   <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                     <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                      <ActionIcon variant="light" color="dark" size="lg">
+                      <LegacyActionIcon variant="light" color="dark" size="lg">
                         <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </ImageMetaPopover2>
                   </div>
                 )}
@@ -280,7 +285,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   key={file.url}
                   radius="sm"
                   p={0}
-                  sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                  style={{ position: 'relative', overflow: 'hidden', height: 332 }}
                   withBorder
                 >
                   {file.status === 'success' ? (
@@ -292,21 +297,21 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                         style={{ objectFit: 'cover', height: '100%' }}
                       />
                       <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="filled"
                           size="lg"
                           color="red"
                           onClick={() => removeImage(file.url)}
                         >
                           <IconTrash size={26} strokeWidth={2.5} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </div>
                       {file.type === 'image' && (
                         <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                           <ImageMetaPopover meta={file.meta}>
-                            <ActionIcon variant="light" color="dark" size="lg">
+                            <LegacyActionIcon variant="light" color="dark" size="lg">
                               <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </ImageMetaPopover>
                         </div>
                       )}
@@ -314,25 +319,27 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   ) : (
                     <>
                       <MediaHash {...file} />
-                      <Progress
-                        size="xl"
-                        value={file.progress}
-                        label={`${Math.floor(file.progress)}%`}
-                        color={file.progress < 100 ? 'blue' : 'green'}
-                        striped
-                        animate
-                      />
+                      <Progress.Root size="xl">
+                        <Progress.Section
+                          value={file.progress}
+                          color={file.progress < 100 ? 'blue' : 'green'}
+                          striped
+                          animated
+                        >
+                          <Progress.Label>{Math.floor(file.progress)}%</Progress.Label>
+                        </Progress.Section>
+                      </Progress.Root>
                     </>
                   )}
                 </Paper>
               ))}
           </SimpleGrid>
         )}
-        <Group spacing="md" align="flex-start" sx={{ '& > *': { flexGrow: 1 } }}>
+        <Group gap="md" align="flex-start" className="*:grow">
           <InputMultiFileUpload
             name="sampleFiles"
             label={
-              <Group spacing={8} noWrap>
+              <Group gap={8} wrap="nowrap">
                 <Text size="xl">Sample Files</Text>
                 <HoverCard width={300}>
                   <HoverCard.Target>
@@ -341,7 +348,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     </ThemeIcon>
                   </HoverCard.Target>
                   <HoverCard.Dropdown>
-                    <Stack spacing={4}>
+                    <Stack gap={4}>
                       <Text size="md" color="yellow">
                         What&apos;s this?
                       </Text>
@@ -365,8 +372,8 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               return (
                 <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
                   <Stack>
-                    <Group position="apart" noWrap>
-                      <Stack spacing={0}>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Stack gap={0}>
                         {bountyEntry && file.id ? (
                           <Anchor
                             href={`/api/download/attachments/${file.id}`}
@@ -376,16 +383,16 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                             {file.name}
                           </Anchor>
                         ) : (
-                          <Text size="sm" weight={500} lineClamp={1}>
+                          <Text size="sm" fw={500} lineClamp={1}>
                             {file.name}
                           </Text>
                         )}
-                        <Text color="dimmed" size="xs">
+                        <Text c="dimmed" size="xs">
                           {formatKBytes(file.sizeKB)}
                         </Text>
                       </Stack>
                       <Tooltip label="Remove">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="md"
                           color="red"
                           variant="light"
@@ -393,7 +400,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                           onClick={onRemove}
                         >
                           <IconTrash size="1rem" />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </Group>
                     {/* <NumberInputWrapper
@@ -455,7 +462,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               };
             }}
             label={
-              <Group spacing={8} noWrap>
+              <Group gap={8} wrap="nowrap">
                 <Text size="xl">Bounty Files</Text>
                 <HoverCard width={300}>
                   <HoverCard.Target>
@@ -464,7 +471,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     </ThemeIcon>
                   </HoverCard.Target>
                   <HoverCard.Dropdown>
-                    <Stack spacing={4}>
+                    <Stack gap={4}>
                       <Text size="md" color="yellow">
                         What&apos;s this?
                       </Text>
@@ -491,8 +498,8 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               return (
                 <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
                   <Stack>
-                    <Group position="apart" noWrap>
-                      <Stack spacing={0}>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Stack gap={0}>
                         {bountyEntry && file.id ? (
                           <Anchor
                             href={`/api/download/attachments/${file.id}`}
@@ -502,11 +509,11 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                             {file.name}
                           </Anchor>
                         ) : (
-                          <Text size="sm" weight={500} lineClamp={1}>
+                          <Text size="sm" fw={500} lineClamp={1}>
                             {file.name}
                           </Text>
                         )}
-                        <Text color="dimmed" size="xs">
+                        <Text c="dimmed" size="xs">
                           {formatKBytes(file.sizeKB)}
                         </Text>
                       </Stack>
@@ -531,7 +538,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                           </Tooltip>
                         )}
                         <Tooltip label="Remove">
-                          <ActionIcon
+                          <LegacyActionIcon
                             size="md"
                             color="red"
                             variant="light"
@@ -539,7 +546,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                             onClick={onRemove}
                           >
                             <IconTrash size="1rem" />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </Tooltip>
                       </Group>
                     </Group>
@@ -578,7 +585,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             label="Unlock amount"
             description="Set a specific amount people have to award you before they can download your files. This only affects bounty files - sample files are always unlocked."
             labelProps={{ size: 'xl' }}
-            icon={<CurrencyIcon currency={currency} size={18} />}
+            leftSection={<CurrencyIcon currency={currency} size={18} />}
             format={currency !== Currency.BUZZ ? 'currency' : undefined}
             currency={currency}
             min={1}
@@ -613,7 +620,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             />
           </>
         )}
-        <Group mt="xl" position="right">
+        <Group mt="xl" justify="flex-end">
           <NavigateBack url={`/bounties/${bounty.id}`}>
             {({ onClick }) => (
               <Button variant="light" color="gray" onClick={onClick}>
@@ -625,7 +632,9 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
           <Button
             loading={bountyEntryUpsertMutation.isLoading && !creating}
             disabled={
-              bountyEntryUpsertMutation.isLoading || (!bountyEntry && !ownershipAcknowledgement) || !features.canWrite
+              bountyEntryUpsertMutation.isLoading ||
+              (!bountyEntry && !ownershipAcknowledgement) ||
+              !features.canWrite
             }
             onClick={() => setCreating(false)}
             type="submit"

@@ -4,8 +4,11 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 export function PageModal({ children, ...props }: ModalProps) {
   return (
     <Modal
-      target="main"
-      transitionDuration={0}
+      // TODO: Mantine7. Confirm this is fine.
+      // target="main"
+      transitionProps={{
+        duration: 0,
+      }}
       {...props}
       styles={{
         root: { position: 'absolute' },

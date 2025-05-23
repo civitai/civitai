@@ -12,7 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { CosmeticSource } from '~/shared/utils/prisma/enums';
-import { IconCircleCheck, IconClock2, IconX } from '@tabler/icons-react';
+import { IconCircleCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -21,12 +21,12 @@ import { useQueryCosmetic } from '~/components/Cosmetics/cosmetics.util';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { enterFall, jelloVertical } from '~/libs/animations';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { numericString } from '~/utils/zod-helpers';
+import animationClasses from '~/libs/animations.module.scss';
 
 const querySchema = z.object({ id: numericString() });
 
@@ -55,7 +55,7 @@ export const getServerSideProps = createServerSideProps({
 const availableCosmeticTypes: string[] = ['Badge', 'ContentDecoration'];
 type ClaimStatus = 'unavailable' | 'pending' | 'claimed' | 'equipped';
 export default function ClaimCosmeticPage({ id }: { id: number }) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const [status, setStatus] = useState<ClaimStatus | null>();
   const { cosmetic, isLoading: cosmeticLoading } = useQueryCosmetic({ id });
   const { data: cosmeticStatus, refetch } = trpc.user.cosmeticStatus.useQuery({ id });
@@ -115,8 +115,8 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
 
   const actionStates: Record<ClaimStatus, React.ReactNode> = {
     unavailable: (
-      <Alert radius="sm" color="red" sx={{ zIndex: 10 }}>
-        <Group spacing="xs" noWrap position="center">
+      <Alert radius="sm" color="red" className="z-10">
+        <Group gap="xs" wrap="nowrap" justify="center">
           <ThemeIcon color="red" size="lg">
             <IconX strokeWidth={3} />
           </ThemeIcon>
@@ -137,8 +137,8 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
       </Button>
     ),
     equipped: (
-      <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-        <Group spacing="xs" noWrap position="center">
+      <Alert radius="sm" color="green" className="z-10">
+        <Group gap="xs" wrap="nowrap" justify="center">
           <ThemeIcon color="green" size="lg">
             <IconCircleCheck />
           </ThemeIcon>
@@ -157,26 +157,17 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
         deIndex
       />
       <Container size="xs" mb="lg">
-        <Stack spacing={0}>
+        <Stack gap={0}>
           {cosmeticAvailable && status !== 'unavailable' && (
             <Center>
-              <Alert radius="sm" color="blue" sx={{ zIndex: 10 }}>
-                <Group spacing="xs" noWrap position="center">
-                  <Text size="md" weight={500}>{`🎉 You've received a cosmetic! 🎉`}</Text>
+              <Alert radius="sm" color="blue" className="z-10">
+                <Group gap="xs" wrap="nowrap" justify="center">
+                  <Text size="md" fw={500}>{`🎉 You've received a cosmetic! 🎉`}</Text>
                 </Group>
               </Alert>
             </Center>
           )}
-          <Center
-            sx={{
-              animationName: `${enterFall}, ${jelloVertical}`,
-              animationDuration: `1.5s, 2s`,
-              animationDelay: `0s, 1.5s`,
-              animationIterationCount: '1, 1',
-            }}
-            h={256}
-            my="lg"
-          >
+          <Center className={animationClasses.jelloFall} h={256} my="lg">
             {cosmetic.type === 'Badge' && (
               <EdgeMedia
                 src={(cosmetic.data as MixedObject).url}
@@ -188,17 +179,17 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
               <Card
                 withBorder
                 shadow="sm"
+                className="flex items-end justify-center"
                 h={256}
                 w={(256 * 2) / 3}
-                sx={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
               >
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   Example Cosmetic here
                 </Text>
               </Card>
             )}
           </Center>
-          <Title order={1} align="center" mb={5}>
+          <Title order={1} ta="center" mb={5}>
             {cosmetic.name}
           </Title>
           <Text size="lg" align="center">
@@ -207,8 +198,8 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
 
           <Center mt="xl">
             {!cosmeticAvailable ? (
-              <Alert radius="sm" color="red" sx={{ zIndex: 10 }}>
-                <Group spacing="xs" noWrap position="center">
+              <Alert radius="sm" color="red" className="z-10">
+                <Group gap="xs" wrap="nowrap" justify="center">
                   <Text size="lg">🥲 This cosmetic is no longer available to claim</Text>
                 </Group>
               </Alert>

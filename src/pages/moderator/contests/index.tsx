@@ -14,6 +14,7 @@ import {
 import { IconEdit, IconExternalLink } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { useQueryCollections } from '~/components/Collections/collection.utils';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CollectionSort } from '~/server/common/enums';
@@ -42,9 +43,9 @@ export default function Contests() {
     <>
       <Meta title="Contests - Settings" deIndex />
       <Container size="md">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Contests</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Manage our contests &amp; banned users{' '}
           </Text>
         </Stack>
@@ -62,7 +63,7 @@ export default function Contests() {
             </Center>
           ) : flatData?.length ?? 0 ? (
             <Stack>
-              <Table highlightOnHover withBorder>
+              <Table highlightOnHover withTableBorder>
                 <thead>
                   <tr>
                     <th>Contest Name</th>
@@ -77,7 +78,7 @@ export default function Contests() {
                   {flatData.map((collection) => (
                     <tr key={collection.id}>
                       <td>
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           <Text>{collection.name}</Text>
                         </Group>
                       </td>
@@ -94,7 +95,7 @@ export default function Contests() {
                           : 'N/A'}
                       </td>
                       <td>
-                        <ActionIcon
+                        <LegacyActionIcon
                           component={Link}
                           href={`/collections/${collection.id}`}
                           variant="transparent"
@@ -107,7 +108,7 @@ export default function Contests() {
                             strokeWidth={2.5}
                             size={26}
                           />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </td>
                     </tr>
                   ))}

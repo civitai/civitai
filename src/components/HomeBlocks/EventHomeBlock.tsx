@@ -41,17 +41,17 @@ function EventHomeBlockContent({ metadata }: Props) {
       </Center>
     </Card>
   ) : eventData ? (
-    <Group spacing={48}>
+    <Group gap={48}>
       <Card className="rounded-[16px] p-4 @md:rounded-[32px] @md:p-10" radius="xl">
-        <Group align="start" position="center" spacing={40}>
-          <Stack className="justify-center @md:flex-1 @md:justify-start" spacing="xl">
-            <Stack spacing={0}>
-              <Text size="sm" weight={500} tt="uppercase" inline>
+        <Group align="start" justify="center" gap={40}>
+          <Stack className="justify-center @md:flex-1 @md:justify-start" gap="xl">
+            <Stack gap={0}>
+              <Text size="sm" fw={500} tt="uppercase" inline>
                 Holiday Event
               </Text>
               <div className="text-nowrap text-2xl font-bold">{eventData.title}</div>
             </Stack>
-            <Group spacing={8}>
+            <Group gap={8}>
               <Button
                 component={Link}
                 href={`/events/${event}`}
@@ -79,7 +79,7 @@ function EventHomeBlockContent({ metadata }: Props) {
             </Group>
           </Stack>
 
-          <Stack className="@md:flex-1" align="end" spacing="xl">
+          <Stack className="@md:flex-1" align="end" gap="xl">
             <div className="max-w-80">
               {eventCosmetic?.cosmetic ? (
                 <HolidayFrame
@@ -97,21 +97,21 @@ function EventHomeBlockContent({ metadata }: Props) {
                 />
               )}
             </div>
-            <Group spacing="xl">
-              <Stack align="end" spacing={0}>
-                <Group spacing={4} noWrap>
+            <Group gap="xl">
+              <Stack align="end" gap={0}>
+                <Group gap={4} wrap="nowrap">
                   <CurrencyIcon currency={Currency.BUZZ} />
-                  <Text size="xl" lh={1} weight={590} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                  <Text size="xl" lh={1} fw={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {abbreviateNumber(totalTeamScores)}
                   </Text>
                 </Group>
                 <Text size="xs">Total Buzz donations</Text>
               </Stack>
               {teamScore && equipped && (
-                <Stack align="end" spacing={0}>
-                  <Group spacing={4} noWrap>
+                <Stack align="end" gap={0}>
+                  <Group gap={4} wrap="nowrap">
                     <Lightbulb color={userTeam} size={24} transform="rotate(180)" animated />
-                    <Text size="xl" lh={1} weight={590} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                    <Text size="xl" lh={1} fw={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
                       {abbreviateNumber(teamScore.score ?? 0)}
                     </Text>
                   </Group>

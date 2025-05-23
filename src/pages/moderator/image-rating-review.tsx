@@ -74,7 +74,6 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
   const [nsfwLevel, setNsfwLevel] = useState(item.nsfwLevel);
   const previous = usePrevious(nsfwLevel);
   const [updated, setUpdated] = useState(false);
-  const queryUtils = trpc.useUtils();
 
   const { mutate } = trpc.image.updateImageNsfwLevel.useMutation({
     onError: (error) => {
@@ -111,7 +110,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
               <React.Fragment key={level}>
                 <Button
                   variant={nsfwLevel === level ? 'filled' : 'outline'}
-                  compact
+                  size="compact-md"
                   onClick={() => handleSetLevel(level)}
                   color={
                     item.nsfwLevelLocked && item.nsfwLevel === level
@@ -123,7 +122,13 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
                 >
                   {getBrowsingLevelLabel(level)}
                 </Button>
-                <Progress size={26} sections={sections} />
+                <Progress.Root size={26}>
+                  {sections.map((section, index) => (
+                    <Progress.Section key={index} value={section.value} color={section.color}>
+                      <Progress.Label>{section.label}</Progress.Label>
+                    </Progress.Section>
+                  ))}
+                </Progress.Root>
               </React.Fragment>
             );
           })}

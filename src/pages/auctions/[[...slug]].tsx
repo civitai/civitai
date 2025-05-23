@@ -21,7 +21,7 @@ import { AuctionInfo } from '~/components/Auction/AuctionInfo';
 import { AuctionMyBids } from '~/components/Auction/AuctionMyBids';
 import { MY_BIDS, useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useAuctionTopicListener } from '~/components/Auction/AuctionUtils';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
@@ -153,7 +153,7 @@ export default function Auctions({
     <Stack>
       <NavLink
         p={itemSize}
-        label={<Text weight={500}>My Bids</Text>}
+        label={<Text fw={500}>My Bids</Text>}
         onClick={() => {
           chooseAuction(undefined);
         }}
@@ -176,8 +176,8 @@ export default function Auctions({
               key={a.id}
               p={itemSize}
               label={
-                <Group position="apart">
-                  <Text weight={500} className="shrink basis-2/3">
+                <Group justify="space-between">
+                  <Text fw={500} className="shrink basis-2/3">
                     {a.auctionBase.name}
                   </Text>
                   <Tooltip label="Min bid currently required to place">
@@ -217,9 +217,9 @@ export default function Auctions({
         deIndex={slug === MY_BIDS}
       />
       <Container size="xl" h="100%" data-tour="auction:start">
-        <ContainerGrid gutter="xl" my="sm" h="100%">
+        <ContainerGrid2 gutter="xl" className="my-8 h-full">
           {!isMobile && (
-            <ContainerGrid.Col xs={12} md={4}>
+            <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
               <Box
                 maw={330}
                 w="100%"
@@ -230,13 +230,17 @@ export default function Auctions({
               >
                 {navLinks()}
               </Box>
-            </ContainerGrid.Col>
+            </ContainerGrid2.Col>
           )}
 
-          <ContainerGrid.Col xs={12} md={8} display="flex" sx={{ justifyContent: 'center' }}>
+          <ContainerGrid2.Col
+            span={{ base: 12, md: 8 }}
+            display="flex"
+            style={{ justifyContent: 'center' }}
+          >
             {slug !== MY_BIDS ? <AuctionInfo /> : <AuctionMyBids />}
-          </ContainerGrid.Col>
-        </ContainerGrid>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
       </Container>
       <Drawer
         opened={drawerIsOpen}
@@ -244,16 +248,16 @@ export default function Auctions({
         size="90%"
         position="bottom"
         styles={{
-          drawer: {
+          content: {
             maxHeight: 'calc(100dvh - var(--header-height))',
             overflowY: 'auto',
           },
           body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
           header: { padding: '6px 16px' },
-          closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
         }}
         title={
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Auctions
           </Text>
         }

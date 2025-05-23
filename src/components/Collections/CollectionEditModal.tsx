@@ -27,6 +27,7 @@ import {
 } from '~/components/Collections/collection.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -146,7 +147,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
         </Center>
       ) : canEdit || isCreate ? (
         <Form form={form} onSubmit={handleSubmit}>
-          <Stack spacing="sm">
+          <Stack gap="sm">
             <InputSimpleImageUpload name="image" label="Cover Image" />
             <InputText
               name="name"
@@ -213,28 +214,28 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       description="Makes it so that you can add managers to the collection by sharing a link with them."
                     />
                     {metadata?.inviteUrlEnabled && (
-                      <Stack spacing={4}>
-                        <Text weight={500} size="sm">
+                      <Stack gap={4}>
+                        <Text fw={500} size="sm">
                           Here is your Invite Link:
                         </Text>
                         <CopyButton value={joinUrl}>
                           {({ copied, copy }) => (
-                            <Box pos="relative" onClick={copy} sx={{ cursor: 'pointer' }}>
-                              <ActionIcon
+                            <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
+                              <LegacyActionIcon
                                 pos="absolute"
                                 top="50%"
                                 right={10}
                                 variant="transparent"
-                                sx={{ transform: 'translateY(-50%) !important' }}
+                                style={{ transform: 'translateY(-50%) !important' }}
                               >
                                 <IconClipboard />
-                              </ActionIcon>
+                              </LegacyActionIcon>
                               <Code block color={copied ? 'green' : undefined}>
                                 {copied ? 'Copied' : joinUrl}
                               </Code>
                             </Box>
                           )}
-                        </CopyButton> 
+                        </CopyButton>
                       </Stack>
                     )}
 
@@ -248,10 +249,10 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       name="metadata.endsAt"
                       label="End Date"
                       placeholder="Select an end date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       clearable
                     />
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       This is only used to stop recurring job updating the random indexes. We
                       suggest you add this in to save some resources, but this value will not be
                       shown to end-users.
@@ -260,14 +261,14 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       name="metadata.submissionStartDate"
                       label="Submission Start Date"
                       placeholder="Select an start date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       clearable
                     />
                     <InputDatePicker
                       name="metadata.submissionEndDate"
                       label="Submission End Date"
                       placeholder="Select an end date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       clearable
                     />
                     {metadata?.submissionEndDate && (
@@ -301,13 +302,13 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       label="When voting for this contest will start"
                       description="This will lock the ratings on these entries. Use with care. Leaving this blank makes it so that they're always reactable."
                       placeholder="Select a voting period start date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       clearable
                     />
                     <InputTags
                       name="tags"
                       label={
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           <Input.Label>Tags</Input.Label>
                           <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                             <Text>
@@ -360,7 +361,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       label="Sets a start date for Reactions on the entries"
                       description="This will lock the reactions on these entries. Use with care, ideally only when the contest rely on reactions from users. Leaving this blank makes it so that they're always reactable."
                       placeholder="Select a voting period start date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       clearable
                     />
                     <InputBrowsingLevels
@@ -409,7 +410,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
 
             <Divider label="Extras" />
             <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
-            <Group position="right">
+            <Group justify="flex-end">
               <Button type="submit" loading={upsertCollectionMutation.isLoading}>
                 Save
               </Button>

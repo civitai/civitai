@@ -17,6 +17,7 @@ import { breakpoints } from '~/utils/tailwind';
 import { useMemo } from 'react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ImageCarousel(props: Props) {
   return (
@@ -126,9 +127,13 @@ export function ImageCarouselContent({
                         />
                         {image.meta && (
                           <ImageMetaPopover meta={image.meta} imageId={image.id}>
-                            <ActionIcon variant="light" className="absolute bottom-2.5 right-2.5">
+                            <LegacyActionIcon
+                              color="gray"
+                              variant="light"
+                              className="absolute bottom-2.5 right-2.5"
+                            >
                               <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </ImageMetaPopover>
                         )}
                       </>

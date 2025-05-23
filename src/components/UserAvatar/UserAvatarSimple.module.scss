@@ -3,7 +3,7 @@
   filter: drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.2));
 }
 
-:global(.dark) {
+:global([data-mantine-color-scheme="dark"]) {
   .username {
     filter: drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8));
   }

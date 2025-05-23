@@ -14,7 +14,7 @@ export function NoContent({
       <ThemeIcon size={iconSize} radius={100}>
         <IconCloudOff size={iconSize / ICON_CONTAINER_SIZE_RATIO} />
       </ThemeIcon>
-      <Text size={32} align="center">
+      <Text fz={32} align="center">
         No results found
       </Text>
       <Text align="center">

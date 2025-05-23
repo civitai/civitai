@@ -1,0 +1,7 @@
+.root {
+  @container (min-width: theme('screens.xs')) {
+    top: var(--header-height);
+    height: calc(100% - var(--header-height));
+  }
+}
+ 

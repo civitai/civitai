@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Chip,
-  createStyles,
   Group,
   Menu,
   Paper,
@@ -15,7 +14,6 @@ import {
   Textarea,
   TextInput,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -45,31 +43,8 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import { titleCase } from '~/utils/string-helpers';
-
-const useStyles = createStyles((theme) => ({
-  tagOverlay: {
-    position: 'relative',
-    height: 'auto',
-    '&:hover button': {
-      display: 'flex',
-    },
-  },
-  trash: {
-    display: 'none',
-    position: 'absolute',
-    width: '100%',
-    height: '100%',
-    top: 0,
-    left: 0,
-    border: 0,
-    borderRadius: '4px',
-
-    backgroundColor: theme.fn.rgba(
-      theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-      0.9
-    ),
-  },
-}));
+import styles from './TrainingImagesTagViewer.module.css';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const TrainingImagesLabelTypeSelect = ({
   modelId,
@@ -92,7 +67,7 @@ export const TrainingImagesLabelTypeSelect = ({
       value={labelType}
       data={constants.autoLabel.labelTypes.map((l) => ({
         label: (
-          // <Group position="center">
+          // <Group justify="center">
           //   <Text>{capitalize(l)}</Text>
           //   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }} withinPortal>
           //     <Text>{labelDescriptions[l]}</Text>
@@ -120,26 +95,11 @@ export const TrainingImagesSwitchLabel = ({
   modelId: number;
   mediaType: TrainingDetailsObj['mediaType'];
 }) => {
-  const theme = useMantineTheme();
-
   return (
-    <Paper
-      px="md"
-      py="xs"
-      shadow="xs"
-      radius="sm"
-      withBorder
-      style={{
-        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-      }}
-    >
+    <Paper className="bg-gray-0 dark:bg-dark-6" px="md" py="xs" shadow="xs" radius="sm" withBorder>
       <Group>
         <Text>Label Type</Text>
-        <TrainingImagesLabelTypeSelect
-          modelId={modelId}
-          mediaType={mediaType}
-          sx={{ flexGrow: 1 }}
-        />
+        <TrainingImagesLabelTypeSelect className="grow" modelId={modelId} mediaType={mediaType} />
       </Group>
     </Paper>
   );
@@ -156,8 +116,6 @@ export const TrainingImagesTags = ({
   mediaType: TrainingDetailsObj['mediaType'];
   selectedTags: string[];
 }) => {
-  const theme = useMantineTheme();
-  const { classes } = useStyles();
   const [addTagTxt, setAddTagTxt] = useState('');
 
   const { autoLabeling } = useTrainingImageStore(
@@ -189,48 +147,36 @@ export const TrainingImagesTags = ({
   };
 
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <Paper
+        className="overflow-y-auto bg-gray-0 scrollbar-thin dark:bg-dark-6"
         h={100}
-        // mih="xl"
-        // mah={100}
         p={6}
         shadow="xs"
         radius="sm"
         withBorder
-        style={{
-          backgroundColor:
-            theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        }}
-        sx={{ overflowY: 'auto', scrollbarWidth: 'thin' }}
       >
         {tags.length > 0 ? (
-          <Group spacing={8}>
+          <Group gap={8}>
             {tags.map((cap, index) => (
               <Badge
                 key={index}
                 variant="outline"
                 color={selectedTags.includes(cap) ? 'green' : 'gray'}
                 px={6}
-                className={classes.tagOverlay}
-                styles={{
-                  inner: {
-                    overflow: 'auto',
-                    overflowWrap: 'break-word',
-                    whiteSpace: 'normal',
-                  },
-                }}
+                className={styles.tagOverlay}
+                classNames={{ label: 'overflow-auto break-words whitespace-normal' }}
               >
                 <Text>{cap}</Text>
-                <ActionIcon
+                <LegacyActionIcon
                   disabled={autoLabeling.isRunning}
                   size={14}
                   variant="transparent"
-                  className={classes.trash}
+                  className={styles.trash}
                   onClick={() => removeTag(cap)}
                 >
                   <IconX size={12} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Badge>
             ))}
           </Group>
@@ -264,7 +210,7 @@ export const TrainingImagesTags = ({
         styles={{ input: { scrollbarWidth: 'thin' } }}
         rightSectionWidth={52}
         rightSection={
-          <ActionIcon
+          <LegacyActionIcon
             h="100%"
             onClick={() => {
               if (!addTagTxt.length) return;
@@ -272,10 +218,10 @@ export const TrainingImagesTags = ({
               setAddTagTxt('');
             }}
             // disabled={!addTagTxt.length}
-            sx={{ borderRadius: 0 }}
+            style={{ borderRadius: 0 }}
           >
             <IconPlus />
-          </ActionIcon>
+          </LegacyActionIcon>
         }
       />
     </Stack>
@@ -344,7 +290,7 @@ export const TrainingImagesTagViewer = ({
     <Accordion variant="contained" transitionDuration={0}>
       <Accordion.Item value="tag-viewer">
         <Accordion.Control>
-          <Group spacing="xs">
+          <Group gap="xs">
             <Text>Tag Viewer</Text>
             <Badge color="indigo" leftSection={<IconPhoto size={14} />}>
               {numImages}
@@ -360,20 +306,20 @@ export const TrainingImagesTagViewer = ({
           <Stack>
             <Group>
               <TextInput
-                icon={<IconSearch size={16} />}
+                leftSection={<IconSearch size={16} />}
                 placeholder="Search tags"
                 value={tagSearchInput}
                 onChange={(event) => setTagSearchInput(event.currentTarget.value.toLowerCase())}
                 style={{ flexGrow: 1 }}
                 rightSection={
-                  <ActionIcon
+                  <LegacyActionIcon
                     onClick={() => {
                       setTagSearchInput('');
                     }}
                     disabled={!tagSearchInput.length}
                   >
                     <IconX size={16} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 }
               />
               <Button
@@ -445,48 +391,42 @@ export const TrainingImagesTagViewer = ({
                 No tags to display.
               </Text>
             ) : (
-              <Chip.Group
-                value={selectedTags}
-                onChange={setSelectedTags}
-                multiple
-                mah={300}
-                // mih={40}
-                // resize: 'vertical'
-                style={{ overflowY: 'auto', rowGap: '6px' }}
-              >
-                {tagList.map((t) => (
-                  <Chip
-                    key={t[0]}
-                    value={t[0]}
-                    styles={{
-                      root: { lineHeight: 0, overflow: 'hidden' },
-                      label: { display: 'flex' },
-                      iconWrapper: { overflow: 'initial', paddingRight: '10px' },
-                    }}
-                  >
-                    <Group h="100%" maw="100%">
-                      {/* TODO when switching to m7, change this to a class */}
-                      <Text
-                        style={{
-                          maxWidth: '90%',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                        }}
-                      >
-                        {t[0] === blankTagStr ? (
-                          <Badge color="red" size="sm" radius={0}>
-                            None
-                          </Badge>
-                        ) : (
-                          t[0]
-                        )}
-                      </Text>
-                      <Badge color="gray" variant="outline" radius="xl" size="sm">
-                        {t[1]}
-                      </Badge>
-                    </Group>
-                  </Chip>
-                ))}
+              <Chip.Group value={selectedTags} onChange={setSelectedTags} multiple>
+                <Group className="overflow-y-auto" mah={300} gap={6}>
+                  {tagList.map((t) => (
+                    <Chip
+                      key={t[0]}
+                      value={t[0]}
+                      styles={{
+                        root: { lineHeight: 0, overflow: 'hidden' },
+                        label: { display: 'flex' },
+                        iconWrapper: { overflow: 'initial', paddingRight: '10px' },
+                      }}
+                    >
+                      <Group h="100%" maw="100%">
+                        {/* TODO when switching to m7, change this to a class */}
+                        <Text
+                          style={{
+                            maxWidth: '90%',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {t[0] === blankTagStr ? (
+                            <Badge color="red" size="sm" radius={0}>
+                              None
+                            </Badge>
+                          ) : (
+                            t[0]
+                          )}
+                        </Text>
+                        <Badge color="gray" variant="outline" radius="xl" size="sm">
+                          {t[1]}
+                        </Badge>
+                      </Group>
+                    </Chip>
+                  ))}
+                </Group>
               </Chip.Group>
             )}
           </Stack>

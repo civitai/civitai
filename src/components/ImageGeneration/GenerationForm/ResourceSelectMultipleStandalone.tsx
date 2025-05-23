@@ -1,4 +1,4 @@
-import { Accordion, Button, Text, Anchor, Badge, createStyles } from '@mantine/core';
+import { Accordion, Button, Text, Anchor, Badge } from '@mantine/core';
 import {
   ResourceSelectMultiple,
   ResourceSelectMultipleProps,
@@ -12,6 +12,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconPlus } from '@tabler/icons-react';
 import { withController } from '~/libs/form/hoc/withController';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import classes from './ResourceSelectMultipleStandalone.module.scss';
 
 export function ResourceSelectMultipleStandalone(props: ResourceSelectMultipleProps) {
   const status = useGenerationStatus();
@@ -19,7 +20,6 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
   const currentUser = useCurrentUser();
   const resourceIds = !!props.value?.length ? props.value.map((x) => x.id) : [];
   const atLimit = resourceIds.length >= status.limits.resources;
-  const { classes } = useStyles();
   // const [opened, setOpened] = useState(false);
 
   const options = {
@@ -43,7 +43,7 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
         <Accordion.Control>
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-1">
-              <Text size="sm" weight={590}>
+              <Text size="sm" fw={590}>
                 Additional Resources
               </Text>
               {!!resources?.length && (
@@ -54,9 +54,9 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
 
               <Button
                 component="span"
-                compact
+                size="compact-md"
                 variant="light"
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   resourceSelectHandler
@@ -78,7 +78,7 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
                 classNames={{ inner: 'flex gap-1' }}
               >
                 <IconPlus size={16} />
-                <Text size="sm" weight={500}>
+                <Text size="sm" fw={500}>
                   Add
                 </Text>
               </Button>
@@ -87,7 +87,11 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
             {atLimit && (!currentUser || currentUser.tier === 'free') && (
               <Text size="xs">
                 <Link legacyBehavior href="/pricing" passHref>
-                  <Anchor color="yellow" rel="nofollow" onClick={(e) => e.stopPropagation()}>
+                  <Anchor
+                    color="yellow"
+                    rel="nofollow"
+                    onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                  >
                     Become a member
                   </Anchor>
                 </Link>{' '}
@@ -118,40 +122,3 @@ export const InputResourceSelectMultipleStandalone = withController(
     value: field.value,
   })
 );
-
-const useStyles = createStyles((theme) => ({
-  accordionItem: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff',
-
-    '&:first-of-type': {
-      borderTopLeftRadius: theme.radius.sm,
-      borderTopRightRadius: theme.radius.sm,
-    },
-
-    '&:last-of-type': {
-      borderBottomLeftRadius: theme.radius.sm,
-      borderBottomRightRadius: theme.radius.sm,
-    },
-
-    '&[data-active]': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : `#fff`,
-    },
-  },
-  accordionControl: {
-    padding: '8px 8px 8px 12px',
-
-    '&:hover': {
-      background: 'transparent',
-    },
-
-    '&[data-active]': {
-      borderRadius: '0 !important',
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-      }`,
-    },
-  },
-  accordionContent: {
-    padding: '8px 12px 12px 12px',
-  },
-}));

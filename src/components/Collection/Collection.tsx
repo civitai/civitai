@@ -1,4 +1,4 @@
-import { Badge, BadgeProps, Group, MantineNumberSize } from '@mantine/core';
+import { Badge, BadgeProps, Group, MantineSpacing } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Fragment } from 'react';
 import OneKeyMap from '@essentials/one-key-map';
@@ -41,7 +41,7 @@ export function Collection<T>({
             size="sm"
             {...badgeProps}
             onClick={open}
-            sx={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer' }}
           >
             + {collapsedItems.length}
           </Badge>
@@ -52,7 +52,7 @@ export function Collection<T>({
             size="sm"
             {...badgeProps}
             onClick={close}
-            sx={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer' }}
           >
             - Hide
           </Badge>
@@ -60,14 +60,14 @@ export function Collection<T>({
     </>
   );
 
-  return grouped ? <Group spacing={spacing}>{renderedItems}</Group> : renderedItems;
+  return grouped ? <Group gap={spacing}>{renderedItems}</Group> : renderedItems;
 }
 
 type Props<T> = {
   items: T[];
   renderItem: (item: T, index: number) => React.ReactNode;
   limit?: number;
-  spacing?: MantineNumberSize;
+  spacing?: MantineSpacing;
   grouped?: boolean;
   badgeProps?: Omit<BadgeProps, 'children'>;
 };

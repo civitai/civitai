@@ -56,7 +56,7 @@ export const CivitaiLinkManageButton = ({
   noTooltip?: boolean;
   tooltipProps?: Omit<CivitaiTooltipProps, 'children' | 'label'>;
 } & CivitaiLinkResourceManagerProps) => {
-  const { hovered, ref } = useHover<HTMLButtonElement>();
+  const { hovered, ref } = useHover();
   const isMobile = useContainerSmallerThan('sm');
 
   return (

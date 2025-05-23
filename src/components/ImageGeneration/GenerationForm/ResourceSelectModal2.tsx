@@ -17,6 +17,8 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import {
@@ -41,7 +43,7 @@ import {
   useRefinementList,
 } from 'react-instantsearch';
 import { BidModelButton } from '~/components/Auction/AuctionUtils';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.scss';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
@@ -77,7 +79,7 @@ import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceR
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import searchLayoutClasses from '~/components/Search/SearchLayout.module.scss';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { TwCard } from '~/components/TwCard/TwCard';
@@ -105,6 +107,7 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
@@ -453,9 +456,9 @@ function ResourceSelectModalContent() {
         <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
           <Text>{title}</Text>
           <CustomSearchBox
-            isMobile={isMobile}
-            autoFocus
+            isMobile={isMobile as boolean}
             className="order-last w-full grow sm:order-none sm:w-auto"
+            autoFocus
           />
           <CloseButton onClick={handleClose} />
         </div>
@@ -480,9 +483,9 @@ function ResourceSelectModalContent() {
             {selectedTab !== 'featured' && <ResourceSelectSort />}
             <ResourceSelectFiltersDropdown />
             <GenerationSettingsPopover>
-              <ActionIcon>
+              <LegacyActionIcon>
                 <IconSettings />
-              </ActionIcon>
+              </LegacyActionIcon>
             </GenerationSettingsPopover>
           </div>
         </div>
@@ -537,8 +540,6 @@ function ResourceHitList({
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
-  const { classes, cx } = useSearchLayoutStyles();
-  const { classes: cardClasses } = useCardStyles({ aspectRatio: 1 });
   const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
   const {
     items: models,
@@ -604,16 +605,14 @@ function ResourceHitList({
     return (
       <div className="p-3 py-5">
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
-              <Text color="dimmed">
-                {hiddenCount} models have been hidden due to your settings.
-              </Text>
+              <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
             )}
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <ThemeIcon size={128} radius={100} style={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
             </ThemeIcon>
-            <Title order={1} inline>
+            <Title order={1} className="inline">
               No models found
             </Title>
             <Text align="center">
@@ -642,14 +641,14 @@ function ResourceHitList({
     // <ScrollArea id="resource-select-modal" className="flex-1 p-3">
     <div className="flex flex-col gap-3 p-3">
       {hiddenCount > 0 && (
-        <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
+        <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
 
       {topItems.length > 0 && (
         <div
-          className={cx(
-            classes.grid,
-            'p-3 grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6'
+          className={clsx(
+            searchLayoutClasses.grid,
+            'grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6 p-3'
           )}
         >
           <div className={cardClasses.winnerFirst}>
@@ -679,7 +678,7 @@ function ResourceHitList({
           )}
         </div>
       )}
-      <div className={classes.grid}>
+      <div className={searchLayoutClasses.grid}>
         {restItems.map((model) => (
           <ResourceSelectCard
             key={model.id}
@@ -691,7 +690,7 @@ function ResourceHitList({
       </div>
       {items.length > 0 && !isLastPage && (
         <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
-          <Center sx={{ height: 36 }} my="md">
+          <Center style={{ height: 36 }} my="md">
             <Loader />
           </Center>
         </InViewLoader>
@@ -781,30 +780,30 @@ const TopRightIcons = ({
   return (
     <>
       <div className="absolute right-9 top-2 flex flex-col gap-1">
-        <ActionIcon
+        <LegacyActionIcon
           variant="transparent"
           className="mix-blend-difference"
           size="md"
           onClick={() => setFlipped((f) => !f)}
         >
           <IconInfoCircle strokeWidth={2.5} size={24} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </div>
       <div className="absolute right-2 top-2 flex flex-col gap-1">
         {contextMenuItems.length > 0 && (
           <Menu position="left-start" withArrow offset={-5}>
             <Menu.Target>
-              <ActionIcon
+              <LegacyActionIcon
                 variant="transparent"
                 className="mix-blend-difference"
                 p={0}
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                 }}
               >
                 <IconDotsVertical size={24} style={{ filter: `drop-shadow(0 0 2px #000)` }} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Menu.Target>
             <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
           </Menu>
@@ -851,9 +850,8 @@ function ResourceSelectCard({
   const [loading, setLoading] = useState(false);
 
   const image = data.images[0];
-  const { classes, cx, theme } = useCardStyles({
-    aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
-  });
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const versions = data.versions;
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
@@ -921,7 +919,7 @@ function ResourceSelectCard({
     {
       label: 'Stats',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           <IconBadge radius="xs" icon={<IconDownload size={14} />}>
             <Text>{(selectedVersion.metrics?.downloadCount ?? 0).toLocaleString()}</Text>
           </IconBadge>
@@ -975,7 +973,7 @@ function ResourceSelectCard({
     {
       label: 'Training',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           {selectedVersion.steps && (
             <Badge size="sm" radius="sm" color="teal">
               Steps: {selectedVersion.steps.toLocaleString()}
@@ -993,7 +991,7 @@ function ResourceSelectCard({
     {
       label: 'Usage Tips',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           {selectedVersion.clipSkip && (
             <Badge size="sm" radius="sm" color="cyan">
               Clip Skip: {selectedVersion.clipSkip.toLocaleString()}
@@ -1020,8 +1018,8 @@ function ResourceSelectCard({
     },
     {
       label: (
-        <Group spacing="xs">
-          <Text weight={500}>AIR</Text>
+        <Group gap="xs">
+          <Text fw={500}>AIR</Text>
           <URNExplanation size={20} />
         </Group>
       ),
@@ -1058,7 +1056,7 @@ function ResourceSelectCard({
   return (
     // Visually hide card if there are no versions
     <TwCard
-      className={clsx(classes.root, 'justify-between')}
+      className={clsx(cardClasses.root, 'justify-between')}
       // onClick={handleSelect}
       style={{ display: versions.length === 0 ? 'none' : undefined }}
     >
@@ -1082,7 +1080,7 @@ function ResourceSelectCard({
                           type={image.type}
                           width={width}
                           placeholder="empty"
-                          className={classes.image}
+                          className={cardClasses.image}
                           loading="lazy"
                         />
                       </Link>
@@ -1092,23 +1090,21 @@ function ResourceSelectCard({
                     <div className="absolute left-2 top-2 flex items-center gap-1">
                       <ImageGuard2.BlurToggle />
                       <ModelTypeBadge
-                        className={cx(classes.infoChip, classes.chip)}
+                        className={clsx(cardClasses.infoChip, cardClasses.chip)}
                         type={data.type}
                         baseModel={data.version.baseModel}
                       />
 
                       {(isNew || isUpdated) && (
                         <Badge
-                          className={classes.chip}
+                          className={cardClasses.chip}
                           variant="filled"
                           radius="xl"
-                          sx={(theme) => ({
-                            backgroundColor: isUpdated
-                              ? '#1EBD8E'
-                              : theme.colors.blue[theme.fn.primaryShade()],
-                          })}
+                          style={{
+                            backgroundColor: isUpdated ? '#1EBD8E' : theme.colors.blue[4],
+                          }}
                         >
-                          <Text color="white" size="xs" transform="capitalize">
+                          <Text c="white" size="xs" tt="capitalize">
                             {isUpdated ? 'Updated' : 'New'}
                           </Text>
                         </Badge>
@@ -1141,7 +1137,7 @@ function ResourceSelectCard({
                         <BidModelButton
                           actionIconProps={{
                             size: 'md',
-                            variant: theme.colorScheme === 'light' ? undefined : 'light',
+                            variant: colorScheme === 'light' ? undefined : 'light',
                             px: 4,
                           }}
                           entityData={{
@@ -1166,7 +1162,7 @@ function ResourceSelectCard({
                             color={isFavorite ? 'green' : 'gray'}
                             px={4}
                             size="xs"
-                            variant={theme.colorScheme === 'light' ? undefined : 'light'}
+                            variant={colorScheme === 'light' ? undefined : 'light'}
                           >
                             <ThumbsUpIcon color="#fff" filled={isFavorite} size={20} />
                           </Button>
@@ -1185,7 +1181,7 @@ function ResourceSelectCard({
                   items={modelDetails}
                   labelWidth="80px"
                   withBorder
-                  fontSize="xs"
+                  fz="xs"
                 />
               </Stack>
               <TopRightIcons data={data} setFlipped={setFlipped} />
@@ -1193,10 +1189,10 @@ function ResourceSelectCard({
           ))}
 
         <div className="flex flex-col gap-2 p-3 text-black dark:text-white">
-          <Text size="sm" weight={700} lineClamp={1} lh={1}>
+          <Text size="sm" fw={700} lineClamp={1} lh={1}>
             {data.name}
           </Text>
-          <Group noWrap position="apart">
+          <Group wrap="nowrap" justify="space-between">
             <Select
               onClick={(e) => {
                 e.preventDefault();
@@ -1213,7 +1209,7 @@ function ResourceSelectCard({
             />
             <Button
               loading={loading}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 handleSelect();

@@ -28,7 +28,7 @@ function Preview({ image }: { image: PostEditMediaDetail }) {
         {image.blockedFor && (
           <Text className="flex flex-wrap items-center gap-1">
             <span>Blocked for:</span>
-            <Text color="red" inline className="font-semibold">
+            <Text c="red" inline className="font-semibold">
               {image.blockedFor}
             </Text>
           </Text>
@@ -65,7 +65,7 @@ function EditDetail({ image }: { image: PostEditMediaDetail }) {
         {image.blockedFor && (
           <Text className="flex flex-wrap items-center gap-1">
             <span>Blocked for:</span>
-            <Text color="red" inline className="font-semibold">
+            <Text c="red" inline className="font-semibold">
               {image.blockedFor}
             </Text>
           </Text>

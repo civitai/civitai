@@ -1,0 +1,25 @@
+.stopped {
+  background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-gray-1));
+}
+
+.grid {
+  display: grid;
+  gap: var(--mantine-spacing-xs);
+  grid-template-columns: repeat(1, 1fr);
+
+  @container (min-width: 530px) {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  @container (min-width: 900px) {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  @container (min-width: 1200px) {
+    grid-template-columns: repeat(auto-fill, minmax(256px, 1fr));
+  }
+}
+
+.asSidebar {
+  grid-template-columns: repeat(2, 1fr);
+}

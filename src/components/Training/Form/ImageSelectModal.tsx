@@ -14,6 +14,7 @@ import {
   Stack,
   Text,
   Title,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import {
@@ -47,7 +48,6 @@ import {
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import {
   ImageSelectFiltersProfileDropdown,
   ImageSelectFiltersTrainingDropdown,
@@ -71,6 +71,9 @@ import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import styles from '~/components/Search/SearchLayout.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 // const take = 20;
 
@@ -259,7 +262,7 @@ export default function ImageSelectModal({
               <CloseButton onClick={handleClose} />
             </div>
 
-            <Group position="apart">
+            <Group justify="space-between">
               <Group>
                 <Button onClick={handleSelect} disabled={!selected.length}>{`Import${
                   selected.length > 0 ? ` (${selected.length})` : ''
@@ -314,7 +317,7 @@ export default function ImageSelectModal({
                   loadFn={fetchNextPage}
                   loadCondition={!isLoading && !isFetchingNext && hasNextPage}
                 >
-                  <Center p="xl" sx={{ height: 36 }} mt="md">
+                  <Center p="xl" style={{ height: 36 }} mt="md">
                     <Loader />
                   </Center>
                 </InViewLoader>
@@ -334,8 +337,6 @@ const ImageGrid = ({
   | { type: 'generation'; data: GennedMedia[] }
   | { type: 'uploaded'; data: UploadedImage[] }
   | { type: 'training'; data: TrainedData[] }) => {
-  const { classes, cx } = useSearchLayoutStyles();
-
   if (!data || !data.length)
     return <NoContent message={`No ${type === 'training' ? 'datasets' : 'assets'} found`} />;
 
@@ -393,7 +394,7 @@ const ImageGrid = ({
             {date}
           </Title>
           <div
-            className={cx('p-2', classes.grid)}
+            className={clsx('p-2', styles.grid)}
             style={
               type === 'training'
                 ? { gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }
@@ -431,6 +432,7 @@ const ImageGridMedia = ({
   | { type: 'training'; img: TrainedData }) => {
   const { selected, setSelected, importedUrls } = useImageSelectContext();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const compareKey = type === 'training' ? `${img.modelVersion.id}` : img.url;
 
@@ -477,7 +479,7 @@ const ImageGridMedia = ({
         label: 'Status',
         value: trainingStatus ? (
           <Badge color={trainingStatusFields[trainingStatus]?.color ?? 'gray'}>
-            <Group spacing={6} noWrap>
+            <Group gap={6} wrap="nowrap">
               {splitUppercase(
                 trainingStatus === TrainingStatus.InReview ? 'Ready' : trainingStatus
               )}
@@ -504,7 +506,7 @@ const ImageGridMedia = ({
       {
         label: 'Files',
         value: (
-          <Group spacing="xs">
+          <Group gap="xs">
             <IconBadge color="pink" icon={<IconHash size={14} />} tooltip="Number of files">
               {metadata?.numImages || 0}
             </IconBadge>
@@ -513,7 +515,7 @@ const ImageGridMedia = ({
             </IconBadge>
             {(metadata?.numCaptions || 0) > 0 && (
               <IconBadge
-                color={theme.colorScheme === 'dark' ? 'gray.2' : 'gray.8'}
+                color={colorScheme === 'dark' ? 'gray.2' : 'gray.8'}
                 icon={<IconCategory size={14} />}
                 tooltip="Label type"
               >
@@ -534,8 +536,8 @@ const ImageGridMedia = ({
               type: 'Training Data',
             })}
             color="cyan"
-            compact
-            leftIcon={<IconDownload size={16} />}
+            size="compact-md"
+            leftSection={<IconDownload size={16} />}
           >
             <Text align="center">{`Download (${formatKBytes(sizeKB)})`}</Text>
           </Button>
@@ -551,7 +553,7 @@ const ImageGridMedia = ({
             trainingModelInfo[baseModel as TrainingDetailsBaseModelList].pretty
           ) : isAir(baseModel) ? (
             <Text component="a" href={getAirModelLink(baseModel)} target="_blank" variant="link">
-              <Group spacing="xs">
+              <Group gap="xs">
                 <Text>Custom</Text>
                 <IconExternalLink size={14} />
               </Group>
@@ -608,7 +610,7 @@ const ImageGridMedia = ({
             <Overlay
               blur={2}
               zIndex={11}
-              color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+              color={colorScheme === 'dark' ? theme.colors.dark[7] : theme.white}
               opacity={0.8}
             />
           )}
@@ -618,8 +620,8 @@ const ImageGridMedia = ({
                 // title="Dataset Details"
                 items={modelDetails}
                 labelWidth="80px"
+                className="text-xs"
                 withBorder
-                fontSize="xs"
               />
             </div>
           </div>
@@ -627,8 +629,8 @@ const ImageGridMedia = ({
             className="flex cursor-pointer flex-col gap-2 p-3 text-black dark:text-white"
             onClick={onChange}
           >
-            <Group noWrap position="apart">
-              <Text size="sm" weight={700}>
+            <Group wrap="nowrap" justify="space-between">
+              <Text size="sm" fw={700}>
                 {img.modelVersion.model.name} ({img.modelVersion.name})
               </Text>
               <Button variant={isSelected ? 'light' : 'filled'}>
@@ -652,7 +654,7 @@ const ImageGridMedia = ({
         <Overlay
           blur={2}
           zIndex={11}
-          color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+          color={colorScheme === 'dark' ? theme.colors.dark[7] : theme.white}
           opacity={0.8}
         />
       )}
@@ -673,7 +675,7 @@ const ImageGridMedia = ({
             meta={type === 'generation' ? imageMetaSchema.parse(img.params) : img.meta!}
             hideSoftware
           >
-            <ActionIcon variant="transparent" size="md">
+            <LegacyActionIcon variant="transparent" size="md">
               <IconInfoCircle
                 color="white"
                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -681,7 +683,7 @@ const ImageGridMedia = ({
                 strokeWidth={2.5}
                 size={26}
               />
-            </ActionIcon>
+            </LegacyActionIcon>
           </ImageMetaPopover>
         </div>
       ) : undefined}

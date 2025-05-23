@@ -27,6 +27,7 @@ import { formatDate } from '~/utils/date-helpers';
 
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function Rewards() {
   const [filters, setFilters] = useState<
@@ -43,18 +44,18 @@ export default function Rewards() {
     <>
       <Meta title="Rewards" deIndex />
       <Container size="lg">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Purchasable Rewards</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Manage the rewards that users can purchase with their Buzz.
           </Text>
         </Stack>
-        <Group position="apart" mb="md">
+        <Group justify="space-between" mb="md">
           <Group>
             <Button
               component={Link}
               href="/moderator/rewards/create"
-              leftIcon={<IconPlus size={16} />}
+              leftSection={<IconPlus size={16} />}
               radius="xl"
             >
               Create
@@ -120,22 +121,22 @@ export default function Rewards() {
                           : '-'}
                       </td>
                       <td>
-                        <ActionIcon
+                        <LegacyActionIcon
                           component={Link}
                           href={`/moderator/rewards/update/${purchasableReward.id}`}
                         >
                           <IconEdit />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
               {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                   <Pagination
-                    page={filters.page}
+                    value={filters.page}
                     onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                     total={pagination.totalPages}
                   />

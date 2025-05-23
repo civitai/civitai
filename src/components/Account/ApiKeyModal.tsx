@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Box,
   Button,
   Code,
@@ -17,6 +16,7 @@ import { addApiKeyInputSchema } from '~/server/schema/api-key.schema';
 import { KeyScope } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const schema = addApiKeyInputSchema;
 
@@ -63,27 +63,28 @@ export function ApiKeyModal({ ...props }: Props) {
       closeOnEscape={!mutating}
     >
       {apiKey ? (
-        <Stack spacing={4}>
-          <Text weight={500}>Here is your API Key:</Text>
+        <Stack gap={4}>
+          <Text fw={500}>Here is your API Key:</Text>
           <CopyButton value={apiKey}>
             {({ copied, copy }) => (
-              <Box pos="relative" onClick={copy} sx={{ cursor: 'pointer' }}>
-                <ActionIcon
+              <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
+                <LegacyActionIcon
                   pos="absolute"
                   top="50%"
                   right={10}
                   variant="transparent"
-                  sx={{ transform: 'translateY(-50%) !important' }}
+                  color="gray"
+                  style={{ transform: 'translateY(-50%) !important' }}
                 >
                   <IconClipboard />
-                </ActionIcon>
+                </LegacyActionIcon>
                 <Code block color={copied ? 'green' : undefined}>
                   {copied ? 'Copied' : apiKey}
                 </Code>
               </Box>
             )}
           </CopyButton>
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             {`Be sure to save this, you won't be able to see it again.`}
           </Text>
         </Stack>
@@ -91,7 +92,7 @@ export function ApiKeyModal({ ...props }: Props) {
         <Form form={form} onSubmit={handleSaveApiKey}>
           <Stack>
             <InputText name="name" label="Name" placeholder="Your API Key name" withAsterisk />
-            <Group position="apart">
+            <Group justify="space-between">
               <Button variant="default" disabled={mutating} onClick={handleClose}>
                 Cancel
               </Button>

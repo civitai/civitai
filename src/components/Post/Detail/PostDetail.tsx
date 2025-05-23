@@ -13,6 +13,7 @@ import {
   Center,
   Tooltip,
   useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import {
   Availability,
@@ -74,6 +75,7 @@ import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSearchParams } from 'next/navigation';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = { postId: number };
 
@@ -88,7 +90,7 @@ export function PostDetail(props: Props) {
 }
 
 export function PostDetailContent({ postId }: Props) {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const scrollRef = useScrollAreaRef();
   const currentUser = useCurrentUser();
   const searchParams = useSearchParams();
@@ -204,7 +206,7 @@ export function PostDetailContent({ postId }: Props) {
                   )}
                 </div>
                 <div className="flex flex-wrap justify-between gap-2 @md:items-center @max-md:flex-col">
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     {relatedResource && (
                       <>
                         Posted to{' '}
@@ -223,18 +225,17 @@ export function PostDetailContent({ postId }: Props) {
                   </Text>
                   <div className="flex gap-2 ">
                     <Button
-                      size="md"
                       radius="xl"
                       color="gray"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      leftIcon={<IconBookmark size={14} />}
+                      variant={colorScheme === 'dark' ? 'filled' : 'light'}
+                      leftSection={<IconBookmark size={14} />}
                       onClick={() =>
                         openContext('addToCollection', {
                           postId: post.id,
                           type: CollectionType.Post,
                         })
                       }
-                      compact
+                      size="compact-md"
                     >
                       <Text size="xs">Save</Text>
                     </Button>
@@ -246,10 +247,9 @@ export function PostDetailContent({ postId }: Props) {
                       <Button
                         radius="xl"
                         color="gray"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        size="md"
-                        leftIcon={<IconShare3 size={14} />}
-                        compact
+                        variant={colorScheme === 'dark' ? 'filled' : 'light'}
+                        leftSection={<IconShare3 size={14} />}
+                        size="compact-md"
                       >
                         <Text size="xs">Share</Text>
                       </Button>
@@ -259,14 +259,14 @@ export function PostDetailContent({ postId }: Props) {
                       userId={post.user.id}
                       isModelVersionPost={post.modelVersionId}
                     >
-                      <ActionIcon
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      <LegacyActionIcon
+                        variant={colorScheme === 'dark' ? 'filled' : 'light'}
                         size={30}
                         radius="xl"
                         className="@max-md:ml-auto"
                       >
                         <IconDotsVertical size={16} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </PostControls>
                   </div>
                 </div>
@@ -282,22 +282,21 @@ export function PostDetailContent({ postId }: Props) {
                     withUsername
                     linkToProfile
                   />
-                  <Group spacing={8} noWrap>
+                  <Group gap={8} wrap="nowrap">
                     <TipBuzzButton
                       toUserId={post.user.id}
                       entityId={post.id}
                       entityType="Post"
-                      size="md"
-                      compact
+                      size="compact-md"
                     />
-                    <ChatUserButton user={post.user} size="md" compact />
-                    <FollowUserButton userId={post.user.id} size="md" compact />
+                    <ChatUserButton user={post.user} size="compact-md" />
+                    <FollowUserButton userId={post.user.id} size="compact-md" />
                   </Group>
                 </div>
                 {postCollaborators.length > 0 &&
                   postCollaborators.map((collaborator) => {
                     return (
-                      <Group key={collaborator.user.id} spacing={4} noWrap>
+                      <Group key={collaborator.user.id} gap={4} wrap="nowrap">
                         <UserAvatar
                           user={collaborator.user}
                           avatarProps={{ size: 32 }}
@@ -307,12 +306,12 @@ export function PostDetailContent({ postId }: Props) {
                           withUsername
                           linkToProfile
                         />
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           {collaborator.user.id === currentUser?.id &&
                             collaborator.status === EntityCollaboratorStatus.Pending && (
                               <Fragment key={collaborator.user.id}>
                                 <Tooltip label="Accept collaboration">
-                                  <ActionIcon
+                                  <LegacyActionIcon
                                     onClick={() => {
                                       actionEntityCollaborator({
                                         entityId: postId,
@@ -323,10 +322,10 @@ export function PostDetailContent({ postId }: Props) {
                                     loading={actioningEntityCollaborator}
                                   >
                                     <IconCheck size={20} />
-                                  </ActionIcon>
+                                  </LegacyActionIcon>
                                 </Tooltip>
                                 <Tooltip label="Reject collaboration">
-                                  <ActionIcon
+                                  <LegacyActionIcon
                                     onClick={() => {
                                       actionEntityCollaborator({
                                         entityId: postId,
@@ -337,14 +336,14 @@ export function PostDetailContent({ postId }: Props) {
                                     loading={actioningEntityCollaborator}
                                   >
                                     <IconX size={20} />
-                                  </ActionIcon>
+                                  </LegacyActionIcon>
                                 </Tooltip>
                               </Fragment>
                             )}
 
                           {isOwnerOrMod && (
                             <Tooltip label="Remove collaborator">
-                              <ActionIcon
+                              <LegacyActionIcon
                                 onClick={() => {
                                   removeEntityCollaborator({
                                     entityId: postId,
@@ -356,7 +355,7 @@ export function PostDetailContent({ postId }: Props) {
                                 color="red"
                               >
                                 <IconTrash size={20} />
-                              </ActionIcon>
+                              </LegacyActionIcon>
                             </Tooltip>
                           )}
                         </Group>
@@ -392,7 +391,7 @@ export function PostDetailContent({ postId }: Props) {
                   )}
                 </>
               )}
-              <Stack spacing="xl" mt="xl" id="comments" mb={90}>
+              <Stack gap="xl" mt="xl" id="comments" mb={90}>
                 {!!post.tags.length && (
                   <Collection
                     items={post.tags}
@@ -412,9 +411,9 @@ export function PostDetailContent({ postId }: Props) {
                           size="xl"
                           p="md"
                           style={{ cursor: 'pointer' }}
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          variant={colorScheme === 'dark' ? 'filled' : 'light'}
                         >
-                          <Text size="xs" transform="capitalize" weight={500}>
+                          <Text size="xs" tt="capitalize" fw={500}>
                             {item.name}
                           </Text>
                         </Badge>

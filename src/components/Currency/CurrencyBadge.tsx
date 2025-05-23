@@ -5,6 +5,7 @@ import {
   MantineSize,
   Text,
   Tooltip,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import NumberFlow from '@number-flow/react';
@@ -43,7 +44,6 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
       currency,
       formatter,
       displayCurrency = true,
-      sx,
       children,
       loading,
       iconProps,
@@ -51,12 +51,14 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
       type,
       typeDistrib,
       asCounter,
+      style,
       ...badgeProps
     },
     ref
   ) => {
     const value = formatCurrencyForDisplay(unitAmount, currency);
     const theme = useMantineTheme();
+    const colorScheme = useComputedColorScheme('dark');
     const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
     const Icon = config.icon;
     const colorString = textColor || config.color(theme);
@@ -72,18 +74,18 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
       >
         <Badge
           ref={ref}
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           color="gray"
           radius="xl"
           pl={8}
           pr={12}
-          sx={{
+          style={{
             fontSize: 12,
             fontWeight: 600,
             lineHeight: 1.5,
             color: colorString,
             position: 'relative',
-            ...(sx ? (typeof sx === 'function' ? sx(theme) : sx) : {}),
+            ...(style ?? {}),
           }}
           styles={{
             root: typeDistrib
@@ -112,7 +114,7 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
         >
           <div className="flex items-center gap-1">
             <Icon
-              size={iconSize[badgeProps.size ?? 'sm']}
+              size={iconSize[(badgeProps.size as MantineSize) ?? 'sm']}
               fill={currency === Currency.BUZZ ? 'currentColor' : undefined}
               {...iconProps}
             />
