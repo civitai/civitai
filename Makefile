@@ -29,7 +29,7 @@ burn:
 	docker-compose down \
 		&& docker-compose down --volumes
 
-ROWS ?= 500
+ROWS ?= 1000
 # Initialize the database and seed it with data
 .PHONY: bootstrap-db
 bootstrap-db:
@@ -65,14 +65,17 @@ dev:
 .PHONY: run
 run: gen-prisma dev
 
+.PHONY: reseed
+reseed: bootstrap-db bootstrap-metrics
+
 .PHONY: init
-init: copy-env npm-install start run-migrations bootstrap-db bootstrap-metrics run
+init: copy-env npm-install start run-migrations reseed run
 
 .PHONY: rerun
-rerun: start bootstrap-db bootstrap-metrics dev
+rerun: start reseed dev
 
 .PHONY: init-devcontainer
-init-devcontainer: copy-env npm-install run-migrations bootstrap-db bootstrap-metrics
+init-devcontainer: copy-env npm-install run-migrations reseed
 
 .PHONY: default
 default: start
