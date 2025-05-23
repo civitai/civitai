@@ -56,7 +56,9 @@ export function WanFormInput() {
           <Radio key={value} label={label} value={value} />
         ))}
       </InputRadioGroup>
-      {process === 'img2vid' && <InputSourceImageUpload name="sourceImage" className="flex-1" />}
+      {process === 'img2vid' && (
+        <InputSourceImageUpload name="sourceImage" className="flex-1" warnOnMissingAiMetadata />
+      )}
       {!!resources?.length && (
         <InputResourceSelectMultipleStandalone
           name="resources"

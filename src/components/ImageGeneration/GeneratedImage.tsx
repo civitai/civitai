@@ -469,7 +469,7 @@ function BlockedBlock({ title, message }: { title: string; message: string }) {
           {title}
         </Text>
         <Text align="center" size="sm">
-          {message} Please adjust your prompt and try again.
+          {message}
         </Text>
       </Stack>
     </Center>
@@ -868,7 +868,7 @@ function handleAuxClick(url: string) {
 
 const imageBlockedReasonMap: Record<string, string> = {
   ChildReference: 'An inappropriate child reference was detected.',
-  Bestiality: 'Detected bestiality in the image.',
+  Bestiality: 'Bestiality detected.',
   'Child Sexual - Anime': 'Inappropriate minor content detected.',
   'Child Sexual - Realistic': 'Inappropriate minor content detected.',
   NSFWLevel: 'Mature content restriction.',
