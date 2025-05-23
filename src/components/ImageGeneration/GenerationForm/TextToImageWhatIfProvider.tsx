@@ -12,6 +12,7 @@ import {
   getIsSD3,
   getSizeFromAspectRatio,
   whatIfQueryOverrides,
+  fluxModelId,
 } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -68,7 +69,8 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     // else params.engine = undefined;
 
     delete params.engine;
-    if (params.fluxUltraRaw && params.fluxMode === fluxUltraAir) params.engine = 'flux-pro-raw';
+    if (model.id === fluxModelId && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
+      params.engine = 'flux-pro-raw';
     if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
 
     const additionalResources =
