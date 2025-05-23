@@ -171,6 +171,7 @@ export function handleLogError(e: Error, name?: string) {
   if (isProd)
     logToAxiom(
       {
+        type: 'error',
         name: name ?? error.name,
         message: error.message,
         stack: error.stack,
