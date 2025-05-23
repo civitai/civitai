@@ -62,6 +62,7 @@ import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageTools
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { BlockedReason } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
@@ -75,13 +76,12 @@ import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
 import { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
+import { isValidAIGeneration } from '~/utils/image-utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { CustomCard } from './CustomCard';
-import { BlockedReason } from '~/server/common/enums';
-import { isValidAIGeneration } from '~/utils/image-utils';
 import { VotableTagModel } from '~/libs/tags';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -1057,7 +1057,10 @@ function EditDetail() {
             classNames={{ message: 'flex items-center justify-center gap-2' }}
           >
             <Loader size="xs" />
-            <Text align="center">Analyzing image</Text>
+            <Text align="center">
+              Analyzing image. Image will not be visible to other people while analysis is in
+              progress.
+            </Text>
           </Alert>
         )}
         {isPendingManualAssignment && (

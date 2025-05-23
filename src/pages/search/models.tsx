@@ -44,7 +44,9 @@ const RenderFilters = () => {
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const filters = [
-    browsingSettingsAddons.settings.disablePoi ? 'poi != true' : null,
+    browsingSettingsAddons.settings.disablePoi
+      ? `poi != true OR user.id = ${currentUser?.id}`
+      : null,
     `availability != ${Availability.Private} OR user.id = ${currentUser?.id}`,
   ].filter(isDefined);
 

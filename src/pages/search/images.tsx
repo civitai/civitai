@@ -24,6 +24,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export default function ImageSearch() {
   return (
@@ -43,6 +44,7 @@ const filterMediaTypesOptions: RefinementListProps['transformItems'] = (items) =
 function RenderFilters() {
   const { canViewNsfw } = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const currentUser = useCurrentUser();
 
   const items = [
     { label: 'Relevancy', value: ImagesSearchIndexSortBy[0] as string },
@@ -54,7 +56,9 @@ function RenderFilters() {
   ];
 
   const filters = [
-    browsingSettingsAddons.settings.disablePoi ? 'poi != true' : null,
+    browsingSettingsAddons.settings.disablePoi
+      ? `poi != true OR user.id = ${currentUser?.id}`
+      : null,
     browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
   ].filter(isDefined);
 

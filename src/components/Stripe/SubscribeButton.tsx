@@ -14,6 +14,7 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import type { CheckoutEventsData } from '@paddle/paddle-js';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useHasPaddleSubscription, useMutatePaddle } from '~/components/Paddle/util';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 function StripeSubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
   const queryUtils = trpc.useUtils();
@@ -185,6 +186,7 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
 export function SubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
   const currentUser = useCurrentUser();
   const paymentProvider = usePaymentProvider();
+  const featureFlags = useFeatureFlags();
   const { subscriptionPaymentProvider } = useActiveSubscription();
 
   const provider = subscriptionPaymentProvider ?? paymentProvider;
@@ -202,7 +204,7 @@ export function SubscribeButton({ children, priceId, onSuccess, disabled }: Prop
 
   if (currentUser && !currentUser.email)
     return (
-      <Button onClick={handleAddEmail} style={{ height: 50 }}>
+      <Button onClick={handleAddEmail} style={{ height: 50 }} disabled={featureFlags.disablePayments}>
         <Stack align="center" gap={0}>
           <Text align="center" style={{ lineHeight: 1.1 }}>
             Subscribe
@@ -216,7 +218,11 @@ export function SubscribeButton({ children, priceId, onSuccess, disabled }: Prop
 
   if (provider === PaymentProvider.Stripe) {
     return (
-      <StripeSubscribeButton priceId={priceId} onSuccess={onSuccess} disabled={disabled}>
+      <StripeSubscribeButton
+        priceId={priceId}
+        onSuccess={onSuccess}
+        disabled={disabled || featureFlags.disablePayments}
+      >
         {children}
       </StripeSubscribeButton>
     );
@@ -225,7 +231,11 @@ export function SubscribeButton({ children, priceId, onSuccess, disabled }: Prop
   if (provider === PaymentProvider.Paddle) {
     // Default to Paddle:
     return (
-      <PaddleSubscribeButton priceId={priceId} onSuccess={onSuccess} disabled={disabled}>
+      <PaddleSubscribeButton
+        priceId={priceId}
+        onSuccess={onSuccess}
+        disabled={disabled || featureFlags.disablePayments}
+      >
         {children}
       </PaddleSubscribeButton>
     );

@@ -198,8 +198,10 @@ const ChangelogItem = ({
                 size="sm"
                 color="gray"
                 variant="transparent"
-                onClick={() => copy(`${window.location.href.split('#')[0]}?id=${slug}`)}
-                title="Copy link to this changelog"
+                onClick={() =>
+                  copy(`${window.location.href.split('?')[0].split('#')[0]}?id=${slug}`)
+                }
+                title="Copy link to this update"
               >
                 <IconLink size={16} />
               </ActionIcon>

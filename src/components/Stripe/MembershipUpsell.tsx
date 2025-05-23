@@ -28,7 +28,7 @@ import classes from './MembershipUpsell.module.scss';
 
 export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
   const currentUser = useCurrentUser();
-  const featureFlags = useFeatureFlags();
+  const features = useFeatureFlags();
   const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
     {},
     { enabled: !!currentUser }
@@ -70,7 +70,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
   }
 
   const metadata = (targetPlan.metadata ?? {}) as SubscriptionProductMetadata;
-  const planMeta = getPlanDetails(targetPlan, featureFlags);
+  const planMeta = getPlanDetails(targetPlan, features);
   const { image, benefits } = planMeta;
 
   const targetTier = metadata.tier ?? 'free';
@@ -114,6 +114,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
               radius="xl"
               size="md"
               mt="sm"
+              disabled={features.disablePayments}
               onClick={() => {
                 dialogStore.trigger({
                   component: MembershipUpgradeModal,
@@ -132,8 +133,8 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
               /Month
             </Button>
           ) : (
-            <SubscribeButton priceId={priceId}>
-              <Button radius="xl" size="md" mt="sm">
+            <SubscribeButton priceId={priceId} disabled={features.disablePayments} >
+              <Button radius="xl" size="md" mt="sm" >
                 Get {capitalize(targetTier)} - $
                 {formatPriceForDisplay(unitAmount, undefined, { decimals: false })}
                 /Month

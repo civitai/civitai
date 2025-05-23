@@ -367,6 +367,15 @@ export function PostDetailContent({ postId }: Props) {
                 <Alert>Unable to load images</Alert>
               ) : (
                 <>
+                  {currentUser?.id === post.user.id &&
+                    hiddenExplained.hiddenByBrowsingSettings.length > 0 && (
+                      <>
+                        <Alert color="yellow" mb="md">
+                          Some of your images have been removed due to infringing on our Policies.
+                          If you believe this was a mistake, you may contact support.
+                        </Alert>
+                      </>
+                    )}
                   <PostImages
                     postId={post.id}
                     images={images}

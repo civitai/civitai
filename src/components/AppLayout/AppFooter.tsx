@@ -20,20 +20,9 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   key: string;
 })[] = [
   {
-    key: 'creator-program',
-    href: '/creator-program',
-    color: 'blue',
-    children: 'Creators',
-  },
-  {
     key: 'tos',
     href: '/content/tos',
     children: 'Terms of Service',
-  },
-  {
-    key: '2257',
-    href: '/content/2257',
-    children: '18 U.S.C. §2257',
   },
   {
     key: 'privacy',
@@ -81,14 +70,30 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     children: '💡Education',
   },
   {
-    key: 'content-removal',
-    href: '/content/content-removal-request',
-    children: 'Content Removal',
+    key: 'creator-program',
+    href: '/creator-program',
+    color: 'blue',
+    children: 'Creators',
   },
   {
     key: 'careers',
     href: '/content/careers',
     children: 'Careers',
+  },
+  {
+    key: 'content-removal',
+    href: '/content/content-removal-request',
+    children: 'Content Removal',
+  },
+  {
+    key: 'contact-us',
+    href: '/content/complaints',
+    children: 'Complaints',
+  },
+  {
+    key: '2257',
+    href: '/content/2257',
+    children: '18 U.S.C. §2257',
   },
 ];
 

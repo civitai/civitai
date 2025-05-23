@@ -6,6 +6,7 @@ import { generationConfig } from '~/server/common/constants';
 import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   fluxStandardAir,
+  fluxUltraAir,
   getBaseModelSetType,
   getIsFlux,
   getIsSD3,
@@ -62,9 +63,13 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
-    if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
-    else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
-    else params.engine = undefined;
+    // if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
+    // else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+    // else params.engine = undefined;
+
+    delete params.engine;
+    if (params.fluxUltraRaw && params.fluxMode === fluxUltraAir) params.engine = 'flux-pro-raw';
+    if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
 
     const additionalResources =
       resources?.map((x) => {

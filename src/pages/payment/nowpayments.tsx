@@ -10,7 +10,14 @@ import {
   Center,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
+import {
+  IconBarbell,
+  IconBolt,
+  IconBrush,
+  IconCircleCheck,
+  IconLayoutDashboard,
+  IconRosette,
+} from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import animationClasses from '~/libs/animations.module.scss';
@@ -54,25 +61,29 @@ export default function NOWPaymentsSuccess() {
           <Text size="lg" align="center" mb="lg">
             {`Thank you so much for your support! Your perks may take a few moments* to come in to effect, but our love for you is instant.`}
           </Text>
-
-          <Group grow>
-            <Button component={Link} href="/models" size="md" leftIcon={<IconLayoutDashboard />}>
-              View Models
+          <Stack>
+            <Button
+              component={Link}
+              href="/purchase/buzz"
+              size="md"
+              color="yellow.8"
+              leftIcon={<IconBolt />}
+            >
+              Buy More
+            </Button>
+            <Button component={Link} href="/generate" size="md" leftIcon={<IconBrush />}>
+              Generate
             </Button>
             <Button
-              variant="light"
               component={Link}
-              href="/user/account"
+              href="/models/train"
               size="md"
-              rightIcon={<IconRosette />}
+              color="green"
+              leftIcon={<IconBarbell />}
             >
-              Customize Profile
+              Train
             </Button>
-          </Group>
-          <Text
-            size="xs"
-            color="dimmed"
-          >{`*Cosmetics and other perks should be delivered within 2-3 minutes, but you may need to refresh the site before you're able to see them in your profile.`}</Text>
+          </Stack>{' '}
         </Stack>
       </Container>
     </>

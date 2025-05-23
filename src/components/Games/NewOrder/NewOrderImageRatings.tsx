@@ -48,7 +48,7 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
               </div>
             ) : (
               <div className="flex flex-col gap-2">
-                {[NewOrderRankType.Knight, NewOrderRankType.Templar].map((rankType) => {
+                {[NewOrderRankType.Templar, NewOrderRankType.Knight].map((rankType) => {
                   const ratersForRank = raters[rankType] ?? [];
 
                   return ratersForRank.length > 0 ? (

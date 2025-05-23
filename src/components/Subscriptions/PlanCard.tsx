@@ -113,10 +113,13 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     ? subscribeBtnProps.downgrade
     : subscribeBtnProps.subscribe;
 
+  
   const disabledDueToProvider =
     !!subscription && subscription.product.provider !== product.provider;
   const disabledDueToYearlyPlan =
     !!subscription && subscription.price.interval === 'year' && price.interval === 'month';
+
+  const ctaDisabled = disabledDueToProvider || disabledDueToYearlyPlan || features.disablePayments;
 
   const metadata = (subscription?.product?.metadata ?? {
     tier: 'free',
@@ -195,7 +198,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   <Button
                     radius="xl"
                     {...btnProps}
-                    disabled={disabledDueToProvider || disabledDueToYearlyPlan}
+                    disabled={ctaDisabled}
                     onClick={() => {
                       dialogStore.trigger({
                         component: DowngradeFeedbackModal,
@@ -214,7 +217,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   <Button
                     radius="xl"
                     {...btnProps}
-                    disabled={disabledDueToProvider || disabledDueToYearlyPlan}
+                    disabled={ctaDisabled}
                     onClick={() => {
                       dialogStore.trigger({
                         component: MembershipUpgradeModal,
@@ -231,7 +234,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                 ) : (
                   <SubscribeButton
                     priceId={priceId}
-                    disabled={disabledDueToProvider || disabledDueToYearlyPlan}
+                    disabled={ctaDisabled}
                   >
                     <Button radius="xl" {...btnProps}>
                       {isActivePlan ? `You are ${meta?.tier}` : `Subscribe to ${meta?.tier}`}

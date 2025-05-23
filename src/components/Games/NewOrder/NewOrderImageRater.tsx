@@ -74,7 +74,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
               '3',
               handleHotkeyPress({
                 rating: NsfwLevel.Blocked,
-                damnedReason: NewOrderDamnedReason.InappropriateRealPerson,
+                damnedReason: NewOrderDamnedReason.DepictsRealPerson,
               }),
             ],
             [

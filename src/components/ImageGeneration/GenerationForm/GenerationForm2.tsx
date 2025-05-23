@@ -247,18 +247,15 @@ export function GenerationFormContent() {
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
-    if (fluxUltraRaw) params.engine = 'flux-pro-raw';
-    else if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
-    else params.engine = undefined;
+    delete params.engine;
+    if (fluxUltraRaw && params.fluxMode === fluxUltraAir) params.engine = 'flux-pro-raw';
+    if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
-      }
-      if (params.fluxMode !== fluxUltraAir) {
-        if (params.engine) delete params.engine;
       }
     } else {
       const keys = ['fluxMode', 'fluxUltraAspectRatio'];

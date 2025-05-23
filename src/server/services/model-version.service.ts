@@ -1443,8 +1443,7 @@ export const resourceDataCache = createCachedArray({
         mv."availability",
         mv."clipSkip",
         mv."vaeId",
-        mv."earlyAccessEndsAt",
-        (CASE WHEN mv."availability" = 'EarlyAccess' THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
         gc."covered",
         (
           SELECT to_json(obj)
@@ -1490,7 +1489,6 @@ export type GenerationResourceDataModel = {
   baseModel: string;
   settings: RecommendedSettingsSchema | null;
   availability: Availability;
-  earlyAccessEndsAt: Date | null;
   earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
   covered: boolean | null;
   air: string;

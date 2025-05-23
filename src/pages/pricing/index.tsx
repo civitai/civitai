@@ -7,6 +7,7 @@ import {
   Card,
   Center,
   Container,
+  createStyles,
   Group,
   Loader,
   SegmentedControl,
@@ -19,7 +20,7 @@ import { IconExclamationMark, IconInfoCircle, IconInfoTriangleFilled } from '@ta
 import clsx from 'clsx';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -33,7 +34,7 @@ import {
 } from '~/components/Stripe/memberships.util';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
-import { PlanCard, getPlanDetails } from '~/components/Subscriptions/PlanCard';
+import { getPlanDetails, PlanCard } from '~/components/Subscriptions/PlanCard';
 import { env } from '~/env/client';
 import { isDev } from '~/env/other';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -43,23 +44,6 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
 import { JoinRedirectReason, joinRedirectReasons } from '~/utils/join-helpers';
 import { trpc } from '~/utils/trpc';
-import classes from './index.module.scss';
-
-export const getServerSideProps = createServerSideProps({
-  useSSG: true,
-  resolver: async ({ ssg, features }) => {
-    await ssg?.subscriptions.getPlans.prefetch({});
-    await ssg?.subscriptions.getUserSubscription.prefetch();
-    if (!isDev && (!features?.isGreen || !features?.canBuyBuzz))
-      return {
-        redirect: {
-          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?sync-account=blue`,
-          statusCode: 302,
-          basePath: false,
-        },
-      };
-  },
-});
 
 export default function Pricing() {
   const router = useRouter();
@@ -156,14 +140,55 @@ export default function Pricing() {
             As the leading generative AI community, we&rsquo;re adding new features every week. Help
             us keep the community thriving by becoming a Supporter and get exclusive perks.
           </Text>
-          <Text align="center" className={classes.introText} style={{ lineHeight: 1.25 }}>
-            Your Membership provides full access across all Civitai domains, ensuring the same great
-            benefits and features wherever you explore
-          </Text>
         </Stack>
       </Container>
       <Container size="xl">
         <Stack>
+          {features.disablePayments && (
+            <Center>
+              <AlertWithIcon
+                color="red"
+                iconColor="red"
+                icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
+                iconSize={28}
+                py={11}
+                maw="calc(50% - 8px)"
+              >
+                <Stack spacing={0}>
+                  <Text lh={1.2}>
+                    Purchasing or updating memberships is currently disabled. We are working hard to
+                    resolve this and will notify you when it is back up. You can still manage your
+                    active membership, and your benefits will be active until your
+                    membership&rsquo;s expiration date.{' '}
+                    <Anchor href="https://civitai.com/articles/14945" color="red.3">
+                      Learn more
+                    </Anchor>
+                  </Text>
+                </Stack>
+              </AlertWithIcon>
+            </Center>
+          )}
+          {features.cryptoPayments && features.disablePayments && (
+            <Center>
+              <AlertWithIcon
+                color="yellow"
+                iconColor="yellow"
+                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+                iconSize={28}
+                py={11}
+                maw="calc(50% - 8px)"
+              >
+                <Stack spacing={0}>
+                  <Text lh={1.2}>
+                    You can still purchase Buzz using crypto!{' '}
+                    <Anchor href="/purchase/buzz" color="yellow.7">
+                      Buy now
+                    </Anchor>
+                  </Text>
+                </Stack>
+              </AlertWithIcon>
+            </Center>
+          )}
           {subscription?.isBadState && (
             <AlertWithIcon
               color="red"
@@ -177,7 +202,7 @@ export default function Pricing() {
                   Uh oh! It looks like there was an issue with your membership. You can update your
                   payment method or renew your membership now by clicking{' '}
                   <SubscribeButton priceId={subscription.price.id}>
-                    <Anchor component="button" type="button">
+                    <Anchor component="button" type="button" disabled={features.disablePayments}>
                       here
                     </Anchor>
                   </SubscribeButton>
@@ -215,7 +240,7 @@ export default function Pricing() {
             </AlertWithIcon>
           )}
           <Group>
-            {currentMembershipUnavailable && (
+            {/* {currentMembershipUnavailable && (
               <AlertWithIcon
                 color="yellow"
                 iconColor="yellow"
@@ -233,7 +258,7 @@ export default function Pricing() {
                   or level up your support here.
                 </Text>
               </AlertWithIcon>
-            )}
+            )} */}
             {appliesForDiscount && (
               <Alert maw={650} mx="auto" py={4} miw="calc(50% - 8px)" pl="sm">
                 <Group gap="xs">
@@ -357,6 +382,18 @@ export default function Pricing() {
                 </ContainerGrid2.Col>
               ))}
             </ContainerGrid2>
+          )}
+
+          {!isLoading && (
+            <Stack spacing={0}>
+              <p className="mb-0 text-xs opacity-50">
+                By purchasing a membership, you agree to our{' '}
+                <Anchor href="/content/tos">Terms of Service</Anchor>
+              </p>
+              <p className="text-xs opacity-50">
+                Transactions will appear as CIVIT AI INC on your billing statement
+              </p>
+            </Stack>
           )}
         </Stack>
       </Container>

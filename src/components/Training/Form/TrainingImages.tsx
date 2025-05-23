@@ -1813,14 +1813,14 @@ const AttestDiv = () => {
       </Text>
       <List size="sm" type="ordered">
         <List.Item mb={2}>
-          Consent: If the content depicts the likeness of a real person, who is not a public figure,
-          I am either that person or have obtained clear, explicit consent from that person for
-          their likeness to be used in this model.
+          Consent: If the content depicts the likeness of a real person, I am either that person
+          or have obtained clear, explicit consent from that person for their likeness to be used
+          in this creation of this model.
         </List.Item>
         <List.Item mb={2}>
           Responsibility: I understand that I am solely responsible for ensuring that all necessary
           permissions have been obtained, and I acknowledge that failure to do so may result in the
-          removal of content, my account or other actions by Civitai.
+          removal of content, my account, or other actions by Civitai.
         </List.Item>
         <List.Item mb={2}>
           Accuracy: I attest that the likeness depicted in this model aligns with the consents

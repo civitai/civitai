@@ -219,7 +219,10 @@ export default function UserMembership() {
                       Uh oh! It looks like there was an issue with your membership. You can update
                       your payment method or renew your membership now by clicking{' '}
                       {isStripe ? (
-                        <SubscribeButton priceId={subscription.price.id}>
+                        <SubscribeButton
+                          priceId={subscription.price.id}
+                          disabled={features.disablePayments}
+                        >
                           <Anchor component="button" type="button">
                             here
                           </Anchor>
@@ -273,7 +276,10 @@ export default function UserMembership() {
                         {subscription.canceledAt && (
                           <>
                             {price.active && (
-                              <SubscribeButton priceId={price.id}>
+                              <SubscribeButton
+                                priceId={price.id}
+                                disabled={features.disablePayments}
+                              >
                                 <Button radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
                                   Resume
                                 </Button>

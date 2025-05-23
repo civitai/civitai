@@ -132,13 +132,13 @@ export async function smitePlayer({
   if (activeSmiteCount >= 3) return resetPlayer({ playerId, withNotification: true });
 
   const newSmiteCount = await smitesCounter.increment({ id: playerId });
-  signalClient
+  await signalClient
     .send({
       userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
       data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: newSmiteCount } },
     })
-    .catch();
+    .catch((e) => handleLogError(e, 'signals:new-order-smite-player'));
 
   createNotification({
     category: NotificationCategory.Other,
@@ -164,13 +164,13 @@ export async function cleanseAllSmites({
 
   if (data.count === 0) return; // Nothing done :shrug:
 
-  signalClient
+  await signalClient
     .send({
       userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
       data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: 0 } },
     })
-    .catch();
+    .catch((e) => handleLogError(e, 'signals:new-order-smite-cleansed-all'));
 
   createNotification({
     category: NotificationCategory.Other,
@@ -188,13 +188,13 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   });
 
   const smiteCount = await smitesCounter.decrement({ id: playerId });
-  signalClient
+  await signalClient
     .send({
       userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
       data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: smiteCount } },
     })
-    .catch();
+    .catch((e) => handleLogError(e, 'signals:new-order-smite-cleansed'));
 
   createNotification({
     category: NotificationCategory.Other,
@@ -210,7 +210,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
 const damnedReasonToReviewType = {
   [NewOrderDamnedReason.InappropriateMinors]: 'minor',
   [NewOrderDamnedReason.RealisticMinors]: 'csam',
-  [NewOrderDamnedReason.InappropriateRealPerson]: 'poi',
+  [NewOrderDamnedReason.DepictsRealPerson]: 'poi',
   [NewOrderDamnedReason.Bestiality]: 'reported',
   [NewOrderDamnedReason.GraphicViolence]: 'reported',
 } as const;
@@ -255,7 +255,7 @@ export async function addImageRating({
   if (valueInQueue.value >= 5 && valueInQueue.rank === NewOrderRankType.Knight) {
     // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
     await valueInQueue.pool.reset({ id: imageId });
-    signalClient
+    await signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Knight`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -269,7 +269,7 @@ export async function addImageRating({
   if (valueInQueue.value >= 2 && valueInQueue.rank === NewOrderRankType.Templar) {
     // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
     await valueInQueue.pool.reset({ id: imageId });
-    signalClient
+    await signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Templar`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -294,7 +294,7 @@ export async function addImageRating({
       });
     }
 
-    signalClient
+    await signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -435,7 +435,7 @@ export async function addImageRating({
       userId: playerId,
     }).catch(() => null); // Ignore if it fails
 
-    signalClient
+    await signalClient
       .send({
         userId: playerId,
         target: SignalMessages.NewOrderPlayerUpdate,
@@ -445,7 +445,7 @@ export async function addImageRating({
           rank: { ...knightRank },
         },
       })
-      .catch();
+      .catch((e) => handleLogError(e, 'signals:new-order-rank-up'));
   }
 
   // Now, process what to do with the image:
@@ -507,7 +507,7 @@ export async function addImageRating({
     await updatePendingImageRatings({ imageId, rating });
     await valueInQueue.pool.reset({ id: imageId });
 
-    signalClient
+    await signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Knight`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -553,7 +553,7 @@ export async function addImageRating({
     await updatePendingImageRatings({ imageId, rating });
     await valueInQueue.pool.reset({ id: imageId });
 
-    signalClient
+    await signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Templar`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -665,13 +665,13 @@ export async function updatePlayerStats({
     stats = { ...stats, fervor: newFervor, blessedBuzz };
   }
 
-  signalClient
+  await signalClient
     .send({
       userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
       data: { action: NewOrderSignalActions.UpdateStats, stats },
     })
-    .catch(handleLogError);
+    .catch((e) => handleLogError(e, 'signals:new-order-update-player-stats'));
 
   return stats;
 }
@@ -722,7 +722,7 @@ export async function resetPlayer({
   bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
 
   const acolyteRank = await getNewOrderRanks({ name: 'Acolyte' });
-  signalClient
+  await signalClient
     .send({
       userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
@@ -738,7 +738,7 @@ export async function resetPlayer({
         },
       },
     })
-    .catch();
+    .catch((e) => handleLogError(e, 'signals:new-order-reset-player'));
 
   if (withNotification)
     createNotification({
@@ -829,7 +829,7 @@ export async function addImageToQueue({
     })
   );
 
-  signalClient
+  await signalClient
     .topicSend({
       topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
       target: SignalMessages.NewOrderQueueUpdate,
