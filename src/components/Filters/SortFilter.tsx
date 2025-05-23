@@ -23,7 +23,7 @@ import {
 import { removeEmpty } from '~/utils/object-helpers';
 
 type SortFilterComponentProps = {
-  type: Exclude<FilterSubTypes, 'changelogs'>;
+  type: Exclude<FilterSubTypes, 'changelogs' | 'auctions'>;
   ignoreNsfwLevel?: boolean;
   options?: { label: SortOption; value: SortOption }[];
 } & Omit<ButtonProps, 'children' | 'type'>;
