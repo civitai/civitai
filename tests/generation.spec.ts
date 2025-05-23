@@ -2,6 +2,7 @@ import { expect, Page, test } from '@playwright/test';
 import { authDegen, testAuthData } from './auth/data';
 import { getImageWhatIfReturn } from './responses/getImageWhatIf';
 import { queryGeneratedImagesReturn } from './responses/queryGeneratedImages';
+import { parseRequestParams } from './utils';
 
 test.describe('generation', () => {
   test.use(authDegen);
@@ -53,15 +54,23 @@ test.describe('generation', () => {
     await expect(page.getByTestId('generation-feed-list').locator('> div')).toHaveCount(19);
   });
 
+  const getSwapModel = async (page: Page) => {
+    await page.getByRole('button', { name: 'Swap' }).click();
+
+    const confirmBtn = page.getByRole('button', { name: 'Close' });
+    if (await confirmBtn.isVisible()) {
+      await confirmBtn.click();
+    }
+
+    // await items?
+    return page.getByTestId('resource-select-items').locator('> div').first();
+  };
+
   test('swap models', async ({ page }) => {
     await openGen({ page });
-
-    await page.getByRole('button', { name: 'Swap' }).click();
-    // await items?
-    const firstItem = page.getByTestId('resource-select-items').locator('> div').first();
+    const firstItem = await getSwapModel(page);
 
     const modelName = await firstItem.getByTestId('resource-select-name').innerText();
-    console.log(modelName);
     expect(modelName.length).toBeGreaterThan(0);
 
     await firstItem.getByRole('button', { name: 'Select' }).click();
@@ -69,5 +78,70 @@ test.describe('generation', () => {
     await expect(page.getByTestId('selected-gen-resource-name')).toHaveText(modelName);
   });
 
-  //
+  test('form values reset upon clicking reset button', async ({ page }) => {
+    await openGen({ page });
+
+    const firstItem = await getSwapModel(page);
+    await firstItem.getByRole('button', { name: 'Select' }).click();
+
+    await page
+      .getByRole('textbox', { name: 'Your prompt goes here...' })
+      .fill('Test prompt for reset functionality');
+    await page.getByRole('textbox', { name: 'Negative Prompt' }).fill('Test negative prompt');
+
+    await page.getByRole('button', { name: 'Advanced' }).click();
+
+    await page.getByText('Creative').click();
+    await page.getByTestId('gen-cfg-scale').locator('button').nth(1).click();
+
+    await page.getByRole('searchbox', { name: 'Sampler' }).click();
+    await page.getByRole('option', { name: 'Heun' }).click();
+    await page.getByTestId('gen-steps').locator('button').nth(2).click();
+
+    const seedInput = page.getByRole('textbox', { name: 'Random' });
+    await seedInput.fill('234');
+
+    // Change Quantity
+    // const quantityInput = page.getByRole('spinbutton').filter({ hasText: '1' });
+    // await quantityInput.click();
+    // await quantityInput.fill('4');
+
+    await expect(page.getByRole('textbox', { name: 'Your prompt goes here...' })).toHaveValue(
+      'Test prompt for reset functionality'
+    );
+    await expect(page.getByRole('textbox', { name: 'Negative Prompt' })).toHaveValue(
+      'Test negative prompt'
+    );
+    await expect(seedInput).toHaveValue('234');
+
+    await page.getByRole('button', { name: 'Reset' }).click();
+
+    await expect(page.getByRole('textbox', { name: 'Your prompt goes here...' })).toHaveValue('');
+    // await expect(page.getByRole('textbox', { name: 'Negative Prompt' })).toHaveValue('');
+    await expect(seedInput).not.toHaveValue('234');
+  });
+
+  test('make sure flux-pro-raw is not in other requests', async ({ page }) => {
+    await openGen({ page });
+
+    // await page.getByRole('button', { name: 'Reset' }).click();
+
+    await page.getByText('Ultra').click();
+    await page.locator('label[for="input_fluxUltraRaw"]').first().click();
+
+    const firstItem = await getSwapModel(page);
+    await firstItem.getByRole('button', { name: 'Select' }).click();
+
+    await page
+      .getByRole('textbox', { name: 'Your prompt goes here...' })
+      .fill('Test prompt for reset functionality');
+
+    await page.route(/\/api\/trpc\/orchestrator.generateImage(\?|$)/, async (route, request) => {
+      const params = parseRequestParams(request);
+      expect(params).toHaveProperty('engine', null); // or not be there
+      await route.fulfill({ json: {} });
+    });
+
+    await page.getByRole('button', { name: 'Generate' }).click();
+  });
 });
