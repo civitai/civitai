@@ -7,7 +7,6 @@ import {
   Card,
   Center,
   Container,
-  createStyles,
   Group,
   Loader,
   SegmentedControl,
@@ -35,15 +34,13 @@ import {
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { getPlanDetails, PlanCard } from '~/components/Subscriptions/PlanCard';
-import { env } from '~/env/client';
-import { isDev } from '~/env/other';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
 import { JoinRedirectReason, joinRedirectReasons } from '~/utils/join-helpers';
 import { trpc } from '~/utils/trpc';
+import classes from './index.module.scss';
 
 export default function Pricing() {
   const router = useRouter();
@@ -154,7 +151,7 @@ export default function Pricing() {
                 py={11}
                 maw="calc(50% - 8px)"
               >
-                <Stack spacing={0}>
+                <Stack gap={0}>
                   <Text lh={1.2}>
                     Purchasing or updating memberships is currently disabled. We are working hard to
                     resolve this and will notify you when it is back up. You can still manage your
@@ -178,7 +175,7 @@ export default function Pricing() {
                 py={11}
                 maw="calc(50% - 8px)"
               >
-                <Stack spacing={0}>
+                <Stack gap={0}>
                   <Text lh={1.2}>
                     You can still purchase Buzz using crypto!{' '}
                     <Anchor href="/purchase/buzz" color="yellow.7">
@@ -385,7 +382,7 @@ export default function Pricing() {
           )}
 
           {!isLoading && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <p className="mb-0 text-xs opacity-50">
                 By purchasing a membership, you agree to our{' '}
                 <Anchor href="/content/tos">Terms of Service</Anchor>

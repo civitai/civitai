@@ -45,6 +45,7 @@ import AlertDialog from '../Dialog/Common/AlertDialog';
 import { dialogStore } from '../Dialog/dialogStore';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -538,10 +539,10 @@ export const BuzzPurchase = ({
                 purchaseSuccessMessage={purchaseSuccessMessage}
               />
 
-              <Stack spacing={0} align="center" my={4}>
+              <Stack gap={0} align="center" my={4}>
                 <p className="mb-0 text-xs opacity-50">
                   By clicking Pay Now, you agree to our{' '}
-                  <Anchor href="/content/tos">Terms of Service</Anchor>
+                  <Link href="/content/tos">Terms of Service</Link>
                 </p>
                 <p className="text-xs opacity-50">
                   Transactions will appear as CIVIT AI INC on your billing statement
