@@ -122,7 +122,7 @@ export const processBuzzOrder = async (paymentId: string | number) => {
         toAccountId: userId,
         amount: totalYellowBuzz,
         type: TransactionType.Purchase,
-        externalTransactionId: payment.order_id,
+        externalTransactionId: `${payment.order_id}-${payment.payment_id}`,
         description: !isPartial
           ? `Purchase of ${toPay} Buzz. ${
               purchasesMultiplier && purchasesMultiplier > 1
