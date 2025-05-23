@@ -32,6 +32,10 @@ export const videoGenerationConfig2 = {
   wan: wanGenerationConfig,
 };
 
+export function isVideoGenerationEngine(engine?: string) {
+  return engine ? !!videoGenerationConfig2[engine as OrchestratorEngine2] : false;
+}
+
 export function getVideoGenerationConfig(key: string): VideoGenerationConfig | undefined {
   return videoGenerationConfig2[key as OrchestratorEngine2];
 }
