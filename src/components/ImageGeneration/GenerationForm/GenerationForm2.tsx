@@ -107,6 +107,7 @@ import {
   getIsSdxl,
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
+  getImageGenerationBaseModels,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
@@ -148,7 +149,6 @@ export function GenerationFormContent() {
   const invalidateWhatIf = useInvalidateWhatIf();
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
-  const [opened, setOpened] = useState(false);
   const [runsOnFalAI, setRunsOnFalAI] = useState(false);
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
@@ -245,7 +245,8 @@ export function GenerationFormContent() {
     const modelClone = clone(model);
 
     delete params.engine;
-    if (fluxUltraRaw && params.fluxMode === fluxUltraAir) params.engine = 'flux-pro-raw';
+    if (model.id === fluxModelId && fluxUltraRaw && params.fluxMode === fluxUltraAir)
+      params.engine = 'flux-pro-raw';
     if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
 
     const isFlux = getIsFlux(params.baseModel);
@@ -563,7 +564,10 @@ export function GenerationFormContent() {
                               .filter((x) => x.type === 'Checkpoint')
                               .map(({ type, baseModels }) => ({
                                 type,
-                                baseModels: !!resources?.length || !!vae ? baseModels : undefined,
+                                baseModels:
+                                  !!resources?.length || !!vae
+                                    ? baseModels
+                                    : getImageGenerationBaseModels(),
                               })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                           }}
                           hideVersion={isFlux}
