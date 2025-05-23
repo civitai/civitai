@@ -107,7 +107,7 @@ export function ClubPostContextMenu({
     canUpdatePost ? (
       <Menu.Item
         key="edit"
-        icon={<IconPencilMinus size={14} stroke={1.5} />}
+        leftSection={<IconPencilMinus size={14} stroke={1.5} />}
         href={`/clubs/${clubPost.clubId}/posts/${clubPost.id}/edit`}
         component={Link}
       >
@@ -120,7 +120,7 @@ export function ClubPostContextMenu({
     (clubPost.data?.user?.id === currentUser?.id || isModerator) ? (
       <Menu.Item
         key="edit"
-        icon={<IconPencilMinus size={14} stroke={1.5} />}
+        leftSection={<IconPencilMinus size={14} stroke={1.5} />}
         href={`/posts/${clubPost.entityId}/edit`}
         component={Link}
       >
@@ -130,7 +130,7 @@ export function ClubPostContextMenu({
     canDeletePost ? (
       <Menu.Item
         key="edit"
-        icon={<IconTrash size={14} stroke={1.5} />}
+        leftSection={<IconTrash size={14} stroke={1.5} />}
         onClick={handleDeletePost}
         color="red"
       >

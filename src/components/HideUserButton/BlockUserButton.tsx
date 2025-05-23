@@ -77,7 +77,7 @@ export function BlockUserButton({ userId, as = 'button', onToggleHide, ...props 
       <Menu.Item
         onClick={handleBlockClick}
         color={props.color}
-        icon={
+        leftSection={
           isBlocked ? (
             <IconUserCheck size={16} stroke={1.5} />
           ) : (

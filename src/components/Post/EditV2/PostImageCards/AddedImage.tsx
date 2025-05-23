@@ -1129,13 +1129,13 @@ function PostImage() {
           </Menu.Target>
           <Menu.Dropdown>
             {!isBlocked && (
-              <Menu.Item icon={<IconPencil size={16} />} onClick={onEditMetaClick}>
+              <Menu.Item leftSection={<IconPencil size={16} />} onClick={onEditMetaClick}>
                 Edit image
               </Menu.Item>
             )}
             <Menu.Item
               color="red"
-              icon={<IconTrash size={16} />}
+              leftSection={<IconTrash size={16} />}
               onClick={onDelete}
               disabled={isDeleting}
             >

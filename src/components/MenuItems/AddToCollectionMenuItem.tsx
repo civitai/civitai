@@ -1,4 +1,4 @@
-import { Menu, useMantineTheme } from '@mantine/core';
+import { Menu } from '@mantine/core';
 import { IconBookmark } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -9,7 +9,7 @@ export function AddToCollectionMenuItem({ onClick }: Props) {
   return (
     <LoginRedirect reason="add-to-collection">
       <Menu.Item
-        icon={<IconBookmark size={14} stroke={1.5} />}
+        leftSection={<IconBookmark size={14} stroke={1.5} />}
         onClick={(e: React.MouseEvent) => {
           e.preventDefault();
           e.stopPropagation();

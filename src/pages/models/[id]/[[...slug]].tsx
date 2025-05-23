@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -678,11 +677,11 @@ export default function ModelDetailsV2({
                         </LoginRedirect>
                       </div>
                     </Tooltip>
-                    <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
+                    <AlertWithIcon radius="sm" size="lg" icon={<IconDownload size={18} />}>
                       <Text className={classes.modelBadgeText}>
                         {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
                       </Text>
-                    </IconBadge>
+                    </AlertWithIcon>
                     {/* TODO this isn't quite right, we need to check the other couldGenerate options */}
                     {latestGenerationVersion && (
                       <GenerateButton
@@ -693,11 +692,11 @@ export default function ModelDetailsV2({
                         canGenerate={model.canGenerate}
                         data-activity="create:model-stat"
                       >
-                        <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
+                        <AlertWithIcon radius="sm" size="lg" icon={<IconBrush size={18} />}>
                           <Text className={classes.modelBadgeText}>
                             {abbreviateNumber(model.rank?.generationCountAllTime ?? 0)}
                           </Text>
-                        </IconBadge>
+                        </AlertWithIcon>
                       </GenerateButton>
                     )}
                     {features.collections && (
@@ -801,7 +800,7 @@ export default function ModelDetailsV2({
                       <Menu.Dropdown>
                         {currentUser && isCreator && published && (
                           <Menu.Item
-                            icon={<IconBan size={14} stroke={1.5} />}
+                            leftSection={<IconBan size={14} stroke={1.5} />}
                             color="yellow"
                             onClick={() => unpublishModelMutation.mutate({ id })}
                             disabled={unpublishModelMutation.isLoading}
@@ -811,7 +810,7 @@ export default function ModelDetailsV2({
                         )}
                         {currentUser && isCreator && model.status === ModelStatus.Unpublished && (
                           <Menu.Item
-                            icon={<IconRepeat size={14} stroke={1.5} />}
+                            leftSection={<IconRepeat size={14} stroke={1.5} />}
                             color="green"
                             onClick={handlePublishModel}
                             disabled={publishModelMutation.isLoading}
@@ -821,7 +820,7 @@ export default function ModelDetailsV2({
                         )}
                         {currentUser && isModerator && modelDeleted && (
                           <Menu.Item
-                            icon={<IconRecycle size={14} stroke={1.5} />}
+                            leftSection={<IconRecycle size={14} stroke={1.5} />}
                             color="green"
                             onClick={() => restoreModelMutation.mutate({ id })}
                             disabled={restoreModelMutation.isLoading}
@@ -835,7 +834,7 @@ export default function ModelDetailsV2({
                               <Menu.Item
                                 component="a"
                                 target="_blank"
-                                icon={<IconInfoCircle size={14} stroke={1.5} />}
+                                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
                                 href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
                               >
                                 Lookup Model
@@ -844,7 +843,7 @@ export default function ModelDetailsV2({
                             {published && (
                               <Menu.Item
                                 color="yellow"
-                                icon={<IconBan size={14} stroke={1.5} />}
+                                leftSection={<IconBan size={14} stroke={1.5} />}
                                 onClick={() => openContext('unpublishModel', { modelId: model.id })}
                               >
                                 Unpublish as Violation
@@ -852,14 +851,14 @@ export default function ModelDetailsV2({
                             )}
                             <Menu.Item
                               color="orange"
-                              icon={<IconBan size={14} stroke={1.5} />}
+                              leftSection={<IconBan size={14} stroke={1.5} />}
                               onClick={() => handleToggleCannotPromote()}
                             >
                               {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
                             </Menu.Item>
                             <Menu.Item
                               color="red.6"
-                              icon={<IconTrash size={14} stroke={1.5} />}
+                              leftSection={<IconTrash size={14} stroke={1.5} />}
                               onClick={() => handleDeleteModel({ permanently: true })}
                             >
                               Permanently Delete Model
@@ -870,13 +869,13 @@ export default function ModelDetailsV2({
                           <>
                             <Menu.Item
                               color="red.6"
-                              icon={<IconTrash size={14} stroke={1.5} />}
+                              leftSection={<IconTrash size={14} stroke={1.5} />}
                               onClick={() => handleDeleteModel()}
                             >
                               Delete Model
                             </Menu.Item>
                             <Menu.Item
-                              icon={<IconEdit size={14} stroke={1.5} />}
+                              leftSection={<IconEdit size={14} stroke={1.5} />}
                               component={Link}
                               href={`/models/${model.id}/edit`}
                             >
@@ -904,7 +903,7 @@ export default function ModelDetailsV2({
                         {(!currentUser || !isOwner || isModerator) && (
                           <LoginRedirect reason="report-model">
                             <Menu.Item
-                              icon={<IconFlag size={14} stroke={1.5} />}
+                              leftSection={<IconFlag size={14} stroke={1.5} />}
                               onClick={() =>
                                 openReportModal({
                                   entityType: ReportEntity.Model,
@@ -918,7 +917,7 @@ export default function ModelDetailsV2({
                         )}
                         {isModerator && (
                           <Menu.Item
-                            icon={
+                            leftSection={
                               rescanModelMutation.isLoading ? (
                                 <Loader size={14} />
                               ) : (
@@ -936,7 +935,7 @@ export default function ModelDetailsV2({
                             <HideUserButton as="menu-item" userId={model.user.id} />
                             <HideModelButton as="menu-item" modelId={model.id} />
                             <Menu.Item
-                              icon={<IconTagOff size={14} stroke={1.5} />}
+                              leftSection={<IconTagOff size={14} stroke={1.5} />}
                               onClick={() => openContext('blockModelTags', { modelId: model.id })}
                             >
                               Hide content with these tags
@@ -946,7 +945,7 @@ export default function ModelDetailsV2({
                                 <ToggleLockModel modelId={model.id} locked={model.locked}>
                                   {({ onClick }) => (
                                     <Menu.Item
-                                      icon={
+                                      leftSection={
                                         model.locked ? (
                                           <IconLockOff size={14} stroke={1.5} />
                                         ) : (
@@ -965,7 +964,7 @@ export default function ModelDetailsV2({
                                 >
                                   {({ onClick }) => (
                                     <Menu.Item
-                                      icon={
+                                      leftSection={
                                         model.meta?.commentsLocked ? (
                                           <IconLockOff size={14} stroke={1.5} />
                                         ) : (
@@ -987,13 +986,13 @@ export default function ModelDetailsV2({
                                 {!model.mode ? (
                                   <>
                                     <Menu.Item
-                                      icon={<IconArchive size={14} stroke={1.5} />}
+                                      leftSection={<IconArchive size={14} stroke={1.5} />}
                                       onClick={() => handleChangeMode(ModelModifier.Archived)}
                                     >
                                       Archive
                                     </Menu.Item>
                                     <Menu.Item
-                                      icon={<IconCircleMinus size={14} stroke={1.5} />}
+                                      leftSection={<IconCircleMinus size={14} stroke={1.5} />}
                                       onClick={() => handleChangeMode(ModelModifier.TakenDown)}
                                     >
                                       Take Down
@@ -1001,7 +1000,7 @@ export default function ModelDetailsV2({
                                   </>
                                 ) : (
                                   <Menu.Item
-                                    icon={<IconReload size={14} stroke={1.5} />}
+                                    leftSection={<IconReload size={14} stroke={1.5} />}
                                     onClick={() => handleChangeMode(null)}
                                   >
                                     Bring Back

@@ -177,11 +177,11 @@ export function ChoppedLayout({
                 <Menu.Dropdown>
                   <Menu.Item
                     onClick={toggleAutoplay}
-                    icon={autoplay ? <IconVolume /> : <IconVolumeOff />}
+                    leftSection={autoplay ? <IconVolume /> : <IconVolumeOff />}
                   >
                     {autoplay ? 'Disable' : 'Enable'} Audio Autoplay
                   </Menu.Item>
-                  <Menu.Item color="red" icon={<IconLogout />} onClick={exitGame}>
+                  <Menu.Item color="red" leftSection={<IconLogout />} onClick={exitGame}>
                     Leave Game
                   </Menu.Item>
                 </Menu.Dropdown>

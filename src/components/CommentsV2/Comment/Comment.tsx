@@ -181,7 +181,7 @@ export function CommentContent({
                   <DeleteComment id={comment.id} entityId={entityId} entityType={entityType}>
                     {({ onClick }) => (
                       <Menu.Item
-                        icon={<IconTrash size={14} stroke={1.5} />}
+                        leftSection={<IconTrash size={14} stroke={1.5} />}
                         color="red"
                         onClick={onClick}
                       >
@@ -191,7 +191,7 @@ export function CommentContent({
                   </DeleteComment>
                   {canEdit && (
                     <Menu.Item
-                      icon={<IconEdit size={14} stroke={1.5} />}
+                      leftSection={<IconEdit size={14} stroke={1.5} />}
                       onClick={() => setId(comment.id)}
                     >
                       Edit comment
@@ -201,7 +201,7 @@ export function CommentContent({
               )}
               {canHide && (
                 <Menu.Item
-                  icon={
+                  leftSection={
                     comment.hidden ? (
                       <IconEye size={14} stroke={1.5} />
                     ) : (
@@ -215,7 +215,7 @@ export function CommentContent({
               )}
               {currentUser?.isModerator && (
                 <Menu.Item
-                  icon={
+                  leftSection={
                     comment.pinnedAt ? (
                       <IconPinnedOff size={14} stroke={1.5} />
                     ) : (
@@ -230,7 +230,7 @@ export function CommentContent({
               {canReport && (
                 <LoginRedirect reason="report-model">
                   <Menu.Item
-                    icon={<IconFlag size={14} stroke={1.5} />}
+                    leftSection={<IconFlag size={14} stroke={1.5} />}
                     onClick={() =>
                       openReportModal({
                         entityType: ReportEntity.CommentV2,

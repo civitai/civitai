@@ -705,14 +705,14 @@ function GeneratedImageWorkflowMenuItems({
         <>
           <Menu.Item
             onClick={() => handleRemix()}
-            icon={<IconArrowsShuffle size={14} stroke={1.5} />}
+            leftSection={<IconArrowsShuffle size={14} stroke={1.5} />}
           >
             Remix
           </Menu.Item>
           {!isBlocked && image.seed && (
             <Menu.Item
               onClick={() => handleRemix(image.seed)}
-              icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
+              leftSection={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
             >
               Remix (with seed)
             </Menu.Item>
@@ -723,7 +723,7 @@ function GeneratedImageWorkflowMenuItems({
         <Menu.Item
           color="red"
           onClick={handleDeleteImage}
-          icon={<IconTrash size={14} stroke={1.5} />}
+          leftSection={<IconTrash size={14} stroke={1.5} />}
         >
           Delete
         </Menu.Item>
@@ -766,7 +766,7 @@ function GeneratedImageWorkflowMenuItems({
           <Menu.Divider />
           <Menu.Label>System</Menu.Label>
           <Menu.Item
-            icon={
+            leftSection={
               copied ? (
                 <IconCheck size={14} stroke={1.5} />
               ) : (
@@ -779,7 +779,7 @@ function GeneratedImageWorkflowMenuItems({
           </Menu.Item>
           {!isBlocked && (
             <Menu.Item
-              icon={<IconExternalLink size={14} stroke={1.5} />}
+              leftSection={<IconExternalLink size={14} stroke={1.5} />}
               onClick={() => handleAuxClick(image.url)}
             >
               Open in New Tab

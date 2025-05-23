@@ -747,7 +747,7 @@ const TopRightIcons = ({
       0,
       <Menu.Item
         key="block-tags"
-        icon={<IconTagOff size={14} stroke={1.5} />}
+        leftSection={<IconTagOff size={14} stroke={1.5} />}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
@@ -764,7 +764,7 @@ const TopRightIcons = ({
         component="a"
         key="lookup-model"
         target="_blank"
-        icon={<IconInfoCircle size={14} stroke={1.5} />}
+        leftSection={<IconInfoCircle size={14} stroke={1.5} />}
         href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
         onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
           e.preventDefault();

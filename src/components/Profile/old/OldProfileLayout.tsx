@@ -239,7 +239,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                 <Menu.Item
                   component="a"
                   target="_blank"
-                  icon={<IconInfoCircle size={14} stroke={1.5} />}
+                  leftSection={<IconInfoCircle size={14} stroke={1.5} />}
                   href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`}
                 >
                   Lookup User
@@ -248,7 +248,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               {features.impersonation && user.id !== currentUser.id && (
                 <Menu.Item
                   color="yellow"
-                  icon={<IconCrystalBall size={14} stroke={1.5} />}
+                  leftSection={<IconCrystalBall size={14} stroke={1.5} />}
                   onClick={handleImpersonate}
                 >
                   Impersonate User
@@ -256,7 +256,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               )}
               <Menu.Item
                 color={user.bannedAt ? 'green' : 'red'}
-                icon={
+                leftSection={
                   !user.bannedAt ? (
                     <IconBan size={14} stroke={1.5} />
                   ) : (
@@ -269,7 +269,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               </Menu.Item>
               <Menu.Item
                 color={user.excludeFromLeaderboards ? 'green' : 'red'}
-                icon={
+                leftSection={
                   !user.excludeFromLeaderboards ? (
                     <IconGraphOff size={14} stroke={1.5} />
                   ) : (
@@ -284,20 +284,20 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               </Menu.Item>
               {/* <Menu.Item
                 color="red"
-                icon={<IconTrash size={14} stroke={1.5} />}
+                leftSection={<IconTrash size={14} stroke={1.5} />}
                 onClick={handleRemoveContent}
               >
                 Remove all content
               </Menu.Item> */}
               {/* <Menu.Item
                 color="red"
-                icon={<IconUserMinus size={14} stroke={1.5} />}
+                leftSection={<IconUserMinus size={14} stroke={1.5} />}
                 onClick={handleDeleteAccount}
               >
                 Delete Account
               </Menu.Item> */}
               <Menu.Item
-                icon={
+                leftSection={
                   user.muted ? (
                     <IconMicrophone size={14} stroke={1.5} />
                   ) : (
@@ -319,7 +319,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           <HideUserButton as="menu-item" userId={user.id} />
           <LoginRedirect reason="report-user">
             <Menu.Item
-              icon={<IconFlag size={14} stroke={1.5} />}
+              leftSection={<IconFlag size={14} stroke={1.5} />}
               onClick={() =>
                 openReportModal({
                   entityType: ReportEntity.User,
@@ -481,22 +481,22 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 //                     </Group>
 //                   </Card>
 //                   <Tabs.List justify="center">
-//                     <Tabs.Tab value="/models" icon={<IconCategory size="1rem" />}>
+//                     <Tabs.Tab value="/models" leftSection={<IconCategory size="1rem" />}>
 //                       Models
 //                     </Tabs.Tab>
-//                     <Tabs.Tab value="/images" icon={<IconPhoto size="1rem" />}>
+//                     <Tabs.Tab value="/images" leftSection={<IconPhoto size="1rem" />}>
 //                       Images
 //                     </Tabs.Tab>
-//                     <Tabs.Tab value="/posts" icon={<IconLayoutList size="1rem" />}>
+//                     <Tabs.Tab value="/posts" leftSection={<IconLayoutList size="1rem" />}>
 //                       Posts
 //                     </Tabs.Tab>
 //                     {features.articles && (
-//                       <Tabs.Tab value="/articles" icon={<IconFileText size="1rem" />}>
+//                       <Tabs.Tab value="/articles" leftSection={<IconFileText size="1rem" />}>
 //                         Articles
 //                       </Tabs.Tab>
 //                     )}
 //                     {features.profileCollections && (
-//                       <Tabs.Tab value="/collections" icon={<IconFolder size="1rem" />}>
+//                       <Tabs.Tab value="/collections" leftSection={<IconFolder size="1rem" />}>
 //                         Collections
 //                       </Tabs.Tab>
 //                     )}

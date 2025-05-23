@@ -155,7 +155,7 @@ export function ModelCategoryCard({
     component: (
       <LoginRedirect reason="report-model" key="report">
         <Menu.Item
-          icon={<IconFlag size={14} stroke={1.5} />}
+          leftSection={<IconFlag size={14} stroke={1.5} />}
           onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             e.preventDefault();
             e.stopPropagation();
@@ -174,7 +174,7 @@ export function ModelCategoryCard({
         component: (
           <LoginRedirect reason="report-content" key="report-image">
             <Menu.Item
-              icon={<IconFlag size={14} stroke={1.5} />}
+              leftSection={<IconFlag size={14} stroke={1.5} />}
               onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -193,7 +193,7 @@ export function ModelCategoryCard({
     component: (
       <Menu.Item
         key="block-tags"
-        icon={<IconTagOff size={14} stroke={1.5} />}
+        leftSection={<IconTagOff size={14} stroke={1.5} />}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();

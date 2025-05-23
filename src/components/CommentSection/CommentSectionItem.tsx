@@ -236,7 +236,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             {isOwner || isMod ? (
               <>
                 <Menu.Item
-                  icon={<IconTrash size={14} stroke={1.5} />}
+                  leftSection={<IconTrash size={14} stroke={1.5} />}
                   onClick={() => handleDeleteComment(comment.id)}
                   color="red"
                 >
@@ -244,7 +244,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                 </Menu.Item>
                 {((!comment.locked && !isMuted) || isMod) && (
                   <Menu.Item
-                    icon={<IconEdit size={14} stroke={1.5} />}
+                    leftSection={<IconEdit size={14} stroke={1.5} />}
                     onClick={() => setEditComment(comment)}
                   >
                     Edit comment
@@ -255,7 +255,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             {(!currentUser || !isOwner) && (
               <LoginRedirect reason="report-model">
                 <Menu.Item
-                  icon={<IconFlag size={14} stroke={1.5} />}
+                  leftSection={<IconFlag size={14} stroke={1.5} />}
                   onClick={() =>
                     openReportModal({
                       entityType: ReportEntity.Comment,

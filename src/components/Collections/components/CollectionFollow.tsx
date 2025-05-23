@@ -9,7 +9,7 @@ import { useCollection } from '~/components/Collections/collection.utils';
 
 export const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Props) => {
   const utils = trpc.useUtils();
-  
+
   const { permissions: serverPermissions } = useCollection(collectionId);
   const mergedPermissions = { ...serverPermissions, ...permissions };
 
@@ -41,7 +41,10 @@ export const CollectionFollowAction = ({ collectionId, permissions, ...btnProps 
       },
     });
 
-  if ((!mergedPermissions.follow && !mergedPermissions.isContributor) || mergedPermissions.isOwner) {
+  if (
+    (!mergedPermissions.follow && !mergedPermissions.isContributor) ||
+    mergedPermissions.isOwner
+  ) {
     // For contributors, we will still make it possible to un-follow
     return null;
   }

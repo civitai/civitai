@@ -120,7 +120,7 @@ export function ResourceReviewMenu({
         {(isOwner || isMod) && (
           <>
             <Menu.Item
-              icon={<IconTrash size={14} stroke={1.5} />}
+              leftSection={<IconTrash size={14} stroke={1.5} />}
               color="red"
               onClick={handleDelete}
             >
@@ -128,7 +128,7 @@ export function ResourceReviewMenu({
             </Menu.Item>
             {!isMuted && (
               <Menu.Item
-                icon={<IconEdit size={14} stroke={1.5} />}
+                leftSection={<IconEdit size={14} stroke={1.5} />}
                 onClick={() => openResourceReviewEditModal(review)}
               >
                 Edit review
@@ -140,14 +140,14 @@ export function ResourceReviewMenu({
           <>
             {!review.exclude ? (
               <Menu.Item
-                icon={<IconCalculatorOff size={14} stroke={1.5} />}
+                leftSection={<IconCalculatorOff size={14} stroke={1.5} />}
                 onClick={handleExcludeReview}
               >
                 Exclude from count
               </Menu.Item>
             ) : review.metadata?.excludeReason !== 'reviewManipulation' ? (
               <Menu.Item
-                icon={<IconCalculator size={14} stroke={1.5} />}
+                leftSection={<IconCalculator size={14} stroke={1.5} />}
                 onClick={handleUnexcludeReview}
               >
                 Include into count
@@ -157,7 +157,9 @@ export function ResourceReviewMenu({
               {({ toggle, locked, isLoading }) => {
                 return (
                   <Menu.Item
-                    icon={isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />}
+                    leftSection={
+                      isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />
+                    }
                     onClick={toggle}
                     disabled={isLoading}
                   >
@@ -171,7 +173,7 @@ export function ResourceReviewMenu({
         {!isOwner && (
           <LoginRedirect reason="report-review">
             <Menu.Item
-              icon={<IconFlag size={14} stroke={1.5} />}
+              leftSection={<IconFlag size={14} stroke={1.5} />}
               onClick={() =>
                 openReportModal({
                   entityType: ReportEntity.ResourceReview,

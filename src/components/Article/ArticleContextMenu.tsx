@@ -140,7 +140,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             )}
             <Menu.Item
               color="red"
-              icon={<IconTrash size={14} stroke={1.5} />}
+              leftSection={<IconTrash size={14} stroke={1.5} />}
               onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -153,7 +153,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             {showUnpublish && (
               <Menu.Item
                 color="yellow"
-                icon={
+                leftSection={
                   unpublishArticleMutation.isLoading ? (
                     <Loader size={14} />
                   ) : (
@@ -174,7 +174,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             <Menu.Item
               component={Link}
               href={`/articles/${article.id}/edit`}
-              icon={<IconPencil size={14} stroke={1.5} />}
+              leftSection={<IconPencil size={14} stroke={1.5} />}
             >
               Edit
             </Menu.Item>
@@ -183,7 +183,9 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                 {({ toggle, locked, isLoading }) => {
                   return (
                     <Menu.Item
-                      icon={isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />}
+                      leftSection={
+                        isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />
+                      }
                       onClick={toggle}
                       disabled={isLoading}
                       closeMenuOnClick={false}
@@ -199,7 +201,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         {(!isOwner || isModerator) && (
           <LoginRedirect reason="report-article">
             <Menu.Item
-              icon={<IconFlag size={14} stroke={1.5} />}
+              leftSection={<IconFlag size={14} stroke={1.5} />}
               onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();

@@ -11,7 +11,7 @@ export function ReportMenuItem({
   return (
     <LoginRedirect reason={loginReason}>
       <Menu.Item
-        icon={<IconFlag size={14} stroke={1.5} />}
+        leftSection={<IconFlag size={14} stroke={1.5} />}
         onClick={(e: React.MouseEvent) => {
           e.preventDefault();
           e.stopPropagation();

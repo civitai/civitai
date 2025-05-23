@@ -248,8 +248,7 @@ const ImageCollection = ({
           <>
             {canUpdateCover && (
               <Menu.Item
-                icon={
-                  // @ts-ignore: transparent variant actually works here.
+                leftSection={
                   <ThemeIcon color="pink.7" variant="transparent" size="xs">
                     <IconPhoto size={16} stroke={1.5} />
                   </ThemeIcon>

@@ -26,7 +26,7 @@ export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) 
       <Menu.Item
         key="delete"
         color="red"
-        icon={<IconTrash size={14} stroke={1.5} />}
+        leftSection={<IconTrash size={14} stroke={1.5} />}
         onClick={(e: React.MouseEvent) => {
           e.stopPropagation();
           e.preventDefault();
@@ -62,7 +62,7 @@ export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) 
     />,
     isModerator || (!expired && isOwner) ? (
       <Link legacyBehavior key="edit" href={`/bounties/${bounty.id}/edit`} passHref>
-        <Menu.Item component="a" icon={<IconEdit size={14} stroke={1.5} />}>
+        <Menu.Item component="a" leftSection={<IconEdit size={14} stroke={1.5} />}>
           Edit
         </Menu.Item>
       </Link>
@@ -72,7 +72,7 @@ export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) 
         key="refund"
         disabled={refunding}
         component="button"
-        icon={<IconReceiptRefund size={14} stroke={1.5} />}
+        leftSection={<IconReceiptRefund size={14} stroke={1.5} />}
         onClick={() => {
           openConfirmModal({
             title: 'Refund bounty',

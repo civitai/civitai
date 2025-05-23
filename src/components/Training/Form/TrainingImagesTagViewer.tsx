@@ -339,7 +339,7 @@ export const TrainingImagesTagViewer = ({
                 </Menu.Target>
                 <Menu.Dropdown>
                   <Menu.Item
-                    icon={<IconTrash size={14} />}
+                    leftSection={<IconTrash size={14} />}
                     onClick={() =>
                       openConfirmModal({
                         title: 'Remove these tags?',
@@ -364,7 +364,7 @@ export const TrainingImagesTagViewer = ({
                     })`}
                   </Menu.Item>
                   <Menu.Item
-                    icon={<IconReplace size={14} />}
+                    leftSection={<IconReplace size={14} />}
                     onClick={() =>
                       dialogStore.trigger({
                         component: TrainingEditTagsModal,

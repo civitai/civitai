@@ -146,7 +146,7 @@ export function CollectionContextMenu({
           <>
             <Menu.Item
               color="red"
-              icon={<IconTrash size={14} stroke={1.5} />}
+              leftSection={<IconTrash size={14} stroke={1.5} />}
               onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -156,7 +156,7 @@ export function CollectionContextMenu({
               Delete collection
             </Menu.Item>
             <Menu.Item
-              icon={<IconEdit size={14} stroke={1.5} />}
+              leftSection={<IconEdit size={14} stroke={1.5} />}
               onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -169,7 +169,7 @@ export function CollectionContextMenu({
         )}
         {currentUser && permissions?.read && (
           <Menu.Item
-            icon={<IconHome size={14} stroke={1.5} />}
+            leftSection={<IconHome size={14} stroke={1.5} />}
             onClick={(e: React.MouseEvent) => {
               e.preventDefault();
               e.stopPropagation();
@@ -181,7 +181,7 @@ export function CollectionContextMenu({
         )}
         {!isBookmarkCollection && permissions?.manage && (
           <Link legacyBehavior href={`/collections/${collectionId}/review`} passHref>
-            <Menu.Item component="a" icon={<IconPencil size={14} stroke={1.5} />}>
+            <Menu.Item component="a" leftSection={<IconPencil size={14} stroke={1.5} />}>
               Review items
             </Menu.Item>
           </Link>

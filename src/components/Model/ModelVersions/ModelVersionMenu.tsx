@@ -143,7 +143,7 @@ export function ModelVersionMenu({
         {canDelete && (
           <Menu.Item
             color="red"
-            icon={<IconTrash size={14} stroke={1.5} />}
+            leftSection={<IconTrash size={14} stroke={1.5} />}
             onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
               e.preventDefault();
@@ -156,7 +156,7 @@ export function ModelVersionMenu({
         {currentUser?.isModerator && published && (
           <Menu.Item
             color="yellow"
-            icon={<IconBan size={14} stroke={1.5} />}
+            leftSection={<IconBan size={14} stroke={1.5} />}
             onClick={() =>
               openContext('unpublishModel', {
                 modelId: modelId,
@@ -169,7 +169,7 @@ export function ModelVersionMenu({
         )}
         {currentUser?.isModerator && (
           <Menu.Item
-            icon={<IconShieldHalf size={14} stroke={1.5} />}
+            leftSection={<IconShieldHalf size={14} stroke={1.5} />}
             color="yellow"
             onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
@@ -182,7 +182,7 @@ export function ModelVersionMenu({
         )}
         {currentUser?.isModerator && (
           <Menu.Item
-            icon={<IconCloudX size={14} stroke={1.5} />}
+            leftSection={<IconCloudX size={14} stroke={1.5} />}
             color="yellow"
             onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
@@ -198,7 +198,7 @@ export function ModelVersionMenu({
           <>
             <Menu.Item
               disabled={isLoading}
-              icon={isLoading ? <Loader size="xs" /> : <IconAi size={14} stroke={1.5} />}
+              leftSection={isLoading ? <Loader size="xs" /> : <IconAi size={14} stroke={1.5} />}
               color="yellow"
               onClick={() =>
                 handleToggleCoverage({
@@ -216,13 +216,13 @@ export function ModelVersionMenu({
         <Menu.Item
           component={Link}
           href={`/models/${modelId}/model-versions/${modelVersionId}/edit`}
-          icon={<IconEdit size={14} stroke={1.5} />}
+          leftSection={<IconEdit size={14} stroke={1.5} />}
           className={!features.canWrite ? 'pointer-events-none' : undefined}
         >
           Edit details
         </Menu.Item>
         <Menu.Item
-          icon={<IconFileSettings size={14} stroke={1.5} />}
+          leftSection={<IconFileSettings size={14} stroke={1.5} />}
           onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
             triggerRoutedDialog({
@@ -238,7 +238,7 @@ export function ModelVersionMenu({
         {postId ? (
           <Menu.Item
             component={Link}
-            icon={<IconPhotoEdit size={14} stroke={1.5} />}
+            leftSection={<IconPhotoEdit size={14} stroke={1.5} />}
             onClick={(e: React.MouseEvent) => e.stopPropagation()}
             href={`/posts/${postId}/edit`}
             className={!features.canWrite ? 'pointer-events-none' : undefined}
@@ -248,7 +248,7 @@ export function ModelVersionMenu({
         ) : (
           <Menu.Item
             component={Link}
-            icon={<IconPhotoPlus size={14} stroke={1.5} />}
+            leftSection={<IconPhotoPlus size={14} stroke={1.5} />}
             onClick={(e: React.MouseEvent) => e.stopPropagation()}
             href={`/models/${modelId}/model-versions/${modelVersionId}/wizard?step=3`}
           >

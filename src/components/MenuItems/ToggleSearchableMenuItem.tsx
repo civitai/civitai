@@ -49,7 +49,7 @@ export function ToggleSearchableMenuItem({ entityType, entityId }: Props) {
 
   if (isLoadingAccess) {
     return (
-      <Menu.Item icon={<IconSearch size={14} stroke={1.5} />} disabled>
+      <Menu.Item leftSection={<IconSearch size={14} stroke={1.5} />} disabled>
         &hellip;Loading&hellip;
       </Menu.Item>
     );
@@ -57,7 +57,7 @@ export function ToggleSearchableMenuItem({ entityType, entityId }: Props) {
 
   return (
     <Menu.Item
-      icon={
+      leftSection={
         isSearchable ? (
           <IconSearchOff size={14} stroke={1.5} />
         ) : (

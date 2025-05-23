@@ -237,7 +237,7 @@ export function ChatList() {
             </Menu.Target>
             <Menu.Dropdown>
               <Menu.Item
-                icon={muteSounds ? <IconEar size={18} /> : <IconEarOff size={18} />}
+                leftSection={muteSounds ? <IconEar size={18} /> : <IconEarOff size={18} />}
                 onClick={handleMute}
                 disabled={isApril1() && !muteSounds}
               >
@@ -247,7 +247,7 @@ export function ChatList() {
               </Menu.Item>
               <Menu.Item
                 disabled={activeCount === 0}
-                icon={<IconEye size={18} />}
+                leftSection={<IconEye size={18} />}
                 onClick={() => markAsRead()}
               >
                 {`Mark all as read${activeCount > 0 ? ` (${activeCount})` : ''}`}

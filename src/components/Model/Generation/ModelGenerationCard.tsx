@@ -341,13 +341,13 @@ export function ModelGenerationCard({
                               <Menu.Dropdown>
                                 <Menu.Item
                                   color="red"
-                                  icon={<IconTrash size={14} stroke={1.5} />}
+                                  leftSection={<IconTrash size={14} stroke={1.5} />}
                                   onClick={() => handleDeletePrompt(prompt.name)}
                                 >
                                   Delete
                                 </Menu.Item>
                                 <Menu.Item
-                                  icon={<IconEdit size={14} stroke={1.5} />}
+                                  leftSection={<IconEdit size={14} stroke={1.5} />}
                                   onClick={() => {
                                     const selected = data.find((p) => p.prompt === prompt.prompt);
                                     if (selected)

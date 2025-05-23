@@ -185,7 +185,7 @@ export function ImagesAsPostsCard({
         {image.postId ? (
           <Menu.Item
             key="pin-post"
-            icon={
+            leftSection={
               alreadyPinned ? (
                 <IconPinnedOff size={16} stroke={1.5} />
               ) : (

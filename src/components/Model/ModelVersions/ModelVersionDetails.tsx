@@ -572,7 +572,7 @@ export function ModelVersionDetails({
         key={file.id}
         component="a"
         py={4}
-        icon={<VerifiedText file={file} iconOnly />}
+        leftSection={<VerifiedText file={file} iconOnly />}
         {...getDownloadProps(file)}
       >
         {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)}){' '}
@@ -585,7 +585,7 @@ export function ModelVersionDetails({
         )}
       </Menu.Item>
     ) : (
-      <Menu.Item key={file.id} py={4} icon={<VerifiedText file={file} iconOnly />} disabled>
+      <Menu.Item key={file.id} py={4} leftSection={<VerifiedText file={file} iconOnly />} disabled>
         {`${startCase(file.type)}${
           ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
         } (${formatKBytes(file.sizeKB)})`}

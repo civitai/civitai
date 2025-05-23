@@ -15,7 +15,6 @@ import {
   Text,
   ThemeIcon,
   useComputedColorScheme,
-  useMantineTheme,
 } from '@mantine/core';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconChevronDown, IconExclamationMark, IconExternalLink } from '@tabler/icons-react';

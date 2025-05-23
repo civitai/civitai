@@ -62,7 +62,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
                     <DeleteQuestion id={question.id}>
                       <Menu.Item
                         color={theme.colors.red[6]}
-                        icon={<IconTrash size={14} stroke={1.5} />}
+                        leftSection={<IconTrash size={14} stroke={1.5} />}
                       >
                         Delete Question
                       </Menu.Item>
@@ -71,7 +71,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
                       <Menu.Item
                         component={Link}
                         href={`/questions/${question.id}/${questionTitle}?edit=true`}
-                        icon={<IconEdit size={14} stroke={1.5} />}
+                        leftSection={<IconEdit size={14} stroke={1.5} />}
                         shallow
                       >
                         Edit question

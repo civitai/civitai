@@ -33,20 +33,27 @@ export function ModelDiscussionContextMenu() {
         {canDelete && (
           <DeleteComment entityId={entityId} entityType={entityType} id={comment.id}>
             {({ onClick }) => (
-              <Menu.Item icon={<IconTrash size={14} stroke={1.5} />} color="red" onClick={onClick}>
+              <Menu.Item
+                leftSection={<IconTrash size={14} stroke={1.5} />}
+                color="red"
+                onClick={onClick}
+              >
                 Delete Comment
               </Menu.Item>
             )}
           </DeleteComment>
         )}
         {canEdit && (
-          <Menu.Item icon={<IconEdit size={14} stroke={1.5} />} onClick={handleEditClick}>
+          <Menu.Item leftSection={<IconEdit size={14} stroke={1.5} />} onClick={handleEditClick}>
             Edit Comment
           </Menu.Item>
         )}
         {canReport && (
           <LoginRedirect reason="report-model">
-            <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleReportClick}>
+            <Menu.Item
+              leftSection={<IconFlag size={14} stroke={1.5} />}
+              onClick={handleReportClick}
+            >
               Report
             </Menu.Item>
           </LoginRedirect>

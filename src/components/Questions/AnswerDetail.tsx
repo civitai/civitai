@@ -73,14 +73,14 @@ export function AnswerDetail({
                     <DeleteAnswer id={answer.id}>
                       <Menu.Item
                         color={theme.colors.red[6]}
-                        icon={<IconTrash size={14} stroke={1.5} />}
+                        leftSection={<IconTrash size={14} stroke={1.5} />}
                       >
                         Delete answer
                       </Menu.Item>
                     </DeleteAnswer>
                     {(!isMuted || isModerator) && (
                       <Menu.Item
-                        icon={<IconEdit size={14} stroke={1.5} />}
+                        leftSection={<IconEdit size={14} stroke={1.5} />}
                         onClick={() => setEditing(true)}
                       >
                         Edit answer

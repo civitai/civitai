@@ -901,7 +901,7 @@ function DisplayMessages({
                     </Menu.Target>
                     <Menu.Dropdown>
                       <Menu.Item
-                        icon={<IconArrowBack size={14} />}
+                        leftSection={<IconArrowBack size={14} />}
                         onClick={() => setReplyId(c.id)}
                       >
                         Reply

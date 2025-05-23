@@ -59,7 +59,7 @@ export function ModelsInfinite({
         <Center p="xl">
           <Loader size="xl" />
         </Center>
-      ) : !!models.length ? (
+      ) : !models.length ? (
         <div className="relative">
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <MasonryGrid

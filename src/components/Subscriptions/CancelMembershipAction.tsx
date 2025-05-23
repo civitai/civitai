@@ -79,7 +79,7 @@ export function CancelMembershipAction({
   );
 
   return variant === 'menu-item' ? (
-    <Menu.Item icon={icon} onClick={handleClick}>
+    <Menu.Item leftSection={icon} onClick={handleClick}>
       {label}
     </Menu.Item>
   ) : (
