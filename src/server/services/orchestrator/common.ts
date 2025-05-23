@@ -21,6 +21,7 @@ import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
+import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
 import {
@@ -639,6 +640,12 @@ function formatVideoGenStep({
   // TODO - come up with a better way to handle jsonb data type mismatches
   if ('type' in params && (params.type === 'txt2vid' || params.type === 'img2vid'))
     params.process = params.type;
+
+  if (!params.process && baseModel) {
+    const wanProcess = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
+    if (wanProcess) params.process = wanProcess as any;
+  }
+
   if (baseModel === 'WanVideo') {
     if (params.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
     else baseModel = 'WanVideo14B_I2V_720p';
