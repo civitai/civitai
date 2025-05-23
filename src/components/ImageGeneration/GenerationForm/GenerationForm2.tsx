@@ -11,12 +11,12 @@ import {
   Group,
   Input,
   List,
+  Notification,
   NumberInputProps,
   Paper,
   SliderProps,
   Stack,
   Text,
-  Notification,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -76,13 +76,7 @@ import {
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  Form,
-  InputNumberSlider,
-  InputSegmentedControl,
-  InputSelect,
-  InputSwitch,
-} from '~/libs/form';
+import { InputNumberSlider, InputSegmentedControl, InputSelect, InputSwitch } from '~/libs/form';
 import { Watch } from '~/libs/form/components/Watch';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -1137,6 +1131,7 @@ export function GenerationFormContent() {
                                   }
                                   reverse
                                   disabled={cfgDisabled}
+                                  data-testid="gen-cfg-scale"
                                 />
                               )}
                               {!isFlux && !isSD3 && (
@@ -1226,6 +1221,7 @@ export function GenerationFormContent() {
                                               ]
                                         }
                                         reverse
+                                        data-testid="gen-steps"
                                       />
                                     );
                                   }}
