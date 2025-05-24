@@ -76,21 +76,25 @@ export function SourceImageUpload({
 
   async function handleResizeToBase64(src: File | Blob | string) {
     setLoading(true);
-    const resized = await resizeImage(src, {
-      maxHeight: maxUpscaleSize,
-      maxWidth: maxUpscaleSize,
-    });
-    return await getBase64(resized);
+    try {
+      const resized = await resizeImage(src, {
+        maxHeight: maxUpscaleSize,
+        maxWidth: maxUpscaleSize,
+      });
+      return await getBase64(resized);
+    } catch (e) {
+      setLoading(false);
+    }
   }
 
   async function handleDrop(files: File[]) {
     const base64 = await handleResizeToBase64(files[0]);
-    handleChange(base64);
+    if (base64) handleChange(base64);
   }
 
   async function handleDropCapture(src: File | Blob | string) {
     const base64 = await handleResizeToBase64(src);
-    handleChange(base64);
+    if (base64) handleChange(base64);
   }
 
   useEffect(() => {
