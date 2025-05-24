@@ -101,7 +101,9 @@ export const useQueryImages = (
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(filters.username === currentUser?.username || filters.userId === currentUser?.id
+    ...((filters.username &&
+      filters.username.toLowerCase() === currentUser?.username?.toLowerCase()) ||
+    filters.userId === currentUser?.id
       ? []
       : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ].filter(isDefined);

@@ -50,7 +50,7 @@ export const useQueryPosts = (
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(filters.username === currentUser?.username
+    ...(filters.username && filters.username.toLowerCase() === currentUser?.username?.toLowerCase()
       ? []
       : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ].filter(isDefined);
