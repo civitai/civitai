@@ -227,6 +227,12 @@ export const serverSchema = z.object({
   NOW_PAYMENTS_API_URL: z.string().optional(),
   NOW_PAYMENTS_API_KEY: z.string().optional(),
   NOW_PAYMENTS_IPN_KEY: z.string().optional(),
+
+  // InovoPay Related:
+  INOVOPAY_API_URL: z.string().optional(),
+  INOVOPAY_USERNAME: z.string().optional(),
+  INOVOPAY_PASSWORD: z.string().optional(),
+  INOVOPAY_SITE_ID: z.string().optional(),
 });
 
 /**
