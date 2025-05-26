@@ -55,6 +55,7 @@ export const processBuzzOrder = async (paymentId: string | number) => {
       message: 'Failed to retrieve payment status',
       paymentId,
     });
+
     throw new Error('Could not retrieve invoice data');
   }
 
@@ -181,6 +182,13 @@ export const processBuzzOrder = async (paymentId: string | number) => {
       if (!transactionId) {
         throw new Error('Failed to create Buzz transaction');
       }
+    }
+
+    if (payment.payment_status !== 'waiting') {
+      log({
+        message: 'Event with payment handled...',
+        ...payment,
+      });
     }
   } catch (error) {
     await log({
