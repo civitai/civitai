@@ -203,6 +203,11 @@ function filterPreferences<
               return false;
             }
           }
+
+          if (model.minor && minorDisabled) {
+            hidden.minor++;
+            return false;
+          }
           return true;
         })
         .map(({ images, ...x }) => {
@@ -655,6 +660,8 @@ type BaseModel = {
   nsfwLevel: number;
   nsfw?: boolean;
   name?: string | null;
+  minor?: boolean;
+  poi?: boolean;
 };
 
 type BaseArticle = {

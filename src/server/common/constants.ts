@@ -572,6 +572,20 @@ export const baseModelSets = {
     baseModels: ['Wan Video 14B i2v 720p'],
   }),
 };
+
+export function getEcosystemFromBaseModel(baseModel: string) {
+  const ecosystem =
+    Object.entries(baseModelSets)
+      .find(([, baseModelSet]) => (baseModelSet.baseModels as string[]).includes(baseModel))?.[0]
+      ?.toLowerCase() ?? 'multi';
+
+  return ecosystem
+    .replace('pony', 'sdxl')
+    ?.replace('illustrious', 'sdxl')
+    ?.replace('noobai', 'sdxl')
+    ?.replace('sd3_5m', 'sd3');
+}
+
 /*
 'Wan Video 1.3B T2V',
 'Wan Video 14B T2V',

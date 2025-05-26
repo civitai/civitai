@@ -45,6 +45,7 @@
     // "**/*.mjs",
     "scripts",
     "src",
+    "tests",
     ".next/types/**/*.ts"
     // ".next/types/**/*.ts"
   ],

@@ -91,7 +91,8 @@ function StatefulPeriodFilter({ type, disabled, hideMode, variant }: StatefulPro
         type !== 'generation' &&
         type !== 'tools' &&
         type !== 'buzzWithdrawalRequests' &&
-        type !== 'changelogs'
+        type !== 'changelogs' &&
+        type !== 'auctions'
           ? state[type].period
           : undefined,
       [type]

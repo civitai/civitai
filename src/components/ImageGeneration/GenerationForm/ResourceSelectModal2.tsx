@@ -678,7 +678,7 @@ function ResourceHitList({
           )}
         </div>
       )}
-      <div className={searchLayoutClasses.grid}>
+      <div className={searchLayoutClasses.grid} data-testid="resource-select-items">
         {restItems.map((model) => (
           <ResourceSelectCard
             key={model.id}
@@ -1189,7 +1189,7 @@ function ResourceSelectCard({
           ))}
 
         <div className="flex flex-col gap-2 p-3 text-black dark:text-white">
-          <Text size="sm" fw={700} lineClamp={1} lh={1}>
+          <Text size="sm" fw={700} lineClamp={1} lh={1} data-testid="resource-select-name">
             {data.name}
           </Text>
           <Group wrap="nowrap" justify="space-between">

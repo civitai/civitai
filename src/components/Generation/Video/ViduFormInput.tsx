@@ -9,7 +9,7 @@ import {
 import { ViduVideoGenStyle } from '@civitai/client';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
@@ -24,6 +24,8 @@ export function ViduFormInput() {
   const endSourceImage = form.watch('endSourceImage');
   const model = form.watch('model');
   const isTxt2Vid = process === 'txt2vid';
+  const [Warning1, setWarning1] = useState<JSX.Element | null>(null);
+  const [Warning2, setWarning2] = useState<JSX.Element | null>(null);
 
   useEffect(() => {
     if (process === 'txt2vid') return;
@@ -60,25 +62,30 @@ export function ViduFormInput() {
     <>
       <InputVideoProcess name="process" />
       {process === 'img2vid' && (
-        <div className="flex justify-center gap-2">
-          <InputSourceImageUpload
-            name="sourceImage"
-            className="flex aspect-video flex-1 flex-col justify-start"
-            iconSize={32}
-          >
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-center text-sm">Starting image</span>
-            </div>
-          </InputSourceImageUpload>
-          <InputSourceImageUpload
-            name="endSourceImage"
-            className="flex aspect-video flex-1 flex-col justify-start"
-            iconSize={32}
-          >
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-center text-sm">Ending image (optional)</span>
-            </div>
-          </InputSourceImageUpload>
+        <div className="flex flex-col gap-2">
+          <div className="flex justify-center gap-2">
+            <InputSourceImageUpload
+              name="sourceImage"
+              className="flex  flex-1 flex-col justify-start"
+              iconSize={32}
+              onWarnMissingAiMetadata={setWarning1}
+            >
+              <div className="flex flex-col items-center gap-2">
+                <span className="text-center text-sm">Starting image</span>
+              </div>
+            </InputSourceImageUpload>
+            <InputSourceImageUpload
+              name="endSourceImage"
+              className="flex flex-1 flex-col justify-start"
+              iconSize={32}
+              onWarnMissingAiMetadata={setWarning2}
+            >
+              <div className="flex flex-col items-center gap-2">
+                <span className="text-center text-sm">Ending image (optional)</span>
+              </div>
+            </InputSourceImageUpload>
+          </div>
+          {Warning1 ?? Warning2}
         </div>
       )}
       <InputTextArea

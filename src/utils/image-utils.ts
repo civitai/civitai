@@ -2,8 +2,13 @@ import type { Area } from 'react-easy-crop';
 import { NsfwLevel } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { TagType } from '~/shared/utils/prisma/enums';
+import ExifReader from 'exifreader';
 
 import { fetchBlob } from '~/utils/file-utils';
+
+function copyImageExifData(file: File | string) {
+  // TODO - need to copy exif data when resizing or cropping images
+}
 
 // deprecated?
 export async function imageToBlurhash(url: string) {
@@ -122,9 +127,14 @@ type ImageForAiVerification = {
  * @returns
  */
 
+export function isValidAiMeta(meta?: Record<string, any> | null) {
+  if (meta?.prompt) return true;
+  if (meta?.civitaiResources) return true;
+  return false;
+}
+
 export function isValidAIGeneration(image: ImageForAiVerification) {
-  if (image.meta?.prompt) return true;
-  if (image.meta?.civitaiResources) return true;
+  if (isValidAiMeta(image.meta)) return true;
   // Updated to only allow prompt.
   // if (image.meta?.comfy) return true;
   // if (image.meta?.extra) return true;

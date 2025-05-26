@@ -255,7 +255,7 @@ export async function addImageRating({
   if (valueInQueue.value >= 5 && valueInQueue.rank === NewOrderRankType.Knight) {
     // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
     await valueInQueue.pool.reset({ id: imageId });
-    await signalClient
+    signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Knight`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -269,7 +269,7 @@ export async function addImageRating({
   if (valueInQueue.value >= 2 && valueInQueue.rank === NewOrderRankType.Templar) {
     // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
     await valueInQueue.pool.reset({ id: imageId });
-    await signalClient
+    signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Templar`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -294,7 +294,7 @@ export async function addImageRating({
       });
     }
 
-    await signalClient
+    signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -507,7 +507,7 @@ export async function addImageRating({
     await updatePendingImageRatings({ imageId, rating });
     await valueInQueue.pool.reset({ id: imageId });
 
-    await signalClient
+    signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Knight`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -553,7 +553,7 @@ export async function addImageRating({
     await updatePendingImageRatings({ imageId, rating });
     await valueInQueue.pool.reset({ id: imageId });
 
-    await signalClient
+    signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Templar`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -829,7 +829,7 @@ export async function addImageToQueue({
     })
   );
 
-  await signalClient
+  signalClient
     .topicSend({
       topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
       target: SignalMessages.NewOrderQueueUpdate,
@@ -872,7 +872,7 @@ export async function getImagesQueue({
     rankType: player.rankType,
   });
 
-  for (const pool of shuffle(rankPools)) {
+  for (const pool of rankPools) {
     let offset = 0;
 
     while (validatedImages.length < imageCount) {

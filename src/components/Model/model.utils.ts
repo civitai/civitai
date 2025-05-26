@@ -129,7 +129,8 @@ export const useQueryModels = (
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(_filters.excludedTagIds ?? []),
-    ...(_filters.username === currentUser?.username
+    ...(_filters.username &&
+    _filters.username?.toLowerCase() === currentUser?.username?.toLowerCase()
       ? []
       : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ];

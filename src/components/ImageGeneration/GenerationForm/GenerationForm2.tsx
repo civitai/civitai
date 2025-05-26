@@ -10,12 +10,12 @@ import {
   Group,
   Input,
   List,
+  Notification,
   NumberInputProps,
   Paper,
   SliderProps,
   Stack,
   Text,
-  Notification,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
@@ -77,13 +77,7 @@ import {
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  Form,
-  InputNumberSlider,
-  InputSegmentedControl,
-  InputSelect,
-  InputSwitch,
-} from '~/libs/form';
+import { InputNumberSlider, InputSegmentedControl, InputSelect, InputSwitch } from '~/libs/form';
 import { Watch } from '~/libs/form/components/Watch';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -108,6 +102,7 @@ import {
   getIsSdxl,
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
+  getImageGenerationBaseModels,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
@@ -151,7 +146,6 @@ export function GenerationFormContent() {
   const invalidateWhatIf = useInvalidateWhatIf();
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
-  const [opened, setOpened] = useState(false);
   const [runsOnFalAI, setRunsOnFalAI] = useState(false);
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
@@ -248,8 +242,11 @@ export function GenerationFormContent() {
     const modelClone = clone(model);
 
     delete params.engine;
-    if (fluxUltraRaw && params.fluxMode === fluxUltraAir) params.engine = 'flux-pro-raw';
-    if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+    if (model.id === fluxModelId && fluxUltraRaw && params.fluxMode === fluxUltraAir)
+      params.engine = 'flux-pro-raw';
+    if (model.id === generationConfig.OpenAI.checkpoint.id) {
+      params.engine = 'openai';
+    }
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
@@ -258,10 +255,8 @@ export function GenerationFormContent() {
         modelClone.id = version;
       }
     } else {
-      const keys = ['fluxMode', 'fluxUltraAspectRatio'];
-      for (const key in params) {
-        if (keys.includes(key)) delete params[key as keyof typeof params];
-      }
+      delete params.fluxMode;
+      delete params.fluxUltraAspectRatio;
     }
 
     if (workflowDefinition?.type === 'txt2img') params.sourceImage = null;
@@ -566,7 +561,10 @@ export function GenerationFormContent() {
                               .filter((x) => x.type === 'Checkpoint')
                               .map(({ type, baseModels }) => ({
                                 type,
-                                baseModels: !!resources?.length || !!vae ? baseModels : undefined,
+                                baseModels:
+                                  !!resources?.length || !!vae
+                                    ? baseModels
+                                    : getImageGenerationBaseModels(),
                               })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                           }}
                           hideVersion={isFlux}
@@ -877,7 +875,7 @@ export function GenerationFormContent() {
                   <Input.Wrapper
                     label={
                       <div className="mb-1 flex items-center gap-1">
-                        <Input.Label required>Prompt</Input.Label>
+                        <Input.Label required={!isImg2Img}>Prompt</Input.Label>
                         <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
                           Type out what you&apos;d like to generate in the prompt, add aspects
                           you&apos;d like to avoid in the negative prompt
@@ -1128,6 +1126,7 @@ export function GenerationFormContent() {
                                   }
                                   reverse
                                   disabled={cfgDisabled}
+                                  data-testid="gen-cfg-scale"
                                 />
                               )}
                               {!isFlux && !isSD3 && (
@@ -1217,6 +1216,7 @@ export function GenerationFormContent() {
                                               ]
                                         }
                                         reverse
+                                        data-testid="gen-steps"
                                       />
                                     );
                                   }}

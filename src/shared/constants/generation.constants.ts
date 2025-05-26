@@ -532,6 +532,16 @@ export function getBaseModelResourceTypes(baseModel: string) {
     return baseModelResourceTypes[baseModel as SupportedBaseModel];
 }
 
+export function getImageGenerationBaseModels() {
+  return [
+    ...new Set(
+      Object.entries(baseModelResourceTypes)
+        .filter(([key]) => !videoBaseModelSetTypes.includes(key as BaseModelSetType))
+        .flatMap(([key, value]) => value.flatMap((x) => x.baseModels))
+    ),
+  ];
+}
+
 export const miscModelTypes: ModelType[] = [
   'AestheticGradient',
   'Hypernetwork',

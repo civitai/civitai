@@ -231,7 +231,7 @@ const OverflowTooltip = ({
   }, []);
 
   return (
-    <Tooltip label={label} disabled={!isOverflown} withinPortal>
+    <Tooltip label={label} disabled={!isOverflown} withinPortal multiline>
       <Highlight
         ref={textElementRef}
         className="min-w-0 max-w-[min(400px,80vw)] truncate"
@@ -251,6 +251,7 @@ const SectionModelInfo = ({
   entityData: ModelData['entityData'];
   searchText: string;
 }) => {
+  const isMobile = useIsMobile();
   const shouldHide = useHideNsfwText();
   const blurNsfw =
     shouldHide && (hasNSFWWords(entityData?.name) || hasNSFWWords(entityData?.model?.name));
@@ -271,6 +272,7 @@ const SectionModelInfo = ({
               searchText={searchText}
               size="lg"
               fw={500}
+              fz={isMobile ? 'sm' : undefined}
             />
             <OverflowTooltip
               label={entityData?.name ?? '(Unknown Version)'}
@@ -774,8 +776,14 @@ export const ModelPlacementCard = ({
         <Group className="gap-y-2 max-md:flex-col">
           {!mobile && <SectionPosition position={data.position} aboveThreshold={aboveThreshold} />}
           <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
-            <SectionModelImage image={data.entityData?.image} />
-            <SectionModelInfo entityData={data.entityData} searchText={searchText} />
+            <div className="flex w-full min-w-0 gap-4">
+              <div className="shrink-0">
+                <SectionModelImage image={data.entityData?.image} />
+              </div>
+              <div className="min-w-0 grow">
+                <SectionModelInfo entityData={data.entityData} searchText={searchText} />
+              </div>
+            </div>
           </Group>
 
           {!mobile && <Divider orientation="vertical" />}

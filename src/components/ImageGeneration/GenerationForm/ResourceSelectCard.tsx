@@ -108,6 +108,7 @@ function CheckpointInfo({
             c="initial"
             lineClamp={1}
             fw={590}
+            data-testid="selected-gen-resource-name"
           >
             {resource.model.name}
           </Text>

@@ -58,7 +58,7 @@ const baseSchema = textToImageParamsSchema
     remixPrompt: z.string().optional(),
     remixNegativePrompt: z.string().optional(),
     aspectRatio: z.string(),
-    fluxUltraAspectRatio: z.string(),
+    fluxUltraAspectRatio: z.string().optional(),
     fluxUltraRaw: z.boolean().optional(),
   });
 const partialSchema = baseSchema.partial();
@@ -270,14 +270,22 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   function checkSimilarity(id: number, prompt?: string) {
     fetchGenerationData({ type: 'image', id }).then((data) => {
-      setValues({
-        remixSimilarity:
-          !!data.params.prompt && !!prompt
-            ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
-            : undefined,
-        remixPrompt: data.params.prompt,
-        remixNegativePrompt: data.params.negativePrompt,
-      });
+      form.setValue(
+        'remixSimilarity',
+        !!data.params.prompt && !!prompt
+          ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
+          : undefined
+      );
+      form.setValue('remixPrompt', data.params.prompt);
+      form.setValue('remixNegativePrompt', data.params.negativePrompt);
+      // setValues({
+      //   remixSimilarity:
+      //     !!data.params.prompt && !!prompt
+      //       ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
+      //       : undefined,
+      //   remixPrompt: data.params.prompt,
+      //   remixNegativePrompt: data.params.negativePrompt,
+      // });
     });
   }
 
@@ -333,7 +341,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
       // handle model change to update baseModel value
-
       if (name !== 'baseModel') {
         if (
           watchedValues.model &&
@@ -343,7 +350,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         }
       }
 
-      if (name === 'baseModel') {
+      if (!name || name === 'baseModel') {
         if (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') {
           form.setValue('workflow', 'txt2img');
         }
@@ -357,7 +364,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         prevBaseModelRef.current = watchedValues.baseModel;
       }
 
-      if (name === 'prompt') {
+      if (!name || name === 'prompt') {
         const { remixOfId, prompt } = watchedValues;
         if (remixOfId) {
           debouncer(() => {
@@ -367,10 +374,19 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       }
 
       // handle setting flux mode to standard when flux loras are added
-      if (name === 'resources') {
-        if (watchedValues.baseModel === 'Flux1' && !!watchedValues.resources?.length) {
-          form.setValue('fluxMode', 'urn:air:flux1:checkpoint:civitai:618692@691639');
-        }
+      if (
+        watchedValues.baseModel === 'Flux1' &&
+        !!watchedValues.resources?.length &&
+        watchedValues.fluxMode !== fluxStandardAir
+      ) {
+        form.setValue('fluxMode', fluxStandardAir);
+      }
+
+      if (watchedValues.model?.id === generationConfig.OpenAI.checkpoint.id) {
+        if (watchedValues.sourceImage && watchedValues.workflow !== 'img2img')
+          form.setValue('workflow', 'img2img');
+        else if (!watchedValues.sourceImage && watchedValues.workflow !== 'txt2img')
+          form.setValue('workflow', 'txt2img');
       }
     });
     return () => {

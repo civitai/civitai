@@ -40,6 +40,7 @@ import { useInView } from 'react-intersection-observer';
 import { z } from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { getModelTypesForAuction } from '~/components/Auction/auction.utils';
+import { AuctionFiltersDropdown } from '~/components/Auction/AuctionFiltersDropdown';
 import { ModelPlacementCard } from '~/components/Auction/AuctionPlacementCard';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { AuctionViews, usePurchaseBid } from '~/components/Auction/AuctionUtils';
@@ -55,7 +56,8 @@ import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { BaseModel, constants } from '~/server/common/constants';
 import { SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
@@ -286,6 +288,7 @@ export const AuctionInfo = () => {
   const { ref: placeBidRef, inView: placeBidInView } = useInView();
   const router = useRouter();
   const { selectedAuction, selectedModel, validAuction, setSelectedModel } = useAuctionContext();
+  const { baseModels } = useFiltersContext((state) => state.auctions);
 
   const [searchText, setSearchText] = useState<string>('');
   const searchLower = searchText.toLowerCase();
@@ -316,6 +319,7 @@ export const AuctionInfo = () => {
   );
 
   const isLoadingAuctionData = isInitialLoadingAuctionData || isRefetchingAuctionData;
+  const isCheckpointAuction = selectedAuction?.auctionBase?.slug === 'featured-checkpoints';
 
   const [bidPrice, setBidPrice] = useState(auctionData?.minPrice);
   const [isRecurring, setIsRecurring] = useState(false);
@@ -350,6 +354,35 @@ export const AuctionInfo = () => {
     [searchLower]
   );
 
+  const hasBaseModel = useCallback(
+    (
+      base: GetAuctionBySlugReturn['auctionBase'],
+      d: GetAuctionBySlugReturn['bids'][number]['entityData']
+    ) => {
+      if (base.type === AuctionType.Model) {
+        if (!baseModels || !baseModels.length) return true;
+        if (!d?.baseModel) return false;
+        return baseModels.includes(d.baseModel as BaseModel);
+      }
+      return true;
+    },
+    [baseModels]
+  );
+
+  const existingBaseModels = useMemo(
+    () =>
+      auctionData?.bids?.length
+        ? [
+            ...new Set(
+              auctionData.bids
+                .map((b) => b.entityData?.baseModel as BaseModel | undefined)
+                .filter(isDefined)
+            ),
+          ]
+        : ([] as BaseModel[]),
+    [auctionData?.bids]
+  );
+
   const bidsAbove = useMemo(
     () =>
       auctionData?.bids?.length
@@ -372,16 +405,24 @@ export const AuctionInfo = () => {
   const filteredBidsAbove = useMemo(
     () =>
       bidsAbove.length > 0 && !!auctionData
-        ? bidsAbove.filter((b) => hasSearchText(auctionData.auctionBase, b.entityData))
+        ? bidsAbove.filter(
+            (b) =>
+              hasSearchText(auctionData.auctionBase, b.entityData) &&
+              hasBaseModel(auctionData.auctionBase, b.entityData)
+          )
         : [],
-    [auctionData, bidsAbove, hasSearchText]
+    [auctionData, bidsAbove, hasBaseModel, hasSearchText]
   );
   const filteredBidsBelow = useMemo(
     () =>
       bidsBelow.length > 0 && !!auctionData
-        ? bidsBelow.filter((b) => hasSearchText(auctionData.auctionBase, b.entityData))
+        ? bidsBelow.filter(
+            (b) =>
+              hasSearchText(auctionData.auctionBase, b.entityData) &&
+              hasBaseModel(auctionData.auctionBase, b.entityData)
+          )
         : [],
-    [auctionData, bidsBelow, hasSearchText]
+    [auctionData, bidsBelow, hasBaseModel, hasSearchText]
   );
 
   const getPosFromBid = (n: number) => {
@@ -785,24 +826,33 @@ export const AuctionInfo = () => {
             <Title order={5} data-tour="auction:bid-results">
               Active Bids
             </Title>
-            <TextInput
-              leftSection={<IconSearch size={16} />}
-              placeholder="Filter items..."
-              value={searchText}
-              maxLength={150}
-              disabled={!auctionData?.bids || auctionData.bids.length === 0}
-              onChange={(event) => setSearchText(event.currentTarget.value)}
-              rightSection={
-                <LegacyActionIcon
-                  color="gray"
-                  variant="subtle"
-                  onClick={() => setSearchText('')}
-                  disabled={!searchText.length}
-                >
-                  <IconX size={16} />
-                </LegacyActionIcon>
+            <Group
+              gap="xs"
+              justify="space-between"
+              className={
+                isCheckpointAuction && auctionData?.auctionBase?.type === AuctionType.Model
+                  ? 'max-xs:w-full'
+                  : ''
               }
-            />
+            >
+              <TextInput
+                leftSection={<IconSearch size={16} />}
+                placeholder="Search items..."
+                value={searchText}
+                maxLength={150}
+                className="grow"
+                disabled={!auctionData?.bids || auctionData.bids.length === 0}
+                onChange={(event) => setSearchText(event.currentTarget.value)}
+                rightSection={
+                  <LegacyActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
+                    <IconX size={16} />
+                  </LegacyActionIcon>
+                }
+              />
+              {isCheckpointAuction && auctionData?.auctionBase?.type === AuctionType.Model && (
+                <AuctionFiltersDropdown baseModels={existingBaseModels} />
+              )}
+            </Group>
           </Group>
           {isLoadingAuctionData ? (
             <Center my="lg">
