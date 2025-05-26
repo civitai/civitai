@@ -10,13 +10,15 @@
   bottom: 6px;
   left: 6px;
   border-radius: var(--mantine-radius-sm);
-  /* Replace with Mantine's small radius variable */
-  background: light-dark(var(--mantine-color-gray-0),
-      rgba(var(--mantine-color-dark-6), 0.6));
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    alpha(var(--mantine-color-dark-6), 0.6)
+  );
   /* Dynamic light/dark background */
-  color: light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-0));
-  /* Dynamic text color */
-  /* Uncomment the following line if backdrop-filter is supported */
+  color: light-dark(
+    var(--mantine-color-dark-4),
+    var(--mantine-color-gray-0)
+  );
   /* backdrop-filter: blur(13px) saturate(160%); */
   box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
   padding: 4px;

@@ -10,6 +10,7 @@ import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ThemeIcon } from '@mantine/core';
 
 export function ImageCard({ data }: Props) {
   const context = useImagesContext();
@@ -52,9 +53,9 @@ export function ImageCard({ data }: Props) {
             />
             {data.hasMeta && (
               <ImageMetaPopover2 imageId={data.id} type={data.type}>
-                <LegacyActionIcon className={cardClasses.infoChip} variant="light">
+                <ThemeIcon className={cardClasses.infoChip} variant="light">
                   <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                </LegacyActionIcon>
+                </ThemeIcon>
               </ImageMetaPopover2>
             )}
           </div>

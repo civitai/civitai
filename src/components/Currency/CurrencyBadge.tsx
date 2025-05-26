@@ -125,7 +125,7 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
                 {asCounter ? (
                   <NumberFlow respectMotionPreference={false} value={unitAmount} />
                 ) : (
-                  <Text>
+                  <Text fw={600} size="xs">
                     {formatter
                       ? formatter(unitAmount)
                       : `${value || 0} ${displayCurrency ? currency : ''}`}

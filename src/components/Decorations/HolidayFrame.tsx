@@ -20,7 +20,7 @@ const MIN_SIZE = 24;
 export function HolidayFrame({ cosmetic, data, force, children, animated }: Props) {
   const { lights = 0, upgradedLights = 0 } = data ?? {};
   const style = {
-    '--light-size': Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE),
+    '--light-size': `${Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE)}px`,
   };
   const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
 

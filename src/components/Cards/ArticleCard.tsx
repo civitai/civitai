@@ -69,21 +69,26 @@ export function ArticleCard({ data, aspectRatio }: Props) {
           <div className="flex items-center justify-between gap-1">
             <Badge
               className={clsx(cardClasses.statChip, cardClasses.chip)}
+              classNames={{ label: 'flex flex-nowrap gap-2' }}
               variant="light"
               radius="xl"
             >
               <div className="flex items-center gap-0.5">
                 <IconBookmark size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(collectedCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(collectedCount)}
+                </Text>
               </div>
               <div className="flex items-center gap-0.5">
                 <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(commentCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(commentCount)}
+                </Text>
               </div>
               <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
                 <div className="flex items-center gap-0.5">
                   <IconBolt size={14} strokeWidth={2.5} />
-                  <Text size="xs" tt="uppercase">
+                  <Text fw="bold" size="xs" tt="uppercase">
                     {abbreviateNumber(tippedAmountCount + tippedAmount)}
                   </Text>
                 </div>
@@ -96,7 +101,9 @@ export function ArticleCard({ data, aspectRatio }: Props) {
             >
               <div className="flex items-center gap-0.5">
                 <IconEye size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(viewCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(viewCount)}
+                </Text>
               </div>
             </Badge>
           </div>

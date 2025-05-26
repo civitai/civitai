@@ -101,6 +101,7 @@
   border-radius: var(--mantine-radius-sm);
   background-color: rgba(0, 0, 0, 0.31);
   color: var(--mantine-color-white);
+  font-weight: bold;
 
   & .mantine-Badge-label {
     display: flex;
@@ -138,6 +139,7 @@
   background-color: rgba(0, 0, 0, 0.31);
   align-self: flex-start;
   color: var(--mantine-color-white);
+  font-weight: bold;
 
   & .mantine-Badge-label {
     display: flex;
@@ -154,6 +156,10 @@
 .chip {
   border-radius: var(--mantine-radius-xl);
   height: 26px;
+  
+  > * {
+    font-weight: bold !important;
+  }
 }
 
 /* No hover */

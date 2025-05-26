@@ -15,7 +15,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { PostsInfiniteModel } from '~/server/services/post.service';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
-import classes from './PostsCard.module.scss';
+import classes from './PostsCard.module.css';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user },

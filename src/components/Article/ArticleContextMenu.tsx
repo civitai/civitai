@@ -100,7 +100,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
       <Menu.Target>
         <LegacyActionIcon
           {...props}
-          color="gray"
+          color="gray.2"
           variant="transparent"
           p={0}
           onClick={(e: React.MouseEvent) => {

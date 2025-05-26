@@ -27,7 +27,7 @@ const HoverActionButton = ({
       style={{
         ...style,
         // @ts-ignore
-        '--size': size,
+        '--size': `${size}px`,
       }}
       onClick={onClick}
       className={clsx(classes.wrapper, isCustomVariant ? classes[colorCustomVariant] : undefined)}

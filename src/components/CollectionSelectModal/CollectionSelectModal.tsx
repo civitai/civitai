@@ -240,16 +240,21 @@ function CollectionSelectCard({ data }: { data: SearchIndexDataMap['collections'
           <div className="flex flex-nowrap gap-1">
             <Badge
               className={clsx(cardClasses.statChip, cardClasses.chip)}
+              classNames={{ label: 'flex flex-nowrap gap-2' }}
               variant="light"
               radius="xl"
             >
               <Group gap={2}>
                 <IconLayoutGrid size={14} stroke={2.5} />
-                <Text size="xs">{abbreviateNumber(itemCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(itemCount)}
+                </Text>
               </Group>
               <Group gap={2}>
                 <IconUser size={14} stroke={2.5} />
-                <Text size="xs">{abbreviateNumber(contributorCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(contributorCount)}
+                </Text>
               </Group>
             </Badge>
           </div>

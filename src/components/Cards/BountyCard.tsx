@@ -1,12 +1,4 @@
-import {
-  Badge,
-  BadgeProps,
-  HoverCard,
-  Text,
-  ThemeIcon,
-  useComputedColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
+import { Badge, BadgeProps, HoverCard, Text, ThemeIcon, useMantineTheme } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
@@ -36,6 +28,7 @@ const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
   px: 8,
   h: 26,
   tt: 'capitalize',
+  fw: 'bold',
 };
 
 export function BountyCard({ data }: Props) {
@@ -43,7 +36,6 @@ export function BountyCard({ data }: Props) {
   const image = images?.[0];
   const expired = expiresAt < new Date();
   const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme('dark');
 
   const { engagements } = useBountyEngagement();
 
@@ -59,7 +51,7 @@ export function BountyCard({ data }: Props) {
         backgroundColor: 'rgba(0, 0, 0, 0.31)',
       }}
     >
-      <Text size="xs">
+      <Text fw="bold" size="xs">
         <DaysFromNow date={expiresAt} withoutSuffix />
       </Text>
     </IconBadge>
@@ -112,7 +104,7 @@ export function BountyCard({ data }: Props) {
                 variant="light"
                 radius="xl"
               >
-                <Text c="white" size="xs" tt="capitalize">
+                <Text c="white" size="xs" tt="capitalize" fw="bold">
                   {getDisplayName(type)}
                 </Text>
               </Badge>
@@ -126,7 +118,6 @@ export function BountyCard({ data }: Props) {
       footer={
         <div className="flex w-full flex-col gap-2">
           <UserAvatarSimple {...data.user} />
-          <div className="flex items-start justify-between gap-2"></div>
           <div className="flex items-start justify-between gap-2">
             <Text size="xl" fw={700} lineClamp={2} lh={1.2}>
               {name}
@@ -181,10 +172,9 @@ export function BountyCard({ data }: Props) {
                       color={isTracked ? theme.colors.green[5] : 'currentColor'}
                     />
                   }
-                  color={isTracked ? 'green' : colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={isTracked ? 'green' : 'gray.0'}
                   p={0}
                   size="lg"
-                  // @ts-ignore: transparent variant does work
                   variant="transparent"
                 >
                   <Text size="xs">{abbreviateNumber(stats?.trackCountAllTime ?? 0)}</Text>
@@ -197,33 +187,36 @@ export function BountyCard({ data }: Props) {
                       fill={isFavorite ? theme.colors.red[5] : 'currentColor'}
                     />
                   }
-                  color={isFavorite ? 'red' : colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={isFavorite ? 'red' : 'gray.0'}
                   p={0}
                   size="lg"
-                  // @ts-ignore
                   variant="transparent"
                 >
-                  <Text size="xs">{abbreviateNumber(stats?.favoriteCountAllTime ?? 0)}</Text>
+                  <Text fw="bold" size="xs">
+                    {abbreviateNumber(stats?.favoriteCountAllTime ?? 0)}
+                  </Text>
                 </IconBadge>
                 <IconBadge
                   icon={<IconMessageCircle2 size={14} />}
-                  color={colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color="gray.0"
                   p={0}
                   size="lg"
-                  // @ts-ignore
                   variant="transparent"
                 >
-                  <Text size="xs">{abbreviateNumber(stats?.commentCountAllTime ?? 0)}</Text>
+                  <Text fw="bold" size="xs">
+                    {abbreviateNumber(stats?.commentCountAllTime ?? 0)}
+                  </Text>
                 </IconBadge>
                 <IconBadge
                   icon={<IconSwords size={14} />}
-                  color={colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color="gray.0"
                   p={0}
                   size="lg"
-                  // @ts-ignore
                   variant="transparent"
                 >
-                  <Text size="xs">{abbreviateNumber(stats?.entryCountAllTime ?? 0)}</Text>
+                  <Text fw="bold" size="xs">
+                    {abbreviateNumber(stats?.entryCountAllTime ?? 0)}
+                  </Text>
                 </IconBadge>
               </div>
             </Badge>
