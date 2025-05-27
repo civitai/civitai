@@ -89,7 +89,7 @@ export const useHasPaddleSubscription = () => {
     isLoading,
     isInitialLoading,
   } = trpc.paddle.hasSubscription.useQuery(undefined, {
-    enabled: !!currentUser,
+    enabled: false,
   });
 
   return {
