@@ -2545,7 +2545,7 @@ export const getImagesForModelVersion = async ({
      WITH targets AS (
       SELECT
         i.id,
-        full_mv.id AS "modelVersionId"
+        full_mv.id::int AS "modelVersionId"
       FROM unnest(ARRAY[${Prisma.join(modelVersionIds)}]) AS full_mv(id)
       CROSS JOIN LATERAL
       (
