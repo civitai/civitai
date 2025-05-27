@@ -2542,26 +2542,25 @@ export const getImagesForModelVersion = async ({
 
   const engines = Object.keys(videoGenerationConfig2);
   const query = Prisma.sql`
-    -- getImagesForModelVersion
-    WITH targets AS (
+     WITH targets AS (
       SELECT
-        id,
-        "modelVersionId"
-      FROM (
+        i.id,
+        full_mv.id AS "modelVersionId"
+      FROM unnest(ARRAY[${Prisma.join(modelVersionIds)}]) AS full_mv(id)
+      CROSS JOIN LATERAL
+      (
         SELECT
-          i.id,
-          p."modelVersionId",
-          row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY i."postId", i.index) row_num
+          i.id
         FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE (p."userId" = m."userId" OR m."userId" = -1)
-          AND p."modelVersionId" IN (${Prisma.join(modelVersionIds)})
+          AND p."modelVersionId" = full_mv.id
           AND ${Prisma.join(imageWhere, ' AND ')}
-
-      ) ranked
-      WHERE ranked.row_num <= ${imagesPerVersion}
+        ORDER BY i."postId", i.index
+        LIMIT ${imagesPerVersion}
+      ) i
     )
     SELECT
       i.id,
