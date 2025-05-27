@@ -52,9 +52,17 @@ const createPrismaClient = ({ readonly }: { readonly: boolean }) => {
   // use with prisma-slow,prisma-showparams
   if (env.LOGGING.some((x) => x === 'prisma-showparams')) {
     // @ts-ignore
-    prisma.$on('query', async (e) => {
-      // @ts-ignore
-      console.log({ query: e.query, params: e.params });
+    prisma.$on('query', async (e: { query: string; params: string; duration: number }) => {
+      let query = e.query;
+      const params = JSON.parse(e.params);
+
+      for (let i = 0; i < params.length; i++) {
+        const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
+        if (typeof params[i] === 'string') params[i] = "'" + params[i].replace("'", "\\'") + "'";
+        query = query.replace(re, params[i]);
+      }
+
+      console.log(query);
     });
   }
   return prisma;

@@ -27,6 +27,7 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
   getUserFollows,
@@ -118,10 +119,6 @@ import {
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import {
-  getVideoGenerationConfig,
-  videoGenerationConfig2,
-} from '~/server/orchestrator/generation/generation.config';
 import { Flags } from '~/shared/utils';
 import {
   Availability,
@@ -145,7 +142,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import { input } from 'motion/dist/react-m';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -2520,28 +2516,51 @@ export const getImagesForModelVersion = async ({
     );
   }
 
-  const engines = Object.keys(videoGenerationConfig2);
-  const query = Prisma.sql`
-    -- getImagesForModelVersion
-    WITH targets AS (
+  /*
+  -- getImagesForModelVersion
+     WITH targets AS (
       SELECT
-        id,
-        "modelVersionId"
-      FROM (
+        i.id,
+        mv.id AS "modelVersionId"
+      FROM unnest(ARRAY[${Prisma.join(modelVersionIds)}]) AS mv(id)
+      CROSS JOIN LATERAL
+      (
         SELECT
-          i.id,
-          p."modelVersionId",
-          row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY i."postId", i.index) row_num
+          i.id
         FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE (p."userId" = m."userId" OR m."userId" = -1)
-          AND p."modelVersionId" IN (${Prisma.join(modelVersionIds)})
+          AND p."modelVersionId" = mv.id
           AND ${Prisma.join(imageWhere, ' AND ')}
+        ORDER BY i."postId", i.index
+        LIMIT ${imagesPerVersion}
+      ) i
+    )
+   */
 
-      ) ranked
-      WHERE ranked.row_num <= ${imagesPerVersion}
+  const engines = Object.keys(videoGenerationConfig2);
+  const query = Prisma.sql`
+     WITH targets AS (
+      SELECT
+        i.id,
+        full_mv.id AS "modelVersionId"
+      FROM unnest(ARRAY[${Prisma.join(modelVersionIds)}]) AS full_mv(id)
+      CROSS JOIN LATERAL
+      (
+        SELECT
+          i.id
+        FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+        JOIN "Model" m ON m.id = mv."modelId"
+        WHERE (p."userId" = m."userId" OR m."userId" = -1)
+          AND p."modelVersionId" = full_mv.id
+          AND ${Prisma.join(imageWhere, ' AND ')}
+        ORDER BY i."postId", i.index
+        LIMIT ${imagesPerVersion}
+      ) i
     )
     SELECT
       i.id,
