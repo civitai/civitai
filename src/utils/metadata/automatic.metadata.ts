@@ -97,10 +97,11 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       generationDetails = decodeBigEndianUTF16(exif.userComment);
     }
 
-    if (generationDetails) {
+    if (generationDetails?.includes('Steps: ')) {
       exif.generationDetails = generationDetails;
-      return generationDetails.includes('Steps: ');
+      return true;
     }
+
     return false;
   },
   parse(exif) {

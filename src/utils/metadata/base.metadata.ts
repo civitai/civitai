@@ -1,7 +1,7 @@
 import { isProd } from '~/env/other';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 
-type MetadataProcessor = {
+export type MetadataProcessor = {
   canParse: (exif: Record<string, any>) => boolean;
   parse: (exif: Record<string, any>) => ImageMetaProps;
   encode: (meta: ImageMetaProps) => string;

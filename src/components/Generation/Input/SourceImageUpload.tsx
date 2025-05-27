@@ -7,7 +7,7 @@ import { maxOrchestratorImageFileSize, maxUpscaleSize } from '~/server/common/co
 import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
 import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
-import { resizeImage } from '~/utils/image-utils';
+import { imageToJpegBlob, resizeImage } from '~/utils/image-utils';
 import { uniqBy } from 'lodash-es';
 import { getMetadata } from '~/utils/metadata';
 import clsx from 'clsx';
@@ -74,27 +74,23 @@ export function SourceImageUpload({
     else mutate({ sourceImage: value });
   }
 
-  async function handleResizeToBase64(src: File | Blob | string) {
+  async function handleDrop(files: File[]) {
+    handleDropCapture(files[0]);
+  }
+
+  async function handleDropCapture(src: File | Blob | string) {
     setLoading(true);
     try {
       const resized = await resizeImage(src, {
         maxHeight: maxUpscaleSize,
         maxWidth: maxUpscaleSize,
       });
-      return await getBase64(resized);
+      const jpegBlob = await imageToJpegBlob(resized);
+      const base64 = await getBase64(jpegBlob);
+      if (base64) handleChange(base64);
     } catch (e) {
       setLoading(false);
     }
-  }
-
-  async function handleDrop(files: File[]) {
-    const base64 = await handleResizeToBase64(files[0]);
-    if (base64) handleChange(base64);
-  }
-
-  async function handleDropCapture(src: File | Blob | string) {
-    const base64 = await handleResizeToBase64(src);
-    if (base64) handleChange(base64);
   }
 
   useEffect(() => {

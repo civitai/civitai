@@ -44,7 +44,6 @@ export const rfooocusMetadataProcessor = createMetadataProcessor({
       software,
       other,
     };
-    console.log(metadata);
 
     if (scheduler !== 'simple') metadata.scheduler = scheduler;
 

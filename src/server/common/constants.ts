@@ -579,11 +579,20 @@ export function getEcosystemFromBaseModel(baseModel: string) {
       .find(([, baseModelSet]) => (baseModelSet.baseModels as string[]).includes(baseModel))?.[0]
       ?.toLowerCase() ?? 'multi';
 
+  // for (const item of [
+  //   'wanvideo1_3b_t2v',
+  //   'wanvideo14b_t2v',
+  //   'wanvideo14b_i2v_480p',
+  //   'wanvideo14b_i2v_720p',
+  // ]) {
+  //   if (ecosystem === item) return 'wanvideo';
+  // }
+
   return ecosystem
     .replace('pony', 'sdxl')
-    ?.replace('illustrious', 'sdxl')
-    ?.replace('noobai', 'sdxl')
-    ?.replace('sd3_5m', 'sd3');
+    .replace('illustrious', 'sdxl')
+    .replace('noobai', 'sdxl')
+    .replace('sd3_5m', 'sd3');
 }
 
 /*

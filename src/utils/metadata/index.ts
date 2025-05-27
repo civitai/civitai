@@ -20,42 +20,54 @@ const parsers = {
   rfooocus: rfooocusMetadataProcessor,
 };
 
-export async function getExifData(file: File | string) {
+export async function ExifParser(file: File | string) {
   const tags = await ExifReader.load(file, { includeUnknown: true });
-  delete tags['MakerNote'];
   const exif = Object.entries(tags).reduce((acc, [key, value]) => {
     acc[key] = value.value;
     return acc;
   }, {} as Record<string, any>); //eslint-disable-line
-  return exif;
-}
-
-export async function getParsedExifData(file: File | string) {
-  const exif = await getExifData(file);
 
   if (exif.UserComment) {
     // @ts-ignore - this is a hack to not have to rework our downstream code
     exif.userComment = Int32Array.from(exif.UserComment);
   }
 
-  try {
-    const { parse } = Object.values(parsers).find((x) => x.canParse(exif)) ?? {};
-    return parse?.(exif);
-  } catch (e: any) {
-    //eslint-disable-line
-    console.error('Error parsing metadata', e);
+  const [name, parser] = Object.entries(parsers).find(([name, x]) => x.canParse(exif)) ?? [];
+
+  function parse() {
+    try {
+      return parser?.parse(exif);
+    } catch (e) {
+      console.error('Error parsing metadata', e);
+    }
   }
+
+  function encode(meta: ImageMetaProps) {
+    try {
+      return parser?.encode(meta) ?? '';
+    } catch (e) {
+      console.error('Error encoding metadata', e);
+      return '';
+    }
+  }
+
+  async function getMetadata() {
+    try {
+      const metadata = parse();
+      const result = imageMetaSchema.safeParse(metadata ?? {});
+      return result.success ? result.data : {};
+    } catch (e) {
+      console.error(e);
+      return {};
+    }
+  }
+
+  return { parse, encode, getMetadata };
 }
 
 export async function getMetadata(file: File | string) {
-  try {
-    const metadata = await getParsedExifData(file);
-    const result = imageMetaSchema.safeParse(metadata ?? {});
-    return result.success ? result.data : {};
-  } catch (e) {
-    console.log(e);
-    return {};
-  }
+  const parser = await ExifParser(file);
+  return parser.getMetadata();
 }
 
 export function encodeMetadata(meta: ImageMetaProps, type: keyof typeof parsers = 'automatic') {
