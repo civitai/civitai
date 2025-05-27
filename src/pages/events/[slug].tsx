@@ -403,7 +403,7 @@ export default function EventPageDetails({
                           Your rank in {userTeam} team
                         </Text>
                         {loadingUserRank ? (
-                          <Loader variant="bars" />
+                          <Loader type="bars" />
                         ) : (
                           <Text size={96} fw="bold" align="center" color={userTeam} inline>
                             {userRank?.toLocaleString()}
@@ -462,7 +462,7 @@ export default function EventPageDetails({
                 {equipped && !ended && <DonateInput event={event} ref={inputRef} />}
                 {loadingHistory ? (
                   <Center py="xl">
-                    <Loader variant="bars" />
+                    <Loader type="bars" />
                   </Center>
                 ) : (
                   <Stack gap={40} w="100%" align="center">

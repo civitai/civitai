@@ -370,7 +370,7 @@ export default function BountyEntryDetailsPage({
           <Stack gap={2}>
             {isLoadingFiles ? (
               <Center p="md">
-                <Loader size="md" variant="bars" />
+                <Loader size="md" type="bars" />
               </Center>
             ) : filesCount > 0 ? (
               <ScrollArea.Autosize mah={300}>

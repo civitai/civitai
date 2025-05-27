@@ -14,7 +14,7 @@ export function ResourceReviewComments({ reviewId, userId }: { reviewId: number;
       {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
         isLoading ? (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         ) : (
           <Stack>

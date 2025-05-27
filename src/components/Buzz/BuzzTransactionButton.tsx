@@ -2,7 +2,6 @@ import {
   Badge,
   Button,
   ButtonProps,
-  MantineSize,
   Text,
   Tooltip,
   useComputedColorScheme,
@@ -116,6 +115,7 @@ export function BuzzTransactionButton({
             meetsTypeRequiredAmount && takesBlue ? theme.colors.blue[4] : theme.colors.yellow[7]
           }
           color={colorScheme === 'dark' ? 'dark.8' : 'gray.9'}
+          className="!h-[24px] !py-0"
           typeDistrib={showTypePct ? typeDistrib : undefined}
         >
           {!hasRequiredAmount(buzzAmount) && (

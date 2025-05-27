@@ -201,7 +201,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
 
           {entityId && entityType && isLoadingResourceDetails && (
             <Center>
-              <Loader variant="bars" />
+              <Loader type="bars" />
             </Center>
           )}
 

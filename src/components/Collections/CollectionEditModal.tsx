@@ -143,7 +143,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
     <Modal {...dialog} size="lg" title={isCreate ? 'Create collection' : 'Edit collection'}>
       {isLoading ? (
         <Center py="xl">
-          <Loader variant="bars" />
+          <Loader type="bars" />
         </Center>
       ) : canEdit || isCreate ? (
         <Form form={form} onSubmit={handleSubmit}>

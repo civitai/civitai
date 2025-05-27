@@ -20,7 +20,7 @@ export function ClubPostDiscussion({ clubId, clubPostId, userId }: Props) {
       {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
         isLoading ? (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         ) : (
           <Stack>

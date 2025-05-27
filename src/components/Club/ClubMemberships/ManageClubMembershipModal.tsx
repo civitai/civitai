@@ -38,7 +38,7 @@ export const ManageClubMembershipModal = ({ clubId, clubTierIds }: Props) => {
 
       {isLoading ? (
         <Center>
-          <Loader variant="bars" />
+          <Loader type="bars" />
         </Center>
       ) : club ? (
         <Stack gap="md">

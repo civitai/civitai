@@ -183,7 +183,7 @@ export default Page(
                   />
                 )}
                 {loadingImagesQueue || isRefetching ? (
-                  <Loader variant="bars" size="xl" />
+                  <Loader type="bars" size="xl" />
                 ) : currentImage ? (
                   <div className="relative flex size-full max-w-sm flex-col items-center justify-center gap-4 overflow-hidden">
                     <ImageGuard2 image={currentImage} explain={false}>

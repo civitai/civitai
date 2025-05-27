@@ -40,7 +40,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
     return (
       <Paper className={classes.card}>
         <Center w="100%">
-          <Loader variant="bars" />
+          <Loader type="bars" />
         </Center>
       </Paper>
     );
@@ -133,8 +133,8 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
               /Month
             </Button>
           ) : (
-            <SubscribeButton priceId={priceId} disabled={features.disablePayments} >
-              <Button radius="xl" size="md" mt="sm" >
+            <SubscribeButton priceId={priceId} disabled={features.disablePayments}>
+              <Button radius="xl" size="md" mt="sm">
                 Get {capitalize(targetTier)} - $
                 {formatPriceForDisplay(unitAmount, undefined, { decimals: false })}
                 /Month

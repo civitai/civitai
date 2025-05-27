@@ -175,7 +175,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                   </Card.Section>
                   {isLoading && (
                     <Center>
-                      <Loader variant="bars" />
+                      <Loader type="bars" />
                     </Center>
                   )}
                   <Card.Section ml={0}>

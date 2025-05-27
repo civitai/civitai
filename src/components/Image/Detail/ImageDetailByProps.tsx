@@ -126,14 +126,14 @@ export function ImageDetailByProps({
           <Card className={clsx(classes.sidebar)}>
             {!image ? (
               <Center>
-                <Loader variant="bars" />
+                <Loader type="bars" />
               </Center>
             ) : (
               <>
                 <Card.Section py="xs" withBorder inheritPadding>
                   {!user ? (
                     <Center>
-                      <Loader variant="bars" />
+                      <Loader type="bars" />
                     </Center>
                   ) : (
                     <Group justify="space-between" gap={8} wrap="nowrap">

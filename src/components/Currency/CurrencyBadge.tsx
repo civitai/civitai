@@ -15,6 +15,9 @@ import { BuzzTypeDistribution } from '~/components/Buzz/buzz.utils';
 import { CurrencyConfig } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
+import classes from './CurrencyBadge.module.scss';
+import clsx from 'clsx';
+import { label } from 'motion/dist/react-m';
 
 type Props = BadgeProps & {
   currency: Currency;
@@ -52,6 +55,7 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
       typeDistrib,
       asCounter,
       style,
+      className,
       ...badgeProps
     },
     ref
@@ -86,29 +90,17 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
             color: colorString,
             position: 'relative',
             ...(style ?? {}),
-          }}
-          styles={{
-            root: typeDistrib
-              ? {
-                  '::after': {
-                    content: '""',
-                    position: 'absolute',
-                    pointerEvents: 'none',
-                    left: '1px',
-                    right: '1px',
-                    top: '1px',
-                    bottom: '1px',
-                    border: '1px solid yellow',
-                    borderRadius: '50%',
-                    borderImage: `linear-gradient(to right, ${theme.colors.blue[4]} ${Math.round(
-                      typeDistrib.pct.blue * 100
-                    )}%, ${theme.colors.yellow[7]} ${Math.round(typeDistrib.pct.blue * 100)}%, ${
-                      theme.colors.yellow[7]
-                    } ${Math.round(typeDistrib.pct.yellow * 100)}%) 1`,
-                    clipPath: 'inset(0% 0% 0% 0% round 1px)',
-                  },
-                }
+            '--border-image': typeDistrib
+              ? `linear-gradient(to right, ${theme.colors.blue[4]} ${Math.round(
+                  typeDistrib.pct.blue * 100
+                )}%, ${theme.colors.yellow[7]} ${Math.round(typeDistrib.pct.blue * 100)}%, ${
+                  theme.colors.yellow[7]
+                } ${Math.round(typeDistrib.pct.yellow * 100)}%) 1`
               : undefined,
+          }}
+          classNames={{
+            root: clsx(typeDistrib && classes.badgeWithDistrib, className),
+            label: 'flex gap-0.5 items-center flex-nowrap',
           }}
           {...badgeProps}
         >
@@ -119,7 +111,7 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
               {...iconProps}
             />
             {loading ? (
-              <Loader size="xs" variant="dots" color={colorString} />
+              <Loader size="xs" type="dots" color={colorString} />
             ) : (
               <div className="flex items-center gap-1">
                 {asCounter ? (

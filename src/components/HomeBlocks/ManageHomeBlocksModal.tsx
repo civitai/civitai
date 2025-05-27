@@ -113,7 +113,7 @@ function ManageHomeBlocks({ onClose }: Props) {
   if (isLoading) {
     return (
       <Center py="xl">
-        <Loader variant="bars" />
+        <Loader type="bars" />
       </Center>
     );
   }

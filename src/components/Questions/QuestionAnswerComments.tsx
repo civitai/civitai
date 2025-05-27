@@ -31,7 +31,7 @@ export function QuestionAnswerComments({
       {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
         isLoading ? (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         ) : (
           <Box className={classes.list}>

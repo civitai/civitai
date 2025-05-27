@@ -308,7 +308,7 @@ export const BuzzPurchase = ({
           </Stack>
           {isLoading || processing ? (
             <Center py="xl">
-              <Loader variant="bars" />
+              <Loader type="bars" />
             </Center>
           ) : (
             <Input.Wrapper error={error}>

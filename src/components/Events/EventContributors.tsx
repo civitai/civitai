@@ -172,7 +172,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
             {loading ? (
               <Grid.Col span={12}>
                 <Center>
-                  <Loader variant="bars" />
+                  <Loader type="bars" />
                 </Center>
               </Grid.Col>
             ) : (

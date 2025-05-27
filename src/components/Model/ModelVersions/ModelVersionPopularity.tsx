@@ -74,7 +74,7 @@ export const ModelVersionPopularity = ({
   if (!features.auctions) return <></>;
   // if we want to show this for non checkpoints, simply remove this line
   if (!isCheckpoint) return <></>;
-  if (isLoading) return <Loader size="xs" variant="bars" />;
+  if (isLoading) return <Loader size="xs" type="bars" />;
 
   const popColors: {
     [key in

@@ -146,7 +146,7 @@ export default function IntentAvatar() {
       {waiting ? (
         <Stack align="center">
           <Title order={2}>Updating Avatar</Title>
-          <Loader size="xl" variant="bars" />
+          <Loader size="xl" type="bars" />
         </Stack>
       ) : loading ? (
         <Center>

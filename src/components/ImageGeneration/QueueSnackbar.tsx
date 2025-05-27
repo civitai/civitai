@@ -87,8 +87,9 @@ export function QueueSnackbar() {
     <div className="flex w-full flex-col gap-2 ">
       <Card
         radius="md"
-        p={0}
-        className={clsx(classes.card, 'flex items-stretch justify-center gap-2 px-1 ')}
+        px={4}
+        py={0}
+        className={clsx(classes.card, 'flex flex-row items-stretch justify-center gap-2')}
       >
         <div className="flex basis-20 items-center py-2 pl-1">
           {queueStatus ? (

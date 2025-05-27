@@ -100,7 +100,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               data={tabEntries.map(([key, { Icon, label }]) => ({
                 label: (
                   <Tooltip label={label} position="bottom" color="dark" openDelay={200} offset={10}>
-                    <div data-tour={`gen:${key}`}>
+                    <div data-tour={`gen:${key}`} className="flex items-center justify-center">
                       <Icon size={16} />
                     </div>
                   </Tooltip>

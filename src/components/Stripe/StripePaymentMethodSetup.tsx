@@ -26,7 +26,7 @@ export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props
   if (isLoading || isFetching) {
     return (
       <Center>
-        <Loader variant="bars" />
+        <Loader type="bars" />
       </Center>
     );
   }

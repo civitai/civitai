@@ -67,7 +67,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
             </Stack>
             {isLoading ? (
               <Center mt="xl">
-                <Loader variant="bars" />
+                <Loader type="bars" />
               </Center>
             ) : (
               <>
@@ -161,7 +161,7 @@ const HiddenCommentsModal = ({ opened, onClose, entityId, userId }: HiddenCommen
             {({ data, isLoading, remaining, showMore, toggleShowMore }) =>
               isLoading ? (
                 <Center mt="xl">
-                  <Loader variant="bars" />
+                  <Loader type="bars" />
                 </Center>
               ) : !!data?.length ? (
                 <Stack gap="xl">

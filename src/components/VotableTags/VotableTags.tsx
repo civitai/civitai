@@ -82,7 +82,7 @@ export function VotableTags({
   if (!initialTags && isLoading)
     return (
       <Center p="xl">
-        <Loader variant="bars" />
+        <Loader type="bars" />
       </Center>
     );
   if (!tags) return null;

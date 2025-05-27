@@ -45,7 +45,7 @@ export function CollectionShowcase({ modelId, loading }: Props) {
       <ScrollArea.Autosize mah={300}>
         {isLoading || loading ? (
           <div className="flex items-center justify-center p-2">
-            <Loader variant="bars" size="sm" />
+            <Loader type="bars" size="sm" />
           </div>
         ) : items.length > 0 ? (
           <>
@@ -59,7 +59,7 @@ export function CollectionShowcase({ modelId, loading }: Props) {
                 style={{ gridColumn: '1/-1' }}
               >
                 <div className="flex items-center justify-center px-4 py-2">
-                  <Loader variant="bars" size="sm" />
+                  <Loader type="bars" size="sm" />
                 </div>
               </InViewLoader>
             )}

@@ -213,7 +213,7 @@ function CollectionListForm({
           </Group>
           {isLoading ? (
             <Center py="xl">
-              <Loader variant="bars" />
+              <Loader type="bars" />
             </Center>
           ) : (
             <>

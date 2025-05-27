@@ -265,7 +265,7 @@ export const ClubPostFromResourceModal = ({
         <Divider mx="-lg" />
         {isLoadingUserClubs && (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         )}
         {canCreateClubPostClubs?.length > 0 ? (

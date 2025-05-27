@@ -306,7 +306,7 @@ const { openModal, Modal } = createContextModal<Props>({
     if (isLoading || (isLoadingPaymentMethods && !error)) {
       return (
         <Center>
-          <Loader variant="bars" />
+          <Loader type="bars" />
         </Center>
       );
     }

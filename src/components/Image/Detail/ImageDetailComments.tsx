@@ -20,7 +20,7 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
       {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
         isLoading ? (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         ) : (
           <Stack>

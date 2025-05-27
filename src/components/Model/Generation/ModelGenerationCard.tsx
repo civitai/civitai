@@ -203,7 +203,7 @@ export function ModelGenerationCard({
           >
             {loading && !images.length ? (
               <Center h="100%">
-                <Loader size="md" variant="bars" />
+                <Loader size="md" type="bars" />
               </Center>
             ) : (
               <>

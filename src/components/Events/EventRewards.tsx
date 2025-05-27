@@ -36,7 +36,7 @@ export function EventRewards({ event }: { event: string }) {
     >
       {loadingRewards || loadingCosmetics ? (
         <Center py="xl">
-          <Loader variant="bars" />
+          <Loader type="bars" />
         </Center>
       ) : shownRewards.length === 0 ? (
         <Alert color="red" radius="xl" ta="center" w="100%" py={8}>

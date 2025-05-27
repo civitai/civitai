@@ -165,7 +165,7 @@ const StripePaymentMethods = () => {
         <Divider label="Your payment methods" />
         {isLoadingPaymentMethods ? (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         ) : (userPaymentMethods?.length ?? 0) > 0 ? (
           <Stack>
@@ -269,11 +269,15 @@ const PaddlePaymentMethods = () => {
         <Divider label="Your payment methods" />
         {isLoading && (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         )}
         {managementUrls?.updatePaymentMethod && (
-          <Button component="a" classNames={{ label: 'text-white' }} href={managementUrls?.updatePaymentMethod}>
+          <Button
+            component="a"
+            classNames={{ label: 'text-white' }}
+            href={managementUrls?.updatePaymentMethod}
+          >
             Update your default payment method
           </Button>
         )}

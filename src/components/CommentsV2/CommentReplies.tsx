@@ -16,7 +16,7 @@ export function CommentReplies({ commentId, userId }: { commentId: number; userI
         {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
           isLoading ? (
             <Center>
-              <Loader variant="bars" />
+              <Loader type="bars" />
             </Center>
           ) : (
             <Stack>

@@ -179,7 +179,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
             </Text>
             {isLoading && (
               <Center>
-                <Loader variant="bars" />
+                <Loader type="bars" />
               </Center>
             )}
             {!isLoading && (
