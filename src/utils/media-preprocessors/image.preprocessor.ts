@@ -16,7 +16,7 @@ export const preprocessImage = async (file: File) => {
       size: file.size,
       width: img.width,
       height: img.height,
-      hash: createBlurHash(img),
+      hash: createBlurHash(img, img.width, img.height),
     } as ImageMetadata,
     meta,
   };

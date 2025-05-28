@@ -37,6 +37,7 @@ module.exports = {
     '@typescript-eslint/no-unused-vars': ['warn', { 'ignoreRestSiblings': true }],
     '@typescript-eslint/no-namespace': 'off',
     '@typescript-eslint/no-non-null-assertion': 'off'
+    // '@typescript-eslint/consistent-type-imports': ['error']
   },
   // settings: {
   //   'import/parsers': {

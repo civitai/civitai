@@ -1,6 +1,6 @@
 import type { Area } from 'react-easy-crop';
 import { NsfwLevel } from '~/server/common/enums';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { TagType } from '~/shared/utils/prisma/enums';
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser, encodeMetadata } from '~/utils/metadata';

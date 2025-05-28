@@ -1,12 +1,13 @@
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import type React from 'react';
+import { useState } from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
+import type { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';

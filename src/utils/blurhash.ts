@@ -68,16 +68,11 @@ export function blurHashImage(img: HTMLImageElement): HashResult {
   return { hash, width: img.width, height: img.height };
 }
 
-export function createBlurHash(media: HTMLImageElement | HTMLVideoElement) {
-  let width = 0,
-    height = 0;
-  if (media instanceof HTMLImageElement) {
-    width = media.width;
-    height = media.height;
-  } else if (media instanceof HTMLVideoElement) {
-    width = media.videoWidth;
-    height = media.videoHeight;
-  }
+export function createBlurHash(
+  media: HTMLImageElement | HTMLVideoElement,
+  width: number,
+  height: number
+) {
   try {
     const clampedSize = getClampedSize(width, height, 64);
     const canvas = document.createElement('canvas');

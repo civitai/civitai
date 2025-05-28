@@ -3,8 +3,8 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import { BuzzAccountType, GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
-import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
+import type { BuzzAccountType, GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
+import type { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { trpc } from '~/utils/trpc';
 
 export const useBuzz = (accountId?: number, accountType?: BuzzAccountType | null) => {
