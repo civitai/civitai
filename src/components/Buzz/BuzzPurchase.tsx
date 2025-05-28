@@ -44,6 +44,7 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
+import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -553,7 +554,16 @@ export const BuzzPurchase = ({
                 />
               )} */}
 
-              {features.cryptoPayments && (
+              {features.coinbasePayments && (
+                <BuzzCoinbaseButton
+                  unitAmount={unitAmount}
+                  buzzAmount={buzzAmount}
+                  onPurchaseSuccess={onPurchaseSuccess}
+                  disabled={!ctaEnabled}
+                  purchaseSuccessMessage={purchaseSuccessMessage}
+                />
+              )}
+              {features.nowpaymentPayments && (
                 <BuzzNowPaymentsButton
                   unitAmount={unitAmount}
                   buzzAmount={buzzAmount}
