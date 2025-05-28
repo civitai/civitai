@@ -55,7 +55,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         case 'finished':
         case 'partially_paid':
         default: // temporary as we test
-          await processBuzzOrder(event.payment_id as string | number);
+          await processBuzzOrder(
+            event.payment_id as string | number,
+            event.payment_status as string
+          );
           break;
         // throw new Error('Unhandled relevant event!');
       }
