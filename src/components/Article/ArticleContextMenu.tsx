@@ -1,4 +1,5 @@
-import { ActionIcon, ActionIconProps, Loader, Menu } from '@mantine/core';
+import type { ActionIconProps } from '@mantine/core';
+import { ActionIcon, Loader, Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons-react';
@@ -19,7 +20,7 @@ import { ToggleLockComments } from '../CommentsV2';
 import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
-import { ArticleGetById } from '~/types/router';
+import type { ArticleGetById } from '~/types/router';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 export function ArticleContextMenu({ article, ...props }: Props) {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { CacheTTL, constants } from '~/server/common/constants';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { RateLimit } from '~/server/middleware.trpc';
+import type { RateLimit } from '~/server/middleware.trpc';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export const commentRateLimits: RateLimit[] = [

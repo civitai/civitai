@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';

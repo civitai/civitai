@@ -1,3 +1,4 @@
+import type { PopoverProps } from '@mantine/core';
 import {
   ActionIcon,
   Button,
@@ -6,7 +7,6 @@ import {
   Divider,
   Group,
   Popover,
-  PopoverProps,
   SimpleGrid,
   Stack,
   Text,
@@ -16,8 +16,9 @@ import { useClipboard } from '@mantine/hooks';
 import { IconBrush, IconCheck, IconCopy } from '@tabler/icons-react';
 import { cloneElement, useMemo, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageGenerationProcess, ModelType } from '~/shared/utils/prisma/enums';
+import type { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageGenerationProcess } from '~/shared/utils/prisma/enums';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { fromJson } from '~/utils/json-helpers';
 import { encodeMetadata } from '~/utils/metadata';

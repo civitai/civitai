@@ -1,10 +1,8 @@
 import React from 'react';
 import { IconCategory, IconClubs, IconLayoutList, IconPencilMinus } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import {
-  DataItem,
-  HomeStyleSegmentedControl,
-} from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
+import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
+import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 
 const overviewPath = '[id]';
 

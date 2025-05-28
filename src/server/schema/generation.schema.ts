@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { BaseModel, constants, generation } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
 import { userTierSchema } from '~/server/schema/user.schema';

@@ -1,4 +1,5 @@
-import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core';
+import type { ColorScheme } from '@mantine/core';
+import { ColorSchemeProvider, MantineProvider } from '@mantine/core';
 import { setCookie } from 'cookies-next';
 import dayjs from 'dayjs';
 import { useCallback, useEffect, useState } from 'react';

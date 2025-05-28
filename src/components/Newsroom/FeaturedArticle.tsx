@@ -1,13 +1,5 @@
-import {
-  Box,
-  Button,
-  CardProps,
-  createStyles,
-  MantineColor,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import type { CardProps, MantineColor } from '@mantine/core';
+import { Box, Button, createStyles, Stack, Text, Title } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { CivitaiNewsItem } from '~/server/services/article.service';

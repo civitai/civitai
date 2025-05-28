@@ -10,24 +10,22 @@ import {
 } from '~/server/orchestrator/generation/generation.config';
 import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
   CheckResourcesCoverageSchema,
   GenerationStatus,
-  generationStatusSchema,
   GetGenerationDataSchema,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
+import { generationStatusSchema } from '~/server/schema/generation.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
+import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
-import {
-  GenerationResourceDataModel,
-  resourceDataCache,
-} from '~/server/services/model-version.service';
+import type { GenerationResourceDataModel } from '~/server/services/model-version.service';
+import { resourceDataCache } from '~/server/services/model-version.service';
 import { getFeaturedModels } from '~/server/services/model.service';
 import {
   handleLogError,
@@ -36,6 +34,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getPagedData } from '~/server/utils/pagination-helpers';
+import type { SupportedBaseModel } from '~/shared/constants/generation.constants';
 import {
   baseModelResourceTypes,
   fluxUltraAir,
@@ -44,9 +43,8 @@ import {
   getBaseModelSet,
   getBaseModelSetType,
   getResourceGenerationType,
-  SupportedBaseModel,
 } from '~/shared/constants/generation.constants';
-import { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { isFutureDate } from '~/utils/date-helpers';
 
 import { fromJson, toJson } from '~/utils/json-helpers';

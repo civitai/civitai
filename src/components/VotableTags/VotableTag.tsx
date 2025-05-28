@@ -1,4 +1,4 @@
-import { VotableTagConnectorInput } from '~/server/schema/tag.schema';
+import type { VotableTagConnectorInput } from '~/server/schema/tag.schema';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import {
@@ -13,7 +13,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useCallback, useRef } from 'react';
-import { TagType } from '~/shared/utils/prisma/enums';
+import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBigDown,
   IconArrowBigUp,
@@ -27,7 +27,7 @@ import { getTagDisplayName } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Countdown } from '~/components/Countdown/Countdown';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import {
   votableTagColors,
   getIsSafeBrowsingLevel,
@@ -99,7 +99,7 @@ export function VotableTag({
   const key = getKey({ entityType, entityId, name });
   const vote = useVotableTagStore(useCallback((state) => state.votes[key] ?? initialVote, [key])); //eslint-disable-line
   const upvoteDate = useVotableTagStore(useCallback((state) => state.upvoteDates[key], [key]));
-  const moderatorVariant = highlightContested && needsReview
+  const moderatorVariant = highlightContested && needsReview;
 
   const theme = useMantineTheme();
   const isNsfw = !getIsSafeBrowsingLevel(nsfwLevel);

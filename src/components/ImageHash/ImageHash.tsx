@@ -1,4 +1,4 @@
-import { CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { BlurhashCanvas } from 'react-blurhash';
 import { getClampedSize } from '~/utils/blurhash';
 import clsx from 'clsx';

@@ -3,8 +3,8 @@ import dayjs from 'dayjs';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { ChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
-  ChallengeConfig,
   endChallenge,
   getChallengeConfig,
   getChallengeDetails,

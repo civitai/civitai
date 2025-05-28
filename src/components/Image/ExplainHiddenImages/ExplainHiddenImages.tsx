@@ -10,8 +10,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
-  BrowsingLevel,
   browsingLevelLabels,
   flagifyBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';

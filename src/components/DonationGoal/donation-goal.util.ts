@@ -1,4 +1,4 @@
-import { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
+import type { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
 export const useMutateDonationGoal = () => {

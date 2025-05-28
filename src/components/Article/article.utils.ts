@@ -7,7 +7,7 @@ import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ArticleSort } from '~/server/common/enums';
-import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
+import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';

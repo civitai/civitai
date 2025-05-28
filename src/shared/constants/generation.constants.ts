@@ -1,19 +1,19 @@
-import { WorkflowStatus } from '@civitai/client';
-import { MantineColor } from '@mantine/core';
+import type { WorkflowStatus } from '@civitai/client';
+import type { MantineColor } from '@mantine/core';
+import type { BaseModelSetType, Sampler } from '~/server/common/constants';
 import {
   baseModelSets,
-  BaseModelSetType,
   generation,
   generationConfig,
   getGenerationConfig,
   maxUpscaleSize,
   minDownscaleSize,
-  Sampler,
 } from '~/server/common/constants';
-import { GenerationLimits } from '~/server/schema/generation.schema';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import type { GenerationLimits } from '~/server/schema/generation.schema';
+import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { getImageDimensions } from '~/utils/image-utils';
 import { findClosest } from '~/utils/number-helpers';
 

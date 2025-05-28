@@ -1,13 +1,5 @@
-import {
-  Control,
-  FieldPath,
-  FieldPathValues,
-  FieldValues,
-  Path,
-  PathValue,
-  UseFormGetValues,
-  useWatch,
-} from 'react-hook-form';
+import type { Control, FieldPath, FieldValues, UseFormGetValues } from 'react-hook-form';
+import { FieldPathValues, Path, PathValue, useWatch } from 'react-hook-form';
 
 export function Watch<
   TFieldValues extends FieldValues,

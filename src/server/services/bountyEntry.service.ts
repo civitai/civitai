@@ -1,13 +1,16 @@
 import { Prisma } from '@prisma/client';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
+import type {
+  BountyEntryFileMeta,
+  UpsertBountyEntryInput,
+} from '~/server/schema/bounty-entry.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
-import { GetByIdInput } from '../schema/base.schema';
+import type { GetByIdInput } from '../schema/base.schema';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 

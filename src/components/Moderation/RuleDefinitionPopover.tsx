@@ -1,4 +1,5 @@
-import { Button, ButtonProps, Center, JsonInput, Loader, Popover, Text } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Center, JsonInput, Loader, Popover, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { trpc } from '~/utils/trpc';
 

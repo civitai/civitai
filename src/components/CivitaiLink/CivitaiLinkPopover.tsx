@@ -1,4 +1,5 @@
 /* eslint-disable react/jsx-no-undef */
+import type { GroupProps, StackProps } from '@mantine/core';
 import {
   ActionIcon,
   Group,
@@ -7,7 +8,6 @@ import {
   Text,
   Progress,
   Title,
-  GroupProps,
   Paper,
   Indicator,
   createStyles,
@@ -16,7 +16,6 @@ import {
   Center,
   Button,
   Tooltip,
-  StackProps,
   CopyButton,
   ColorSwatch,
   useMantineTheme,

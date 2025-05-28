@@ -1,5 +1,5 @@
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
-import { InstantSearchProps } from 'react-instantsearch';
+import type { InstantSearchProps } from 'react-instantsearch';
 import { env } from '~/env/client';
 
 const meilisearch = instantMeiliSearch(

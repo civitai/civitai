@@ -1,4 +1,5 @@
-import { MiniMaxVideoGenInput, MiniMaxVideoGenModel } from '@civitai/client';
+import type { MiniMaxVideoGenInput } from '@civitai/client';
+import { MiniMaxVideoGenModel } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {

@@ -5,7 +5,7 @@ import {
   Comment,
   RootThreadProvider,
 } from '~/components/CommentsV2';
-import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 
 type Props = CommentConnectorInput & {
   initialCount?: number;

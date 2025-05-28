@@ -1,5 +1,5 @@
 import produce from 'immer';
-import { RecommendationRequest } from '~/server/schema/recommenders.schema';
+import type { RecommendationRequest } from '~/server/schema/recommenders.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

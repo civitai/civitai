@@ -1,7 +1,7 @@
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { MetadataParam } from '@stripe/stripe-js';
 import { chunk } from 'lodash-es';
-import { Stripe } from 'stripe';
+import type { Stripe } from 'stripe';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -19,7 +19,7 @@ import { createLogger } from '~/utils/logging';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { TransactionType } from '../schema/buzz.schema';
 import * as Schema from '../schema/stripe.schema';
-import { PaymentMethodDeleteInput } from '../schema/stripe.schema';
+import type { PaymentMethodDeleteInput } from '../schema/stripe.schema';
 import {
   completeStripeBuzzTransaction,
   createBuzzTransaction,
@@ -27,10 +27,8 @@ import {
 } from './buzz.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import { sleep } from '~/server/utils/concurrency-helpers';
-import {
-  SubscriptionProductMetadata,
-  subscriptionProductMetadataSchema,
-} from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');

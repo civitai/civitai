@@ -1,6 +1,8 @@
 import React, { forwardRef } from 'react';
-import { Anchor, AutocompleteItem, Center, createStyles, useMantineTheme } from '@mantine/core';
-import { IconBadge, IconBadgeProps } from '~/components/IconBadge/IconBadge';
+import type { AutocompleteItem } from '@mantine/core';
+import { Anchor, Center, createStyles, useMantineTheme } from '@mantine/core';
+import type { IconBadgeProps } from '~/components/IconBadge/IconBadge';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 export const ViewMoreItem = forwardRef<HTMLDivElement, AutocompleteItem>(
   ({ value, ...props }, ref) => {

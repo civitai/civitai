@@ -7,10 +7,10 @@ import {
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
   addBlockedImage,
@@ -37,7 +37,7 @@ import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsin
 import { Flags } from '~/shared/utils';
 import { BlockImageReason, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import {
+import type {
   GetEntitiesCoverImage,
   GetImageInput,
   GetInfiniteImagesOutput,

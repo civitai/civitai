@@ -1,5 +1,5 @@
 import { writeHeapSnapshot } from 'node:v8';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { JobEndpoint } from '~/server/utils/endpoint-helpers';
 import { createReadStream } from 'node:fs';
 

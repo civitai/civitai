@@ -14,7 +14,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { IconLock, IconLockOpen, IconStar } from '@tabler/icons-react';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { trpc } from '~/utils/trpc';
-import { BountyGetEntries } from '~/types/router';
+import type { BountyGetEntries } from '~/types/router';
 import { formatKBytes } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 

@@ -1,13 +1,13 @@
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GetByIdStringInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdStringInput } from '~/server/schema/base.schema';
+import type {
   CreateBuzzWithdrawalRequestSchema,
   GetPaginatedBuzzWithdrawalRequestSchema,
   GetPaginatedOwnedBuzzWithdrawalRequestSchema,
   UpdateBuzzWithdrawalRequestSchema,
 } from '~/server/schema/buzz-withdrawal-request.schema';
-import { BuzzWithdrawalGetPaginatedItem } from '~/types/router';
+import type { BuzzWithdrawalGetPaginatedItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

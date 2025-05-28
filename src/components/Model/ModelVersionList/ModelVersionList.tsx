@@ -11,7 +11,7 @@ import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { ModelVersionMenu } from '../ModelVersions/ModelVersionMenu';
 
 const useStyles = createStyles((theme) => ({

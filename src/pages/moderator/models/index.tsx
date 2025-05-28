@@ -18,8 +18,8 @@ import {
 } from '@mantine/core';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { IconExternalLink } from '@tabler/icons-react';
-import { TRPCClientErrorBase } from '@trpc/client';
-import { DefaultErrorShape } from '@trpc/server';
+import type { TRPCClientErrorBase } from '@trpc/client';
+import type { DefaultErrorShape } from '@trpc/server';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
@@ -27,7 +27,7 @@ import { FlaggedModelsList } from '~/components/Moderation/FlaggedModelsList';
 
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { ModelGetAllPagedSimple } from '~/types/router';
+import type { ModelGetAllPagedSimple } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { slugit } from '~/utils/string-helpers';

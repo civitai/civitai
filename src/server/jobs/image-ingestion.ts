@@ -5,7 +5,7 @@ import { env } from '~/env/server';
 import { BlockedReason } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
-import { IngestImageInput } from '~/server/schema/image.schema';
+import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImageById, ingestImage, ingestImageBulk } from '~/server/services/image.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { decreaseDate } from '~/utils/date-helpers';

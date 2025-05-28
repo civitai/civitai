@@ -1,4 +1,4 @@
-import { IncomingHttpHeaders } from 'http';
+import type { IncomingHttpHeaders } from 'http';
 import { camelCase } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client';

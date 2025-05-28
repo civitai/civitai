@@ -1,6 +1,7 @@
-import { CardProps, createPolymorphicComponent } from '@mantine/core';
+import type { CardProps } from '@mantine/core';
+import { createPolymorphicComponent } from '@mantine/core';
 import { forwardRef } from 'react';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { TwCard } from '~/components/TwCard/TwCard';
 import clsx from 'clsx';

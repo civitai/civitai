@@ -1,4 +1,5 @@
-import { Tabs, TabsProps, createStyles } from '@mantine/core';
+import type { TabsProps } from '@mantine/core';
+import { Tabs, createStyles } from '@mantine/core';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme, _params, getRef) => {

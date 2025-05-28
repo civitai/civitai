@@ -2,24 +2,25 @@ import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
-import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
+import type { BaseModel, BaseModelType } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
+import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { ProfileImage } from '~/server/selectors/image.selector';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
-import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
+import type { ImagesForModelVersions } from '~/server/services/image.service';
+import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
-import { CachedObject, createCachedObject } from '~/server/utils/cache-helpers';
+import type { CachedObject } from '~/server/utils/cache-helpers';
+import { createCachedObject } from '~/server/utils/cache-helpers';
+import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import {
-  Availability,
   CollectionReadConfiguration,
   CosmeticEntity,
-  CosmeticSource,
-  CosmeticType,
   ModelStatus,
   TagSource,
   TagType,

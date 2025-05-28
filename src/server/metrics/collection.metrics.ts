@@ -1,5 +1,6 @@
 import { chunk } from 'lodash-es';
-import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { collectionsSearchIndex } from '~/server/search-index';

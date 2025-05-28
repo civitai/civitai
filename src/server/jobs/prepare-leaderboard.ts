@@ -9,11 +9,13 @@ import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
-import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import type { Task } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
 import { insertSorted } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
-import { createJob, getJobDate, JobContext } from './job';
+import type { JobContext } from './job';
+import { createJob, getJobDate } from './job';
 
 const log = createLogger('leaderboard', 'blue');
 

@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead } from '~/server/db/client';

@@ -1,13 +1,5 @@
-import {
-  ActionIconProps,
-  Box,
-  Group,
-  HoverCard,
-  Menu,
-  Stack,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
+import type { ActionIconProps } from '@mantine/core';
+import { Box, Group, HoverCard, Menu, Stack, Text, ThemeIcon } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconBan,
@@ -36,16 +28,17 @@ import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';
 import { useReportTosViolation } from '~/components/Image/hooks/useReportTosViolation';
 import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
 import { useReportCsamImages } from '~/components/Image/image.utils';
-import { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ImageModerationSchema } from '~/server/schema/image.schema';
+import type { ImageModerationSchema } from '~/server/schema/image.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { imageStore, useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '~/components/NextLink/NextLink';

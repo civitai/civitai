@@ -1,5 +1,5 @@
 import { RewardsEligibility } from '~/shared/utils/prisma/enums';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { v4 as uuid } from 'uuid';
 import { z } from 'zod';
 import { NotificationCategory } from '~/server/common/enums';

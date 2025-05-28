@@ -1,7 +1,8 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createNotification } from '~/server/services/notification.service';
-import { BuzzEventContext, createEvent, DonationCosmeticData } from './base.event';
+import type { BuzzEventContext, DonationCosmeticData } from './base.event';
+import { createEvent } from './base.event';
 
 type CosmeticData = {
   lights: number;

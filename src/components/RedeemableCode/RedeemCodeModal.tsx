@@ -3,10 +3,8 @@ import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Form, InputText, useForm } from '~/libs/form';
-import {
-  ConsumeRedeemableCodeInput,
-  consumeRedeemableCodeSchema,
-} from '~/server/schema/redeemableCode.schema';
+import type { ConsumeRedeemableCodeInput } from '~/server/schema/redeemableCode.schema';
+import { consumeRedeemableCodeSchema } from '~/server/schema/redeemableCode.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

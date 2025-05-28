@@ -1,3 +1,4 @@
+import type { SegmentedControlProps } from '@mantine/core';
 import {
   Accordion,
   ActionIcon,
@@ -9,7 +10,6 @@ import {
   Menu,
   Paper,
   SegmentedControl,
-  SegmentedControlProps,
   Stack,
   Text,
   Textarea,
@@ -35,12 +35,11 @@ import { TrainingEditTagsModal } from '~/components/Training/Form/TrainingEditTa
 import { blankTagStr, labelDescriptions } from '~/components/Training/Form/TrainingImages';
 import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import type { ImageDataType, LabelTypes } from '~/store/training.store';
 import {
   defaultTrainingState,
   defaultTrainingStateVideo,
   getShortNameFromUrl,
-  ImageDataType,
-  LabelTypes,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';

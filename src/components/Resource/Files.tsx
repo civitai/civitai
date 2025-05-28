@@ -28,13 +28,10 @@ import { isEqual, startCase } from 'lodash-es';
 import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
 import { useRef, useState } from 'react';
 
-import { FileFromContextProps, useFilesContext } from '~/components/Resource/FilesProvider';
-import {
-  constants,
-  ModelFileType,
-  ZipModelFileType,
-  zipModelFileTypes,
-} from '~/server/common/constants';
+import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
+import { useFilesContext } from '~/components/Resource/FilesProvider';
+import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
+import { constants, zipModelFileTypes } from '~/server/common/constants';
 // import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 // import { ModelVersionById } from '~/types/router';

@@ -9,7 +9,8 @@ import { create } from 'zustand';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { devtools } from 'zustand/middleware';
-import { AdConfig, getAdConfig } from '~/components/Ads/Old/ads.utils';
+import type { AdConfig } from '~/components/Ads/Old/ads.utils';
+import { getAdConfig } from '~/components/Ads/Old/ads.utils';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';

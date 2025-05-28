@@ -1,6 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import { tagIdsForImagesCache, thumbnailCache } from '~/server/redis/caches';
-import { TagSource } from '~/shared/utils/prisma/enums';
+import type { TagSource } from '~/shared/utils/prisma/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getModeratedTags, getTagRules } from '~/server/services/system-cache';

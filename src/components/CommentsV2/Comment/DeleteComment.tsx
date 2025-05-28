@@ -2,7 +2,7 @@ import { Text } from '@mantine/core';
 import { useCommentsContext, useNewCommentStore } from '../CommentsProvider';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import React from 'react';
-import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';

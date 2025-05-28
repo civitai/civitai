@@ -4,7 +4,7 @@ import {
   EXTRACTION_PHASE_DURATION,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
-import { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
+import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 
 export function getForecastedValue(
   toBank: number,

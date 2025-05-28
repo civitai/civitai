@@ -1,7 +1,7 @@
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { HttpCaller } from '../httpCaller';
-import { Orchestrator } from './orchestrator.types';
+import type { Orchestrator } from './orchestrator.types';
 
 class OrchestratorCaller extends HttpCaller {
   constructor(endpoint?: string, token?: string) {

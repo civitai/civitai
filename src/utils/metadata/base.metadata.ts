@@ -1,5 +1,5 @@
 import { isProd } from '~/env/other';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 
 export type MetadataProcessor = {
   canParse: (exif: Record<string, any>) => boolean;

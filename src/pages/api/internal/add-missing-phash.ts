@@ -1,10 +1,10 @@
 import { chunk } from 'lodash-es';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { ImageScanType } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
-import { IngestImageInput } from '~/server/schema/image.schema';
+import type { IngestImageInput } from '~/server/schema/image.schema';
 import { ingestImageBulk } from '~/server/services/image.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 

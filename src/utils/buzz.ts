@@ -1,7 +1,5 @@
-import {
-  BuzzTransactionDetails,
-  GetUserBuzzTransactionsResponse,
-} from '~/server/schema/buzz.schema';
+import type { BuzzTransactionDetails } from '~/server/schema/buzz.schema';
+import { GetUserBuzzTransactionsResponse } from '~/server/schema/buzz.schema';
 
 export const parseBuzzTransactionDetails = (
   details?: BuzzTransactionDetails

@@ -1,7 +1,7 @@
 import { Menu } from '@mantine/core';
 import { IconSearch, IconSearchOff } from '@tabler/icons-react';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
-import { SupportedAvailabilityResources } from '../../server/schema/base.schema';
+import type { SupportedAvailabilityResources } from '../../server/schema/base.schema';
 import { trpc } from '~/utils/trpc';
 import { Availability } from '~/shared/utils/prisma/enums';
 

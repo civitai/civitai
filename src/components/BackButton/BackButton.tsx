@@ -1,7 +1,7 @@
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { useRef, useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { UrlObject } from 'url';
+import type { UrlObject } from 'url';
 import { ActionIcon, Group } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
 

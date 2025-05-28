@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router';
-import React, { cloneElement, forwardRef } from 'react';
+import type React from 'react';
+import { cloneElement, forwardRef } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const RequireMembership = forwardRef<HTMLElement, { children: React.ReactElement }>(

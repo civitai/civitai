@@ -1,3 +1,4 @@
+import type { RingProgressProps, TooltipProps } from '@mantine/core';
 import {
   ActionIcon,
   Alert,
@@ -7,10 +8,8 @@ import {
   Group,
   Loader,
   RingProgress,
-  RingProgressProps,
   Text,
   Tooltip,
-  TooltipProps,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import {
@@ -41,15 +40,16 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
 
-import { TimeSpan, WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/client';
+import { TimeSpan } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { GenerationResource } from '~/server/services/generation/generation.service';
-import {
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';

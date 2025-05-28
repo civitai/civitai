@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Reactions, ReactionMetrics } from '~/components/Reaction/Reactions';
+import type { ReactionMetrics } from '~/components/Reaction/Reactions';
+import { Reactions } from '~/components/Reaction/Reactions';
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import type { Comment } from '~/server/services/commentsv2.service';

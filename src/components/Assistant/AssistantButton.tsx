@@ -1,4 +1,5 @@
-import { Button, ButtonProps } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button } from '@mantine/core';
 import { IconCat, IconMessageChatbot, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';

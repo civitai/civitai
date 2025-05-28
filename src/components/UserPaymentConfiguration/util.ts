@@ -1,6 +1,6 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
+import type { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
 import { trpc } from '~/utils/trpc';
 
 export const useUserPaymentConfiguration = () => {

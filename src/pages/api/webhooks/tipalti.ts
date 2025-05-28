@@ -1,18 +1,15 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { Readable } from 'node:stream';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
-import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
+import type { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 import { updateCashWithdrawal, userCashCache } from '~/server/services/creator-program.service';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import { parseRefCodeToWithdrawalId } from '~/server/utils/creator-program.utils';
-import {
-  BuzzWithdrawalRequestStatus,
-  CashWithdrawalMethod,
-  CashWithdrawalStatus,
-} from '~/shared/utils/prisma/enums';
+import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
+import { BuzzWithdrawalRequestStatus, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 
 export const config = {
   api: {

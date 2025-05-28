@@ -1,8 +1,11 @@
-import { TRPCClientErrorBase } from '@trpc/client';
-import { DefaultErrorShape } from '@trpc/server';
+import type { TRPCClientErrorBase } from '@trpc/client';
+import type { DefaultErrorShape } from '@trpc/server';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
+  EquipCosmeticInput,
+  GetPaginatedCosmeticsInput,
+} from '~/server/schema/cosmetic.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

@@ -1,7 +1,8 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { FeatureFlagKey, featureFlagKeys } from '~/server/services/feature-flags.service';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
+import { featureFlagKeys } from '~/server/services/feature-flags.service';
 import { addSystemPermission, removeSystemPermission } from '~/server/services/system-cache';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';

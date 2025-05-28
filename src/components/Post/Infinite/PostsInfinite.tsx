@@ -11,7 +11,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { PostsCard } from '~/components/Post/Infinite/PostsCard';
 import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
-import { PostSort } from '~/server/common/enums';
+import type { PostSort } from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
 export type PostsInfiniteState = {

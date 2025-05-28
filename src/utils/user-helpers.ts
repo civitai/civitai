@@ -1,6 +1,6 @@
 import { banReasonDetails } from '~/server/common/constants';
-import { BanReasonCode } from '~/server/common/enums';
-import { UserMeta } from '~/server/schema/user.schema';
+import type { BanReasonCode } from '~/server/common/enums';
+import type { UserMeta } from '~/server/schema/user.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 
 export type UserBanDetails = {

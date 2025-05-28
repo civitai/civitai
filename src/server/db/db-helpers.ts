@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { Pool, QueryResult, QueryResultRow } from 'pg';
+import type { QueryResult, QueryResultRow } from 'pg';
+import { Pool } from 'pg';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -56,7 +57,9 @@ export function getClient(
     // trying this for leaderboard job
     idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
-      instance === 'primaryRead' || instance === 'notificationRead'
+      instance === 'notificationRead'
+        ? undefined // standby seems to not support this
+        : instance === 'primaryRead'
         ? env.DATABASE_READ_TIMEOUT
         : env.DATABASE_WRITE_TIMEOUT,
     application_name: `${appBaseName}${env.PODNAME ? '-' + env.PODNAME : ''}`,

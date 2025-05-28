@@ -22,7 +22,7 @@ import { PurchasableRewardsFiltersModeratorDropdown } from '~/components/Purchas
 import { useQueryPurchasableRewardsModerator } from '~/components/PurchasableRewards/purchasableRewards.util';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
-import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
+import type { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
 import { formatDate } from '~/utils/date-helpers';
 
 import { numberWithCommas } from '~/utils/number-helpers';

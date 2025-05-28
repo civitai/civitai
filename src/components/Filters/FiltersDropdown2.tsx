@@ -1,7 +1,9 @@
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
-import { Indicator, MantineSize } from '@mantine/core';
-import { Icon, IconChevronDown, IconProps } from '@tabler/icons-react';
-import { ComponentPropsWithoutRef, ForwardRefExoticComponent, RefAttributes } from 'react';
+import type { MantineSize } from '@mantine/core';
+import { Indicator } from '@mantine/core';
+import type { Icon, IconProps } from '@tabler/icons-react';
+import { IconChevronDown } from '@tabler/icons-react';
+import type { ComponentPropsWithoutRef, ForwardRefExoticComponent, RefAttributes } from 'react';
 import clsx from 'clsx';
 
 export type FilterButtonProps = ComponentPropsWithoutRef<'button'> & {

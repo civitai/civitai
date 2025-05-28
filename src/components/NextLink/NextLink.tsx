@@ -1,4 +1,5 @@
-import Link, { LinkProps } from 'next/link';
+import type { LinkProps } from 'next/link';
+import Link from 'next/link';
 import { forwardRef } from 'react';
 
 // export function NextLink({

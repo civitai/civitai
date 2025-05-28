@@ -1,9 +1,9 @@
+import type { ModalProps } from '@mantine/core';
 import {
   Button,
   Group,
   Input,
   Modal,
-  ModalProps,
   NumberInput,
   Paper,
   Slider,

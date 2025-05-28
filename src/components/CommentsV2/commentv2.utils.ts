@@ -1,4 +1,4 @@
-import { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
+import type { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

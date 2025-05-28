@@ -1,3 +1,4 @@
+import type { NumberInputProps, SliderProps } from '@mantine/core';
 import {
   Accordion,
   Alert,
@@ -12,9 +13,7 @@ import {
   Input,
   List,
   Notification,
-  NumberInputProps,
   Paper,
-  SliderProps,
   Stack,
   Text,
 } from '@mantine/core';
@@ -46,9 +45,9 @@ import {
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import type { GenerationFormOutput } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import {
   blockedRequest,
-  GenerationFormOutput,
   useGenerationForm,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';

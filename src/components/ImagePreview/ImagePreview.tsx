@@ -1,8 +1,9 @@
-import { MantineNumberSize } from '@mantine/core';
+import type { MantineNumberSize } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { CSSProperties } from 'react';
-import { EdgeMedia2, EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageGetInfinite } from '~/types/router';
+import type { CSSProperties } from 'react';
+import type { EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import type { ImageGetInfinite } from '~/types/router';
 import clsx from 'clsx';
 
 type ImagePreviewProps = {

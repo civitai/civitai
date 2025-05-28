@@ -1,4 +1,5 @@
-import { clsx, MantineSize, Paper, PaperProps, ThemeIcon, Tooltip } from '@mantine/core';
+import type { MantineSize, PaperProps } from '@mantine/core';
+import { clsx, Paper, ThemeIcon, Tooltip } from '@mantine/core';
 import { IconFlame, IconHeart, IconMoneybag, IconSword } from '@tabler/icons-react';
 import React from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -8,10 +9,10 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { newOrderConfig } from '~/server/common/constants';
-import { SimpleUser } from '~/server/selectors/user.selector';
+import type { SimpleUser } from '~/server/selectors/user.selector';
 import { getLevelProgression } from '~/server/utils/game-helpers';
 import { Currency, NewOrderRankType } from '~/shared/utils/prisma/enums';
-import { GetPlayer } from '~/types/router';
+import type { GetPlayer } from '~/types/router';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 const MAX_SMITE_COUNT = 3;

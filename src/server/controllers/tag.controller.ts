@@ -1,8 +1,8 @@
-import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
+import type { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
-import {
+import type {
   AddTagVotesSchema,
   AdjustTagsSchema,
   DeleteTagsSchema,

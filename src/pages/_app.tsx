@@ -1,5 +1,5 @@
 // src/pages/_app.tsx
-import { ColorScheme } from '@mantine/core';
+import type { ColorScheme } from '@mantine/core';
 import { NotificationsProvider } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, getCookies } from 'cookies-next';
@@ -17,12 +17,13 @@ import { SessionProvider } from 'next-auth/react';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
-import React, { ReactElement } from 'react';
+import type { ReactElement } from 'react';
+import React from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
-import { CustomNextPage } from '~/components/AppLayout/Page';
+import type { CustomNextPage } from '~/components/AppLayout/Page';
 import { AuctionContextProvider } from '~/components/Auction/AuctionProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import {
@@ -65,7 +66,8 @@ import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags, serverDomainMap } from '~/server/services/feature-flags.service';
-import { parseCookies, ParsedCookies } from '~/shared/utils';
+import type { ParsedCookies } from '~/shared/utils';
+import { parseCookies } from '~/shared/utils';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';

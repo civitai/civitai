@@ -1,8 +1,8 @@
 import { useMantineTheme } from '@mantine/core';
 import { useCallback } from 'react';
+import type { Callback } from 'react-joyride';
 import Joyride, {
   ACTIONS,
-  Callback,
   EVENTS,
   LIFECYCLE,
   type Props as JoyrideProps,
@@ -11,7 +11,7 @@ import Joyride, {
 import { IsClient } from '~/components/IsClient/IsClient';
 import { TourPopover } from '~/components/Tour/TourPopover';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { StepData } from '~/types/tour';
+import type { StepData } from '~/types/tour';
 
 const completeStatus: string[] = [STATUS.SKIPPED, STATUS.FINISHED];
 const nextEvents: string[] = [EVENTS.STEP_AFTER, EVENTS.TARGET_NOT_FOUND];

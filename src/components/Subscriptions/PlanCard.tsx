@@ -1,7 +1,7 @@
+import type { ButtonProps, ThemeIconVariant } from '@mantine/core';
 import {
   Box,
   Button,
-  ButtonProps,
   Card,
   Center,
   createStyles,
@@ -9,7 +9,6 @@ import {
   Select,
   Stack,
   Text,
-  ThemeIconVariant,
   Title,
 } from '@mantine/core';
 import {
@@ -36,15 +35,12 @@ import {
 import { appliesForFounderDiscount } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import {
-  benefitIconSize,
-  BenefitItem,
-  PlanBenefitList,
-} from '~/components/Subscriptions/PlanBenefitList';
+import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
+import { benefitIconSize, PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { SubscriptionPlan, UserSubscription } from '~/server/services/subscriptions.service';
 import { isHolidaysTime } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -117,7 +113,6 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     ? subscribeBtnProps.downgrade
     : subscribeBtnProps.subscribe;
 
-  
   const disabledDueToProvider =
     !!subscription && subscription.product.provider !== product.provider;
   const disabledDueToYearlyPlan =
@@ -250,10 +245,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                     Upgrade to {meta?.tier} {isActivePlanDiffInterval ? ' (Annual)' : ''}
                   </Button>
                 ) : (
-                  <SubscribeButton
-                    priceId={priceId}
-                    disabled={ctaDisabled}
-                  >
+                  <SubscribeButton priceId={priceId} disabled={ctaDisabled}>
                     <Button radius="xl" {...btnProps}>
                       {isActivePlan ? `You are ${meta?.tier}` : `Subscribe to ${meta?.tier}`}
                     </Button>

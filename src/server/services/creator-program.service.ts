@@ -11,12 +11,12 @@ import {
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import {
+import type {
   CashWithdrawalMetadataSchema,
   CompensationPoolInput,
   UpdateCashWithdrawalSchema,
 } from '~/server/schema/creator-program.schema';
-import { UserTier } from '~/server/schema/user.schema';
+import type { UserTier } from '~/server/schema/user.schema';
 import {
   createBuzzTransaction,
   getCounterPartyBuzzTransactions,
@@ -40,9 +40,9 @@ import {
 } from '~/server/utils/creator-program.utils';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { invalidateSession } from '~/server/utils/session-helpers';
+import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
   CAP_DEFINITIONS,
-  CapDefinition,
   MIN_CAP,
   MIN_CREATOR_SCORE,
   MIN_WITHDRAWAL_AMOUNT,

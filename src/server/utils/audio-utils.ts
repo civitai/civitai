@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState } from 'react';
 /**
  * Creates an audio controller for a base64-encoded audio file.
  * @param base64Audio - The base64-encoded audio string.
@@ -30,10 +30,10 @@ export function useBase64Audio(base64Audio: string, autoplay = false) {
   }, [base64Audio]);
 
   return {
-    play: () => { },
-    pause: () => { },
-    stop: () => { },
+    play: () => {},
+    pause: () => {},
+    stop: () => {},
     ...controls,
     playing,
-  }
+  };
 }

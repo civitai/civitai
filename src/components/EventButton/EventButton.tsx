@@ -1,4 +1,5 @@
-import { Box, BoxProps, createStyles } from '@mantine/core';
+import type { BoxProps } from '@mantine/core';
+import { Box, createStyles } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconChristmasTree } from '@tabler/icons-react';
 import { wiggle } from '~/libs/animations';

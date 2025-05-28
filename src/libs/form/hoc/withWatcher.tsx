@@ -1,6 +1,7 @@
 import { useDidUpdate } from '@mantine/hooks';
 import { useCallback, useState, useEffect, forwardRef } from 'react';
-import { DeepPartial, FieldValues, UnpackNestedValue, useFormContext } from 'react-hook-form';
+import type { DeepPartial, FieldValues, UnpackNestedValue } from 'react-hook-form';
+import { useFormContext } from 'react-hook-form';
 
 type WatcherBaseProps = {
   visible?: (values: Record<string, unknown>) => boolean;

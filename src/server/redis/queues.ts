@@ -1,9 +1,5 @@
-import {
-  REDIS_SUB_KEYS,
-  REDIS_SYS_KEYS,
-  RedisKeyTemplateSys,
-  sysRedis,
-} from '~/server/redis/client';
+import type { RedisKeyTemplateSys } from '~/server/redis/client';
+import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 async function getBucketNames(key: string) {
   const currentBucket = await sysRedis.hGet(REDIS_SYS_KEYS.QUEUES.BUCKETS, key);

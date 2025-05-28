@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 
 export default function imageForEntity(req: NextApiRequest, res: NextApiResponse) {
   const { entityType, entityId } = req.query;

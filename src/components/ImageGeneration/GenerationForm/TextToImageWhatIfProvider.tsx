@@ -3,7 +3,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { generationConfig } from '~/server/common/constants';
-import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
+import type { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   fluxStandardAir,
   fluxUltraAir,
@@ -16,9 +16,9 @@ import {
 } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 
-import { UseTRPCQueryResult } from '@trpc/react-query/shared';
+import type { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
+import type { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { removeEmpty } from '~/utils/object-helpers';

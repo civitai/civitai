@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
-import dayjs, { ManipulateType } from 'dayjs';
+import type { ManipulateType } from 'dayjs';
+import dayjs from 'dayjs';
 import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
@@ -43,7 +44,7 @@ import {
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import {
+import type {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
   GetEntitiesCoverImage,
@@ -51,7 +52,6 @@ import {
   GetInfiniteImagesOutput,
   GetMyImagesInput,
   ImageEntityType,
-  imageMetaOutput,
   ImageMetaProps,
   ImageModerationSchema,
   ImageRatingReviewOutput,
@@ -59,7 +59,6 @@ import {
   ImageSchema,
   ImageUploadProps,
   IngestImageInput,
-  ingestImageSchema,
   RemoveImageResourceSchema,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
@@ -69,6 +68,7 @@ import {
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
+import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import {
   articlesSearchIndex,
@@ -82,7 +82,8 @@ import type {
 } from '~/server/search-index/metrics-images.search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
+import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
@@ -120,6 +121,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import type { ModelType, ReportReason, ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
@@ -129,10 +131,7 @@ import {
   EntityType,
   ImageIngestionStatus,
   MediaType,
-  ModelType,
-  ReportReason,
   ReportStatus,
-  ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';

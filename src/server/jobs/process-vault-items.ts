@@ -13,7 +13,7 @@ import { getModelVersionDetailsPDF } from '~/server/utils/pdf-helpers';
 import { fetchBlob } from '~/utils/file-utils';
 import { getCustomPutUrl, getS3Client } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
-import { VaultItemMetadataSchema } from '../schema/vault.schema';
+import type { VaultItemMetadataSchema } from '../schema/vault.schema';
 import { createJob, getJobDate } from './job';
 
 const MAX_FAILURES = 3;

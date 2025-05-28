@@ -2,7 +2,7 @@ import { ActionIcon, Button, Card, Modal, Radio, SegmentedControl, Slider } from
 import { useEffect, useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
-import { Point, Area, MediaSize } from 'react-easy-crop/types';
+import type { Point, Area, MediaSize } from 'react-easy-crop/types';
 import { IconZoomIn, IconZoomOut } from '@tabler/icons-react';
 import { getCroppedImg } from '~/utils/image-utils';
 import clsx from 'clsx';

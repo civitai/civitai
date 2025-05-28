@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { Tracker } from './clickhouse/client';

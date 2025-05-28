@@ -1,4 +1,5 @@
-import { SegmentedControlProps, SegmentedControl, SegmentedControlItem } from '@mantine/core';
+import type { SegmentedControlProps, SegmentedControlItem } from '@mantine/core';
+import { SegmentedControl } from '@mantine/core';
 import { useMemo } from 'react';
 
 type SegmentedControlItemProps<T> = Omit<SegmentedControlItem, 'value'> & { value: T };

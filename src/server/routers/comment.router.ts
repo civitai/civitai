@@ -16,9 +16,9 @@ import { toggleReactionHandler } from '~/server/controllers/reaction.controller'
 import { dbRead } from '~/server/db/client';
 import { rateLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import type { CommentUpsertInput } from '~/server/schema/comment.schema';
 import {
   commentRateLimits,
-  CommentUpsertInput,
   commentUpsertInput,
   getAllCommentsSchema,
   getCommentCountByModelSchema,

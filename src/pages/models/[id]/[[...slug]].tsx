@@ -49,7 +49,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -110,7 +110,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
-import { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
@@ -123,7 +123,7 @@ import {
   ModelStatus,
   ModelType,
 } from '~/shared/utils/prisma/enums';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

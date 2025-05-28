@@ -1,9 +1,10 @@
 import type { SessionUser } from 'next-auth';
 import { getToken } from 'next-auth/jwt';
-import { NextRequest, NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
 import { civitaiTokenCookieName } from '~/libs/auth';
 import { apiCacheMiddleware } from '~/server/middleware/api-cache.middleware';
-import { Middleware } from '~/server/middleware/middleware-utils';
+import type { Middleware } from '~/server/middleware/middleware-utils';
 import { redirectsMiddleware } from '~/server/middleware/redirects.middleware';
 import { routeGuardsMiddleware } from '~/server/middleware/route-guards.middleware';
 

@@ -1,11 +1,12 @@
 import { showNotification } from '@mantine/notifications';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { useEffect } from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { colorDomains, ColorDomain } from '~/server/common/constants';
-import { EncryptedDataSchema } from '~/server/schema/civToken.schema';
+import type { ColorDomain } from '~/server/common/constants';
+import { colorDomains } from '~/server/common/constants';
+import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
 
 async function getSyncToken(syncAccount: ColorDomain = 'blue') {
   const domain = colorDomains[syncAccount];

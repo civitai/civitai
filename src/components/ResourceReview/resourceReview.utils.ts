@@ -3,12 +3,12 @@ import produce from 'immer';
 import { useMemo } from 'react';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
+import type {
   GetRatingTotalsInput,
   GetResourceReviewsInfiniteInput,
   GetUserResourceReviewInput,
 } from '~/server/schema/resourceReview.schema';
-import { ResourceReviewPaged, ResourceReviewRatingTotals } from '~/types/router';
+import type { ResourceReviewPaged, ResourceReviewRatingTotals } from '~/types/router';
 import { queryClient, trpc } from '~/utils/trpc';
 
 export const useCreateResourceReview = () => {

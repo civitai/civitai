@@ -1,5 +1,6 @@
-import { Card, CardProps, Center, Loader, Text } from '@mantine/core';
-import { CSSProperties } from 'react';
+import type { CardProps } from '@mantine/core';
+import { Card, Center, Loader, Text } from '@mantine/core';
+import type { CSSProperties } from 'react';
 import { getAssistantUUID } from '~/components/Assistant/AssistantButton';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { isProd } from '~/env/other';

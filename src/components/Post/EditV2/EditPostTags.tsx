@@ -17,7 +17,7 @@ import { IconPlus, IconStar, IconX } from '@tabler/icons-react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
-import { PostDetailEditable } from '~/server/services/post.service';
+import type { PostDetailEditable } from '~/server/services/post.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

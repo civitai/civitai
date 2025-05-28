@@ -1,11 +1,12 @@
 import { createServerSideHelpers } from '@trpc/react-query/server';
-import { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
-import { Session } from 'next-auth';
+import type { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
+import type { Session } from 'next-auth';
 import superjson from 'superjson';
 import { Tracker } from '~/server/clickhouse/client';
 
 import { appRouter } from '~/server/routers';
-import { FeatureAccess, getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
 export const getServerProxySSGHelpers = async (

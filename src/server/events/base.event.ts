@@ -1,15 +1,9 @@
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
-import {
-  redis,
-  REDIS_KEYS,
-  REDIS_SUB_KEYS,
-  REDIS_SYS_KEYS,
-  RedisKeyTemplateCache,
-  sysRedis,
-} from '~/server/redis/client';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 // Disable pod memory keeping for now... We might not need it.
 // const manualAssignments: Record<string, Record<string, string>> = {};

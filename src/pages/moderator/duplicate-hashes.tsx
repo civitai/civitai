@@ -1,6 +1,6 @@
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Text, Pagination, Badge, SegmentedControl } from '@mantine/core';
 import { useState, useMemo } from 'react';

@@ -1,9 +1,10 @@
-import { IndexUiState, UiState } from 'instantsearch.js';
+import type { IndexUiState, UiState } from 'instantsearch.js';
 import { z } from 'zod';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
-import { InstantSearchRoutingParser, searchParamsSchema } from './base';
+import type { InstantSearchRoutingParser } from './base';
+import { searchParamsSchema } from './base';
 
 export const ImagesSearchIndexSortBy = [
   IMAGES_SEARCH_INDEX,

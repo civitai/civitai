@@ -3,8 +3,7 @@ import { logToAxiom } from '../logging/client';
 import { grantBuzzPurchase } from './buzz.service';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import Decimal from 'decimal.js';
-import { CreatePaymentInvoiceInput } from '~/server/schema/nowpayments.schema';
-import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
+import type { CreatePaymentInvoiceInput } from '~/server/schema/nowpayments.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
 

@@ -1,10 +1,10 @@
-import {
+import type {
   Workflow as GeneratedWorkflow,
   WorkflowStep,
   TextToImageStep,
   WorkflowCost,
 } from '@civitai/client';
-import { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
+import type { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 
 export * from './comfy/comfy.types';
 

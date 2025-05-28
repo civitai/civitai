@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { ImageGetInfinite } from '~/types/router';
+import type { ImageGetInfinite } from '~/types/router';
 
 export type ImagesContextState = {
   images?: ImageGetInfinite;

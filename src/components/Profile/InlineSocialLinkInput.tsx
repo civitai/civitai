@@ -1,10 +1,10 @@
+import type { InputWrapperProps } from '@mantine/core';
 import {
   ActionIcon,
   Button,
   Divider,
   Group,
   Input,
-  InputWrapperProps,
   LoadingOverlay,
   Paper,
   Stack,
@@ -17,7 +17,7 @@ import { useDidUpdate } from '@mantine/hooks';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { zc } from '~/utils/schema-helpers';
 import { isEqual } from 'lodash-es';
-import { LinkType } from '~/shared/utils/prisma/enums';
+import type { LinkType } from '~/shared/utils/prisma/enums';
 
 type InlineSocialLinkInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: { url: string; id?: number; type: LinkType }[];

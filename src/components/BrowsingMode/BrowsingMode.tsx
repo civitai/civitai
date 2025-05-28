@@ -10,7 +10,8 @@ import {
   Anchor,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconAlertTriangle, IconEyeExclamation, IconProps, IconSword } from '@tabler/icons-react';
+import type { IconProps } from '@tabler/icons-react';
+import { IconAlertTriangle, IconEyeExclamation, IconSword } from '@tabler/icons-react';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';

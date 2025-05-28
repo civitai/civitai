@@ -1,6 +1,7 @@
-import { Alert, AlertProps, Group, MantineColor, ThemeIcon, Text, Stack } from '@mantine/core';
-import { MantineNumberSize } from '@mantine/styles';
-import { ReactNode } from 'react';
+import type { AlertProps, MantineColor } from '@mantine/core';
+import { Alert, Group, ThemeIcon, Text, Stack } from '@mantine/core';
+import type { MantineNumberSize } from '@mantine/styles';
+import type { ReactNode } from 'react';
 
 export const AlertWithIcon = ({
   icon,

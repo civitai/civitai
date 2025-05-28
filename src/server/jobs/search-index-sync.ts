@@ -1,5 +1,6 @@
 import * as searchIndex from '~/server/search-index';
-import { createJob, JobContext, UNRUNNABLE_JOB_CRON } from './job';
+import type { JobContext } from './job';
+import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 
 const searchIndexSets = {
   models: searchIndex.modelsSearchIndex,

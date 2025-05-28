@@ -2,7 +2,8 @@ import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { webhookProcessors } from '~/server/webhooks/utils.webhooks';
 import { createLogger } from '~/utils/logging';
-import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import type { Task } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const log = createLogger('jobs', 'green');
 

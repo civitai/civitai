@@ -2,17 +2,18 @@ import { useHotkeys, useLocalStorage, useOs } from '@mantine/hooks';
 import { useState, useEffect, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
-import { ConnectProps, ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
+import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
+import { ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import useIsClient from '~/hooks/useIsClient';
-import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
-import { MediaType } from '~/shared/utils/prisma/enums';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { EmblaCarouselType } from 'embla-carousel';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 
 type ImageDetailCarouselProps = {

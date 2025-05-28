@@ -17,7 +17,7 @@ import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRati
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { constants } from '~/server/common/constants';
-import { ClubMembershipOnClub, ClubTier } from '~/types/router';
+import type { ClubMembershipOnClub, ClubTier } from '~/types/router';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';

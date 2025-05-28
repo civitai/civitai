@@ -4,22 +4,17 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import singletonRouter from 'next/router';
-import { InstantSearchProps } from 'react-instantsearch';
+import type { InstantSearchProps } from 'react-instantsearch';
 import { createInstantSearchRouterNext } from 'react-instantsearch-router-nextjs';
-import { InstantSearchRoutingParser, SearchIndex } from './parsers/base';
-import { ImageSearchParams, imagesInstantSearchRoutingParser } from './parsers/image.parser';
-import {
-  modelInstantSearchRoutingParser,
-  ModelSearchParams,
-} from '~/components/Search/parsers/model.parser';
-import {
-  ArticleSearchParams,
-  articlesInstantSearchRoutingParser,
-} from '~/components/Search/parsers/article.parser';
-import {
-  UserSearchParams,
-  usersInstantSearchRoutingParser,
-} from '~/components/Search/parsers/user.parser';
+import type { InstantSearchRoutingParser, SearchIndex } from './parsers/base';
+import type { ImageSearchParams } from './parsers/image.parser';
+import { imagesInstantSearchRoutingParser } from './parsers/image.parser';
+import type { ModelSearchParams } from '~/components/Search/parsers/model.parser';
+import { modelInstantSearchRoutingParser } from '~/components/Search/parsers/model.parser';
+import type { ArticleSearchParams } from '~/components/Search/parsers/article.parser';
+import { articlesInstantSearchRoutingParser } from '~/components/Search/parsers/article.parser';
+import type { UserSearchParams } from '~/components/Search/parsers/user.parser';
+import { usersInstantSearchRoutingParser } from '~/components/Search/parsers/user.parser';
 import {
   ARTICLES_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
@@ -29,19 +24,13 @@ import {
   USERS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
 } from '~/server/common/constants';
-import {
-  CollectionSearchParams,
-  collectionsInstantSearchRoutingParser,
-} from '~/components/Search/parsers/collection.parser';
-import {
-  bountiesInstantSearchRoutingParser,
-  BountySearchParams,
-} from '~/components/Search/parsers/bounties.parser';
+import type { CollectionSearchParams } from '~/components/Search/parsers/collection.parser';
+import { collectionsInstantSearchRoutingParser } from '~/components/Search/parsers/collection.parser';
+import type { BountySearchParams } from '~/components/Search/parsers/bounties.parser';
+import { bountiesInstantSearchRoutingParser } from '~/components/Search/parsers/bounties.parser';
 import { searchIndexMap } from '~/components/Search/search.types';
-import {
-  ToolSearchParams,
-  toolsInstantSearchRoutingParser,
-} from '~/components/Search/parsers/tool.parser';
+import type { ToolSearchParams } from '~/components/Search/parsers/tool.parser';
+import { toolsInstantSearchRoutingParser } from '~/components/Search/parsers/tool.parser';
 
 type StoreState = {
   models: ModelSearchParams;

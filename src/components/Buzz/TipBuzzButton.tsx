@@ -1,4 +1,5 @@
-import { Button, ButtonProps, Group, useMantineTheme } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Group, useMantineTheme } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

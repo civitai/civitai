@@ -1,8 +1,8 @@
 import { chunk } from 'lodash-es';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbReadLong } from '~/server/db/pgDb';

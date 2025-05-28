@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';

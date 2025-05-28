@@ -4,7 +4,7 @@ import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
-import { VideoMetadata } from '~/server/schema/media.schema';
+import type { VideoMetadata } from '~/server/schema/media.schema';
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom(

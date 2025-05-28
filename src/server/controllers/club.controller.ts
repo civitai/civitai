@@ -4,18 +4,18 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import {
+import type {
   GetClubTiersInput,
   GetInfiniteClubSchema,
   GetPaginatedClubResourcesSchema,
   RemoveClubResourceInput,
-  supportedClubEntities,
   SupportedClubEntities,
   UpdateClubResourceInput,
   UpsertClubInput,
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
+import { supportedClubEntities } from '~/server/schema/club.schema';
 import {
   deleteClub,
   deleteClubTier,
@@ -31,14 +31,14 @@ import {
   upsertClubTier,
   userContributingClubs,
 } from '~/server/services/club.service';
-import { GetByEntityInput, GetByIdInput } from '~/server/schema/base.schema';
-import { Context } from '~/server/createContext';
+import type { GetByEntityInput, GetByIdInput } from '~/server/schema/base.schema';
+import type { Context } from '~/server/createContext';
 import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { getAllBounties, getImagesForBounties } from '~/server/services/bounty.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { isDefined } from '~/utils/type-guards';
 import { imageSelect } from '~/server/selectors/image.selector';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 export async function getClubHandler({ input, ctx }: { input: GetByIdInput; ctx: Context }) {

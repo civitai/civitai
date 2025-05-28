@@ -25,7 +25,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { BuzzWithdrawalRequestStatus, Currency } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
-import { GetPaginatedOwnedBuzzWithdrawalRequestSchema } from '../../../server/schema/buzz-withdrawal-request.schema';
+import type { GetPaginatedOwnedBuzzWithdrawalRequestSchema } from '../../../server/schema/buzz-withdrawal-request.schema';
 import { formatDate } from '../../../utils/date-helpers';
 import {
   formatCurrencyForDisplay,

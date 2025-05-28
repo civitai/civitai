@@ -1,8 +1,8 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dataForModelsCache } from '~/server/redis/caches';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
+import type { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { updateModelEarlyAccessDeadline } from '~/server/services/model.service';

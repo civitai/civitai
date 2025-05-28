@@ -1,11 +1,13 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
-import { Prisma, PrismaClient, User } from '@prisma/client';
+import type { Prisma, PrismaClient, User } from '@prisma/client';
 import dayjs from 'dayjs';
-import { NextApiRequest, NextApiResponse } from 'next';
-import NextAuth, { type NextAuthOptions, Session } from 'next-auth';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Session } from 'next-auth';
+import NextAuth, { type NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import DiscordProvider from 'next-auth/providers/discord';
-import EmailProvider, { SendVerificationRequestParams } from 'next-auth/providers/email';
+import type { SendVerificationRequestParams } from 'next-auth/providers/email';
+import EmailProvider from 'next-auth/providers/email';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
