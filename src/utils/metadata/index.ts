@@ -16,8 +16,8 @@ import { swarmUIMetadataProcessor } from '~/utils/metadata/swarmui.metadata';
 const parsers = {
   automatic: automaticMetadataProcessor,
   swarmui: swarmUIMetadataProcessor,
-  comfy: comfyMetadataProcessor,
   rfooocus: rfooocusMetadataProcessor,
+  comfy: comfyMetadataProcessor,
 };
 
 export async function ExifParser(file: File | string) {

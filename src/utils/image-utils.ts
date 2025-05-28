@@ -3,7 +3,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { TagType } from '~/shared/utils/prisma/enums';
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
-import { ExifParser } from '~/utils/metadata';
+import { ExifParser, encodeMetadata } from '~/utils/metadata';
 import {
   createExifSegmentWithUserComment,
   encodeUserCommentUTF16BE,
@@ -258,7 +258,7 @@ async function canvasToBlobWithImageExif(canvas: HTMLCanvasElement, src: File | 
   const metadata = await parser.getMetadata();
   const dataUrl = canvas.toDataURL('image/jpeg');
 
-  const userComment = encodeUserCommentUTF16BE(parser.encode(metadata));
+  const userComment = encodeUserCommentUTF16BE(encodeMetadata(metadata));
   const exifSegment = createExifSegmentWithUserComment(userComment);
   const jpegBytes = Buffer.from(dataUrl.split(',')[1], 'base64');
   const soi = Uint8Array.prototype.slice.call(jpegBytes, 0, 2); // FFD8
