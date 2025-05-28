@@ -4102,6 +4102,8 @@ export async function updateImageNsfwLevel({
       update: { nsfwLevel },
     });
   }
+
+  return nsfwLevel;
 }
 
 type ImageRatingRequestResponse = {
