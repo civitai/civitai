@@ -56,7 +56,9 @@ export function getClient(
     // trying this for leaderboard job
     idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
-      instance === 'primaryRead' || instance === 'notificationRead'
+      instance === 'notificationRead'
+        ? undefined // standby seems to not support this
+        : instance === 'primaryRead'
         ? env.DATABASE_READ_TIMEOUT
         : env.DATABASE_WRITE_TIMEOUT,
     application_name: `${appBaseName}${env.PODNAME ? '-' + env.PODNAME : ''}`,
