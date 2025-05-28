@@ -13,6 +13,7 @@ export namespace Coinbase {
     metadata: z
       .object({
         buzzAmount: z.number().optional(),
+        internalOrderId: z.string().optional(),
       })
       .passthrough()
       .optional(),

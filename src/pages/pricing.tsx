@@ -172,27 +172,28 @@ export default function Pricing() {
               </AlertWithIcon>
             </Center>
           )}
-          {features.cryptoPayments && features.disablePayments && (
-            <Center>
-              <AlertWithIcon
-                color="yellow"
-                iconColor="yellow"
-                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
-                iconSize={28}
-                py={11}
-                maw="calc(50% - 8px)"
-              >
-                <Stack spacing={0}>
-                  <Text lh={1.2}>
-                    You can still purchase Buzz using crypto!{' '}
-                    <Anchor href="/purchase/buzz" color="yellow.7">
-                      Buy now
-                    </Anchor>
-                  </Text>
-                </Stack>
-              </AlertWithIcon>
-            </Center>
-          )}
+          {(features.nowpaymentPayments || features.coinbasePayments) &&
+            features.disablePayments && (
+              <Center>
+                <AlertWithIcon
+                  color="yellow"
+                  iconColor="yellow"
+                  icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+                  iconSize={28}
+                  py={11}
+                  maw="calc(50% - 8px)"
+                >
+                  <Stack spacing={0}>
+                    <Text lh={1.2}>
+                      You can still purchase Buzz using crypto!{' '}
+                      <Anchor href="/purchase/buzz" color="yellow.7">
+                        Buy now
+                      </Anchor>
+                    </Text>
+                  </Stack>
+                </AlertWithIcon>
+              </Center>
+            )}
           {subscription?.isBadState && (
             <AlertWithIcon
               color="red"

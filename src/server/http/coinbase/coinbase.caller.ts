@@ -54,9 +54,9 @@ class CoinbaseCaller extends HttpCaller {
       throw new Error(`Failed to create charge: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const json = await response.json();
 
-    return data as Coinbase.CreateChargeResponseSchema;
+    return json.data as Coinbase.CreateChargeResponseSchema;
   }
 
   async getCharge(chargeOrOrderId: string | number) {
@@ -66,9 +66,9 @@ class CoinbaseCaller extends HttpCaller {
       throw new Error(`Failed to get charge: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const json = await response.json();
 
-    return data as Coinbase.CreateChargeResponseSchema;
+    return json.data as Coinbase.CreateChargeResponseSchema;
   }
 }
 

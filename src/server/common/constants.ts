@@ -1353,6 +1353,7 @@ export const buzzBulkBonusMultipliers = [
 ];
 
 export const NOW_PAYMENTS_FIXED_FEE = 100; // !.00 USD
+export const COINBASE_FIXED_FEE = 100; // !.00 USD
 
 export const specialCosmeticRewards = {
   annualRewards: {
