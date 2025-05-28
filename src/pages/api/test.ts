@@ -1,44 +1,66 @@
-// import Decimal from 'decimal.js';
-// import { NextApiRequest, NextApiResponse } from 'next';
-// import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
-// import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import Decimal from 'decimal.js';
+import { NextApiRequest, NextApiResponse } from 'next';
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
+import { searchClient } from '~/server/meilisearch/client';
+import { modelsSearchIndex } from '~/server/search-index';
+import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { sleep } from '~/utils/errorHandling';
 
-// export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-//   const payment = await nowpaymentsCaller.getPaymentStatus(6240773483);
-//   if (!payment) {
-//     return res.status(500).json({
-//       error: 'Failed to retrieve payment status',
-//     });
-//   }
+export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
+  const index = await searchClient?.index(MODELS_SEARCH_INDEX);
 
-//   const estimate = await nowpaymentsCaller.getPriceEstimate({
-//     amount: payment?.price_amount as number,
-//     currency_from: 'usd', // We only do USD
-//     currency_to: payment?.pay_currency as string,
-//   });
+  if (!index) {
+    res.status(500).json({ error: 'Search index not available' });
+    return;
+  }
 
-//   if (!estimate) {
-//     return res.status(500).json({
-//       error: 'Failed to get estimate',
-//     });
-//   }
+  const limit = 100000;
+  const filter = ['canGenerate = true'];
 
-//   const ratio = new Decimal(estimate?.estimated_amount).dividedBy(
-//     new Decimal(estimate?.amount_from)
-//   );
+  let cursor = 0;
+  let endCursor = cursor + limit;
 
-//   const buzzValueUsd = new Decimal(payment.actually_paid as string | number).dividedBy(ratio);
+  const { hits } = await index.search('', {
+    offset: 0,
+    limit: 1,
+    sort: ['id:desc'],
+    filter,
+  });
 
-//   const buzzAmount = Number(payment?.order_id.split('-')[1] as string);
-//   const estimateToBuzz = Math.floor(buzzValueUsd.mul(1000).toNumber());
-//   const toPay = Math.min(estimateToBuzz, buzzAmount);
+  if (hits.length === 0) {
+    return;
+  }
 
-//   res.status(200).json({
-//     payment,
-//     estimate,
-//     buzzAmount,
-//     estimateToBuzz,
-//     toPay,
-//     ratio,
-//   });
-// });
+  // Play it safe:
+  endCursor = Math.max(hits[0].id + 1, endCursor);
+
+  const ids = [];
+
+  while (cursor < endCursor) {
+    const end = cursor + limit;
+    const { hits: canGenerateItems } = await index?.search('', {
+      limit,
+      attributesToRetrieve: ['id', 'canGenerate'],
+      sort: ['id:asc'],
+      filter: [...filter, `id >= ${cursor} AND id < ${end}`],
+    });
+
+    ids.push(...canGenerateItems.map((item) => item.id));
+    console.log('Fetched IDs :: ', canGenerateItems.length, { cursor, end });
+    modelsSearchIndex.queueUpdate(
+      canGenerateItems.map((item) => ({
+        id: item.id,
+        action: SearchIndexUpdateQueueAction.Update,
+      }))
+    );
+
+    cursor = end;
+    await sleep(1000); // Sleep to avoid rate limiting
+  }
+
+  res.status(200).json({
+    quantity: ids.length,
+  });
+});

@@ -47,7 +47,7 @@ export const createBuzzOrder = async (input: CreatePaymentInvoiceInput & { userI
   return invoice;
 };
 
-export const processBuzzOrder = async (paymentId: string | number) => {
+export const processBuzzOrder = async (paymentId: string | number, webhookStatus?: string) => {
   const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
 
   if (!payment) {
@@ -59,8 +59,9 @@ export const processBuzzOrder = async (paymentId: string | number) => {
     throw new Error('Could not retrieve invoice data');
   }
 
-  const isPaid = payment.payment_status === 'finished';
-  const isPartiallyPaid = payment.payment_status === 'partially_paid';
+  const isPaid = payment.payment_status === 'finished' || webhookStatus === 'finished';
+  const isPartiallyPaid =
+    payment.payment_status === 'partially_paid' || webhookStatus === 'partially_paid';
   const [userId, buzzAmount] = payment.order_id.split('-').map((x) => parseInt(x));
 
   let toPay: number | undefined = undefined;
@@ -185,8 +186,9 @@ export const processBuzzOrder = async (paymentId: string | number) => {
     }
 
     if (payment.payment_status !== 'waiting') {
-      log({
+      await log({
         message: 'Event with payment handled...',
+        webhookStatus,
         ...payment,
       });
     }
