@@ -62,7 +62,7 @@ import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
-import { UserSettingsSchema } from '~/server/schema/user.schema';
+import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags, serverDomainMap } from '~/server/services/feature-flags.service';
 import { parseCookies, ParsedCookies } from '~/shared/utils';
