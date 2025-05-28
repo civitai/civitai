@@ -21,7 +21,13 @@ const parsers = {
 };
 
 export async function ExifParser(file: File | string) {
-  const tags = await ExifReader.load(file, { includeUnknown: true });
+  let tags: ExifReader.Tags = {};
+  try {
+    tags = await ExifReader.load(file, { includeUnknown: true });
+  } catch (e) {
+    console.error('failed to read exif data');
+  }
+
   const exif = Object.entries(tags).reduce((acc, [key, value]) => {
     acc[key] = value.value;
     return acc;

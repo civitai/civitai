@@ -22,7 +22,7 @@ export const getVideoData = async (src: string) =>
       resolve({
         width,
         height,
-        hash: createBlurHash(video, width, height),
+        hash: createBlurHash(video),
         duration: Math.round(video.duration * 1000) / 1000,
         audio,
       });

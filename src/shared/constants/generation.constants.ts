@@ -14,7 +14,7 @@ import { GenerationLimits } from '~/server/schema/generation.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
-import { getImageData } from '~/utils/media-preprocessors';
+import { getImageDimensions } from '~/utils/image-utils';
 import { findClosest } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
@@ -45,7 +45,7 @@ export function getRoundedWidthHeight({ width, height }: { width: number; height
 }
 
 export async function getSourceImageFromUrl({ url, upscale }: { url: string; upscale?: boolean }) {
-  return getImageData(url).then(({ width, height }) => {
+  return getImageDimensions(url).then(({ width, height }) => {
     let upscaleWidth: number | undefined;
     let upscaleHeight: number | undefined;
     if (upscale) {

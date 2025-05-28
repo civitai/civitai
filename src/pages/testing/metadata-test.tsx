@@ -16,7 +16,8 @@ import { useEffect, useState } from 'react';
 import { isProd } from '~/env/other';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { createImageElement } from '~/utils/image-utils';
+import { blobToFile } from '~/utils/file-utils';
+import { createImageElement, imageToJpegBlob } from '~/utils/image-utils';
 import { getMetadata, encodeMetadata, ExifParser } from '~/utils/metadata';
 import { auditMetaData } from '~/utils/metadata/audit';
 
@@ -27,8 +28,13 @@ export default function MetadataTester() {
 
   const onDrop = async (files: File[]) => {
     console.log({ files });
-    const [file] = files;
+    // const [file] = files;
+    const jpegBlob = await imageToJpegBlob(files[0]);
+    const file = await blobToFile(jpegBlob);
+
     const parser = await ExifParser(file);
+    const parsed = parser.parse();
+    console.log({ parsed });
     const meta = await parser.getMetadata();
     const encoded = parser.encode(meta);
     // const meta = await getMetadata(file);

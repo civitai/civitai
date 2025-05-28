@@ -1,5 +1,4 @@
 import { Input, InputWrapperProps, CloseButton, Alert } from '@mantine/core';
-import { getImageData } from '~/utils/media-preprocessors';
 import { trpc } from '~/utils/trpc';
 import { useEffect, useState } from 'react';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
@@ -7,7 +6,7 @@ import { maxOrchestratorImageFileSize, maxUpscaleSize } from '~/server/common/co
 import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
 import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
-import { imageToJpegBlob, resizeImage } from '~/utils/image-utils';
+import { getImageDimensions, imageToJpegBlob, resizeImage } from '~/utils/image-utils';
 import { uniqBy } from 'lodash-es';
 import { getMetadata } from '~/utils/metadata';
 import clsx from 'clsx';
@@ -60,7 +59,7 @@ export function SourceImageUpload({
   }
 
   function handleUrlChange(url: string) {
-    getImageData(url).then(({ width, height }) => {
+    getImageDimensions(url).then(({ width, height }) => {
       setError(null);
       handleWarnOnMissingAiMetadata(null);
       onChange?.({ url, width, height });

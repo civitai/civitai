@@ -27,11 +27,20 @@ export async function imageToBlurhash(url: string) {
 export async function createImageElement(src: string | Blob | File) {
   const objectUrl = typeof src === 'string' ? src : URL.createObjectURL(src);
   return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.addEventListener('load', () => resolve(image));
-    image.addEventListener('error', (error) => reject(error));
-    image.src = objectUrl;
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.addEventListener('load', () => resolve(img));
+    img.addEventListener('error', (error) => reject(error));
+    img.src = objectUrl;
   });
+}
+
+export async function getImageDimensions(src: string | Blob | File) {
+  const img = await createImageElement(src);
+  return {
+    width: img.width,
+    height: img.height,
+  };
 }
 
 export async function imageToJpegBlob(src: string | Blob | File) {
@@ -162,15 +171,6 @@ export function isValidAIGeneration(image: ImageForAiVerification) {
   return !hasNsfwTag;
 }
 
-export const createImage = (url: string): Promise<HTMLImageElement> =>
-  new Promise((resolve, reject) => {
-    const image = new Image();
-    image.addEventListener('load', () => resolve(image));
-    image.addEventListener('error', (error) => reject(error));
-    image.setAttribute('crossOrigin', 'anonymous'); // needed to avoid cross-origin issues on CodeSandbox
-    image.src = url;
-  });
-
 export function getRadianAngle(degreeValue: number) {
   return (degreeValue * Math.PI) / 180;
 }
@@ -196,7 +196,7 @@ export async function getCroppedImg(
   rotation = 0,
   flip = { horizontal: false, vertical: false }
 ) {
-  const image = await createImage(imageSrc);
+  const image = await createImageElement(imageSrc);
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
 
