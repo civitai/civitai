@@ -4,7 +4,7 @@ import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { AddViewSchema } from '~/server/schema/track.schema';
+import type { AddViewSchema } from '~/server/schema/track.schema';
 import { trpc } from '~/utils/trpc';
 
 export function TrackView({

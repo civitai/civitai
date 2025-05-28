@@ -1,4 +1,4 @@
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { userContributingClubs } from '~/server/services/club.service';
 import {
@@ -11,7 +11,7 @@ import {
   upsertClubAdminInvite,
 } from '~/server/services/clubAdmin.service';
 import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
-import {
+import type {
   AcceptClubAdminInviteInput,
   DeleteClubAdminInput,
   DeleteClubAdminInviteInput,

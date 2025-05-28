@@ -1,16 +1,17 @@
-import { Logger, withAxiom } from '@civitai/next-axiom';
+import type { Logger } from '@civitai/next-axiom';
+import { withAxiom } from '@civitai/next-axiom';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from 'dayjs';
 import { isArray } from 'lodash-es';
-import { NextApiRequest, NextApiResponse } from 'next';
-import { Session, SessionUser } from 'next-auth';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Session, SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
-import { Partner } from '~/shared/utils/prisma/models';
+import type { Partner } from '~/shared/utils/prisma/models';
 import { isDefined } from '~/utils/type-guards';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };

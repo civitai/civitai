@@ -4,7 +4,7 @@ import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction, getMultipliersForUser } from './buzz.service';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import Decimal from 'decimal.js';
-import { CreatePaymentInvoiceInput } from '~/server/schema/nowpayments.schema';
+import type { CreatePaymentInvoiceInput } from '~/server/schema/nowpayments.schema';
 import { NOW_PAYMENTS_FIXED_FEE, specialCosmeticRewards } from '~/server/common/constants';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';

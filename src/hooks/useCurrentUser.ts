@@ -1,7 +1,5 @@
-import {
-  CurrentUser,
-  useCivitaiSessionContext,
-} from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import type { CurrentUser } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { AuthorizationError } from '~/utils/errorHandling';
 import { postgresSlugify } from '~/utils/string-helpers';
 

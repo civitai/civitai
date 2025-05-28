@@ -1,7 +1,8 @@
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { AugmentedPool, templateHandler } from '~/server/db/db-helpers';
-import { JobContext } from '~/server/jobs/job';
-import { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import type { AugmentedPool } from '~/server/db/db-helpers';
+import { templateHandler } from '~/server/db/db-helpers';
+import type { JobContext } from '~/server/jobs/job';
+import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 
 export function getAffected(ctx: MetricProcessorRunContext) {
   return templateHandler(async (sql) => {

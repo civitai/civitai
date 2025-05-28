@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
-import { Context } from '~/server/createContext';
-import { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
+import type { Context } from '~/server/createContext';
+import type { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -16,8 +16,8 @@ import {
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
-import { GetByIdInput } from './../schema/base.schema';
-import { CommentConnectorInput, UpsertCommentV2Input } from './../schema/commentv2.schema';
+import type { GetByIdInput } from './../schema/base.schema';
+import type { CommentConnectorInput, UpsertCommentV2Input } from './../schema/commentv2.schema';
 import {
   deleteComment,
   getComment,

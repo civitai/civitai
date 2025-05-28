@@ -1,4 +1,4 @@
-import { MochiVideoGenInput } from '@civitai/client';
+import type { MochiVideoGenInput } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {

@@ -10,7 +10,7 @@ import {
 } from '~/components/ResourceReview/resourceReview.utils';
 import { StarRating } from '~/components/StartRating/StarRating';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { ResourceReviewRatingTotals } from '~/types/router';
+import type { ResourceReviewRatingTotals } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 

@@ -1,4 +1,5 @@
-import { AutocompleteItem, Center, Group, Skeleton, Stack, Text } from '@mantine/core';
+import type { AutocompleteItem } from '@mantine/core';
+import { Center, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
@@ -12,10 +13,10 @@ import {
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { abbreviateNumber } from '~/utils/number-helpers';
 

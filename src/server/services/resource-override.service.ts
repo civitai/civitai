@@ -1,6 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
-import { ModelHashType } from '~/shared/utils/prisma/enums';
+import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';

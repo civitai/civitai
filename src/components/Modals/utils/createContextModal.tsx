@@ -1,5 +1,6 @@
-import { ContextModalProps, openContextModal } from '@mantine/modals';
-import { ModalProps } from '@mantine/core';
+import type { ContextModalProps } from '@mantine/modals';
+import { openContextModal } from '@mantine/modals';
+import type { ModalProps } from '@mantine/core';
 
 type ContextProps<T extends Record<string, unknown>> = {
   context: {

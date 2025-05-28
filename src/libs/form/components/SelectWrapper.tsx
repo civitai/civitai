@@ -1,6 +1,8 @@
-import { Group, Loader, Select, SelectItem, SelectProps } from '@mantine/core';
+import type { SelectItem, SelectProps } from '@mantine/core';
+import { Group, Loader, Select } from '@mantine/core';
 import { useMemo, useState, useEffect } from 'react';
-import { PresetOptions, Props as PresetOptionsProps } from './PresetOptions';
+import type { Props as PresetOptionsProps } from './PresetOptions';
+import { PresetOptions } from './PresetOptions';
 
 type SelectItemProps<T extends string | number> = Omit<SelectItem, 'value'> & {
   value: T;

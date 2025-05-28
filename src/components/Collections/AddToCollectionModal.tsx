@@ -20,7 +20,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { IconArrowLeft, IconCalendar, IconPlus } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import {
   Form,
@@ -31,14 +31,12 @@ import {
   useForm,
   InputDatePicker,
 } from '~/libs/form';
-import { AddCollectionItemInput, upsertCollectionInput } from '~/server/schema/collection.schema';
+import type { AddCollectionItemInput } from '~/server/schema/collection.schema';
+import { upsertCollectionInput } from '~/server/schema/collection.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import {
-  PrivacyData,
-  collectionReadPrivacyData,
-  collectionWritePrivacyData,
-} from './collection.utils';
+import type { PrivacyData } from './collection.utils';
+import { collectionReadPrivacyData, collectionWritePrivacyData } from './collection.utils';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';

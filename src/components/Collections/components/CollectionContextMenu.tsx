@@ -1,4 +1,5 @@
-import { Menu, MenuProps } from '@mantine/core';
+import type { MenuProps } from '@mantine/core';
+import { Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconEdit, IconHome, IconPencil, IconTrash } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -7,9 +8,9 @@ import { useMemo } from 'react';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
+import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';

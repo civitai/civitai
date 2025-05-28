@@ -1,6 +1,6 @@
 import { ActionIcon, Button, Group, Menu, Stack, useMantineTheme, Card } from '@mantine/core';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { GetAnswersProps } from '~/server/controllers/answer.controller';
+import type { GetAnswersProps } from '~/server/controllers/answer.controller';
 import { useState } from 'react';
 import { AnswerForm } from '~/components/Questions/AnswerForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -10,7 +10,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { AnswerVotes } from '~/components/Questions/AnswerVotes';
 import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
-import { QuestionDetailProps } from '~/server/controllers/question.controller';
+import type { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { trpc } from '~/utils/trpc';
 import { QuestionAnswerComments } from '~/components/Questions/QuestionAnswerComments';

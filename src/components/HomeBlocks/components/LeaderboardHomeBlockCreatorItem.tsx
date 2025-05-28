@@ -3,10 +3,10 @@ import { IconCrown, IconTrophy } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { LeaderboardGetModel } from '~/types/router';
+import type { LeaderboardGetModel } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { LeaderboardWithResults } from '~/server/services/leaderboard.service';
+import type { LeaderboardWithResults } from '~/server/services/leaderboard.service';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 const useStyles = createStyles(() => ({

@@ -11,12 +11,10 @@ import {
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
 import { generationConfig } from '~/server/common/constants';
-import {
-  SourceImageProps,
-  sourceImageSchema,
-} from '~/server/orchestrator/infrastructure/base.schema';
-import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
+import type { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';

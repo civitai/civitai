@@ -1,8 +1,8 @@
 // This example is for an Editor with `ReactEditor` and `HistoryEditor`
-import { BaseEditor, Descendant } from 'slate';
-import { ReactEditor } from 'slate-react';
-import { HistoryEditor } from 'slate-history';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import type { BaseEditor, Descendant } from 'slate';
+import type { ReactEditor } from 'slate-react';
+import type { HistoryEditor } from 'slate-history';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 
 export type CustomEditor = BaseEditor & ReactEditor & HistoryEditor;
 

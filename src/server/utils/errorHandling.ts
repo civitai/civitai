@@ -1,9 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
+import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '../logging/client';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import type { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',

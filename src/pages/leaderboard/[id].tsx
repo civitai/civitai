@@ -1,3 +1,4 @@
+import type { MantineSize, SegmentedControlProps } from '@mantine/core';
 import {
   ActionIcon,
   Badge,
@@ -8,7 +9,6 @@ import {
   Drawer,
   Group,
   Loader,
-  MantineSize,
   NavLink,
   Popover,
   Stack,
@@ -16,7 +16,6 @@ import {
   Title,
   createStyles,
   SegmentedControl,
-  SegmentedControlProps,
   Alert,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';

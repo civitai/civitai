@@ -11,7 +11,10 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { GetAllModelsInput, ToggleCheckpointCoverageInput } from '~/server/schema/model.schema';
+import type {
+  GetAllModelsInput,
+  ToggleCheckpointCoverageInput,
+} from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
 import {
   Availability,

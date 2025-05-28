@@ -1,4 +1,5 @@
-import { InfiniteData, useIsMutating } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
+import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import dynamic from 'next/dynamic';
@@ -14,7 +15,7 @@ import {
   SignalMessages,
   SignalTopic,
 } from '~/server/common/enums';
-import {
+import type {
   AddImageRatingInput,
   GetHistoryInput,
   GetImagesQueueSchema,
@@ -22,7 +23,7 @@ import {
 } from '~/server/schema/games/new-order.schema';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
-import { GetImagesQueueItem, GetPlayersItem } from '~/types/router';
+import type { GetImagesQueueItem, GetPlayersItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
 

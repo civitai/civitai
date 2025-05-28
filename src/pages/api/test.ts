@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';

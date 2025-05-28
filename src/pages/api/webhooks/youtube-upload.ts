@@ -2,7 +2,7 @@ import { env } from 'process';
 import sanitize from 'sanitize-html';
 import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { VideoMetadata } from '~/server/schema/media.schema';
+import type { VideoMetadata } from '~/server/schema/media.schema';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getYoutubeAuthClient, updateYoutubeVideo } from '~/server/youtube/client';
 

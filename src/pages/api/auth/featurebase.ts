@@ -1,5 +1,5 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { Session } from 'next-auth';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Session } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server';
 import { createFeaturebaseToken } from '~/server/integrations/featurebase';

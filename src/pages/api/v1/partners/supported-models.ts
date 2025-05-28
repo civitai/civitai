@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { Partner } from '~/shared/utils/prisma/models';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { Partner } from '~/shared/utils/prisma/models';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { PartnerEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';

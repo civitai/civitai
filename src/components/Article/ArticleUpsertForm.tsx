@@ -1,14 +1,12 @@
+import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
 import {
   Anchor,
   Button,
-  ButtonProps,
   Group,
   Stack,
-  StackProps,
   Text,
   Title,
   Tooltip,
-  TooltipProps,
   createStyles,
   ActionIcon,
   Paper,
@@ -50,7 +48,7 @@ import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsing
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider'
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -194,7 +192,11 @@ export function ArticleUpsertForm({ article }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this article."} />
+      <ReadOnlyAlert
+        message={
+          "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this article."
+        }
+      />
       <ContainerGrid gutter="xl">
         <ContainerGrid.Col xs={12} md={8}>
           <Stack spacing="xl">

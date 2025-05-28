@@ -1,4 +1,4 @@
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { trainingDetailsParams } from '~/server/schema/model-version.schema';

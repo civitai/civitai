@@ -1,4 +1,5 @@
-import { KlingMode, KlingModel, KlingVideoGenInput } from '@civitai/client';
+import type { KlingVideoGenInput } from '@civitai/client';
+import { KlingMode, KlingModel } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {

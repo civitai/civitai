@@ -1,11 +1,5 @@
-import {
-  createStyles,
-  Grid,
-  GridProps,
-  Stack,
-  Title,
-  TypographyStylesProvider,
-} from '@mantine/core';
+import type { GridProps } from '@mantine/core';
+import { createStyles, Grid, Stack, Title, TypographyStylesProvider } from '@mantine/core';
 import React from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';

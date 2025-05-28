@@ -1,5 +1,5 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import client from 'prom-client';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type client from 'prom-client';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';

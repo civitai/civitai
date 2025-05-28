@@ -1,5 +1,6 @@
-import { ModelFileVisibility, ModelHashType, ModelModifier } from '~/shared/utils/prisma/enums';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { ModelHashType } from '~/shared/utils/prisma/enums';
+import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -7,16 +8,14 @@ import { isProd } from '~/env/other';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
-import {
-  getModelVersionApiSelect,
-  ModelVersionApiReturn,
-} from '~/server/selectors/modelVersion.selector';
+import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
+import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVaeFiles } from '~/server/services/model.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
-import { Session } from 'next-auth';
+import type { Session } from 'next-auth';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 

@@ -14,7 +14,8 @@ import type {
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
-import { getTrainingServiceStatus, TrainingRequest } from '~/server/services/training.service';
+import type { TrainingRequest } from '~/server/services/training.service';
+import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getGetUrl } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';

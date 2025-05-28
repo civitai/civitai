@@ -1,4 +1,5 @@
-import client, { Counter } from 'prom-client';
+import type { Counter } from 'prom-client';
+import client from 'prom-client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 
 const PROM_PREFIX = 'civitai_app_';

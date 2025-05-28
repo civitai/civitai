@@ -1,9 +1,9 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
-import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
+import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { verifyCaptchaToken } from '~/server/recaptcha/client';
-import {
+import type {
   CreatePaymentInvoiceInput,
   PriceEstimateInput,
   TransactionCreateInput,

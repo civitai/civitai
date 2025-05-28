@@ -1,5 +1,6 @@
 import { usePrevious } from '@dnd-kit/utilities';
-import { Group, Input, InputWrapperProps, SegmentedControl } from '@mantine/core';
+import type { InputWrapperProps } from '@mantine/core';
+import { Group, Input, SegmentedControl } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';

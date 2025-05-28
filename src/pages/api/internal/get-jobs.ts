@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { JobEndpoint } from '~/server/utils/endpoint-helpers';
 import { jobs } from '~/pages/api/webhooks/run-jobs/[[...run]]';
 

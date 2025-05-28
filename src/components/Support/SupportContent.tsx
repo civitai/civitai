@@ -1,5 +1,6 @@
 import { Grid, Card, Text, Anchor, Stack, Group } from '@mantine/core';
-import { IconMail, IconQuestionMark, IconWand, IconProps } from '@tabler/icons-react';
+import type { IconProps } from '@tabler/icons-react';
+import { IconMail, IconQuestionMark, IconWand } from '@tabler/icons-react';
 import { IconBook, IconBrandDiscord } from '@tabler/icons-react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';
 import { trpc } from '~/utils/trpc';

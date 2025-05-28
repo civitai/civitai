@@ -1,7 +1,7 @@
 import { Text } from '@mantine/core';
 import Router from 'next/router';
 import { generationPanel } from '~/store/generation.store';
-import { StepWithData } from '~/types/tour';
+import type { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
 
 export const contentGenerationTour: StepWithData[] = [

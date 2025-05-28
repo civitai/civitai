@@ -1,4 +1,5 @@
-import { ActionIcon, Loader, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
+import type { MantineNumberSize, MenuProps } from '@mantine/core';
+import { ActionIcon, Loader, Menu, Text } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconCalculator,
@@ -17,7 +18,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { ResourceReviewPagedModel } from '~/types/router';
+import type { ResourceReviewPagedModel } from '~/types/router';
 import { openReportModal, openResourceReviewEditModal } from '~/components/Dialog/dialog-registry';
 
 export function ResourceReviewMenu({

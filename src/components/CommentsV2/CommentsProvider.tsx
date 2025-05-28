@@ -1,14 +1,14 @@
-import { MantineColor } from '@mantine/core';
+import type { MantineColor } from '@mantine/core';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
-import { CommentV2Model } from '~/server/selectors/commentv2.selector';
+import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '../../server/common/enums';
 import { CommentThread } from '~/server/services/commentsv2.service';
 import { isDefined } from '~/utils/type-guards';
@@ -265,7 +265,7 @@ export function CommentsProvider({
     [created, comments]
   );
 
-  const isLocked = (thread?.locked ?? false);
+  const isLocked = thread?.locked ?? false;
   const isReadonly = !features.canWrite;
   const isMuted = currentUser?.muted ?? false;
   let remaining = initialComments.length - limit;

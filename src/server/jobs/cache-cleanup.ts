@@ -1,11 +1,6 @@
 import { CacheTTL } from '~/server/common/constants';
-import {
-  redis,
-  REDIS_KEYS,
-  REDIS_SYS_KEYS,
-  RedisKeyTemplateCache,
-  sysRedis,
-} from '~/server/redis/client';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { mergeQueue } from '~/server/redis/queues';
 import { refreshBlockedModelHashes } from '~/server/services/model.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';

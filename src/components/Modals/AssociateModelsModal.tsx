@@ -1,5 +1,5 @@
 import { Badge, CloseButton, Stack, Text, Group, Card, Switch } from '@mantine/core';
-import { AssociationType } from '~/shared/utils/prisma/enums';
+import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { AssociateModels } from '~/components/AssociatedModels/AssociateModels';
 import { useToggleResourceRecommendationMutation } from '~/components/AssociatedModels/recommender.utils';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';

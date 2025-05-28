@@ -1,5 +1,5 @@
 import { dbRead } from '~/server/db/client';
-import { BuildCapability, BuildComponent } from '~/server/schema/build-guide.schema';
+import type { BuildCapability, BuildComponent } from '~/server/schema/build-guide.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 
 export async function getBuildGuides() {

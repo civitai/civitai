@@ -7,13 +7,14 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
-import { ConnectType, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import type { ConnectType } from '~/components/ImageGuard/ImageGuard2';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useInView } from '~/hooks/useInView';
-import { VideoMetadata } from '~/server/schema/media.schema';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import type { VideoMetadata } from '~/server/schema/media.schema';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import styles from './AspectRatioImageCard.module.scss';
 
 type AspectRatio = keyof typeof aspectRatioMap;

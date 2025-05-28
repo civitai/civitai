@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { addManualAssignments } from '~/server/events/base.event';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';

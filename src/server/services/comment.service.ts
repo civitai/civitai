@@ -1,14 +1,14 @@
 import { Prisma } from '@prisma/client';
-import { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { userMetrics } from '~/server/metrics';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
   CommentUpsertInput,
   GetAllCommentsSchema,
   GetCommentCountByModelInput,

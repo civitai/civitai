@@ -1,11 +1,11 @@
 import { Button, Group, Stack, Alert, Text, List } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { IconCheck, IconX } from '@tabler/icons-react';
-import { TRPCClientErrorBase } from '@trpc/client';
-import { DefaultErrorShape } from '@trpc/server';
+import type { TRPCClientErrorBase } from '@trpc/client';
+import type { DefaultErrorShape } from '@trpc/server';
 import { z } from 'zod';
 import { Form, InputRTE, useForm } from '~/libs/form';
-import { GetAnswersProps } from '~/server/controllers/answer.controller';
+import type { GetAnswersProps } from '~/server/controllers/answer.controller';
 import { trpc } from '~/utils/trpc';
 
 const schema = z.object({ content: z.string() });

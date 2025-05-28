@@ -1,7 +1,7 @@
 import { AspectRatio, createStyles, Group, Skeleton, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import React from 'react';
-import { UserWithProfile } from '~/types/router';
+import type { UserWithProfile } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type Props = {

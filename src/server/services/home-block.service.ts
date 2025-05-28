@@ -2,8 +2,8 @@ import type { Prisma } from '@prisma/client';
 import type { SessionUser } from 'next-auth';
 import { ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
   GetSystemHomeBlocksInputSchema,
@@ -11,7 +11,7 @@ import {
   SetHomeBlocksOrderInputSchema,
   UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
-import { getCurrentAnnouncements } from '~/server/services/announcement.service';
+import type { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import {
   getCollectionById,
   getCollectionItemsByCollectionId,
@@ -19,9 +19,9 @@ import {
 import { getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
 import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
+import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import {
   getFeaturedModels,
-  GetModelsWithImagesAndModelVersions,
   getModelsWithImagesAndModelVersions,
 } from '~/server/services/model.service';
 import {

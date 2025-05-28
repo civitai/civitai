@@ -1,5 +1,5 @@
 import { Anchor, Text, Alert, Stack } from '@mantine/core';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import React from 'react';
 
 import { Countdown } from '~/components/Countdown/Countdown';

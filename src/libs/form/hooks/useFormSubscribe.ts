@@ -1,4 +1,5 @@
-import { FieldValues, WatchObserver, useFormContext } from 'react-hook-form';
+import type { FieldValues, WatchObserver } from 'react-hook-form';
+import { useFormContext } from 'react-hook-form';
 import { useEffect } from 'react';
 
 export function useFormSubscribe(callback: WatchObserver<FieldValues>) {

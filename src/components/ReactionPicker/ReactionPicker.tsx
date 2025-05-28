@@ -1,5 +1,5 @@
 import { Button, Group, Popover, Text, Tooltip } from '@mantine/core';
-import { ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { IconMoodSmile, IconPlus } from '@tabler/icons-react';
 import { groupBy } from 'lodash-es';
 import type { Session } from 'next-auth';
@@ -7,8 +7,8 @@ import { useSession } from 'next-auth/react';
 import { createContext, useContext, useMemo } from 'react';
 
 import { constants } from '~/server/common/constants';
-import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { CommentGetReactions } from '~/types/router';
+import type { ReactionDetails } from '~/server/selectors/reaction.selector';
+import type { CommentGetReactions } from '~/types/router';
 import { toStringList } from '~/utils/array-helpers';
 
 const ReactionPickerContext = createContext<{

@@ -3,7 +3,8 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { BuzzEventsCache } from '~/server/rewards/buzz-events-cache';
-import { CreateBuzzTransactionInput, TransactionType } from '~/server/schema/buzz.schema';
+import type { CreateBuzzTransactionInput } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 

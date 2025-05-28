@@ -1,4 +1,5 @@
-import { ActionIconProps, Menu, MenuItemProps, MenuProps } from '@mantine/core';
+import type { ActionIconProps, MenuItemProps, MenuProps } from '@mantine/core';
+import { Menu } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { IconEdit, IconReceiptRefund, IconTrash } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

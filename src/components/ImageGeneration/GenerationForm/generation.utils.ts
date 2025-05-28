@@ -1,16 +1,17 @@
-import React, { useCallback, useMemo } from 'react';
+import type React from 'react';
+import { useCallback, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
-import { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
-import { WorkflowStepFormatted } from '~/server/services/orchestrator/common';
+import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
+import type { WorkflowStepFormatted } from '~/server/services/orchestrator/common';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
-import { GenerationResource } from '~/server/services/generation/generation.service';
-import {
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';

@@ -16,7 +16,7 @@ import { IconPencil, IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
 import { useMutateClubAdmin, useQueryClubAdminInvites } from '~/components/Club/club.utils';
-import { GetPagedClubAdminInviteSchema } from '~/server/schema/clubAdmin.schema';
+import type { GetPagedClubAdminInviteSchema } from '~/server/schema/clubAdmin.schema';
 import { formatDate } from '../../../utils/date-helpers';
 import { getDisplayName } from '../../../utils/string-helpers';
 // import { dialogStore } from '../../Dialog/dialogStore';

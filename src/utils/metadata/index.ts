@@ -1,6 +1,7 @@
 import ExifReader from 'exifreader';
 import { v4 as uuidv4 } from 'uuid';
-import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
+import { imageMetaSchema } from '~/server/schema/image.schema';
 import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata';
 import { comfyMetadataProcessor } from '~/utils/metadata/comfy.metadata';
 import { isDefined } from '~/utils/type-guards';

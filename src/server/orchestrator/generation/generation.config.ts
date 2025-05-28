@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 import type { BaseModelSetType } from '~/server/common/constants';
 import { haiperGenerationConfig } from '~/server/orchestrator/haiper/haiper.schema';
 import { hunyuanGenerationConfig } from '~/server/orchestrator/hunyuan/hunyuan.schema';

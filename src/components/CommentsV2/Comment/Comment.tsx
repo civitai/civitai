@@ -1,5 +1,5 @@
+import type { GroupProps } from '@mantine/core';
 import {
-  GroupProps,
   Group,
   ActionIcon,
   Menu,

@@ -1,4 +1,5 @@
-import { createJob, JobContext } from './job';
+import type { JobContext } from './job';
+import { createJob } from './job';
 import * as metrics from '~/server/metrics';
 
 const metricSets = {

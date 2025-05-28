@@ -1,9 +1,10 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Group, Image, Text, ThemeIcon } from '@mantine/core';
+import type { AutocompleteItem } from '@mantine/core';
+import { Group, Image, Text, ThemeIcon } from '@mantine/core';
 import { IconUser } from '@tabler/icons-react';
 import { ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 export const ToolSearchItem = forwardRef<
   HTMLDivElement,

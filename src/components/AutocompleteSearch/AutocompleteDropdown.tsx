@@ -1,22 +1,14 @@
 // TODO.search: confirm this is going to be used
-import {
-  Chip,
-  Group,
-  HoverCard,
-  PopoverDropdownProps,
-  Stack,
-  Text,
-  ThemeIcon,
-  createStyles,
-} from '@mantine/core';
+import type { PopoverDropdownProps } from '@mantine/core';
+import { Chip, Group, HoverCard, Stack, Text, ThemeIcon, createStyles } from '@mantine/core';
 import { titleCase } from '~/utils/string-helpers';
+import type { IconProps } from '@tabler/icons-react';
 import {
   IconAmpersand,
   IconAt,
   IconCurrencyDollar,
   IconHash,
   IconSearch,
-  IconProps,
 } from '@tabler/icons-react';
 
 export type FilterIndex = 'models' | 'users' | 'tags' | 'articles';

@@ -1,5 +1,5 @@
 import { dbRead } from '~/server/db/client';
-import { BareNotification } from '~/server/notifications/base.notifications';
+import type { BareNotification } from '~/server/notifications/base.notifications';
 import { articleDetailFetcher } from '~/server/notifications/detail-fetchers/article.detail-fetcher';
 import { buzzDetailFetcher } from '~/server/notifications/detail-fetchers/buzz.detail-fetcher';
 import { commentDetailFetcher } from '~/server/notifications/detail-fetchers/comment.detail-fetcher';

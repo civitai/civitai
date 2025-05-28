@@ -1,12 +1,5 @@
-import {
-  ButtonProps,
-  Popover,
-  Text,
-  DefaultMantineColor,
-  Group,
-  ThemeIcon,
-  createStyles,
-} from '@mantine/core';
+import type { ButtonProps, DefaultMantineColor } from '@mantine/core';
+import { Popover, Text, Group, ThemeIcon, createStyles } from '@mantine/core';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';

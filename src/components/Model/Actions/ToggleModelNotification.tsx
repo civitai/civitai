@@ -1,4 +1,5 @@
-import { ActionIcon, ActionIconProps, Tooltip } from '@mantine/core';
+import type { ActionIconProps } from '@mantine/core';
+import { ActionIcon, Tooltip } from '@mantine/core';
 import { IconBellCheck, IconBellPlus } from '@tabler/icons-react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';

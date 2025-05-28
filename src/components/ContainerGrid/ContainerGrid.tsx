@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { forwardRef } from 'react';
-import { DefaultProps, MantineNumberSize, useComponentDefaultProps } from '@mantine/styles';
+import type { DefaultProps, MantineNumberSize } from '@mantine/styles';
+import { useComponentDefaultProps } from '@mantine/styles';
 
 import { ContainerCol } from './ContainerCol';
 import { ContainerGridProvider } from './ContainerGrid.context';

@@ -1,6 +1,6 @@
 import dynamic from 'next/dynamic';
-import { ComponentProps, ComponentType } from 'react';
-import { UrlObject } from 'url';
+import type { ComponentProps, ComponentType } from 'react';
+import type { UrlObject } from 'url';
 
 const ImageDetailModal = dynamic(() => import('~/components/Image/Detail/ImageDetailModal'));
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));

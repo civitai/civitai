@@ -1,9 +1,10 @@
-import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
+import type { ReactNode } from 'react';
+import { useContext, createContext, useMemo, useDeferredValue } from 'react';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { HiddenTag } from '~/server/services/user-preferences.service';
+import type { HiddenTag } from '~/server/services/user-preferences.service';
 
 export type HiddenPreferencesState = {
   hiddenUsers: Map<number, boolean>;

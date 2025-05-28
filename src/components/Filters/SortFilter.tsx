@@ -1,10 +1,11 @@
-import { ButtonProps } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
+import type { FilterSubTypes } from '~/providers/FiltersProvider';
+import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import {
   ArticleSort,
   BountySort,

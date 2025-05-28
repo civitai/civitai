@@ -1,4 +1,5 @@
-import { redis, RedisKeyStringsCache, RedisKeyStringsSys, sysRedis } from '~/server/redis/client';
+import type { RedisKeyStringsCache, RedisKeyStringsSys } from '~/server/redis/client';
+import { redis, sysRedis } from '~/server/redis/client';
 
 export function createLimiter({
   counterKey,

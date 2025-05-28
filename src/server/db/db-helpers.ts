@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { Pool, QueryResult, QueryResultRow } from 'pg';
+import type { QueryResult, QueryResultRow } from 'pg';
+import { Pool } from 'pg';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';

@@ -1,6 +1,6 @@
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
-import {
+import type {
   PaymentIntentMetadataSchema,
   PaymentMethodDeleteInput,
 } from '~/server/schema/stripe.schema';

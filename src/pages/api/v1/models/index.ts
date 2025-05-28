@@ -1,16 +1,13 @@
-import {
-  CollectionType,
-  ModelFileVisibility,
-  ModelHashType,
-  ModelModifier,
-} from '~/shared/utils/prisma/enums';
-import { NextApiRequest, NextApiResponse } from 'next';
-import { Session } from 'next-auth';
+import type { ModelHashType } from '~/shared/utils/prisma/enums';
+import { CollectionType, ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Session } from 'next-auth';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { GetAllModelsInput, getAllModelsSchema } from '~/server/schema/model.schema';
+import type { GetAllModelsInput } from '~/server/schema/model.schema';
+import { getAllModelsSchema } from '~/server/schema/model.schema';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';

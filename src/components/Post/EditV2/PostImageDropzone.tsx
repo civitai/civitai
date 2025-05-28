@@ -8,7 +8,7 @@ import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { addPostImageSchema } from '~/server/schema/post.schema';
-import { PostDetailEditable } from '~/server/services/post.service';
+import type { PostDetailEditable } from '~/server/services/post.service';
 import {
   orchestratorMediaTransmitter,
   useExternalMetaStore,

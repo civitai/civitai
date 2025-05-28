@@ -1,12 +1,7 @@
-import {
-  MouseEventHandler,
-  ReactEventHandler,
-  forwardRef,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from 'react';
-import { EdgeVideoBase, EdgeVideoBaseProps } from '~/components/EdgeMedia/EdgeVideoBase';
+import type { ReactEventHandler } from 'react';
+import { MouseEventHandler, forwardRef, useImperativeHandle, useRef, useState } from 'react';
+import type { EdgeVideoBaseProps } from '~/components/EdgeMedia/EdgeVideoBase';
+import { EdgeVideoBase } from '~/components/EdgeMedia/EdgeVideoBase';
 import clsx from 'clsx';
 import { useLocalStorage } from '@mantine/hooks';
 import { create } from 'zustand';

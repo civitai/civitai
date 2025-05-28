@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { devtools } from 'zustand/middleware';
-import { GameState, GlobalState, NewGame } from '~/components/Chopped/chopped.shared-types';
-import { Difference, patch } from '~/utils/object-helpers';
+import type { GameState, GlobalState, NewGame } from '~/components/Chopped/chopped.shared-types';
+import type { Difference } from '~/utils/object-helpers';
+import { patch } from '~/utils/object-helpers';
 
 // #region [state]
 export const defaultGlobalState: GlobalState = {

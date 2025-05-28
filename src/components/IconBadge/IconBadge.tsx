@@ -1,4 +1,5 @@
-import { Badge, BadgeProps, Tooltip } from '@mantine/core';
+import type { BadgeProps } from '@mantine/core';
+import { Badge, Tooltip } from '@mantine/core';
 import { forwardRef } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 

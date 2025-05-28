@@ -1,8 +1,8 @@
+import type { ButtonProps } from '@mantine/core';
 import {
   ActionIcon,
   Badge,
   Button,
-  ButtonProps,
   Center,
   Checkbox,
   Divider,
@@ -55,7 +55,8 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { BaseModel, constants } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';

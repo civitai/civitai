@@ -1,12 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { VideoMetadata } from '~/server/schema/media.schema';
-import {
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import type { VideoMetadata } from '~/server/schema/media.schema';
+import type {
   AddResourceToPostImageInput,
   PostCreateInput,
   RemoveResourceFromPostImageInput,
@@ -31,8 +31,8 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
-import { GetByIdInput } from './../schema/base.schema';
-import {
+import type { GetByIdInput } from './../schema/base.schema';
+import type {
   AddPostTagInput,
   GetPostTagsInput,
   PostsQueryInput,

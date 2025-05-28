@@ -1,5 +1,7 @@
-import { Flex, FlexProps } from '@mantine/core';
-import Lottie, { LottieProps } from 'react-lottie';
+import type { FlexProps } from '@mantine/core';
+import { Flex } from '@mantine/core';
+import type { LottieProps } from 'react-lottie';
+import Lottie from 'react-lottie';
 import * as successAnimation from '~/utils/lotties/success-animation.json';
 
 export function SuccessAnimation({

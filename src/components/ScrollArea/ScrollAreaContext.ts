@@ -1,4 +1,5 @@
-import { RefObject, createContext, useContext, useEffect, useRef } from 'react';
+import type { RefObject } from 'react';
+import { createContext, useContext, useEffect, useRef } from 'react';
 
 export const ScrollAreaContext = createContext<{
   ref: RefObject<HTMLDivElement>;

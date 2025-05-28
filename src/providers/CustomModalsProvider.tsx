@@ -1,5 +1,6 @@
-import { ModalProps } from '@mantine/core';
-import { ContextModalProps, ModalsProvider } from '@mantine/modals';
+import type { ModalProps } from '@mantine/core';
+import type { ContextModalProps } from '@mantine/modals';
+import { ModalsProvider } from '@mantine/modals';
 import dynamic from 'next/dynamic';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { openChatShareModal } from '~/components/Chat/ChatShareModal';

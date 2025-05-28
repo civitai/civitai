@@ -1,11 +1,8 @@
-import { ButtonProps } from '@mantine/core';
-import { Icon, IconChevronDown, IconProps } from '@tabler/icons-react';
-import React, {
-  ForwardRefExoticComponent,
-  MouseEventHandler,
-  RefAttributes,
-  forwardRef,
-} from 'react';
+import type { ButtonProps } from '@mantine/core';
+import type { Icon, IconProps } from '@tabler/icons-react';
+import { IconChevronDown } from '@tabler/icons-react';
+import type { ForwardRefExoticComponent, MouseEventHandler, RefAttributes } from 'react';
+import React, { forwardRef } from 'react';
 import clsx from 'clsx';
 
 export type FilterButtonProps = ButtonProps & {

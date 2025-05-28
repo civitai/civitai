@@ -1,9 +1,9 @@
 import dayjs from 'dayjs';
-import { UpdateSubscriptionSchema } from '~/server/schema/newsletter.schema';
+import type { UpdateSubscriptionSchema } from '~/server/schema/newsletter.schema';
 import { setUserSetting } from '~/server/services/user.service';
 
 import { beehiiv } from '~/server/integrations/beehiiv';
-import { UserSettingsSchema } from '~/server/schema/user.schema';
+import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import { dbRead } from '~/server/db/client';
 
 export async function updateSubscription({

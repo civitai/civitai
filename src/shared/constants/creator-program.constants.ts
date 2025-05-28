@@ -1,5 +1,5 @@
-import { UserTier } from '~/server/schema/user.schema';
-import { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
+import type { UserTier } from '~/server/schema/user.schema';
+import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 
 export const EXTRACTION_PHASE_DURATION = 3; // days
 

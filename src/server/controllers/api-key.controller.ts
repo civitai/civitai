@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
-import { Context } from '~/server/createContext';
-import {
+import type { Context } from '~/server/createContext';
+import type {
   AddAPIKeyInput,
   DeleteAPIKeyInput,
   GetAPIKeyInput,

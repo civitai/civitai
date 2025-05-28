@@ -6,7 +6,7 @@ import React from 'react';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { BountyEntryGetById, BountyGetById } from '~/types/router';
+import type { BountyEntryGetById, BountyGetById } from '~/types/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getBountyCurrency } from '~/components/Bounty/bounty.utils';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';

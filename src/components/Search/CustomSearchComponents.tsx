@@ -1,10 +1,12 @@
-import {
-  Configure,
+import type {
   ConfigureProps,
   RangeInputProps,
   RefinementListProps,
   SearchBoxProps,
   SortByProps,
+} from 'react-instantsearch';
+import {
+  Configure,
   useClearRefinements,
   useConfigure,
   useRange,
@@ -12,11 +14,11 @@ import {
   useSearchBox,
   useSortBy,
 } from 'react-instantsearch';
+import type { ButtonProps } from '@mantine/core';
 import {
   Accordion,
   Box,
   Button,
-  ButtonProps,
   Chip,
   Code,
   createStyles,
@@ -31,7 +33,7 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } f
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
-import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
+import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { uniqBy } from 'lodash-es';
 import { DatePicker } from '@mantine/dates';
 import dayjs from 'dayjs';

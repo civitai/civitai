@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import {
-  HiddenPreferencesState,
-  useHiddenPreferencesContext,
-} from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import type { HiddenPreferencesState } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

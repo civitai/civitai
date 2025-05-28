@@ -1,12 +1,12 @@
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
+import type {
   GetPaginatedVaultItemsSchema,
   VaultItemsAddModelVersionSchema,
   VaultItemsRemoveModelVersionsSchema,
   VaultItemsUpdateNotesSchema,
 } from '~/server/schema/vault.schema';
-import { VaultItemGetPaged } from '~/types/router';
+import type { VaultItemGetPaged } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

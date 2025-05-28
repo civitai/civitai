@@ -1,4 +1,4 @@
-import { ContainerProps } from '@mantine/core';
+import type { ContainerProps } from '@mantine/core';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import React from 'react';
 

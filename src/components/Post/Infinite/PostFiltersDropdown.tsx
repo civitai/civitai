@@ -1,20 +1,12 @@
-import {
-  Button,
-  ButtonProps,
-  Divider,
-  Drawer,
-  Indicator,
-  Popover,
-  Stack,
-  useMantineTheme,
-} from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Divider, Drawer, Indicator, Popover, Stack, useMantineTheme } from '@mantine/core';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { PostsQueryInput } from '~/server/schema/post.schema';
+import type { PostsQueryInput } from '~/server/schema/post.schema';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 
 export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) {

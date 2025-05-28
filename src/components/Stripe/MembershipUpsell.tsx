@@ -20,7 +20,7 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrevention';
@@ -165,8 +165,8 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
               /Month
             </Button>
           ) : (
-            <SubscribeButton priceId={priceId} disabled={features.disablePayments} >
-              <Button radius="xl" size="md" mt="sm" >
+            <SubscribeButton priceId={priceId} disabled={features.disablePayments}>
+              <Button radius="xl" size="md" mt="sm">
                 Get {capitalize(targetTier)} - $
                 {formatPriceForDisplay(unitAmount, undefined, { decimals: false })}
                 /Month

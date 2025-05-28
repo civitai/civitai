@@ -1,4 +1,5 @@
-import { NSFWLevel, headBlob } from '@civitai/client';
+import type { NSFWLevel } from '@civitai/client';
+import { headBlob } from '@civitai/client';
 
 import { createOrchestratorClient } from '~/server/services/orchestrator/common';
 import {

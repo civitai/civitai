@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
+import type React from 'react';
+import { useState } from 'react';
+import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
+import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 
 export function DownloadImage({
   children,

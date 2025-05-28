@@ -1,4 +1,5 @@
-import { ViduVideoGenInput, ViduVideoGenStyle } from '@civitai/client';
+import type { ViduVideoGenInput } from '@civitai/client';
+import { ViduVideoGenStyle } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {

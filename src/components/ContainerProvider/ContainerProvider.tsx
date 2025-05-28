@@ -1,4 +1,5 @@
-import React, { RefObject, createContext, useCallback, useContext, useEffect } from 'react';
+import type { RefObject } from 'react';
+import React, { createContext, useCallback, useContext, useEffect } from 'react';
 import { create } from 'zustand';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 

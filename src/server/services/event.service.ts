@@ -4,7 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { cosmeticCache, profilePictureCache, userBasicCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
-import { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
+import type { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
 import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.service';
 

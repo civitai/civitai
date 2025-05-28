@@ -1,5 +1,7 @@
-import { Flex, FlexProps } from '@mantine/core';
-import Lottie, { LottieProps } from 'react-lottie';
+import type { FlexProps } from '@mantine/core';
+import { Flex } from '@mantine/core';
+import type { LottieProps } from 'react-lottie';
+import Lottie from 'react-lottie';
 // Temporarily using the level up animation until we have a crown animation
 import * as rankAnimation from '~/utils/lotties/level-up-animation.json';
 

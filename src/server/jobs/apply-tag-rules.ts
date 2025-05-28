@@ -1,5 +1,6 @@
 import { createJob, getJobDate } from './job';
-import { getTagRules, TagRule } from '~/server/services/system-cache';
+import type { TagRule } from '~/server/services/system-cache';
+import { getTagRules } from '~/server/services/system-cache';
 import { dbWrite } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
 import { createLogger } from '~/utils/logging';

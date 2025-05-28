@@ -1,8 +1,6 @@
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import {
-  OrchestratorEngine2,
-  videoGenerationConfig2,
-} from '~/server/orchestrator/generation/generation.config';
+import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { useMemo, useState, useEffect } from 'react';
 import { hashify } from '~/utils/string-helpers';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';

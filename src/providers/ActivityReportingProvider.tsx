@@ -1,6 +1,7 @@
 import { useLocalStorage } from '@mantine/hooks';
 import { getCurrentBrowserFingerPrint } from '@rajesh896/broprint.js';
-import { createContext, ReactNode, useContext, useEffect } from 'react';
+import type { ReactNode } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 

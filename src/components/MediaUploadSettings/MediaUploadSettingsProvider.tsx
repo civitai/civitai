@@ -1,5 +1,6 @@
-import { MediaType } from '~/shared/utils/prisma/enums';
-import { createContext, ReactNode, useContext } from 'react';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import type { ReactNode } from 'react';
+import { createContext, useContext } from 'react';
 import { constants } from '~/server/common/constants';
 
 export type MediaUploadMaxSizeByType = { type: MediaType; maxSize: number }[];

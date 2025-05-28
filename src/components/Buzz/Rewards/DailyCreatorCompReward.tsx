@@ -13,11 +13,11 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import type { ChartOptions } from 'chart.js';
 import {
   BarElement,
   CategoryScale,
   Chart as ChartJS,
-  ChartOptions,
   Colors,
   Legend,
   LinearScale,

@@ -1,4 +1,5 @@
-import { Button, Group, Modal, Stack, ButtonProps, Text } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 

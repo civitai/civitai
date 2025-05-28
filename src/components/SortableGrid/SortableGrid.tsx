@@ -1,3 +1,4 @@
+import type { DndContextProps } from '@dnd-kit/core';
 import {
   useSensors,
   useSensor,
@@ -5,12 +6,13 @@ import {
   KeyboardSensor,
   DndContext,
   closestCenter,
-  DndContextProps,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { SimpleGrid, SimpleGridProps } from '@mantine/core';
-import React, { CSSProperties } from 'react';
+import type { SimpleGridProps } from '@mantine/core';
+import { SimpleGrid } from '@mantine/core';
+import type { CSSProperties } from 'react';
+import React from 'react';
 import useIsClient from '~/hooks/useIsClient';
 
 export function SortableGrid<T>({

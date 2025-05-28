@@ -2,10 +2,8 @@ import { useMemo, useRef, useContext, createContext, useState, useEffect } from 
 import { createStore, useStore } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  OrchestratorEngine2,
-  videoGenerationConfig2,
-} from '~/server/orchestrator/generation/generation.config';
+import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';

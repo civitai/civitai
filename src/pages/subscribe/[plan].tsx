@@ -20,7 +20,7 @@ const plans = [
   },
 ];
 
-type Plan = typeof plans[0];
+type Plan = (typeof plans)[0];
 
 const schema = z.object({
   session_id: z.string().optional(),

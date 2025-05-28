@@ -1,7 +1,7 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { publishModelById } from '~/server/services/model.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { JobEndpoint } from '~/server/utils/endpoint-helpers';

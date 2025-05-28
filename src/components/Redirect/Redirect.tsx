@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
-import { UrlObject } from 'url';
+import type { UrlObject } from 'url';
 
 type Url = UrlObject | string;
 

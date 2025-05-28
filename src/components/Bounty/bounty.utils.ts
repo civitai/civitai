@@ -1,7 +1,7 @@
 import { Currency, BountyEngagementType } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
 
-import {
+import type {
   CreateBountyInput,
   GetInfiniteBountySchema,
   UpdateBountyInput,
@@ -11,7 +11,7 @@ import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { constants } from '~/server/common/constants';
-import { ToggleUserBountyEngagementsInput } from '~/server/schema/user.schema';
+import type { ToggleUserBountyEngagementsInput } from '~/server/schema/user.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import dayjs from 'dayjs';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

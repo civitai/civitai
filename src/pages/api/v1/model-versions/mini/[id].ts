@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
-import { NextApiRequest, NextApiResponse } from 'next';
-import { Session } from 'next-auth';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Session } from 'next-auth';
 import { z } from 'zod';
-import { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
 import {
@@ -13,7 +13,8 @@ import { getFeaturedModels } from '~/server/services/model.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { Availability, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import type { ModelType } from '~/shared/utils/prisma/enums';
+import { Availability, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/utils/string-helpers';
 
 const schema = z.object({ id: z.coerce.number(), epoch: z.number().optional() });

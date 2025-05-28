@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GetByIdStringInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdStringInput } from '~/server/schema/base.schema';
+import type {
   GetPaddleAdjustmentsSchema,
   TransactionWithSubscriptionCreateInput,
   UpdateSubscriptionInputSchema,

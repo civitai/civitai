@@ -1,6 +1,7 @@
 import type { MantineTheme } from '@mantine/core';
-import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
-import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import type { Icon, IconProps } from '@tabler/icons-react';
+import { IconBolt, IconCurrencyDollar } from '@tabler/icons-react';
+import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';

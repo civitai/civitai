@@ -1,4 +1,5 @@
-import { CSSProperties, useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DndContext, PointerSensor, useSensor, useSensors, rectIntersection } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -8,8 +9,8 @@ import {
 } from '@dnd-kit/sortable';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { trpc } from '~/utils/trpc';
-import { HomeBlockGetAll } from '~/types/router';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import type { HomeBlockGetAll } from '~/types/router';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import {
   Accordion,
   ActionIcon,

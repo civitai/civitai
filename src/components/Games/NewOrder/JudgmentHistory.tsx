@@ -23,9 +23,10 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useInView } from '~/hooks/useInView';
-import { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
+import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { GetJudgmentHistoryItem } from '~/types/router';
+import type { GetJudgmentHistoryItem } from '~/types/router';
 
 export default function JudgmentHistoryModal() {
   const dialog = useDialogContext();

@@ -1,6 +1,8 @@
-import { CloseButton, Group, TextInput, TextInputProps } from '@mantine/core';
+import type { TextInputProps } from '@mantine/core';
+import { CloseButton, Group, TextInput } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
-import { forwardRef, RefObject, useRef } from 'react';
+import type { RefObject } from 'react';
+import { forwardRef, useRef } from 'react';
 
 type ClearableTextInputProps = TextInputProps & {
   clearable?: boolean;

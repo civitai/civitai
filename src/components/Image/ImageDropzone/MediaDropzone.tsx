@@ -1,8 +1,9 @@
 import { Input, Text, useMantineTheme } from '@mantine/core';
-import { Dropzone, DropzoneProps } from '@mantine/dropzone';
+import type { DropzoneProps } from '@mantine/dropzone';
+import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import dayjs from 'dayjs';
-import { DragEvent } from 'react';
+import type { DragEvent } from 'react';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { constants, isOrchestratorUrl } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';

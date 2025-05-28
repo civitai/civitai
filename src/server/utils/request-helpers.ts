@@ -1,4 +1,4 @@
-import { NextApiRequest } from 'next';
+import type { NextApiRequest } from 'next';
 
 // List of common browser user agents
 const browserUserAgents = ['mozilla', 'chrome', 'safari', 'firefox', 'opera', 'edge'];

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { env } from '~/env/server';
-import { SignalTopic } from '~/server/common/enums';
+import type { SignalTopic } from '~/server/common/enums';
 
 class SignalClient {
   private _endpoint: string;

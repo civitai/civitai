@@ -1,5 +1,5 @@
 import { createStyles } from '@mantine/core';
-import { CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 
 const useStyles = createStyles((theme, { aspectRatio = 1 }: { aspectRatio: number }) => ({
   actions: {

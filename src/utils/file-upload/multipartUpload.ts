@@ -1,4 +1,5 @@
-import { FileUpload, FileUploadOptions } from '~/utils/file-upload/file-upload';
+import type { FileUploadOptions } from '~/utils/file-upload/file-upload';
+import { FileUpload } from '~/utils/file-upload/file-upload';
 import { Queue } from '~/utils/queue';
 
 type UploadStatus = 'pending' | 'error' | 'success' | 'aborted';

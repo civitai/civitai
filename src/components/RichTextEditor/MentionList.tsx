@@ -1,7 +1,7 @@
 import { Button, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { ReactRendererOptions } from '@tiptap/react';
-import { SuggestionProps } from '@tiptap/suggestion';
+import type { ReactRendererOptions } from '@tiptap/react';
+import type { SuggestionProps } from '@tiptap/suggestion';
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { removeDuplicates } from '~/utils/array-helpers';

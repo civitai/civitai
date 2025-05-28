@@ -1,3 +1,4 @@
+import type { GroupProps } from '@mantine/core';
 import {
   ActionIcon,
   Badge,
@@ -8,7 +9,6 @@ import {
   createStyles,
   Divider,
   Group,
-  GroupProps,
   Highlight,
   Image,
   Indicator,
@@ -44,7 +44,7 @@ import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
-import { ChatListMessage } from '~/types/router';
+import type { ChatListMessage } from '~/types/router';
 import { isApril1 } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

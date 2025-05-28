@@ -1,4 +1,5 @@
-import { AutocompleteItem, Badge, Center, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import type { AutocompleteItem } from '@mantine/core';
+import { Badge, Center, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconBrush, IconDownload, IconMessageCircle2, IconPhotoOff } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
 import { Highlight } from 'react-instantsearch';
@@ -9,7 +10,7 @@ import {
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

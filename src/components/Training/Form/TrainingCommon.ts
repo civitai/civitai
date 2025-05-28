@@ -5,7 +5,7 @@ import Router from 'next/router';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
+import type { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import type {
   AutoCaptionResponse,

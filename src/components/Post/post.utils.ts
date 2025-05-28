@@ -6,7 +6,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PostSort } from '~/server/common/enums';
-import { PostsQueryInput, UpdatePostCollectionTagIdInput } from '~/server/schema/post.schema';
+import type { PostsQueryInput, UpdatePostCollectionTagIdInput } from '~/server/schema/post.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';

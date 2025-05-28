@@ -32,10 +32,10 @@ import {
 import clsx from 'clsx';
 import { uniq } from 'lodash-es';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type { InstantSearchProps } from 'react-instantsearch';
 import {
   Configure,
   InstantSearch,
-  InstantSearchProps,
   useClearRefinements,
   useInstantSearch,
   useRefinementList,
@@ -45,10 +45,8 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
-import {
-  DescriptionTable,
-  Props as DescriptionTableProps,
-} from '~/components/DescriptionTable/DescriptionTable';
+import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -76,7 +74,8 @@ import { PermissionIndicator } from '~/components/PermissionIndicator/Permission
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
-import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
@@ -100,7 +99,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import {
+import type {
   ResourceFilter,
   ResourceSelectOptions,
   ResourceSelectSource,

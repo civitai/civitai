@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
+import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
+import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
 type VideoProps = Omit<

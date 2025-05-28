@@ -1,12 +1,12 @@
 import { Prisma } from '@prisma/client';
-import { EntityMetric_MetricType_Type, ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { EntityMetric_MetricType_Type, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { NotificationCategory } from '~/server/common/enums';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { notifDbRead } from '~/server/db/notifDb';
 import { logToAxiom } from '~/server/logging/client';
 import { imageReactionMilestones } from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
-import { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import { createNotification } from '~/server/services/notification.service';
 import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
@@ -17,7 +17,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { isFutureDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { ReactionType } from '../clickhouse/client';
+import type { ReactionType } from '../clickhouse/client';
 import { dbRead } from '../db/client';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';

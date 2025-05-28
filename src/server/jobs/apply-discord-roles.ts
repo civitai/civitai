@@ -1,7 +1,8 @@
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import { discord, DiscordRole } from '~/server/integrations/discord';
+import type { DiscordRole } from '~/server/integrations/discord';
+import { discord } from '~/server/integrations/discord';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createJob } from './job';
 

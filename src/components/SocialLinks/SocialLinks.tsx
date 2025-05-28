@@ -1,6 +1,7 @@
-import { ActionIcon, ActionIconProps } from '@mantine/core';
+import type { ActionIconProps } from '@mantine/core';
+import { ActionIcon } from '@mantine/core';
+import type { Icon, IconProps } from '@tabler/icons-react';
 import {
-  Icon,
   IconBrandDiscord,
   IconBrandGithub,
   IconBrandInstagram,
@@ -9,9 +10,8 @@ import {
   IconBrandTwitch,
   IconBrandX,
   IconBrandYoutube,
-  IconProps,
 } from '@tabler/icons-react';
-import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { useIsLive } from '~/hooks/useIsLive';
 
 const defaultProps: ActionIconProps = {

@@ -1,5 +1,6 @@
 import { Stack, Title, Button, ThemeIcon } from '@mantine/core';
-import { closeAllModals, ContextModalProps } from '@mantine/modals';
+import type { ContextModalProps } from '@mantine/modals';
+import { closeAllModals } from '@mantine/modals';
 import { IconCheck } from '@tabler/icons-react';
 import { z } from 'zod';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
