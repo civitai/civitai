@@ -76,6 +76,7 @@ import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
 import { capitalize } from '~/utils/string-helpers';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -235,18 +236,17 @@ export function GeneratedImage({
 
   const blockedReason = getImageBlockedReason(image.blockedReason);
   const isBlocked = !!nsfwLevelError || !!blockedReason;
+  const aspectRatio = isBlocked ? 1 : image.aspectRatio ?? image.width / image.height;
 
   return (
     <TwCard
       ref={ref}
       className={clsx('max-h-full max-w-full', classes.imageWrapper)}
-      style={{
-        aspectRatio: image.aspectRatio ?? image.width / image.height,
-      }}
+      style={{ aspectRatio }}
     >
       {(isLightbox || inView) && (
         <>
-          <div className={clsx('relative flex flex-1 flex-col items-center justify-center')}>
+          <div className={clsx('relative flex flex-1 flex-col items-center justify-center ')}>
             {nsfwLevelError ? (
               <BlockedBlock
                 title="Blocked for Adult Content"
@@ -462,18 +462,26 @@ const useStyles = createStyles((theme, _params, getRef) => {
   };
 });
 
-function BlockedBlock({ title, message }: { title: string; message: string }) {
+function BlockedBlock({
+  title,
+  message,
+}: {
+  title: string;
+  message: string | (() => JSX.Element);
+}) {
   return (
-    <Center px="md">
-      <Stack spacing="xs">
-        <Text color="red" weight="bold" align="center" size="sm">
-          {title}
-        </Text>
+    <Stack spacing="xs" className="p-2">
+      <Text color="red" weight="bold" align="center" size="sm">
+        {title}
+      </Text>
+      {typeof message === 'string' ? (
         <Text align="center" size="sm">
           {message}
         </Text>
-      </Stack>
-    </Center>
+      ) : (
+        message()
+      )}
+    </Stack>
   );
 }
 
@@ -867,12 +875,32 @@ function handleAuxClick(url: string) {
   window.open(url, '_blank');
 }
 
-const imageBlockedReasonMap: Record<string, string> = {
+const imageBlockedReasonMap: Record<string, string | (() => JSX.Element)> = {
   ChildReference: 'An inappropriate child reference was detected.',
   Bestiality: 'Bestiality detected.',
   'Child Sexual - Anime': 'Inappropriate minor content detected.',
   'Child Sexual - Realistic': 'Inappropriate minor content detected.',
   NSFWLevel: 'Mature content restriction.',
+  NSFWLevelSourceImageRestricted: () => (
+    <div className="flex flex-col gap-1">
+      <Text align="center" size="sm">
+        Mature content restriction.
+      </Text>
+      <Text align="center" size="sm">
+        If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs
+        only.
+      </Text>
+      <Text
+        align="center"
+        size="sm"
+        component={NextLink}
+        variant="link"
+        href="https://civitai.com/changelog?id=11"
+      >
+        More info.
+      </Text>
+    </div>
+  ),
 };
 
 function getImageBlockedReason(reason?: string | null) {
