@@ -4,7 +4,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal2';
 import type { ReportModalProps } from '~/components/Modals/ReportModal';
 import type { EditResourceReviewModalProps } from '~/components/ResourceReview/EditResourceReviewModal';
-import { ImageSelectModalProps } from '~/components/Training/Form/ImageSelectModal';
+import type { ImageSelectModalProps } from '~/components/Training/Form/ImageSelectModal';
 
 const BrowsingLevelGuide = dynamic(() => import('~/components/BrowsingLevel/BrowsingLevelGuide'));
 const SetBrowsingLevelModal = dynamic(

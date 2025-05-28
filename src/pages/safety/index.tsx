@@ -13,7 +13,8 @@ import {
 import { IconList } from '@tabler/icons-react';
 import fs from 'fs';
 import matter from 'gray-matter';
-import { GetStaticProps, InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
+import { GetStaticProps } from 'next';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
@@ -196,11 +197,19 @@ export default function Safety({
 
                 <Title order={3}>Real People</Title>
                 <p>
-                  Content that reproduces the likeness of real people, in any context, is prohibited.
+                  Content that reproduces the likeness of real people, in any context, is
+                  prohibited.
                 </p>
                 <ul>
-                  <li>This prohibition includes fan-art or representations of characters as portrayed by a recognizable individual (e.g., Indiana Jones as portrayed by Harrison Ford).</li>
-                  <li>The use of names, facial features, or any other personally identifiable attributes to reference or imply a real individual is also disallowed.</li>
+                  <li>
+                    This prohibition includes fan-art or representations of characters as portrayed
+                    by a recognizable individual (e.g., Indiana Jones as portrayed by Harrison
+                    Ford).
+                  </li>
+                  <li>
+                    The use of names, facial features, or any other personally identifiable
+                    attributes to reference or imply a real individual is also disallowed.
+                  </li>
                 </ul>
                 {/* <AdditionalContent content={content['real-people']} /> */}
 
@@ -238,8 +247,7 @@ export default function Safety({
                 </p>
                 <p>
                   This includes, but is not limited to, restrictions on mature content as it applies
-                  to minors, illegal or violent activities, and
-                  disrespectful or offensive content.
+                  to minors, illegal or violent activities, and disrespectful or offensive content.
                 </p>
                 <Title order={3}>Prohibited Image Generation Attempts</Title>
                 <p>
@@ -300,7 +308,7 @@ export default function Safety({
                   <li>
                     <strong>Selective Hiding:</strong> Users can choose to hide specific images,
                     models, or even all models created by a specific user.
-                  </li>                  
+                  </li>
                 </ul>
                 <Title order={3}>Automated Content Labeling and Moderation</Title>
                 <p>
@@ -309,9 +317,9 @@ export default function Safety({
                 </p>
                 <ul>
                   <li>
-                    <strong>Automated Content Labeling</strong>: We use a number of automated 
-                    image tagging systems to automatically apply content labels and
-                    screen images for moderated content.
+                    <strong>Automated Content Labeling</strong>: We use a number of automated image
+                    tagging systems to automatically apply content labels and screen images for
+                    moderated content.
                   </li>
                   <li>
                     <strong>Community-Driven Moderation</strong>: Users can vote on the content

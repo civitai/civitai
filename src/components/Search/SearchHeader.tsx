@@ -1,11 +1,11 @@
 import { IndexToLabel, useSearchStore } from '~/components/Search/useSearchState';
 import { useInstantSearch, usePagination, useSearchBox } from 'react-instantsearch';
+import type { SegmentedControlItem } from '@mantine/core';
 import {
   Box,
   createStyles,
   Group,
   SegmentedControl,
-  SegmentedControlItem,
   Stack,
   Text,
   ThemeIcon,

@@ -1,14 +1,15 @@
-import { ClickHouseClient } from '@clickhouse/client';
-import { PrismaClient } from '@prisma/client';
+import type { ClickHouseClient } from '@clickhouse/client';
+import type { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { rewardFailedCounter, rewardGivenCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
-import { Fingerprint } from '~/server/utils/fingerprint';
+import type { Fingerprint } from '~/server/utils/fingerprint';
 import { hashifyObject } from '~/utils/string-helpers';
 import { withRetries } from '../utils/errorHandling';
 

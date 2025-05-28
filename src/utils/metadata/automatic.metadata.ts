@@ -1,7 +1,8 @@
 import { unescape } from 'lodash-es';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { decodeBigEndianUTF16 } from '~/utils/encoding-helpers';
-import { createMetadataProcessor, SDResource } from '~/utils/metadata/base.metadata';
+import type { SDResource } from '~/utils/metadata/base.metadata';
+import { createMetadataProcessor } from '~/utils/metadata/base.metadata';
 import { parseAIR } from '~/utils/string-helpers';
 
 type CivitaiResource = {

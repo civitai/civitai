@@ -13,7 +13,7 @@ import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { imageSchema } from '~/server/schema/image.schema';
-import { RateLimit } from '~/server/middleware.trpc';
+import type { RateLimit } from '~/server/middleware.trpc';
 
 export const articleRateLimits: RateLimit[] = [
   { limit: 1, period: CacheTTL.hour },

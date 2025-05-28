@@ -1,12 +1,12 @@
-import { GetByIdInput } from './../schema/base.schema';
-import { UpsertUserLinkParams } from './../schema/user-link.schema';
+import type { GetByIdInput } from './../schema/base.schema';
+import type { UpsertUserLinkParams } from './../schema/user-link.schema';
 import {
   deleteUserLink,
   upsertManyUserLinks,
   upsertUserLink,
 } from './../services/user-link.service';
-import { Context } from '~/server/createContext';
-import { UpsertManyUserLinkParams, GetUserLinksQuery } from '~/server/schema/user-link.schema';
+import type { Context } from '~/server/createContext';
+import type { UpsertManyUserLinkParams, GetUserLinksQuery } from '~/server/schema/user-link.schema';
 import { getUserLinks } from '~/server/services/user-link.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 

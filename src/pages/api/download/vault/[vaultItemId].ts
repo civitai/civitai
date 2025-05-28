@@ -1,12 +1,12 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { SessionUser } from 'next-auth';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { SessionUser } from 'next-auth';
 import requestIp from 'request-ip';
 import { z } from 'zod';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { VaultItemFilesSchema } from '~/server/schema/vault.schema';
+import type { VaultItemFilesSchema } from '~/server/schema/vault.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getVaultWithStorage } from '~/server/services/vault.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';

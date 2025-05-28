@@ -1,5 +1,5 @@
 import { logToAxiom } from '~/server/logging/client';
-import { ModerationRuleAction, TagSource } from '~/shared/utils/prisma/enums';
+import type { ModerationRuleAction, TagSource } from '~/shared/utils/prisma/enums';
 
 /**
  * Moderation rules are used to automatically moderate content based on certain conditions.

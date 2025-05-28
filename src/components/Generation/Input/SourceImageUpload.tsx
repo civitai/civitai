@@ -1,11 +1,12 @@
-import { Input, InputWrapperProps, CloseButton, Alert } from '@mantine/core';
+import type { InputWrapperProps } from '@mantine/core';
+import { Input, CloseButton, Alert } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import { useEffect, useState } from 'react';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { maxOrchestratorImageFileSize, maxUpscaleSize } from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
-import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { getImageDimensions, imageToJpegBlob, resizeImage } from '~/utils/image-utils';
 import { uniqBy } from 'lodash-es';
 import { getMetadata } from '~/utils/metadata';

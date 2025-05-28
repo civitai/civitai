@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { dbWrite, dbRead } from '~/server/db/client';

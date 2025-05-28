@@ -3,9 +3,9 @@ import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
+import type {
   AddUsersInput,
   CreateChatInput,
   CreateMessageInput,
@@ -27,7 +27,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
-import { ChatCreateChat } from '~/types/router';
+import type { ChatCreateChat } from '~/types/router';
 
 /**
  * Get user chat settings

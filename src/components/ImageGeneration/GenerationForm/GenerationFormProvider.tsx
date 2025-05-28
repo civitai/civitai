@@ -1,22 +1,24 @@
-import { DeepPartial } from 'react-hook-form';
+import type { DeepPartial } from 'react-hook-form';
 import { showNotification } from '@mantine/notifications';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
-import { TypeOf, z } from 'zod';
+import type { TypeOf } from 'zod';
+import { z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { UsePersistFormReturn, usePersistForm } from '~/libs/form/hooks/usePersistForm';
+import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
+import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
+import type { BaseModelSetType } from '~/server/common/constants';
 import {
-  BaseModelSetType,
   constants,
   generation,
   generationConfig,
   getGenerationConfig,
 } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
-import { GenerationData } from '~/server/services/generation/generation.service';
+import type { GenerationData } from '~/server/services/generation/generation.service';
+import type { SupportedBaseModel } from '~/shared/constants/generation.constants';
 import {
-  SupportedBaseModel,
   fluxModeOptions,
   fluxModelId,
   fluxStandardAir,
@@ -36,7 +38,7 @@ import {
 } from '~/store/generation.store';
 import { useDebouncer } from '~/utils/debouncer';
 import { auditPrompt } from '~/utils/metadata/audit';
-import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
+import type { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';

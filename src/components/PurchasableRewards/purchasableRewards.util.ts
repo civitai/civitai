@@ -1,5 +1,5 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
+import type {
   PurchasableRewardUpsert,
   GetPaginatedPurchasableRewardsSchema,
   GetPaginatedPurchasableRewardsModeratorSchema,
@@ -7,7 +7,7 @@ import {
 } from '~/server/schema/purchasable-reward.schema';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
-import { PurchasableRewardGetPaged } from '~/types/router';
+import type { PurchasableRewardGetPaged } from '~/types/router';
 
 export const useMutatePurchasableReward = () => {
   const queryUtils = trpc.useUtils();

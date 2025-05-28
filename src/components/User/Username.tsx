@@ -1,9 +1,10 @@
-import { Group, MantineSize, Text, Tooltip } from '@mantine/core';
+import type { MantineSize } from '@mantine/core';
+import { Group, Text, Tooltip } from '@mantine/core';
 import React from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 const mapSizeToImageWidth: Record<MantineSize, number> = {
   xs: 16,

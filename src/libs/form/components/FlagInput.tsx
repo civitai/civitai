@@ -1,4 +1,5 @@
-import { Checkbox, Input, MantineNumberSize, Stack } from '@mantine/core';
+import type { MantineNumberSize } from '@mantine/core';
+import { Checkbox, Input, Stack } from '@mantine/core';
 import { Flags } from '~/shared/utils';
 import {
   browsingLevelDescriptions,

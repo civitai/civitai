@@ -2,7 +2,7 @@ import { env } from '~/env/server';
 import { constants } from '../common/constants';
 import { logToAxiom } from '../logging/client';
 import { TransactionType } from '../schema/buzz.schema';
-import { PaypalPurchaseBuzzSchema } from '../schema/paypal.schema';
+import type { PaypalPurchaseBuzzSchema } from '../schema/paypal.schema';
 import { throwBadRequestError } from '../utils/errorHandling';
 import { createBuzzTransaction } from './buzz.service';
 

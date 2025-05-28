@@ -1,5 +1,6 @@
 import { Anchor, Divider, Text, Title } from '@mantine/core';
-import React, { Component, ErrorInfo, Fragment, ReactNode } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
+import React, { Component, Fragment } from 'react';
 import { filterHomeOptions } from '~/components/HomeContentToggle/HomeContentToggle';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';

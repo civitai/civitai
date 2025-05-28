@@ -1,6 +1,6 @@
-import { ApiKeyType } from '~/shared/utils/prisma/enums';
+import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
-import {
+import type {
   AddAPIKeyInput,
   DeleteAPIKeyInput,
   GetAPIKeyInput,

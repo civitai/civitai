@@ -1,7 +1,7 @@
 import { CacheTTL } from '~/server/common/constants';
 import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import type { GetLeaderboardInput } from '~/server/schema/leaderboard.schema';
 import {
-  GetLeaderboardInput,
   getLeaderboardPositionsSchema,
   getLeaderboardSchema,
 } from '~/server/schema/leaderboard.schema';

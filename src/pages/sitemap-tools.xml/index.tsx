@@ -1,5 +1,6 @@
-import { GetServerSideProps } from 'next';
-import { ISitemapField, getServerSideSitemapLegacy } from 'next-sitemap';
+import type { GetServerSideProps } from 'next';
+import type { ISitemapField } from 'next-sitemap';
+import { getServerSideSitemapLegacy } from 'next-sitemap';
 import { ToolSort } from '~/server/common/enums';
 import { getAllTools } from '~/server/services/tool.service';
 import { getBaseUrl } from '~/server/utils/url-helpers';

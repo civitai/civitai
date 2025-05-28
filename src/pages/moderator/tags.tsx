@@ -1,16 +1,7 @@
-import {
-  ActionIcon,
-  Badge,
-  Container,
-  Group,
-  Stack,
-  Title,
-  SelectItem,
-  MantineColor,
-  Tooltip,
-  Text,
-} from '@mantine/core';
-import { TagsOnTagsType, TagTarget, TagType } from '~/shared/utils/prisma/enums';
+import type { SelectItem, MantineColor } from '@mantine/core';
+import { ActionIcon, Badge, Container, Group, Stack, Title, Tooltip, Text } from '@mantine/core';
+import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
+import { TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import {
   IconAlbum,
   IconArrowMergeRight,
@@ -29,7 +20,8 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { MantineReactTable, MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
+import type { MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
+import { MantineReactTable } from 'mantine-react-table';
 import { ActionIconSelect } from '~/components/ActionIconSelect/ActionIconSelect';
 import { ActionIconInput } from '~/components/ActionIconInput.tsx/ActionIconInput';
 import { NotFound } from '~/components/AppLayout/NotFound';

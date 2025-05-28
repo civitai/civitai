@@ -16,7 +16,7 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
+import type { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { useMergedRef } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
@@ -65,7 +65,7 @@ import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { resolveAppealSchema } from '~/server/schema/report.schema';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
-import { ImageModerationReviewQueueImage } from '~/types/router';
+import type { ImageModerationReviewQueueImage } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

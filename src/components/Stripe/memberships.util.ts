@@ -3,7 +3,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import refreshSessions from '~/pages/api/admin/refresh-sessions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { trpc } from '~/utils/trpc';
 
 export const useActiveSubscription = ({

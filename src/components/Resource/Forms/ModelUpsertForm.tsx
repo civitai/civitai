@@ -1,10 +1,10 @@
+import type { ChipProps } from '@mantine/core';
 import {
   Alert,
   Anchor,
   Button,
   Checkbox,
   Chip,
-  ChipProps,
   Divider,
   Group,
   Input,
@@ -43,7 +43,8 @@ import {
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TagSort } from '~/server/common/enums';
-import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
+import type { ModelUpsertInput } from '~/server/schema/model.schema';
+import { modelUpsertSchema } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   Availability,
@@ -54,7 +55,7 @@ import {
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';

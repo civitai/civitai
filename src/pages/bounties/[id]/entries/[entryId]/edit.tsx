@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { trpc } from '~/utils/trpc';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { removeEmpty } from '~/utils/object-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 

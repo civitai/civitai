@@ -1,3 +1,4 @@
+import type { Icon as TablerIcon, IconProps } from '@tabler/icons-react';
 import {
   IconBrandBilibili,
   IconBrandDeviantart,
@@ -18,13 +19,12 @@ import {
   IconMug,
   IconPigMoney,
   IconWorld,
-  Icon as TablerIcon,
-  IconProps,
   IconBrandLinkedin,
 } from '@tabler/icons-react';
 import { IconCivitai } from '~/components/SVG/IconCivitai';
 import { IconBrandHuggingFace } from '~/components/SVG/IconHuggingFace';
-import { DomainLink, getDomainLinkType } from '~/utils/domain-link';
+import type { DomainLink } from '~/utils/domain-link';
+import { getDomainLinkType } from '~/utils/domain-link';
 
 export function DomainIcon({
   url,

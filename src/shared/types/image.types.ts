@@ -1,4 +1,4 @@
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 
 export type ImageModel = {
   id: number;

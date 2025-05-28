@@ -1,5 +1,6 @@
 import { Badge, Button, createStyles, Group, Menu, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
+import type { IconProps } from '@tabler/icons-react';
 import {
   IconCalendar,
   IconCaretDown,
@@ -11,7 +12,6 @@ import {
   IconMoneybag,
   IconPhoto,
   IconPointFilled,
-  IconProps,
   IconShoppingBag,
   IconTools,
   IconTrophy,
@@ -22,7 +22,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';

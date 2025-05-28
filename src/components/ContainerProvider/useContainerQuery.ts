@@ -1,4 +1,4 @@
-import { MantineNumberSize } from '@mantine/core';
+import type { MantineNumberSize } from '@mantine/core';
 import { useMediaQuery as useMantineMediaQuery } from '@mantine/hooks';
 import { useCallback } from 'react';
 import {

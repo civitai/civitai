@@ -1,9 +1,11 @@
-import { Prisma, PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { templateHandler } from '~/server/db/db-helpers';
-import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh, snippets } from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';

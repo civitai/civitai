@@ -2,7 +2,7 @@ import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { createStyles } from '@mantine/core';
 import React, { useMemo } from 'react';
-import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 
 type Props<TData> = {

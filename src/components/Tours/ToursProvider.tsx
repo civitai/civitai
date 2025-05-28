@@ -11,13 +11,14 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStorage } from '~/hooks/useStorage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { TourSettingsSchema } from '~/server/schema/user.schema';
+import type { TourSettingsSchema } from '~/server/schema/user.schema';
 import { generationPanel } from '~/store/generation.store';
-import { StepWithData } from '~/types/tour';
-import { TourKey, tourSteps } from '~/components/Tours/tours';
+import type { StepWithData } from '~/types/tour';
+import type { TourKey } from '~/components/Tours/tours';
+import { tourSteps } from '~/components/Tours/tours';
 import { trpc } from '~/utils/trpc';
 import dynamic from 'next/dynamic';
-import { StoreHelpers } from 'react-joyride';
+import type { StoreHelpers } from 'react-joyride';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 
 const LazyTours = dynamic(() => import('~/components/Tours/LazyTours'));

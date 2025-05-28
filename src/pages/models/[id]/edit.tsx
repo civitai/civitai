@@ -21,7 +21,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
-
 export default function ModelEditPage() {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -54,7 +53,11 @@ export default function ModelEditPage() {
         </Center>
       ) : (
         <Stack spacing="xl">
-          <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to edit your model. Please try again later."} />
+          <ReadOnlyAlert
+            message={
+              "Civitai is currently in read-only mode and you won't be able to edit your model. Please try again later."
+            }
+          />
           <Link legacyBehavior href={`/models/${modelId}`} passHref>
             <Anchor size="xs">
               <Group spacing={4}>

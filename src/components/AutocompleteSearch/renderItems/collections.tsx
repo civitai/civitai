@@ -1,5 +1,6 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Center, Group, Stack, Text } from '@mantine/core';
+import type { AutocompleteItem } from '@mantine/core';
+import { Center, Group, Stack, Text } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { Highlight } from 'react-instantsearch';
@@ -12,9 +13,9 @@ import {
 } from '~/components/AutocompleteSearch/renderItems/common';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { truncate } from 'lodash-es';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export const CollectionsSearchItem = forwardRef<

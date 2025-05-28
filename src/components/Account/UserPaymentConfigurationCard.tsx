@@ -1,8 +1,8 @@
+import type { ButtonProps } from '@mantine/core';
 import {
   ActionIcon,
   Alert,
   Button,
-  ButtonProps,
   Card,
   Center,
   Checkbox,

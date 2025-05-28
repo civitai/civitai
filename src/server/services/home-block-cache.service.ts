@@ -1,6 +1,7 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { getHomeBlockData, HomeBlockWithData } from '~/server/services/home-block.service';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import type { HomeBlockWithData } from '~/server/services/home-block.service';
+import { getHomeBlockData } from '~/server/services/home-block.service';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 

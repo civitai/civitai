@@ -1,6 +1,7 @@
-import { createStyles, CSSObject } from '@mantine/core';
+import type { CSSObject } from '@mantine/core';
+import { createStyles } from '@mantine/core';
 import { constants } from '~/server/common/constants';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 
 const winnerFrame: CSSObject = {
   content: '""',

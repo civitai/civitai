@@ -1,8 +1,10 @@
 import { useLocalStorage, usePrevious } from '@mantine/hooks';
 import { signIn, signOut, useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import { createContext, ReactNode, useContext, useEffect } from 'react';
-import { civTokenEndpoint, EncryptedDataSchema } from '~/server/schema/civToken.schema';
+import type { ReactNode } from 'react';
+import { createContext, useContext, useEffect } from 'react';
+import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
+import { civTokenEndpoint } from '~/server/schema/civToken.schema';
 import { deleteCookies } from '~/utils/cookies-helpers';
 
 export type CivitaiAccount = {

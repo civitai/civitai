@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';

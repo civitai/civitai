@@ -41,7 +41,8 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
-import { UpsertCollectionInput, upsertCollectionInput } from '~/server/schema/collection.schema';
+import type { UpsertCollectionInput } from '~/server/schema/collection.schema';
+import { upsertCollectionInput } from '~/server/schema/collection.schema';
 import { CollectionMode, CollectionType, TagTarget } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -234,7 +235,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                               </Code>
                             </Box>
                           )}
-                        </CopyButton> 
+                        </CopyButton>
                       </Stack>
                     )}
 

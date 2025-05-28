@@ -39,7 +39,7 @@ import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';

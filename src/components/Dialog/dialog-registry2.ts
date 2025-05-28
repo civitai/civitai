@@ -1,5 +1,5 @@
 import dynamic from 'next/dynamic';
-import { ComponentProps, ComponentType } from 'react';
+import type { ComponentProps, ComponentType } from 'react';
 
 type DialogConfig<T> = {
   component: ComponentType<T>;

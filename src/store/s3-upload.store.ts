@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-import { UploadType } from '~/server/common/enums';
+import type { UploadType } from '~/server/common/enums';
 import { bytesToKB } from '~/utils/number-helpers';
 
 import { useCatchNavigationStore } from './catch-navigation.store';

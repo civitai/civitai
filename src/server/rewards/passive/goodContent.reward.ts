@@ -1,4 +1,5 @@
-import { reactableEntities, ReactionEntityType } from '~/server/schema/reaction.schema';
+import type { ReactionEntityType } from '~/server/schema/reaction.schema';
+import { reactableEntities } from '~/server/schema/reaction.schema';
 import { createBuzzEvent } from '../base.reward';
 
 const CUTOFF_DAYS = 30;

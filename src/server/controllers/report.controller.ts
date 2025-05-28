@@ -2,8 +2,8 @@ import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { NotificationCategory } from '~/server/common/enums';
 
-import { Context } from '~/server/createContext';
-import {
+import type { Context } from '~/server/createContext';
+import type {
   BulkUpdateReportStatusInput,
   CreateEntityAppealInput,
   CreateReportInput,

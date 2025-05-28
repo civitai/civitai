@@ -2,7 +2,7 @@ import { Container, Title, TypographyStylesProvider } from '@mantine/core';
 import fs from 'fs';
 import matter from 'gray-matter';
 import { truncate } from 'lodash-es';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';

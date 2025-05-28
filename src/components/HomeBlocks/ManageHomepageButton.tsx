@@ -1,5 +1,7 @@
-import { ActionIcon, ActionIconProps } from '@mantine/core';
-import { IconSettings, IconProps } from '@tabler/icons-react';
+import type { ActionIconProps } from '@mantine/core';
+import { ActionIcon } from '@mantine/core';
+import type { IconProps } from '@tabler/icons-react';
+import { IconSettings } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 

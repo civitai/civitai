@@ -1,5 +1,6 @@
 import { supportUsImageSizes } from '~/components/Ads/ads.utils';
-import { CSSObject, Text, createStyles } from '@mantine/core';
+import type { CSSObject } from '@mantine/core';
+import { Text, createStyles } from '@mantine/core';
 import React, { useEffect, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';

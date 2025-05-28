@@ -20,15 +20,17 @@ import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import { UploadType } from '~/server/common/enums';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import {
+import type {
   AutoCaptionSchemaType,
-  autoLabelLimits,
   AutoTagSchemaType,
+  LabelTypes,
+  overwriteList,
+} from '~/store/training.store';
+import {
+  autoLabelLimits,
   defaultTrainingState,
   defaultTrainingStateVideo,
   getShortNameFromUrl,
-  LabelTypes,
-  overwriteList,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';

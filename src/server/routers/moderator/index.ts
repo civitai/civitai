@@ -14,7 +14,7 @@ import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-f
 import { getModelModRules } from '~/server/services/model.service';
 import { moderatorProcedure, router } from '~/server/trpc';
 import { throwDbError } from '~/server/utils/errorHandling';
-import { ModerationRule } from '~/shared/utils/prisma/models';
+import type { ModerationRule } from '~/shared/utils/prisma/models';
 
 export const modRouter = router({
   models: router({

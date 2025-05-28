@@ -1,5 +1,9 @@
 import { trpc } from '~/utils/trpc';
-import { TrackActionInput, TrackSearchInput, TrackShareInput } from '~/server/schema/track.schema';
+import type {
+  TrackActionInput,
+  TrackSearchInput,
+  TrackShareInput,
+} from '~/server/schema/track.schema';
 
 export const useTrackEvent = () => {
   const { mutateAsync: trackShare } = trpc.track.trackShare.useMutation();

@@ -1,9 +1,10 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createNotification } from '~/server/services/notification.service';
-import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import type { Task } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const lightMilestones = [1, 6, 12];

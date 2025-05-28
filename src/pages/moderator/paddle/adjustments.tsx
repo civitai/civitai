@@ -22,7 +22,8 @@ import { usePaddleAdjustmentsInfinite } from '~/components/Paddle/util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { usePaddle } from '~/providers/PaddleProvider';
 
-import { AdjustmentAction, GetPaddleAdjustmentsSchema } from '~/server/schema/paddle.schema';
+import type { GetPaddleAdjustmentsSchema } from '~/server/schema/paddle.schema';
+import { AdjustmentAction } from '~/server/schema/paddle.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { getDisplayName, toPascalCase } from '~/utils/string-helpers';

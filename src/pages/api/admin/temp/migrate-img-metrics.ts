@@ -1,10 +1,10 @@
 import { Prisma } from '@prisma/client';
-import {
+import type {
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
 } from '~/shared/utils/prisma/enums';
 import { chunk, remove } from 'lodash-es';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';

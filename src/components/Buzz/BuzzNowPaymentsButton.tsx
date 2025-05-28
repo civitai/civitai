@@ -1,7 +1,7 @@
 import { Anchor, Button, Stack, Text } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
+import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
 import { useMutateNowPayments, useNowPaymentsStatus } from '~/components/NowPayments/util';
 import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';

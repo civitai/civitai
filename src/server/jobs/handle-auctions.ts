@@ -1,4 +1,5 @@
-import dayjs, { Dayjs } from 'dayjs';
+import type { Dayjs } from 'dayjs';
+import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import { z } from 'zod';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';

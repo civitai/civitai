@@ -1,4 +1,5 @@
-import { Badge, BadgeProps, keyframes } from '@mantine/core';
+import type { BadgeProps } from '@mantine/core';
+import { Badge, keyframes } from '@mantine/core';
 import { useIsLive } from '~/hooks/useIsLive';
 
 export function LiveNowIndicator(props: Omit<BadgeProps, 'children'>) {

@@ -38,10 +38,11 @@ import { env } from '~/env/client';
 import { isDev } from '~/env/other';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
-import { JoinRedirectReason, joinRedirectReasons } from '~/utils/join-helpers';
+import type { JoinRedirectReason } from '~/utils/join-helpers';
+import { joinRedirectReasons } from '~/utils/join-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 

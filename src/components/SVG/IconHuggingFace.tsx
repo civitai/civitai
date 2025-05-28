@@ -1,4 +1,4 @@
-import { IconProps } from '@tabler/icons-react';
+import type { IconProps } from '@tabler/icons-react';
 
 export function IconBrandHuggingFace({
   size = 24,

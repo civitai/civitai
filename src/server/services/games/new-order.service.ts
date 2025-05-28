@@ -1,4 +1,5 @@
-import { clickhouse, Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/client';
+import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, newOrderConfig } from '~/server/common/constants';
 import {
   NewOrderImageRatingStatus,
@@ -23,15 +24,15 @@ import {
 } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { InfiniteQueryInput } from '~/server/schema/base.schema';
-import {
+import type { InfiniteQueryInput } from '~/server/schema/base.schema';
+import type {
   AddImageRatingInput,
   CleanseSmiteInput,
   GetHistorySchema,
   GetImagesQueueSchema,
   SmitePlayerInput,
 } from '~/server/schema/games/new-order.schema';
-import { ImageMetadata } from '~/server/schema/media.schema';
+import type { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
 import { moderateImages, updateImageNsfwLevel } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';

@@ -1,6 +1,6 @@
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { getUserLinks } from '~/server/services/user-link.service';
-import {
+import type {
   GetUserReferralCodesSchema,
   UpsertUserReferralCodesSchema,
 } from '~/server/schema/user-referral-code.schema';
@@ -10,7 +10,7 @@ import {
   deleteUserReferralCode,
 } from '~/server/services/user-referral-code.service';
 import { throwDbError } from '~/server/utils/errorHandling';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 
 export const getUserReferralCodesHandler = async ({
   input,

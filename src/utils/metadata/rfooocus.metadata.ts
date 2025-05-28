@@ -1,5 +1,5 @@
 import { samplerMap } from '~/server/common/constants';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { findKeyForValue } from '~/utils/map-helpers';
 import { createMetadataProcessor } from '~/utils/metadata/base.metadata';
 

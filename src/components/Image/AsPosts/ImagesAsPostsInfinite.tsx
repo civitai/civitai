@@ -42,7 +42,7 @@ import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerati
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Flags } from '~/shared/utils';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';

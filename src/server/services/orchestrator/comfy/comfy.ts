@@ -1,10 +1,11 @@
-import { ComfyStepTemplate, TimeSpan } from '@civitai/client';
-import { SessionUser } from 'next-auth';
-import { z } from 'zod';
+import type { ComfyStepTemplate } from '@civitai/client';
+import { TimeSpan } from '@civitai/client';
+import type { SessionUser } from 'next-auth';
+import type { z } from 'zod';
 import { env } from '~/env/server';
 import { maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
-import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   applyResources,
   getWorkflowDefinition,
@@ -14,7 +15,7 @@ import {
   formatGenerationResponse,
   parseGenerateImageInput,
 } from '~/server/services/orchestrator/common';
-import { TextToImageResponse } from '~/server/services/orchestrator/types';
+import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/generation.constants';
 import { Availability } from '~/shared/utils/prisma/enums';

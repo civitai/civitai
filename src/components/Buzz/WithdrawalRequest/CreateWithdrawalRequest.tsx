@@ -10,7 +10,7 @@ import {
   Text,
 } from '@mantine/core';
 import { IconMoodDollar, IconX } from '@tabler/icons-react';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import {

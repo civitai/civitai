@@ -29,9 +29,9 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { buzzBulkBonusMultipliers, constants } from '~/server/common/constants';
-import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { Price } from '~/shared/utils/prisma/models';
+import type { Price } from '~/shared/utils/prisma/models';
 import {
   formatCurrencyForDisplay,
   formatPriceForDisplay,

@@ -1,6 +1,7 @@
-import { TextareaProps, Textarea } from '@mantine/core';
+import type { TextareaProps } from '@mantine/core';
+import { Textarea } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
-import { KeyboardEvent } from 'react';
+import type { KeyboardEvent } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { keyupEditAttention } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCustomFormContext } from '~/libs/form';

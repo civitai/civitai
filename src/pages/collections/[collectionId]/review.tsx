@@ -12,7 +12,7 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
+import type { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { showNotification } from '@mantine/notifications';
 import {
   IconCheck,
@@ -33,7 +33,7 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { CollectionItemStatus, CollectionMode, CollectionType } from '~/shared/utils/prisma/enums';
-import { CollectionItemExpanded } from '~/server/services/collection.service';
+import type { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import {
@@ -49,7 +49,7 @@ import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
-import { GetAllCollectionItemsSchema } from '~/server/schema/collection.schema';
+import type { GetAllCollectionItemsSchema } from '~/server/schema/collection.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
 import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';

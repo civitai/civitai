@@ -1,4 +1,5 @@
-import { ImageResourceTrainingStep, Workflow, WorkflowStatus } from '@civitai/client';
+import type { ImageResourceTrainingStep, Workflow } from '@civitai/client';
+import { WorkflowStatus } from '@civitai/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { env } from '~/env/server';
@@ -6,8 +7,8 @@ import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
-import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
-import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
+import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';

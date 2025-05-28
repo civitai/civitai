@@ -3,7 +3,8 @@ import CustomParseFormat from 'dayjs/plugin/customParseFormat';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
-import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
+import type { UnpublishReason } from '~/server/common/moderation-helpers';
+import { unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   baseQuerySchema,
   getByIdSchema,

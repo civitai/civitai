@@ -1,4 +1,5 @@
-import { Group, GroupProps } from '@mantine/core';
+import type { GroupProps } from '@mantine/core';
+import { Group } from '@mantine/core';
 import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';

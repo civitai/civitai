@@ -9,7 +9,7 @@ import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useClubFilters, useQueryClubs } from '~/components/Club/club.utils';
 import { ClubCard } from '~/components/Club/ClubCard';
-import { GetInfiniteClubSchema } from '~/server/schema/club.schema';
+import type { GetInfiniteClubSchema } from '~/server/schema/club.schema';
 
 export function ClubsInfinite({ filters: filterOverrides, showEof = true }: Props) {
   const clubsFilters = useClubFilters();

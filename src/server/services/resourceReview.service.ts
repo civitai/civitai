@@ -3,8 +3,8 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import {
   resourceReviewSelect,
   resourceReviewSimpleSelect,
@@ -23,9 +23,9 @@ import {
 } from '~/server/services/user.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagingData } from '~/server/utils/pagination-helpers';
-import { ResourceReviewCreate } from '~/types/router';
-import { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
-import {
+import type { ResourceReviewCreate } from '~/types/router';
+import type { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
+import type {
   CreateResourceReviewInput,
   GetRatingTotalsInput,
   GetResourceReviewPagedInput,

@@ -1,4 +1,5 @@
-import { MRT_ColumnDef, MRT_PaginationState, MantineReactTable } from 'mantine-react-table';
+import type { MRT_ColumnDef, MRT_PaginationState } from 'mantine-react-table';
+import { MantineReactTable } from 'mantine-react-table';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';

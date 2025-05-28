@@ -1,13 +1,7 @@
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
-import {
-  createContext,
-  type Dispatch,
-  ReactNode,
-  type SetStateAction,
-  useContext,
-  useState,
-} from 'react';
+import type { ReactNode } from 'react';
+import { createContext, type Dispatch, type SetStateAction, useContext, useState } from 'react';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useIsClient } from '~/providers/IsClientProvider';

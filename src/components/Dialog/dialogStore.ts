@@ -1,4 +1,5 @@
-import React, { useRef } from 'react';
+import type React from 'react';
+import { useRef } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 

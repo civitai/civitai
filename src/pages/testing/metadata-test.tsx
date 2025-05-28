@@ -15,7 +15,7 @@ import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { isProd } from '~/env/other';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { blobToFile } from '~/utils/file-utils';
 import { createImageElement, imageToJpegBlob } from '~/utils/image-utils';
 import { getMetadata, encodeMetadata, ExifParser } from '~/utils/metadata';

@@ -2,8 +2,8 @@ import { dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import recommendersCaller from '~/server/http/recommenders/recommenders.caller';
 import { dataForModelsCache } from '~/server/redis/caches';
-import { ModelVersionMeta } from '~/server/schema/model-version.schema';
-import { RecommendationRequest } from '~/server/schema/recommenders.schema';
+import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
+import type { RecommendationRequest } from '~/server/schema/recommenders.schema';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export function getRecommendations(params: RecommendationRequest) {

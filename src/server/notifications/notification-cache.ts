@@ -1,6 +1,7 @@
 import { CacheTTL } from '~/server/common/constants';
-import { NotificationCategory } from '~/server/common/enums';
-import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
+import type { NotificationCategory } from '~/server/common/enums';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 // #region Notification Cache
 const NOTIFICATION_CACHE_TIME = CacheTTL.week;

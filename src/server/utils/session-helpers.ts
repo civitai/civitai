@@ -1,12 +1,12 @@
-import { Session } from 'next-auth';
-import { JWT } from 'next-auth/jwt';
+import type { Session } from 'next-auth';
+import type { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';
 import { missingSignedAtCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getSessionUser } from '~/server/services/user.service';
 import { clearCacheByPattern } from '~/server/utils/cache-helpers';
 import { generateSecretHash } from '~/server/utils/key-generator';
-import { User } from '~/shared/utils/prisma/models';
+import type { User } from '~/shared/utils/prisma/models';
 import { createLogger } from '~/utils/logging';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days

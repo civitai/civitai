@@ -1,4 +1,5 @@
-import { MantineColor, Notification, NotificationProps } from '@mantine/core';
+import type { MantineColor, NotificationProps } from '@mantine/core';
+import { Notification } from '@mantine/core';
 import { useInterval } from '@mantine/hooks';
 import {
   createContext,
@@ -11,12 +12,13 @@ import {
 } from 'react';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
-import { SignalMessages, SignalTopic } from '~/server/common/enums';
+import type { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { useDebouncer } from '~/utils/debouncer';
 import { getRandomInt } from '~/utils/number-helpers';
-import { SignalStatus } from '~/utils/signals/types';
+import type { SignalStatus } from '~/utils/signals/types';
 // import { createSignalWorker, SignalWorker } from '~/utils/signals';
-import { SignalWorker, useSignalsWorker } from '~/utils/signals/useSignalsWorker';
+import type { SignalWorker } from '~/utils/signals/useSignalsWorker';
+import { useSignalsWorker } from '~/utils/signals/useSignalsWorker';
 import { trpc } from '~/utils/trpc';
 
 type SignalState = {

@@ -1,4 +1,4 @@
-import { Key } from 'react';
+import type { Key } from 'react';
 
 export type ComboboxOption = {
   group?: string;

@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import client from '~/server/http/nowpayments/nowpayments.caller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';

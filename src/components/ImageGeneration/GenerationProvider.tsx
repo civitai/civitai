@@ -5,13 +5,13 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { GenerationLimits } from '~/server/schema/generation.schema';
-import { UserTier } from '~/server/schema/user.schema';
-import {
+import type { GenerationLimits } from '~/server/schema/generation.schema';
+import type { UserTier } from '~/server/schema/user.schema';
+import type {
   NormalizedGeneratedImage,
   NormalizedGeneratedImageResponse,
 } from '~/server/services/orchestrator';
-import { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/client';
 import { isDefined } from '~/utils/type-guards';
 import { useGenerationStore } from '~/store/generation.store';
 

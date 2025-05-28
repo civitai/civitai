@@ -1,3 +1,4 @@
+import type { ChipProps, ButtonProps } from '@mantine/core';
 import {
   Popover,
   Group,
@@ -5,11 +6,9 @@ import {
   Stack,
   Divider,
   Chip,
-  ChipProps,
   Button,
   createStyles,
   Drawer,
-  ButtonProps,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { BuzzWithdrawalRequestStatus, PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
@@ -17,7 +16,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
+import type { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
 
 type Filters = Omit<GetPaginatedPurchasableRewardsModeratorSchema, 'limit'>;

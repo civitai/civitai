@@ -1,4 +1,4 @@
-import { MantineNumberSize, MantineSize } from '@mantine/core';
+import type { MantineNumberSize, MantineSize } from '@mantine/core';
 
 export const mantineContainerSizes: Record<MantineSize, number> = {
   xs: 576,

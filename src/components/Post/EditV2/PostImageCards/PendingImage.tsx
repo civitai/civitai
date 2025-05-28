@@ -1,13 +1,11 @@
 import { Skeleton } from '@mantine/core';
-import {
-  PostEditMediaDetail,
-  usePostPreviewContext,
-} from '~/components/Post/EditV2/PostEditProvider';
+import type { PostEditMediaDetail } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 
 export function PendingImage({ image }: { image: PostEditMediaDetail }) {
   const { showPreview } = usePostPreviewContext();
   return (
-    <div className="bg-gray-0 dark:bg-dark-8 border border-gray-1 dark:border-dark-6 rounded-lg">
+    <div className="rounded-lg border border-gray-1 bg-gray-0 dark:border-dark-6 dark:bg-dark-8">
       {showPreview ? <Preview image={image} /> : <EditDetail image={image} />}
     </div>
   );
@@ -30,13 +28,13 @@ function Preview({ image }: { image: PostEditMediaDetail }) {
 
 function EditDetail({ image }: { image: PostEditMediaDetail }) {
   return (
-    <div className="p-3 flex flex-col gap-3 @container">
-      <div className="flex flex-row-reverse flex-wrap @sm:flex-nowrap gap-3">
+    <div className="flex flex-col gap-3 p-3 @container">
+      <div className="flex flex-row-reverse flex-wrap gap-3 @sm:flex-nowrap">
         <div className="w-full @sm:w-4/12">
           <Preview image={image} />
         </div>
         <div className="flex-1">
-          <Skeleton className="h-full w-full" />
+          <Skeleton className="size-full" />
         </div>
       </div>
     </div>

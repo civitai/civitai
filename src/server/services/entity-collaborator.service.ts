@@ -3,7 +3,7 @@ import { ChatMessageType, EntityType, EntityCollaboratorStatus } from '~/shared/
 import dayjs from 'dayjs';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
+import type {
   GetEntityCollaboratorsInput,
   RemoveEntityCollaboratorInput,
   UpsertEntityCollaboratorInput,

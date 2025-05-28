@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
-import { BaseModel, constants } from '~/server/common/constants';
-import { MediaType, ModelType, TrainingStatus } from '~/shared/utils/prisma/enums';
+import type { BaseModel } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
+import type { ModelType } from '~/shared/utils/prisma/enums';
+import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
 
 export type ResourceSelectOptions = {
   canGenerate?: boolean;

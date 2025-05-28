@@ -1,3 +1,4 @@
+import type { MenuItemProps } from '@mantine/core';
 import {
   ActionIcon,
   Center,
@@ -7,7 +8,6 @@ import {
   Modal,
   Text,
   Stack,
-  MenuItemProps,
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
@@ -30,7 +30,8 @@ import {
   IconDiamond,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { DragEvent, useState } from 'react';
+import type { DragEvent } from 'react';
+import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 // import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
@@ -46,8 +47,8 @@ import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQ
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { constants } from '~/server/common/constants';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import {
+import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import type {
   NormalizedGeneratedImage,
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
@@ -60,7 +61,7 @@ import {
 import { generationStore, useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
 import { UpscaleEnhancementModal } from '~/components/Orchestrator/components/UpscaleEnhancementModal';
 import { EnhanceVideoModal } from '~/components/Orchestrator/components/EnhanceVideoModal';
@@ -70,7 +71,7 @@ import type { WorkflowDefinitionKey } from '~/server/services/orchestrator/comfy
 import { useGeneratedItemStore } from '~/components/Generation/stores/generated-item.store';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
-import { EmblaCarouselType } from 'embla-carousel';
+import type { EmblaCarouselType } from 'embla-carousel';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';

@@ -1,8 +1,9 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
-import { constants, ModelFileType } from '~/server/common/constants';
+import type { ModelFileType } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
-import { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
+import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
 import { getVaeFiles } from '~/server/services/model.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';

@@ -1,5 +1,6 @@
 import { Button, Kbd, ActionIcon, Tooltip, Text, Modal, Popover } from '@mantine/core';
-import { HotkeyItem, useHotkeys } from '@mantine/hooks';
+import type { HotkeyItem } from '@mantine/hooks';
+import { useHotkeys } from '@mantine/hooks';
 import {
   IconArrowBackUp,
   IconFlag,

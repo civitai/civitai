@@ -39,13 +39,13 @@ import {
 import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
+import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import {
   changeModelModifierSchema,
   copyGallerySettingsSchema,
   declineReviewSchema,
   deleteModelSchema,
   findResourcesToAssociateSchema,
-  GetAllModelsOutput,
   getAllModelsSchema,
   getAssociatedResourcesSchema,
   getDownloadSchema,

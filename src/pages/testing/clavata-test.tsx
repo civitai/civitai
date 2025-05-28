@@ -17,7 +17,7 @@ import { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { ImageTag } from '~/server/integrations/clavata';
+import type { ImageTag } from '~/server/integrations/clavata';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();

@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { addImageToQueue, getImagesQueue } from '~/server/services/games/new-order.service';

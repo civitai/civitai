@@ -6,26 +6,27 @@ import {
   MetricTimeframe,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
-import dayjs, { ManipulateType } from 'dayjs';
+import type { ManipulateType } from 'dayjs';
+import dayjs from 'dayjs';
 import { groupBy } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
 import { decreaseDate, startOfDay } from '~/utils/date-helpers';
-import { BountySort, BountyStatus, NsfwLevel } from '../common/enums';
+import type { NsfwLevel } from '../common/enums';
+import { BountySort, BountyStatus } from '../common/enums';
 import { dbRead, dbWrite } from '../db/client';
-import { GetByIdInput } from '../schema/base.schema';
-import {
+import type { GetByIdInput } from '../schema/base.schema';
+import type {
   AddBenefactorUnitAmountInputSchema,
   BountyDetailsSchema,
   CreateBountyInput,
   GetInfiniteBountySchema,
   UpdateBountyInput,
   UpsertBountyInput,
-  createBountyInputSchema,
-  updateBountyInputSchema,
 } from '../schema/bounty.schema';
+import { createBountyInputSchema, updateBountyInputSchema } from '../schema/bounty.schema';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
 import {
@@ -35,7 +36,7 @@ import {
   throwNotFoundError,
 } from '../utils/errorHandling';
 import { updateEntityFiles } from './file.service';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';

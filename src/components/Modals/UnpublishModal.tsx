@@ -2,7 +2,8 @@ import { Button, Group, Radio, Stack, Textarea } from '@mantine/core';
 import React, { useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
-import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
+import type { UnpublishReason } from '~/server/common/moderation-helpers';
+import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

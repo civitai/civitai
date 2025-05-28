@@ -1,8 +1,9 @@
-import { CopyButton, Tooltip, Badge, Group, BadgeProps } from '@mantine/core';
+import type { BadgeProps } from '@mantine/core';
+import { CopyButton, Tooltip, Badge, Group } from '@mantine/core';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconCheck, IconCopy } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
-import { ModelFileType } from '~/server/common/constants';
+import type { ModelFileType } from '~/server/common/constants';
 
 export function TrainedWords({
   trainedWords = [],

@@ -6,7 +6,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { ChatMessageType } from '~/shared/utils/prisma/enums';
-import { ChatAllMessages, ChatCreateChat } from '~/types/router';
+import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 import { isApril1 } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 

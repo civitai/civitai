@@ -1,3 +1,4 @@
+import type { MantineColor } from '@mantine/core';
 import {
   Accordion,
   ActionIcon,
@@ -11,7 +12,6 @@ import {
   HoverCard,
   Loader,
   LoadingOverlay,
-  MantineColor,
   Modal,
   Pagination,
   ScrollArea,
@@ -45,13 +45,13 @@ import {
   createModelFileDownloadUrl,
   getModelTrainingWizardUrl,
 } from '~/server/common/model-helpers';
-import {
+import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { MyTrainingModelGetAll } from '~/types/router';
+import type { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';

@@ -4,10 +4,10 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { UserPreferencesInput } from '~/server/schema/base.schema';
+import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
-import { ExtendedUser } from '~/types/next-auth';
+import type { ExtendedUser } from '~/types/next-auth';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {

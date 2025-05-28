@@ -1,4 +1,5 @@
-import { CommentV2BadgeProps, useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
+import type { CommentV2BadgeProps } from '~/components/CommentsV2/CommentsProvider';
+import { useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createContext, useContext } from 'react';
 import type { Comment } from '~/server/services/commentsv2.service';

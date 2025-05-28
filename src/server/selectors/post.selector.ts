@@ -1,4 +1,4 @@
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { simpleTagSelect } from './tag.selector';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';

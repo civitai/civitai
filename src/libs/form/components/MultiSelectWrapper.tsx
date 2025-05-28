@@ -1,13 +1,5 @@
-import {
-  MultiSelect,
-  MultiSelectProps,
-  SelectItem,
-  ScrollArea,
-  ScrollAreaProps,
-  Divider,
-  Box,
-  Loader,
-} from '@mantine/core';
+import type { MultiSelectProps, SelectItem, ScrollAreaProps } from '@mantine/core';
+import { MultiSelect, ScrollArea, Divider, Box, Loader } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
 import React, { useMemo, forwardRef } from 'react';
 

@@ -1,10 +1,10 @@
+import type { ContainerProps } from '@mantine/core';
 import {
   ActionIcon,
   AspectRatio,
   Box,
   Button,
   Center,
-  ContainerProps,
   createStyles,
   Divider,
   Group,
@@ -29,7 +29,8 @@ import {
 import { capitalize, truncate } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { CSSProperties, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { useState } from 'react';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -78,7 +79,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
-import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
+import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import {
   Availability,
   CollectionItemStatus,
@@ -86,7 +87,7 @@ import {
   CollectionType,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
-import { CollectionByIdModel } from '~/types/router';
+import type { CollectionByIdModel } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
