@@ -11,7 +11,7 @@ import { IconCloudOff } from '@tabler/icons-react';
 import React from 'react';
 import { UserWithProfile } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import classes from '~/components/Profile/ProfileSection.module.scss';
+import classes from '~/components/Profile/ProfileSection.module.css';
 
 type Props = {
   title: string;

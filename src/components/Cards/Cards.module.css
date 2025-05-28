@@ -19,7 +19,7 @@
 .image {
   height: 100% !important;
   object-fit: cover;
-  // TODO: Mantine7: this needs to be set based on the aspect ratio
+  /* TODO: Mantine7: this needs to be set based on the aspect ratio */
   object-position: top center;
   transition: transform 400ms ease;
   min-width: 100%;
@@ -148,7 +148,7 @@
   }
 
   &[data-reviewed="true"] {
-    background-color: rgba(var(--mantine-color-success-5), 0.2);
+    background-color: alpha(var(--mantine-color-success-5), 0.2);
   }
 }
 

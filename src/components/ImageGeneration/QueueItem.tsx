@@ -265,14 +265,14 @@ export function QueueItem({
               </ContentClamp>
             )}
 
-            <div className="-my-2">
+            <div className="-my-2 flex gap-2">
               {workflowDefinition && (
-                <Badge radius="sm" color="violet" size="sm">
+                <Badge radius="sm" color="violet" size="sm" classNames={{ label: 'overflow-hidden' }}>
                   {workflowDefinition.label}
                 </Badge>
               )}
               {engine && (
-                <Badge radius="sm" color="violet" size="sm">
+                <Badge radius="sm" color="violet" size="sm" classNames={{ label: 'overflow-hidden' }}>
                   {engine}
                 </Badge>
               )}
@@ -349,7 +349,7 @@ export function QueueItem({
       )}
 
       {inView && (
-        <Card.Section withBorder className="-mx-8">
+        <Card.Section withBorder className="-mx-2">
           <GenerationDetails
             label="Additional Details"
             params={details}
@@ -370,7 +370,7 @@ const ResourceBadge = (props: GenerationResource) => {
   const hasEpochDetails = !!epochDetails?.epochNumber;
 
   const badge = (
-    <Group gap={0} wrap="nowrap">
+    <Group gap={4} wrap="nowrap">
       <Badge
         size="sm"
         color={unstable ? 'yellow' : undefined}
@@ -380,6 +380,7 @@ const ResourceBadge = (props: GenerationResource) => {
           borderTopRightRadius: hasEpochDetails ? 0 : undefined,
           borderBottomRightRadius: hasEpochDetails ? 0 : undefined,
         }}
+        classNames={{ label: '!overflow-hidden' }}
         component={Link}
         href={`/models/${model.id}?modelVersionId=${id}`}
         onClick={() => generationPanel.close()}
@@ -395,6 +396,7 @@ const ResourceBadge = (props: GenerationResource) => {
               borderTopLeftRadius: hasEpochDetails ? 0 : undefined,
               borderBottomLeftRadius: hasEpochDetails ? 0 : undefined,
             }}
+            classNames={{ label: '!overflow-hidden' }}
           >
             #{epochDetails?.epochNumber}
           </Badge>

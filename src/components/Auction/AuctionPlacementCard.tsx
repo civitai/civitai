@@ -36,7 +36,7 @@ import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import cardClasses from '~/components/Cards/Cards.module.scss';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';

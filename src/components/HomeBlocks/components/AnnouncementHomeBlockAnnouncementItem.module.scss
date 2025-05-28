@@ -15,6 +15,7 @@ $open-colors: (
   'dark'
 );
 
+// TODO: Mantine7: Fix this for rgba handling
 // Generate color-specific classes
 @each $color-name in $open-colors {
   .card-#{$color-name} {

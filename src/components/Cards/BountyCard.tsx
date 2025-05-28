@@ -10,7 +10,7 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
-import cardClasses from '~/components/Cards/Cards.module.scss';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { BountyGetAll } from '~/types/router';

@@ -3,7 +3,7 @@ import {
   ProfileSectionPreview,
   ProfileSectionProps,
 } from '~/components/Profile/ProfileSection';
-import classes from '~/components/Profile/ProfileSection.module.scss';
+import classes from '~/components/Profile/ProfileSection.module.css';
 
 import { useInView } from '~/hooks/useInView';
 import { IconArrowRight, IconPencilMinus, IconTrendingUp } from '@tabler/icons-react';

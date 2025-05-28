@@ -16,7 +16,7 @@ import {
 } from '~/components/Profile/ProfileSection';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { ImageSort } from '~/server/common/enums';
-import classes from '~/components/Profile/ProfileSection.module.scss';
+import classes from '~/components/Profile/ProfileSection.module.css';
 import clsx from 'clsx';
 
 const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7

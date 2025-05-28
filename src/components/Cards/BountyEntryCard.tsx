@@ -1,7 +1,7 @@
 import { Group, Stack, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import cardClasses from '~/components/Cards/Cards.module.scss';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';

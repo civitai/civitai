@@ -36,7 +36,7 @@ import { BadgeDisplay, Username } from '../User/Username';
 import { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import classes from './CreatorCard.module.scss';
+import classes from './CreatorCard.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function CreatorCard({

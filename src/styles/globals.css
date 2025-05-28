@@ -18,6 +18,10 @@
   overflow: visible;
 }
 
+.mantine-Accordion-label {
+  padding: 0;
+}
+
 html,
 body {
   padding: 0;

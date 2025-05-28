@@ -49,7 +49,7 @@ import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { formatBytes } from '~/utils/number-helpers';
-import styles from './ImageUpload.module.scss';
+import styles from './ImageUpload.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

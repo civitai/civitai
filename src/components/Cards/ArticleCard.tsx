@@ -1,6 +1,6 @@
 import { Badge, Text } from '@mantine/core';
 import React from 'react';
-import cardClasses from '~/components/Cards/Cards.module.scss';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';

@@ -114,7 +114,8 @@ export function BuzzTransactionButton({
           textColor={
             meetsTypeRequiredAmount && takesBlue ? theme.colors.blue[4] : theme.colors.yellow[7]
           }
-          color={colorScheme === 'dark' ? 'dark.8' : 'gray.9'}
+          color={colorScheme === 'dark' ? 'dark.8' : 'gray.2'}
+          variant="filled"
           className="!h-[24px] !py-0"
           typeDistrib={showTypePct ? typeDistrib : undefined}
         >

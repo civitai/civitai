@@ -8,7 +8,7 @@ import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
-import cardClasses from '~/components/Cards/Cards.module.scss';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ThemeIcon } from '@mantine/core';
 

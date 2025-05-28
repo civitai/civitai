@@ -15,8 +15,10 @@
   margin-left: calc(-1 * var(--mantine-spacing-md));
 
   &:nth-of-type(even) {
-    background: light-dark(var(--mantine-color-gray-0),
-        var(--mantine-color-dark-8));
+    background: light-dark(
+      var(--mantine-color-gray-0),
+      var(--mantine-color-dark-8)
+    );
   }
 
   &:hover {
@@ -28,8 +30,10 @@
       }
 
       &::-webkit-scrollbar-thumb {
-        background-color: light-dark(rgba(var(--mantine-color-black), 0.5),
-            rgba(var(--mantine-color-white), 0.5));
+        background-color: light-dark(
+          alpha(var(--mantine-color-black), 0.5),
+          alpha(var(--mantine-color-white), 0.5)
+        );
       }
     }
   }

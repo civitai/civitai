@@ -4,7 +4,7 @@ import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { IconArrowRight } from '@tabler/icons-react';
 import { z } from 'zod';
 
-import cardClasses from '~/components/Cards/Cards.module.scss';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import {
   useEquipContentDecoration,
   useQueryUserCosmetics,

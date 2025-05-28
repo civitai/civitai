@@ -1,7 +1,7 @@
 .hero {
   background-color: light-dark(
-    var(--mantine-color-dark-6),
-    var(--mantine-color-gray-0)
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-6)
   );
   margin-top: calc(-1 * var(--mantine-spacing-md));
   display: flex;
@@ -54,8 +54,14 @@
 }
 
 .tab {
-  background-color: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-0));
-  color: light-dark(var(--mantine-color-dark-0), var(--mantine-color-gray-9));
+  background-color: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-6)
+  );
+  color: light-dark(
+    var(--mantine-color-gray-9),
+    var(--mantine-color-dark-0)
+  );
   padding: calc(var(--mantine-spacing-xs)) calc(var(--mantine-spacing-sm));
   text-align: center;
   flex: 1;

@@ -55,11 +55,11 @@ export function AppHeader({
   return (
     <header
       // fixed={fixed} TODO: Mantine7
-      className={clsx('z-[199]', {
+      className={clsx('z-[199] border-b', {
         ['border-green-8 border-b-[3px]']: features.isGreen,
         ['border-red-8 border-b-[3px]']: features.isRed,
       })}
-      style={{ height: HEADER_HEIGHT }}
+      style={{ height: HEADER_HEIGHT, borderBottomStyle: 'solid' }}
     >
       <div className={clsx('h-full', { ['hidden']: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}

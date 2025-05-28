@@ -43,7 +43,7 @@ import {
   useRefinementList,
 } from 'react-instantsearch';
 import { BidModelButton } from '~/components/Auction/AuctionUtils';
-import cardClasses from '~/components/Cards/Cards.module.scss';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';

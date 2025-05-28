@@ -1,4 +1,4 @@
-import { Alert, Code, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Alert, Code, Paper, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconExclamationMark, IconMail } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { BuiltInProviderType } from 'next-auth/providers';
@@ -68,9 +68,10 @@ export function LoginContent(args: {
       <div className="flex items-center justify-center">
         <Logo className="max-h-10" />
       </div>
-      <h1 className="text-center text-xl font-bold">Sign Up or Log In</h1>
+      <Title order={1} className="text-center text-xl font-bold">Sign Up or Log In</Title>
       {message && (
         <Alert
+          py="sm"
           color="yellow"
           icon={
             <ThemeIcon color="yellow">

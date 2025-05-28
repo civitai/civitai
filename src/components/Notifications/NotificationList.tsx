@@ -18,7 +18,7 @@ import { getNotificationMessage } from '~/server/notifications/utils.notificatio
 import { NotificationGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { isDefined } from '~/utils/type-guards';
-import classes from './NotificationList.module.scss';
+import classes from './NotificationList.module.css';
 
 export function NotificationList({
   items,

@@ -11,7 +11,7 @@ import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
-import classes from '~/components/Profile/ProfileSection.module.scss';
+import classes from '~/components/Profile/ProfileSection.module.css';
 import clsx from 'clsx';
 
 export const ShowcaseSection = ({ user }: ProfileSectionProps) => {

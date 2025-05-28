@@ -18,7 +18,7 @@ import { UniqueIdentifier } from '@dnd-kit/core';
 import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons-react';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import clsx from 'clsx';
-import styles from './ImageUploadPreview.module.scss';
+import styles from './ImageUploadPreview.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 //TODO - handle what to display when there is an error

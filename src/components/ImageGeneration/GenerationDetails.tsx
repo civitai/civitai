@@ -37,8 +37,8 @@ export function GenerationDetails({
         },
         control: {
           padding: 6,
-          paddingLeft: theme.spacing.xs + 6,
-          paddingRight: theme.spacing.xs + 6,
+          paddingLeft: theme.spacing.md,
+          paddingRight: theme.spacing.md,
         },
 
         chevron: upsideDown

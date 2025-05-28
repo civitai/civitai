@@ -17,12 +17,13 @@ export default function NotificationsDrawer({ toggleNode }: { toggleNode: HTMLDi
     <Drawer
       position={mobile ? 'bottom' : 'right'}
       size={mobile ? '100dvh' : '710px'}
-      className={classes.root}
+      classNames={classes}
       shadow="lg"
-      // transitionProps={{ transition: mobile ? 'slide-up' : 'slide-left' }}
+      transitionProps={{ transition: mobile ? 'slide-up' : 'slide-left' }}
       closeOnClickOutside={false}
       withCloseButton={false}
       withOverlay={mobile}
+      withinPortal={false}
       {...dialog}
     >
       <div ref={setDrawer} className="flex size-full flex-col">

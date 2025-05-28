@@ -1,8 +1,10 @@
 .header {
   position: sticky;
   top: 0;
-  background-color: light-dark(var(--mantine-color-white),
-      var(--mantine-color-dark-8));
+  background-color: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-8)
+  );
   transition: box-shadow 150ms ease;
   z-index: 10;
 
@@ -12,8 +14,10 @@
     left: 0;
     right: 0;
     bottom: 0;
-    border-bottom: 1px solid light-dark(var(--mantine-color-gray-2),
-        var(--mantine-color-dark-3));
+    border-bottom: 1px solid light-dark(
+      var(--mantine-color-gray-2),
+      var(--mantine-color-dark-3)
+    );
   }
 }
 
@@ -22,8 +26,5 @@
 }
 
 .rowSelected {
-  background-color: light-dark(
-    var(--mantine-primary-color-0),
-    rgba(var(--mantine-primary-color-7), 0.2)
-  );
+  background-color: var(--mantine-primary-color-light);
 }

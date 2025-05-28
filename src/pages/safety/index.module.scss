@@ -1,7 +1,7 @@
 .hero {
   background-color: light-dark(
-    var(--mantine-color-dark-6),
-    var(--mantine-color-gray-0)
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-6)
   );
   margin-top: calc(-1 * var(--mantine-spacing-md));
   display: flex;
@@ -37,15 +37,15 @@
 
 .inlineSection {
   border: light-dark(
-    1px solid var(--mantine-color-dark-4),
-    1px solid var(--mantine-color-gray-3)
+    1px solid var(--mantine-color-gray-3),
+    1px solid var(--mantine-color-dark-4)
   );
 }
 
 .learnMoreButton {
   color: light-dark(
-    var(--mantine-color-blue-4),
-    var(--mantine-color-blue-7)
+    var(--mantine-color-blue-7),
+    var(--mantine-color-blue-4)
   );
   text-decoration: underline;
   cursor: pointer;
@@ -56,8 +56,8 @@
     padding-bottom: var(--mantine-spacing-xs);
     margin-top: calc(2 * var(--mantine-spacing-xl));
     border-bottom: light-dark(
-      1px solid var(--mantine-color-dark-4),
-      1px solid var(--mantine-color-gray-3)
+      1px solid var(--mantine-color-gray-3),
+      1px solid var(--mantine-color-dark-4)
     );
   }
 

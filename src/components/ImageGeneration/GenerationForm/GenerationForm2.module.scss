@@ -17,12 +17,8 @@
     margin-bottom: 5px;
   }
 
-  background: light-dark(var(--mantine-color-dark-6), transparent);
-
-  // Focus ring for textarea
   &:has(textarea:focus) {
-    // TODO: Mantine7
-    // @include mantine-focus-ring;
+    border: 1px solid var(--mantine-primary-color-filled);
   }
 }
 
@@ -53,7 +49,7 @@
 }
 
 .accordionItem {
-  background-color: light-dark(#fff, var(--mantine-color-dark-6));
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
 
   &:first-of-type {
     border-top-left-radius: var(--mantine-radius-sm);
@@ -66,12 +62,14 @@
   }
 
   &[data-active] {
-    background-color: light-dark(#fff, var(--mantine-color-dark-6));
+    background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
   }
 }
 
 .accordionControl {
   padding: 8px 8px 8px 12px;
+  display: flex;
+  gap: var(--mantine-spacing-md);
 
   &:hover {
     background: transparent;

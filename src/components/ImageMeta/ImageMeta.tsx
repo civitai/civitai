@@ -373,6 +373,7 @@ export function ImageMetaPopover({
 
   return (
     <div
+      className="flex"
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();

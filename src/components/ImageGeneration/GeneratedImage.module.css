@@ -7,7 +7,10 @@
 .imageWrapper {
   &:hover .actionsWrapper {
     box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
-    background: light-dark(alpha(var(--mantine-color-dark-6), 0.6), alpha(var(--mantine-color-gray-0), 0.6));
+    background: light-dark(
+      alpha(var(--mantine-color-gray-0), 0.6),
+      alpha(var(--mantine-color-dark-6), 0.6)
+    );
     opacity: 1;
   }
 }
@@ -16,7 +19,10 @@
   border-radius: var(--mantine-radius-sm);
   transition: opacity 0.3s;
   box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
-  background: light-dark(alpha(var(--mantine-color-dark-6), 0.6), alpha(var(--mantine-color-gray-0), 0.6));
+  background: light-dark(
+    alpha(var(--mantine-color-gray-0), 0.6),
+    alpha(var(--mantine-color-dark-6), 0.6)
+  );
   opacity: 0;
 
   @container (max-width: 420px) {
@@ -31,7 +37,10 @@
 
 .improveMenu {
   border-radius: var(--mantine-radius-sm);
-  background: light-dark(alpha(var(--mantine-color-dark-6), 0.8), alpha(var(--mantine-color-gray-0), 0.8));
+  background: light-dark(
+    alpha(var(--mantine-color-gray-0), 0.8),
+    alpha(var(--mantine-color-dark-6), 0.8)
+  );
   border: none;
   box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
   padding: 4px;

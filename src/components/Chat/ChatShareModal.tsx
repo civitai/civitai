@@ -32,7 +32,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import classes from '~/components/Chat/ChatList.module.scss';
+import classes from '~/components/Chat/ChatList.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

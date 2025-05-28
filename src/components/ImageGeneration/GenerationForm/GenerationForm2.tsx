@@ -545,16 +545,17 @@ export function GenerationFormContent() {
                       <Card
                         className={clsx(
                           { [classes.formError]: form.formState.errors.resources },
-                          'overflow-visible'
+                          'overflow-visible flex gap-3'
                         )}
-                        withBorder
-                        p="sm"
+                        p={0}
                         radius="sm"
+                        withBorder
                       >
                         <InputResourceSelect
                           name="model"
                           buttonLabel="Add Model"
                           allowRemove={false}
+                          className="pt-3 px-3"
                           options={{
                             canGenerate: true,
                             resources: resourceTypes
@@ -580,8 +581,8 @@ export function GenerationFormContent() {
                           <Card.Section
                             className={clsx(
                               { [classes.formError]: form.formState.errors.resources },
-                              'mt-3 border-b-0'
                             )}
+                            m={0}
                             withBorder
                           >
                             <PersistentAccordion
@@ -612,7 +613,7 @@ export function GenerationFormContent() {
 
                                       <Button
                                         component="span"
-                                        size="compact-md"
+                                        size="compact-sm"
                                         variant="light"
                                         onClick={(e: React.MouseEvent) => {
                                           e.preventDefault();
@@ -891,7 +892,6 @@ export function GenerationFormContent() {
 
                         return (
                           <Paper
-                            px="sm"
                             className={clsx(classes.promptPaper, {
                               [classes.noFillForm]: !showFillForm,
                               [classes.fillForm]: showFillForm,
@@ -907,21 +907,18 @@ export function GenerationFormContent() {
                               name="prompt"
                               data-tour="gen:prompt"
                               placeholder="Your prompt goes here..."
+                              minRows={2}
                               autosize
-                              unstyled
                               styles={(theme) => ({
                                 input: {
-                                  background: 'transparent',
                                   width: '100%',
                                   resize: 'none',
                                   border: 'none',
-                                  padding: '0',
                                   outline: 'none',
                                   fontFamily: theme.fontFamily,
                                   fontSize: theme.fontSizes.sm,
                                   lineHeight: theme.lineHeights.sm,
                                   overflow: 'hidden',
-                                  color: colorScheme === 'dark' ? theme.colors.dark[0] : undefined,
                                 },
                                 // Prevents input from displaying form error
                                 error: { display: 'none' },

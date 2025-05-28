@@ -1,5 +1,5 @@
 .profileDetailsContainer {
-  background: rgba(var(--mantine-color-dark-9), 0.8);
+  background: alpha(var(--mantine-color-dark-9), 0.8);
   /* Replace with Mantine's dark[9] RGBA variable */
   margin: calc(-1 * var(--mantine-spacing-md));
   /* Replace with Mantine's medium spacing variable */

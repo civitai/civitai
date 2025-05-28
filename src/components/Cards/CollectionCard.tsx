@@ -2,7 +2,7 @@ import { ActionIcon, Badge, Group, Text } from '@mantine/core';
 import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { truncate } from 'lodash-es';
-import cardClasses from '~/components/Cards/Cards.module.scss';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

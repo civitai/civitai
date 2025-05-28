@@ -1,6 +1,6 @@
 import { Text } from '@mantine/core';
 import React from 'react';
-import cardClasses from '~/components/Cards/Cards.module.scss';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { PostsInfiniteModel } from '~/server/services/post.service';
 import { IconPhoto } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';

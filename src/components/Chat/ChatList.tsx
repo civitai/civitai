@@ -47,7 +47,7 @@ import { ChatListMessage } from '~/types/router';
 import { isApril1 } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import styles from './ChatList.module.scss';
+import styles from './ChatList.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 

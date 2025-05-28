@@ -8,12 +8,12 @@
 
     &,
     &:hover {
-      color: var(--mantine-color-white, #fff); // Replace with Mantine's white or black based on theme
-      border: 1px solid var(--mantine-primary-border-color); // Replace with Mantine's primary border color
+      color: light-dark(var(--mantine-color-black), var(--mantine-color-white)); // Replace with Mantine's white or black based on theme
+      border: 1px solid var(--mantine-color-default-border); // Replace with Mantine's primary border color
     }
 
     &[data-variant="filled"] {
-      background-color: rgba(var(--mantine-primary-rgba), 0.2); // Replace with Mantine's primary RGBA color
+      background-color: var(--mantine-primary-color-light); // Replace with Mantine's primary RGBA color
     }
   }
 }

@@ -1,10 +1,14 @@
 .tableCell {
-  height: 50px !important;
-  background-color: light-dark(var(--mantine-color-dark-6) !important,
-      var(--mantine-color-white) !important);
+  height: 50px;
+  background-color: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-6),
+  );
 }
 
 .baseCostCell {
-  background-color: light-dark(var(--mantine-color-dark-4) !important,
-      var(--mantine-color-gray-1) !important);
+  background-color: light-dark(
+    var(--mantine-color-gray-1),
+    var(--mantine-color-dark-4)
+  );
 }

@@ -255,7 +255,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
 
 function BreakdownExplanation() {
   return (
-    <ul className="list-inside list-none text-sm">
+    <ul className="list-none text-sm m-0 pr-4">
       <li className="mb-2">
         <span className="font-semibold">Base Cost:</span>
         {` The base cost of generating an image is
