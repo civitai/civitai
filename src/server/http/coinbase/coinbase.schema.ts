@@ -1,6 +1,14 @@
 import { z } from 'zod';
 
 export namespace Coinbase {
+  const baseMeta = z
+    .object({
+      internalOrderId: z.string(),
+      userId: z.number().optional(),
+      buzzAmount: z.number().optional(),
+    })
+    .passthrough();
+
   export type CreateChargeInputSchema = z.infer<typeof createChargeInputSchema>;
   export const createChargeInputSchema = z.object({
     name: z.string().min(1, 'Name is required'),
@@ -10,13 +18,7 @@ export namespace Coinbase {
       amount: z.string().min(1, 'Amount is required'),
       currency: z.string().min(1, 'Currency is required'),
     }),
-    metadata: z
-      .object({
-        buzzAmount: z.number().optional(),
-        internalOrderId: z.string().optional(),
-      })
-      .passthrough()
-      .optional(),
+    metadata: baseMeta.optional(),
     redirect_url: z.string().url('Invalid URL').optional(),
     cancel_url: z.string().url('Invalid URL').optional(),
   });
@@ -38,6 +40,7 @@ export namespace Coinbase {
     id: z.string(),
     name: z.string(),
     organization_name: z.string(),
+    metadata: baseMeta.optional(),
     pricing: z.object({
       local: z.object({
         amount: z.string(),
@@ -107,5 +110,20 @@ export namespace Coinbase {
       contract_address: z.string(),
       contract_addresses: z.null(),
     }),
+  });
+
+  export type WebhookEventSchema = z.infer<typeof webhookEventSchema>;
+  export const webhookEventSchema = z.object({
+    attempt_number: z.number(),
+    event: z.object({
+      api_version: z.string(),
+      created_at: z.string(),
+      data: createChargeResponseSchema,
+      id: z.string(),
+      resource: z.string(),
+      type: z.string(),
+    }),
+    id: z.string(),
+    scheduled_for: z.string(),
   });
 }

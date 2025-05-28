@@ -231,6 +231,7 @@ export const serverSchema = z.object({
   // Coinbase Related:
   COINBASE_API_URL: z.string().optional(),
   COINBASE_API_KEY: z.string().optional(),
+  COINBASE_WEBHOOK_SECRET: z.string().optional(),
 });
 
 /**

@@ -18,6 +18,12 @@ export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiR
       amount: new Decimal(10.0).toString(),
       currency: 'USD',
     },
+    metadata: {
+      areU: 'kidding',
+      internalOrderId: 'test-order-123',
+      userId: 1,
+      buzzAmount: 100,
+    },
   });
 
   res.status(200).json(test);

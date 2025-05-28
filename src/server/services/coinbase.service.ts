@@ -4,6 +4,8 @@ import Decimal from 'decimal.js';
 import { CreateBuzzCharge } from '~/server/schema/coinbase.schema';
 import { COINBASE_FIXED_FEE } from '~/server/common/constants';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
+import { Coinbase } from '~/server/http/coinbase/coinbase.schema';
+import { grantBuzzPurchase } from '~/server/services/buzz.service';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'coinbase-service', type: 'error', ...data }).catch();
@@ -25,6 +27,7 @@ export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number
       currency: 'USD',
     },
     metadata: {
+      userId: input.userId,
       buzzAmount: input.buzzAmount,
       internalOrderId: orderId,
     },
@@ -39,6 +42,43 @@ export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number
   return charge;
 };
 
-export const processBuzzOrder = async () => {
-  // TODO.
+export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['event']['data']) => {
+  try {
+    const metadata = eventData.metadata;
+    const internalOrderId = metadata?.internalOrderId;
+
+    if (!internalOrderId) {
+      throw new Error('Missing required metadata in Coinbase webhook event');
+    }
+
+    const [userId, buzzAmount] = internalOrderId?.split('-').map((v) => Number(v));
+
+    if (!userId || !buzzAmount) {
+      throw new Error('Invalid userId or buzzAmount from Coinbase webhook event');
+    }
+
+    // Grant buzz/cosmetics
+    const transactionId = await grantBuzzPurchase({
+      userId,
+      amount: buzzAmount,
+      orderId: internalOrderId,
+      provider: 'coinbase',
+      chargeId: eventData.id,
+    });
+
+    return {
+      userId,
+      buzzAmount,
+      transactionId,
+      message: 'Buzz purchase processed successfully',
+    };
+  } catch (error) {
+    await log({
+      message: 'Failed to process Coinbase webhook event',
+      error: error instanceof Error ? error.message : String(error),
+      event,
+    });
+    console.error('Error processing Coinbase webhook event:', error);
+    throw error; // Re-throw to handle it upstream if needed
+  }
 };

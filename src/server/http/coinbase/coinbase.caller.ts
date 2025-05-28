@@ -1,19 +1,10 @@
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
-import { Coinbase } from '~/server/http/Coinbase/Coinbase.schema';
-
-// DOCUMENTATION
-// https://documenter.getpostman.com/view/7907941/2s93JusNJt#api-documentation
-type CoinbaseAccessToken = {
-  accessToken: string;
-  expiresIn: number;
-  createdAt: number;
-};
+import { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 
 class CoinbaseCaller extends HttpCaller {
   private static instance: CoinbaseCaller;
-  private static acessToken: CoinbaseAccessToken;
 
   protected constructor(baseUrl?: string) {
     baseUrl ??= env.COINBASE_API_URL;
@@ -70,6 +61,28 @@ class CoinbaseCaller extends HttpCaller {
 
     return json.data as Coinbase.CreateChargeResponseSchema;
   }
+
+  /**
+   * Verifies a Coinbase webhook signature.
+   * @param signature The value of the X-CC-Webhook-Signature header
+   * @param payload The raw request body as a Buffer
+   * @param secret The webhook shared secret
+   * @returns boolean
+   */
+  static verifyWebhookSignature(
+    signature: string,
+    payload: Buffer | string,
+    secret: string
+  ): boolean {
+    const data = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
+    // Node expects Buffer, but type may be Buffer<ArrayBufferLike> in some TS setups
+    // Fix for Buffer<ArrayBufferLike> type issue: convert to Buffer using Uint8Array
+    const nodeBuffer = Buffer.from(Uint8Array.prototype.slice.call(data));
+    const computedSig = createHmac('sha256', secret).update(nodeBuffer.toString()).digest('hex');
+    return signature === computedSig;
+  }
 }
 
 export default CoinbaseCaller.getInstance();
+
+export { CoinbaseCaller };
