@@ -18,12 +18,19 @@ import { getDisplayName } from '~/utils/string-helpers';
 
 let timeoutRef: NodeJS.Timeout | undefined;
 
-export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkipClick }: Props) {
+export function NewOrderImageRater({
+  muted,
+  disabled,
+  onRatingClick,
+  onVolumeClick,
+  onSkipClick,
+}: Props) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const [showReasons, setShowReasons] = useState(false);
 
   const debouncedRatingClick = useCallback(
     (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {
+      if (disabled) return;
       if (timeoutRef) {
         clearTimeout(timeoutRef);
       }
@@ -32,7 +39,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
         setShowReasons(false);
       }, 200);
     },
-    [onRatingClick]
+    [disabled, onRatingClick]
   );
 
   const debouncedSkipClick = useCallback(() => {
@@ -52,56 +59,56 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
     [debouncedRatingClick]
   );
 
-  const hotKeys: HotkeyItem[] = useMemo(
-    () =>
-      showReasons
-        ? [
-            [
-              '1',
-              handleHotkeyPress({
-                rating: NsfwLevel.Blocked,
-                damnedReason: NewOrderDamnedReason.InappropriateMinors,
-              }),
-            ],
-            [
-              '2',
-              handleHotkeyPress({
-                rating: NsfwLevel.Blocked,
-                damnedReason: NewOrderDamnedReason.RealisticMinors,
-              }),
-            ],
-            [
-              '3',
-              handleHotkeyPress({
-                rating: NsfwLevel.Blocked,
-                damnedReason: NewOrderDamnedReason.DepictsRealPerson,
-              }),
-            ],
-            [
-              '4',
-              handleHotkeyPress({
-                rating: NsfwLevel.Blocked,
-                damnedReason: NewOrderDamnedReason.Bestiality,
-              }),
-            ],
-            [
-              '5',
-              handleHotkeyPress({
-                rating: NsfwLevel.Blocked,
-                damnedReason: NewOrderDamnedReason.GraphicViolence,
-              }),
-            ],
-          ]
-        : [
-            ['1', handleHotkeyPress({ rating: NsfwLevel.PG })],
-            ['2', handleHotkeyPress({ rating: NsfwLevel.PG13 })],
-            ['3', handleHotkeyPress({ rating: NsfwLevel.R })],
-            ['4', handleHotkeyPress({ rating: NsfwLevel.X })],
-            ['5', handleHotkeyPress({ rating: NsfwLevel.XXX })],
-            ['6', () => setShowReasons(true)],
+  const hotKeys: HotkeyItem[] = useMemo(() => {
+    if (disabled) return [];
+
+    return showReasons
+      ? [
+          [
+            '1',
+            handleHotkeyPress({
+              rating: NsfwLevel.Blocked,
+              damnedReason: NewOrderDamnedReason.InappropriateMinors,
+            }),
           ],
-    [showReasons, handleHotkeyPress]
-  );
+          [
+            '2',
+            handleHotkeyPress({
+              rating: NsfwLevel.Blocked,
+              damnedReason: NewOrderDamnedReason.RealisticMinors,
+            }),
+          ],
+          [
+            '3',
+            handleHotkeyPress({
+              rating: NsfwLevel.Blocked,
+              damnedReason: NewOrderDamnedReason.DepictsRealPerson,
+            }),
+          ],
+          [
+            '4',
+            handleHotkeyPress({
+              rating: NsfwLevel.Blocked,
+              damnedReason: NewOrderDamnedReason.Bestiality,
+            }),
+          ],
+          [
+            '5',
+            handleHotkeyPress({
+              rating: NsfwLevel.Blocked,
+              damnedReason: NewOrderDamnedReason.GraphicViolence,
+            }),
+          ],
+        ]
+      : [
+          ['1', handleHotkeyPress({ rating: NsfwLevel.PG })],
+          ['2', handleHotkeyPress({ rating: NsfwLevel.PG13 })],
+          ['3', handleHotkeyPress({ rating: NsfwLevel.R })],
+          ['4', handleHotkeyPress({ rating: NsfwLevel.X })],
+          ['5', handleHotkeyPress({ rating: NsfwLevel.XXX })],
+          ['6', () => setShowReasons(true)],
+        ];
+  }, [disabled, showReasons, handleHotkeyPress]);
 
   useHotkeys([
     ['m', () => onVolumeClick()],
@@ -169,6 +176,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
                       onClick={() =>
                         isBlocked ? setShowReasons(true) : handleRatingClick({ rating })
                       }
+                      disabled={disabled}
                     >
                       {isBlocked ? <IconFlag size={18} /> : level}
                     </Button>
@@ -210,6 +218,7 @@ type Props = {
   onVolumeClick: () => void;
   onSkipClick: () => void;
   muted?: boolean;
+  disabled?: boolean;
 };
 
 function DamnedReasonOptions({
