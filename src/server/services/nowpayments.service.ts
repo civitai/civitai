@@ -6,6 +6,7 @@ import Decimal from 'decimal.js';
 import type { CreatePaymentInvoiceInput } from '~/server/schema/nowpayments.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
+import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
