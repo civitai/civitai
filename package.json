@@ -284,6 +284,7 @@
     "eslint-plugin-tailwindcss": "^3.15.1",
     "husky": "^9.1.1",
     "lint-staged": "^15.2.7",
+    "madge": "^8.0.0",
     "pg-format": "^1.0.4",
     "postcss": "^8.4.38",
     "prettier": "^2.8.8",
