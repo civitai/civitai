@@ -1125,9 +1125,9 @@ export const grantBuzzPurchase = async ({
 }: {
   amount: number;
   userId: number;
+  externalTransactionId: string;
   description?: string;
-} & Pick<CreateBuzzTransactionInput, 'externalTransactionId'> &
-  MixedObject) => {
+} & MixedObject) => {
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
   const { blueBuzzAdded, totalYellowBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
     buzzAmount: amount,
