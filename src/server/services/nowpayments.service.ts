@@ -115,7 +115,7 @@ export const processBuzzOrder = async (paymentId: string | number, webhookStatus
         description: isPartial
           ? 'Buzz purchase (partial). You’ve been credited Buzz based on the amount received.'
           : undefined,
-
+        externalTransactionId: `${payment.order_id}-${payment.payment_id}`,
         // Extras:
         provider: 'nowpayments',
         invoiceId: payment.invoice_id,

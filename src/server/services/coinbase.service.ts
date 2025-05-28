@@ -62,6 +62,7 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
       userId,
       amount: buzzAmount,
       orderId: internalOrderId,
+      externalTransactionId: internalOrderId,
       provider: 'coinbase',
       chargeId: eventData.id,
     });
