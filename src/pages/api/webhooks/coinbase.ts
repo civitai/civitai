@@ -1,9 +1,10 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { Readable } from 'node:stream';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
 import coinbaseCaller, { CoinbaseCaller } from '~/server/http/coinbase/coinbase.caller';
-import { Coinbase } from '~/server/http/coinbase/coinbase.schema';
+import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 import { logToAxiom } from '~/server/logging/client';
+import { processBuzzOrder } from '~/server/services/coinbase.service';
 
 export const config = {
   api: {
@@ -63,6 +64,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     switch (event.type) {
       case 'charge:confirmed':
         // handle confirmed charge -> Grant buzz
+        await processBuzzOrder(event.data);
         break;
       default: {
         if (event.type !== 'charge:created')
