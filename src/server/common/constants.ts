@@ -1344,6 +1344,10 @@ export const newOrderConfig = {
   cosmetics: {
     badgeIds: { acolyte: 858, knight: 859, templar: 860 },
   },
+  limits: {
+    knightVoteLimit: 5,
+    templarVoteLimit: 2,
+  },
 };
 
 export const buzzBulkBonusMultipliers = [
