@@ -36,7 +36,7 @@ import {
 } from '~/server/services/image.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueByName } from '~/server/services/technique.service';
-import { getToolByDomain, getToolByName, getToolByAlias } from '~/server/services/tool.service';
+import { getToolByAlias, getToolByDomain, getToolByName } from '~/server/services/tool.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
@@ -48,10 +48,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
-  getVideoGenerationConfig,
-  videoGenerationConfig2,
-} from '~/server/orchestrator/generation/generation.config';
-import {
   Availability,
   CollectionContributorPermission,
   CollectionMode,
@@ -62,6 +58,7 @@ import {
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
+import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -79,7 +76,6 @@ import type {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
-import { isValidAIGeneration } from '~/utils/image-utils';
 
 type GetAllPostsRaw = {
   id: number;
@@ -219,9 +215,14 @@ export const getPostsInfinite = async ({
       );
     } else {
       const ageGroups = getPeriods(period);
-      AND.push(
-        Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
-      );
+      // TODO fix month and week to be better
+      if (ageGroups.length === 1) {
+        AND.push(Prisma.sql`pm."ageGroup" = ${ageGroups[0]}::"MetricTimeframe"`);
+      } else {
+        AND.push(
+          Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
+        );
+      }
     }
   }
 
