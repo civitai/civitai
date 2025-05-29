@@ -1,4 +1,4 @@
-import type { AlertProps, MantineColor } from '@mantine/core';
+import type { AlertProps, MantineColor, MantineSize, ThemeIconProps } from '@mantine/core';
 import { Alert, Group, ThemeIcon, Text, Stack } from '@mantine/core';
 import type { ReactNode } from 'react';
 

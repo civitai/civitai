@@ -177,7 +177,7 @@ export default function Pricing() {
                   py={11}
                   maw="calc(50% - 8px)"
                 >
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text lh={1.2}>
                       You can still purchase Buzz using crypto!{' '}
                       <Anchor href="/purchase/buzz" color="yellow.7">

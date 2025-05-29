@@ -1,5 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
 import { Badge } from '@mantine/core';
+import clsx from 'clsx';
 import { formatDuration } from '~/utils/number-helpers';
 
 export function DurationBadge({ duration, className, ...badgeProps }: Props) {

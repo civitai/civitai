@@ -1,5 +1,5 @@
 import type { CardProps } from '@mantine/core';
-import { Stack, Text, Title } from '@mantine/core';
+import { Card, Stack, Text, Title } from '@mantine/core';
 
 export function SectionCard({
   title,

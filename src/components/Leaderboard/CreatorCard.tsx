@@ -9,7 +9,7 @@ import type { LeaderboardGetModel } from '~/types/router';
 import { useInView } from '~/hooks/useInView';
 import { useEffect } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import classes from './CreatorCard.module.css';
+import classes from './CreatorCard.module.scss';
 import clsx from 'clsx';
 
 const linkQuery: Record<string, string> = {

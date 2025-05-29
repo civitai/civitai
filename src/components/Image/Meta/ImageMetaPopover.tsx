@@ -85,8 +85,8 @@ function ImageMetaPopoverInner({ imageId }: { imageId: number }) {
       <ImageMeta imageId={imageId} />
       <Button.Group>
         {canRemix && (
-          <CloseButton
-            as={Button}
+          <Button
+            as={CloseButton}
             {...sharedButtonProps}
             data-activity="remix:image-meta"
             // @ts-ignore eslint-disable-next-line
@@ -99,7 +99,7 @@ function ImageMetaPopoverInner({ imageId }: { imageId: number }) {
               <IconBrush size={16} />
               Remix
             </Group>
-          </CloseButton>
+          </Button>
         )}
         {meta && (
           <CopyButton value={() => encodeMetadata(meta)}>

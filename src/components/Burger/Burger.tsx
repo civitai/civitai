@@ -1,4 +1,4 @@
-import type { MantineColor, MantineNumberSize } from '@mantine/core';
+import type { MantineColor, MantineSize } from '@mantine/core';
 import styles from './Burger.module.scss';
 import clsx from 'clsx';
 

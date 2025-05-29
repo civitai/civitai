@@ -1,5 +1,13 @@
 import type { BadgeProps, MantineSize } from '@mantine/core';
-import { Badge, Box, Group, Text, Tooltip, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import {
+  Badge,
+  Box,
+  Group,
+  Text,
+  Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   IconUpload,
   IconUsers,
@@ -175,12 +183,11 @@ const BadgedIcon = ({
     <IconBadge
       size={size}
       color="dark.6"
-      // @ts-ignore
       variant="filled"
-      className="ml-[-14px] rounded-l-none pl-4"
+      className="ml-[-14px] rounded-l-none !pl-4"
       {...props}
     >
-      <Text size={textSize} inline title={numberWithCommas(value ?? 0)}>
+      <Text size={textSize} fw="bold" inline title={numberWithCommas(value ?? 0)}>
         {abbreviateNumber(value ?? 0)}
       </Text>
     </IconBadge>

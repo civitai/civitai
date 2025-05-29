@@ -1,4 +1,4 @@
-import type { CSSObject, InputWrapperProps, MantineSize } from '@mantine/core';
+import type { InputWrapperProps, MantineSize } from '@mantine/core';
 import { Group, Input, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
@@ -15,7 +15,8 @@ import Youtube from '@tiptap/extension-youtube';
 import type { Editor, Extensions } from '@tiptap/react';
 import { BubbleMenu, Extension, mergeAttributes, nodePasteRule, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { CSSProperties, useEffect, useImperativeHandle, useRef } from 'react';
+import { useEffect, useImperativeHandle, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import slugify from 'slugify';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
@@ -37,7 +38,7 @@ import classes from './RichTextEditorComponent.module.scss';
 //   xl: '90px',
 // };
 
-const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
+const mapEditorSize: Omit<Record<MantineSize, CSSProperties>, 'xs'> = {
   sm: {
     minHeight: 30,
     fontSize: 14,

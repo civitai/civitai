@@ -1,6 +1,6 @@
 import type { WorkflowCost } from '@civitai/client';
 import type { PopoverProps } from '@mantine/core';
-import { ActionIcon, createStyles, Group, NumberInput, Popover, Text } from '@mantine/core';
+import { Group, NumberInput, Popover, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React from 'react';

@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Badge,
   Center,
   Checkbox,
@@ -10,7 +9,6 @@ import {
   Stack,
   Text,
   Title,
-  TooltipProps,
   UnstyledButton,
 } from '@mantine/core';
 import type { TooltipProps } from '@mantine/core';

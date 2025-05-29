@@ -1,4 +1,4 @@
-import type { MantineColor } from '@mantine/core';
+import type { SelectProps } from '@mantine/core';
 import { Button, ColorSwatch, Modal, useMantineTheme } from '@mantine/core';
 import dayjs from 'dayjs';
 import { useRef } from 'react';

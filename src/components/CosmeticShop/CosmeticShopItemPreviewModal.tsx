@@ -155,14 +155,9 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
       size="xl"
       withCloseButton={false}
       radius="lg"
-      styles={{
-        content: {
-          padding: '0 !important',
-          overflow: 'hidden',
-        },
-      }}
+      classNames={{ body: 'p-0', content: 'overflow-hidden' }}
     >
-      <Grid m={0}>
+      <Grid classNames={{ inner: 'my-0' }}>
         <Grid.Col span={{ base: 12, md: 5 }} p="lg">
           <Stack gap="lg" px="md" h="100%">
             <Group justify="space-between" wrap="nowrap">

@@ -1,5 +1,12 @@
 import type { ButtonProps, MantineSize } from '@mantine/core';
-import { Badge, Button, Text, Tooltip, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Text,
+  Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React from 'react';
@@ -89,7 +96,7 @@ export function BuzzTransactionButton({
       )}
       classNames={{ inner: 'flex gap-8 justify-between items-center', label: 'w-full gap-2' }}
     >
-      <Text fz={size ?? 14} ta={!hasCost ? 'center' : undefined} style={{ flex: 1 }}>
+      <Text fz={size ?? 14} ta={!hasCost ? 'center' : 'start'} fw={600} style={{ flex: 1 }}>
         {label}
       </Text>
       {priceReplacement}

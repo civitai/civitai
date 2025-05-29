@@ -1,4 +1,4 @@
-import type { AutocompleteItem, AutocompleteProps } from '@mantine/core';
+import type { AutocompleteProps } from '@mantine/core';
 import {
   ActionIcon,
   Code,

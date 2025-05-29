@@ -1,4 +1,4 @@
-import type { StepProps } from '@mantine/core';
+import type { StepperStepProps } from '@mantine/core';
 import { Box, Stack, Stepper, Text, Title } from '@mantine/core';
 import { useRef, useState } from 'react';
 import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
