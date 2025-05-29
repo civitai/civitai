@@ -4,10 +4,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { TagType } from '~/shared/utils/prisma/enums';
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser, encodeMetadata } from '~/utils/metadata';
-import {
-  createExifSegmentWithUserComment,
-  encodeUserCommentUTF16BE,
-} from '~/utils/encoding-helpers';
+import { createExifSegmentFromTags } from '~/utils/encoding-helpers';
 
 // deprecated?
 export async function imageToBlurhash(url: string) {
@@ -258,8 +255,11 @@ async function canvasToBlobWithImageExif(canvas: HTMLCanvasElement, src: File | 
   const metadata = await parser.getMetadata();
   const dataUrl = canvas.toDataURL('image/jpeg');
 
-  const userComment = encodeUserCommentUTF16BE(encodeMetadata(metadata));
-  const exifSegment = createExifSegmentWithUserComment(userComment);
+  const exifSegment = createExifSegmentFromTags({
+    artist: parser.exif.Artist,
+    userComment: encodeMetadata(metadata),
+    software: parser.exif.Software,
+  });
   const jpegBytes = Buffer.from(dataUrl.split(',')[1], 'base64');
   const soi = Uint8Array.prototype.slice.call(jpegBytes, 0, 2); // FFD8
   const rest = Uint8Array.prototype.slice.call(jpegBytes, 2);

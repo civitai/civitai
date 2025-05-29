@@ -69,7 +69,7 @@ export async function ExifParser(file: File | string) {
     }
   }
 
-  return { parse, encode, getMetadata };
+  return { exif, parse, encode, getMetadata };
 }
 
 export async function getMetadata(file: File | string) {
