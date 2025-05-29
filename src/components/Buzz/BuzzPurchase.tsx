@@ -44,6 +44,7 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
+import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -523,6 +524,25 @@ export const BuzzPurchase = ({
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
 
             <Stack spacing="xs" mt="md">
+              {features.coinbasePayments && (
+                <BuzzCoinbaseButton
+                  unitAmount={unitAmount}
+                  buzzAmount={buzzAmount}
+                  onPurchaseSuccess={onPurchaseSuccess}
+                  disabled={!ctaEnabled}
+                  purchaseSuccessMessage={purchaseSuccessMessage}
+                />
+              )}
+              {features.nowpaymentPayments && (
+                <BuzzNowPaymentsButton
+                  unitAmount={unitAmount}
+                  buzzAmount={buzzAmount}
+                  onPurchaseSuccess={onPurchaseSuccess}
+                  disabled={!ctaEnabled}
+                  purchaseSuccessMessage={purchaseSuccessMessage}
+                />
+              )}
+
               <BuzzPurchasePaymentButton
                 unitAmount={unitAmount}
                 buzzAmount={buzzAmount}
@@ -532,6 +552,21 @@ export const BuzzPurchase = ({
                 disabled={!ctaEnabled}
                 purchaseSuccessMessage={purchaseSuccessMessage}
               />
+
+              {(features.nowpaymentPayments || features.coinbasePayments) && (
+                <Stack align="center">
+                  <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
+                    Never purchased with Crypto before?{' '}
+                    <Anchor
+                      href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Learn how
+                    </Anchor>
+                  </AlertWithIcon>
+                </Stack>
+              )}
 
               <Stack spacing={0} align="center" my={4}>
                 <p className="mb-0 text-xs opacity-50">
@@ -552,16 +587,6 @@ export const BuzzPurchase = ({
                   onValidate={onValidate}
                 />
               )} */}
-
-              {features.cryptoPayments && (
-                <BuzzNowPaymentsButton
-                  unitAmount={unitAmount}
-                  buzzAmount={buzzAmount}
-                  onPurchaseSuccess={onPurchaseSuccess}
-                  disabled={!ctaEnabled}
-                  purchaseSuccessMessage={purchaseSuccessMessage}
-                />
-              )}
 
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">

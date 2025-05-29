@@ -2,11 +2,12 @@ import { Anchor, Button, Stack, Text } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
-import { useMutateNowPayments, useNowPaymentsStatus } from '~/components/NowPayments/util';
-import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
+import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { COINBASE_FIXED_FEE } from '~/server/common/constants';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 
-export const BuzzNowPaymentsButton = ({
+export const BuzzCoinbaseButton = ({
   unitAmount,
   buzzAmount,
   disabled,
@@ -15,49 +16,47 @@ export const BuzzNowPaymentsButton = ({
   unitAmount: number;
   buzzAmount: number;
 }) => {
-  const { createPaymentInvoice, creatingPaymentInvoice } = useMutateNowPayments();
-  const { isLoading, healthy } = useNowPaymentsStatus();
+  const features = useFeatureFlags();
+  const { createBuzzOrder, creatingBuzzOrder } = useMutateCoinbase();
+  const { isLoading, healthy } = useCoinbaseStatus();
 
   if (!isLoading && !healthy) {
     return null;
   }
 
   const handleClick = async () => {
-    const data = await createPaymentInvoice({
+    const data = await createBuzzOrder({
       unitAmount,
       buzzAmount,
     });
 
-    if (data.invoice_url) {
-      // Open new screen so that the user can go ahead and pay.
-      window.location.replace(data.invoice_url);
+    if (data?.hosted_url) {
+      window.location.replace(data.hosted_url);
     }
   };
-
-  // const crypto;
 
   return (
     <Stack spacing={0} align="center">
       <Button
         disabled={disabled || isLoading}
-        loading={creatingPaymentInvoice}
+        loading={creatingBuzzOrder}
         onClick={handleClick}
         radius="xl"
         fullWidth
-        color="grape"
+        color="teal"
       >
-        Pay with Crypto{' '}
+        Pay with {features.nowpaymentPayments ? 'Coinbase' : 'Crypto'}{' '}
         {!!unitAmount
-          ? `- $${formatCurrencyForDisplay(unitAmount + NOW_PAYMENTS_FIXED_FEE, undefined, {
+          ? `- $${formatCurrencyForDisplay(unitAmount + COINBASE_FIXED_FEE, undefined, {
               decimals: false,
             })}`
           : ''}
       </Button>
-      {NOW_PAYMENTS_FIXED_FEE > 0 && (
+      {COINBASE_FIXED_FEE > 0 && (
         <Text size="xs" color="dimmed" mt={8}>
           Crypto purchases include a $
-          {formatCurrencyForDisplay(NOW_PAYMENTS_FIXED_FEE, undefined, { decimals: true })} fee to
-          cover network expenses.
+          {formatCurrencyForDisplay(COINBASE_FIXED_FEE, undefined, { decimals: true })} fee to cover
+          network expenses.
         </Text>
       )}
     </Stack>

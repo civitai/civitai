@@ -10,6 +10,7 @@ import {
   resourceReviewSimpleSelect,
 } from '~/server/selectors/resourceReview.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   BlockedByUsers,
@@ -33,7 +34,6 @@ import type {
   GetUserResourceReviewInput,
   UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
 export const getResourceReview = async ({
@@ -158,7 +158,7 @@ export const getResourceReviewsInfinite = async ({
       rating: true,
       recommended: true,
       user: { select: userWithCosmeticsSelect },
-      helper: { select: { imageCount: true } },
+      // helper: { select: { imageCount: true } },
       model: include?.includes('model')
         ? {
             select: { id: true, name: true },
