@@ -45,7 +45,9 @@
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
     "test:reset": "make bootstrap-db",
-    "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts"
+    "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts",
+    "madge:orphans": "madge --orphans --image ./public/orphans-graph.svg --ts-config ./tsconfig.json --extensions ts,tsx src/",
+    "depcheck": "depcheck"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -137,6 +139,7 @@
     "chalk": "^5.2.0",
     "chart.js": "^4.4.0",
     "chartjs-adapter-dayjs-4": "^1.0.4",
+    "circular-dependency-plugin": "^5.2.2",
     "cloudflare": "^2.9.1",
     "clsx": "^2.1.1",
     "cookies-next": "^2.1.1",
