@@ -10,9 +10,8 @@ import {
   useRef,
   useState,
 } from 'react';
-import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
-import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
-import type { SignalMessages, SignalTopic } from '~/server/common/enums';
+import type { SignalMessages } from '~/server/common/enums';
+import type { SignalTopic } from '~/server/common/enums';
 import { useDebouncer } from '~/utils/debouncer';
 import { getRandomInt } from '~/utils/number-helpers';
 import type { SignalStatus } from '~/utils/signals/types';
@@ -134,8 +133,6 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         setRegisteredTopics,
       }}
     >
-      <SignalNotifications />
-      <SignalsRegistrar />
       {children}
     </SignalContext.Provider>
   );
