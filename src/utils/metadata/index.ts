@@ -58,6 +58,12 @@ export async function ExifParser(file: File | string) {
     }
   }
 
+  function isMadeOnSite() {
+    if (!exif.Artist) return false;
+    const artist = Array.isArray(exif.Artist) ? exif.Artist.join(', ') : exif.Artist;
+    return artist === 'ai';
+  }
+
   async function getMetadata() {
     try {
       const metadata = parse();
@@ -69,7 +75,7 @@ export async function ExifParser(file: File | string) {
     }
   }
 
-  return { exif, parse, encode, getMetadata };
+  return { exif, parse, encode, getMetadata, isMadeOnSite };
 }
 
 export async function getMetadata(file: File | string) {

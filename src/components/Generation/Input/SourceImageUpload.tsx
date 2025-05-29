@@ -9,7 +9,7 @@ import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { getImageDimensions, imageToJpegBlob, resizeImage } from '~/utils/image-utils';
 import { uniqBy } from 'lodash-es';
-import { getMetadata } from '~/utils/metadata';
+import { ExifParser } from '~/utils/metadata';
 import clsx from 'clsx';
 
 const key = 'img-uploads';
@@ -127,8 +127,10 @@ export function SourceImageUpload({
       if (warnOnMissingAiMetadata || onWarnMissingAiMetadata) {
         fetchBlobAsFile(_value.url).then(async (file) => {
           if (file) {
-            const meta = await getMetadata(file);
-            if (!Object.keys(meta).length) {
+            const parser = await ExifParser(file);
+
+            const meta = await parser.getMetadata();
+            if (!Object.keys(meta).length && !parser.isMadeOnSite()) {
               handleWarnOnMissingAiMetadata(
                 <Alert color="yellow" title="We couldn't detect valid metadata in this image.">
                   {`Video outputs based on this image must be PG, PG-13, or they will be blocked and you will not be refunded.`}
