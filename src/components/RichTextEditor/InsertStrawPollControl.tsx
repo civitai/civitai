@@ -1,10 +1,7 @@
 import { Button, Stack } from '@mantine/core';
 import { closeAllModals, openModal } from '@mantine/modals';
-import {
-  RichTextEditor,
-  RichTextEditorControlProps,
-  useRichTextEditorContext,
-} from '@mantine/tiptap';
+import type { RichTextEditorControlProps } from '@mantine/tiptap';
+import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconReportAnalytics } from '@tabler/icons-react';
 import { z } from 'zod';
 

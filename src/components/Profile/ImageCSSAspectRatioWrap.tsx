@@ -1,4 +1,4 @@
-import { CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import classes from './ImageCSSAspectRatioWrap.module.scss';
 import clsx from 'clsx';
 

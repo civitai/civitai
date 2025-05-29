@@ -1,5 +1,6 @@
-import { GroupProps, Group } from '@mantine/core';
-import { BuiltInProviderType } from 'next-auth/providers';
+import type { GroupProps } from '@mantine/core';
+import { Group } from '@mantine/core';
+import type { BuiltInProviderType } from 'next-auth/providers';
 import { socialItems } from './Social';
 
 type Props = {

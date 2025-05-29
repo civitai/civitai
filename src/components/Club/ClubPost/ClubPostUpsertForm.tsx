@@ -28,15 +28,13 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { z } from 'zod';
-import {
-  SupportedClubEntities,
-  SupportedClubPostEntities,
-  upsertClubPostInput,
-} from '~/server/schema/club.schema';
+import type { z } from 'zod';
+import type { SupportedClubEntities, SupportedClubPostEntities } from '~/server/schema/club.schema';
+import { upsertClubPostInput } from '~/server/schema/club.schema';
 import { useMutateClub, useQueryUserContributingClubs } from '~/components/Club/club.utils';
 import { constants } from '~/server/common/constants';
-import { ClubPostGetAll, ClubPostResource, ClubTier } from '~/types/router';
+import type { ClubPostGetAll } from '~/types/router';
+import { ClubPostResource, ClubTier } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { trpc } from '../../../utils/trpc';

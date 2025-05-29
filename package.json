@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.777",
+  "version": "5.0.787",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -21,7 +21,7 @@
     "postbuild": "next-sitemap",
     "deploy": "npm run build && npm run db:deploy",
     "postinstall": "prisma generate --no-hints",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192\" tsc --noEmit",
     "lint": "next lint",
     "prettier:check": "prettier --check \"**/*.{ts,tsx}\"",
     "prettier:write": "prettier --write \"**/*.{ts,tsx}\"",

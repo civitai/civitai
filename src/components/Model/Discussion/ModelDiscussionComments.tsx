@@ -1,10 +1,6 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import {
-  RootThreadProvider,
-  CreateComment,
-  Comment,
-  CommentV2BadgeProps,
-} from '~/components/CommentsV2';
+import type { CommentV2BadgeProps } from '~/components/CommentsV2';
+import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
 
 export function ModelDiscussionComments({
   commentId,

@@ -1,13 +1,5 @@
-import {
-  Box,
-  Group,
-  GroupProps,
-  List,
-  Popover,
-  Text,
-  Tooltip,
-  useMantineTheme,
-} from '@mantine/core';
+import type { GroupProps } from '@mantine/core';
+import { Box, Group, List, Popover, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import {
   IconBrushOff,
   IconCheck,

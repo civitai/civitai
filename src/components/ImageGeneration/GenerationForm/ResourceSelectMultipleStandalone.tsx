@@ -1,8 +1,6 @@
 import { Accordion, Button, Text, Anchor, Badge } from '@mantine/core';
-import {
-  ResourceSelectMultiple,
-  ResourceSelectMultipleProps,
-} from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import type { ResourceSelectMultipleProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import {
   ResourceSelectHandler,
   useGenerationStatus,

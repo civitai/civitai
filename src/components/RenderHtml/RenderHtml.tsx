@@ -1,6 +1,6 @@
+import type { TypographyStylesProviderProps } from '@mantine/core';
 import {
   TypographyStylesProvider,
-  TypographyStylesProviderProps,
   useComputedColorScheme,
   lighten,
   darken,

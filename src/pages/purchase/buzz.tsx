@@ -1,15 +1,5 @@
-import {
-  Alert,
-  Center,
-  Container,
-  Divider,
-  Group,
-  List,
-  ListProps,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import type { ListProps } from '@mantine/core';
+import { Alert, Center, Container, Divider, Group, List, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { z } from 'zod';

@@ -1,3 +1,4 @@
+import type { ButtonProps } from '@mantine/core';
 import {
   Popover,
   Group,
@@ -7,7 +8,6 @@ import {
   Chip,
   Button,
   Drawer,
-  ButtonProps,
   Text,
   useComputedColorScheme,
 } from '@mantine/core';
@@ -16,7 +16,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { TagSort } from '~/server/common/enums';
-import { GetPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';
+import type { GetPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { DatePickerInput } from '@mantine/dates';
 import { trpc } from '~/utils/trpc';

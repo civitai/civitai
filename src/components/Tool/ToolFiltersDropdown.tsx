@@ -1,6 +1,6 @@
+import type { ButtonProps } from '@mantine/core';
 import {
   Button,
-  ButtonProps,
   Chip,
   Divider,
   Drawer,
@@ -15,7 +15,7 @@ import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { GetAllToolsSchema } from '~/server/schema/tool.schema';
+import type { GetAllToolsSchema } from '~/server/schema/tool.schema';
 
 import { useIsClient } from '~/providers/IsClientProvider';
 import { FilterButton } from '~/components/Buttons/FilterButton';

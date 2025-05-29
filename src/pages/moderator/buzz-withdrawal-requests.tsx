@@ -1,3 +1,4 @@
+import type { TooltipProps } from '@mantine/core';
 import {
   ActionIcon,
   Anchor,
@@ -20,7 +21,6 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
-  TooltipProps,
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
 import { useDebouncedValue } from '@mantine/hooks';
@@ -49,7 +49,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BuzzWithdrawalRequestSort } from '~/server/common/enums';
-import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
+import type { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
 import {
   BuzzWithdrawalRequestStatus,
   Currency,

@@ -9,7 +9,8 @@ import {
   useQueryResourceReviewTotals,
 } from '~/components/ResourceReview/resourceReview.utils';
 import { StarRating } from '~/components/StartRating/StarRating';
-import { ResourceReviewRatingTotals } from '~/types/router';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import type { ResourceReviewRatingTotals } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import classes from './ResourceReviewSummary.module.scss';
 

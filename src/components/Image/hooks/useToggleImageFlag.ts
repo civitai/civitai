@@ -2,7 +2,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { ToggleImageFlagInput } from '~/server/schema/image.schema';
+import type { ToggleImageFlagInput } from '~/server/schema/image.schema';
 
 export function useToggleImageFlag() {
   const toggleImageFlagMutation = trpc.image.toggleImageFlag.useMutation({

@@ -1,18 +1,7 @@
-import { SupportedClubEntities } from '~/server/schema/club.schema';
+import type { SupportedClubEntities } from '~/server/schema/club.schema';
 import { useEntityAccessRequirement } from '~/components/Club/club.utils';
-import {
-  Alert,
-  Anchor,
-  Button,
-  ButtonProps,
-  List,
-  Menu,
-  Stack,
-  Text,
-  ThemeIcon,
-  ThemeIconProps,
-  Tooltip,
-} from '@mantine/core';
+import type { ButtonProps, ThemeIconProps } from '@mantine/core';
+import { Alert, Anchor, Button, List, Menu, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import { IconClubs } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';

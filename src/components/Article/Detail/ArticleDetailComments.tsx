@@ -6,7 +6,7 @@ import { IconAlertCircle, IconMessageCancel } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useState } from 'react';
 import { SortFilter } from '../../Filters';
-import { ThreadSort } from '../../../server/common/enums';
+import type { ThreadSort } from '../../../server/common/enums';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
 
 type ArticleDetailCommentsProps = {

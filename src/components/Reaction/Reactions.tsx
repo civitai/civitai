@@ -1,6 +1,7 @@
-import { Badge, Button, Group, GroupProps, Text, useMantineTheme } from '@mantine/core';
+import type { GroupProps } from '@mantine/core';
+import { Badge, Button, Group, Text, useMantineTheme } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
-import { ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { IconBolt, IconHeart, IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import {
@@ -12,7 +13,7 @@ import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
-import { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
+import type { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
 import React from 'react';

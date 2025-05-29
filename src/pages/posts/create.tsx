@@ -20,9 +20,9 @@ import { BackButton } from '~/components/BackButton/BackButton';
 import { CollectionUploadSettingsWrapper } from '~/components/Collections/components/CollectionUploadSettingsWrapper';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
+import type { ReviewEditCommandsRef } from '~/components/ResourceReview/EditUserResourceReview';
 import {
   EditUserResourceReviewV2,
-  ReviewEditCommandsRef,
   UserResourceReviewComposite,
 } from '~/components/ResourceReview/EditUserResourceReview';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';

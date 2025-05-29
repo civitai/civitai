@@ -2,7 +2,7 @@ import { Menu } from '@mantine/core';
 import { IconClubs, IconHeart } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { SupportedClubEntities } from '~/server/schema/club.schema';
+import type { SupportedClubEntities } from '~/server/schema/club.schema';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { AddResourceToClubModal } from './AddResourceToClubModal';
 import { dialogStore } from '../Dialog/dialogStore';

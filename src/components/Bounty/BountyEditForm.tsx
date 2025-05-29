@@ -13,8 +13,9 @@ import {
   InputTags,
   useForm,
 } from '~/libs/form';
-import { UpdateBountyInput, updateBountyInputSchema } from '~/server/schema/bounty.schema';
-import { BountyGetById } from '~/types/router';
+import type { UpdateBountyInput } from '~/server/schema/bounty.schema';
+import { updateBountyInputSchema } from '~/server/schema/bounty.schema';
+import type { BountyGetById } from '~/types/router';
 import { BackButton } from '../BackButton/BackButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';

@@ -1,7 +1,7 @@
 import { IconBrush } from '@tabler/icons-react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { GetGenerationDataInput } from '~/server/schema/generation.schema';
+import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { generationPanel } from '~/store/generation.store';
 
 export function RemixButton({

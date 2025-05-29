@@ -1,4 +1,4 @@
-import { HunyuanVdeoGenInput } from '@civitai/client';
+import type { HunyuanVdeoGenInput } from '@civitai/client';
 import z from 'zod';
 import { AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';

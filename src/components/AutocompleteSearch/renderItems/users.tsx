@@ -1,11 +1,12 @@
 import React, { forwardRef } from 'react';
-import { ComboboxItem, Group, Image, Stack, Text, ThemeIcon } from '@mantine/core';
+import type { ComboboxItem } from '@mantine/core';
+import { Group, Image, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconDownload, IconUpload, IconUser, IconUsers } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 export const UserSearchItem = forwardRef<

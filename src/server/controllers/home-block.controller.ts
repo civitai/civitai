@@ -1,16 +1,16 @@
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import {
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import {
   deleteHomeBlockById,
   getHomeBlockById,
   getHomeBlockData,
   getHomeBlocks,
   getSystemHomeBlocks,
-  HomeBlockWithData,
   setHomeBlocksOrder,
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
@@ -18,7 +18,7 @@ import {
   getCollectionById,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
-import {
+import type {
   CreateCollectionHomeBlockInputSchema,
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
@@ -27,7 +27,7 @@ import {
   SetHomeBlocksOrderInputSchema,
 } from '~/server/schema/home-block.schema';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { TRPCError } from '@trpc/server';
 import { isDefined } from '~/utils/type-guards';
 

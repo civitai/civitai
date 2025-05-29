@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { CustomClickHouseClient } from '~/server/clickhouse/client';
-import { NotificationCategory } from '~/server/common/enums';
+import type { CustomClickHouseClient } from '~/server/clickhouse/client';
+import type { NotificationCategory } from '~/server/common/enums';
 
 export type NotificationProcessor = {
   displayName: string;

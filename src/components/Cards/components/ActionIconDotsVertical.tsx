@@ -1,4 +1,4 @@
-import { ActionIconProps } from '@mantine/core';
+import type { ActionIconProps } from '@mantine/core';
 import { IconDotsVertical } from '@tabler/icons-react';
 import { forwardRef } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

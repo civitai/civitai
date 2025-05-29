@@ -1,14 +1,12 @@
+import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
 import {
   Anchor,
   Button,
-  ButtonProps,
   Group,
   Stack,
-  StackProps,
   Text,
   Title,
   Tooltip,
-  TooltipProps,
   Paper,
   Input,
   useMantineTheme,

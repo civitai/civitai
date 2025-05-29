@@ -1,4 +1,4 @@
-import { MantineSpacing } from '@mantine/core';
+import type { MantineSpacing } from '@mantine/core';
 
 export const mantineContainerSizes: Record<MantineSpacing, number> = {
   xs: 480,

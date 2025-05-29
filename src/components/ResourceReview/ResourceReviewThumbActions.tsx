@@ -1,4 +1,5 @@
-import { Button, Group, MantineSize, Text } from '@mantine/core';
+import type { MantineSize } from '@mantine/core';
+import { Button, Group, Text } from '@mantine/core';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import {
   useCreateResourceReview,
@@ -10,7 +11,7 @@ import {
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { ResourceReviewSimpleModel } from '~/server/selectors/resourceReview.selector';
+import type { ResourceReviewSimpleModel } from '~/server/selectors/resourceReview.selector';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import classes from './ResourceReviewThumbActions.module.scss';

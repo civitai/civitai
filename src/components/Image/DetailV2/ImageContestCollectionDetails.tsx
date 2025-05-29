@@ -1,6 +1,6 @@
 import { Anchor, Button, Card, Checkbox, Divider, Text } from '@mantine/core';
 import { IconBan, IconCheck, IconTournament } from '@tabler/icons-react';
-import { InfiniteData } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useState } from 'react';
@@ -12,7 +12,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { CollectionItemStatus, CollectionType } from '~/shared/utils/prisma/enums';
-import { CollectionGetAllItems } from '~/types/router';
+import type { CollectionGetAllItems } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';

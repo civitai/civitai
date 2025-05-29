@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
-import dayjs, { ManipulateType } from 'dayjs';
+import type { ManipulateType } from 'dayjs';
+import dayjs from 'dayjs';
 import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
@@ -27,6 +28,7 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
   getUserFollows,
@@ -42,7 +44,7 @@ import {
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import {
+import type {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
   GetEntitiesCoverImage,
@@ -50,7 +52,6 @@ import {
   GetInfiniteImagesOutput,
   GetMyImagesInput,
   ImageEntityType,
-  imageMetaOutput,
   ImageMetaProps,
   ImageModerationSchema,
   ImageRatingReviewOutput,
@@ -58,7 +59,6 @@ import {
   ImageSchema,
   ImageUploadProps,
   IngestImageInput,
-  ingestImageSchema,
   RemoveImageResourceSchema,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
@@ -68,6 +68,7 @@ import {
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
+import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import {
   articlesSearchIndex,
@@ -81,7 +82,8 @@ import type {
 } from '~/server/search-index/metrics-images.search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
+import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
@@ -118,11 +120,8 @@ import {
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import {
-  getVideoGenerationConfig,
-  videoGenerationConfig2,
-} from '~/server/orchestrator/generation/generation.config';
 import { Flags } from '~/shared/utils';
+import type { ModelType, ReportReason, ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
@@ -132,10 +131,7 @@ import {
   EntityType,
   ImageIngestionStatus,
   MediaType,
-  ModelType,
-  ReportReason,
   ReportStatus,
-  ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';
@@ -145,7 +141,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import { input } from 'motion/dist/react-m';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -2522,26 +2517,25 @@ export const getImagesForModelVersion = async ({
 
   const engines = Object.keys(videoGenerationConfig2);
   const query = Prisma.sql`
-    -- getImagesForModelVersion
-    WITH targets AS (
+     WITH targets AS (
       SELECT
-        id,
-        "modelVersionId"
-      FROM (
+        i.id,
+        full_mv.id::int AS "modelVersionId"
+      FROM unnest(ARRAY[${Prisma.join(modelVersionIds)}]) AS full_mv(id)
+      CROSS JOIN LATERAL
+      (
         SELECT
-          i.id,
-          p."modelVersionId",
-          row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY i."postId", i.index) row_num
+          i.id
         FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE (p."userId" = m."userId" OR m."userId" = -1)
-          AND p."modelVersionId" IN (${Prisma.join(modelVersionIds)})
+          AND p."modelVersionId" = full_mv.id
           AND ${Prisma.join(imageWhere, ' AND ')}
-
-      ) ranked
-      WHERE ranked.row_num <= ${imagesPerVersion}
+        ORDER BY i."postId", i.index
+        LIMIT ${imagesPerVersion}
+      ) i
     )
     SELECT
       i.id,
@@ -4107,6 +4101,8 @@ export async function updateImageNsfwLevel({
       update: { nsfwLevel },
     });
   }
+
+  return nsfwLevel;
 }
 
 type ImageRatingRequestResponse = {

@@ -2,10 +2,11 @@ import React, { useMemo } from 'react';
 import { createReportForm } from './create-report-form';
 import { withController } from '~/libs/form/hoc/withController';
 import { reportNsfwDetailsSchema } from '~/server/schema/report.schema';
-import { Accordion, Badge, Chip, Group, Input, InputWrapperProps, Text } from '@mantine/core';
+import type { InputWrapperProps } from '@mantine/core';
+import { Accordion, Badge, Chip, Group, Input, Text } from '@mantine/core';
 import { entityModerationCategories } from '~/libs/moderation';
 import { InputTextArea } from '~/libs/form';
-import { TagVotableEntityType } from '~/libs/tags';
+import type { TagVotableEntityType } from '~/libs/tags';
 import { z } from 'zod';
 
 export const ImageNsfwForm = createReportForm({

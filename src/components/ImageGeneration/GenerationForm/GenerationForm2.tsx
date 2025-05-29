@@ -1,3 +1,4 @@
+import type { NumberInputProps, SliderProps } from '@mantine/core';
 import {
   Accordion,
   Alert,
@@ -11,9 +12,7 @@ import {
   Input,
   List,
   Notification,
-  NumberInputProps,
   Paper,
-  SliderProps,
   Stack,
   Text,
   useMantineTheme,
@@ -47,9 +46,9 @@ import {
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import type { GenerationFormOutput } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import {
   blockedRequest,
-  GenerationFormOutput,
   useGenerationForm,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
@@ -108,7 +107,7 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { fetchBlobAsFile } from '~/utils/file-utils';
-import { getParsedExifData, parsePromptMetadata } from '~/utils/metadata';
+import { ExifParser, parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
@@ -392,14 +391,15 @@ export function GenerationFormContent() {
   const [minDenoise, setMinDenoise] = useState(0);
   useEffect(() => {
     if (sourceImage)
-      fetchBlobAsFile(sourceImage.url).then((file) => {
-        if (file)
-          getParsedExifData(file).then((data) => {
-            const min = data ? 0 : 0.5;
-            const denoise = form.getValues('denoise') ?? 0.4;
-            if (min > denoise) form.setValue('denoise', 0.65);
-            setMinDenoise(min);
-          });
+      fetchBlobAsFile(sourceImage.url).then(async (file) => {
+        if (file) {
+          const parser = await ExifParser(file);
+          const data = parser.parse();
+          const min = data ? 0 : 0.5;
+          const denoise = form.getValues('denoise') ?? 0.4;
+          if (min > denoise) form.setValue('denoise', 0.65);
+          setMinDenoise(min);
+        }
       });
     else setMinDenoise(0);
   }, [sourceImage, form]);

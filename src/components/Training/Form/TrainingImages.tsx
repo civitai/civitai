@@ -54,7 +54,8 @@ import { saveAs } from 'file-saver';
 import { capitalize, isEqual, uniq } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import pLimit from 'p-limit';
-import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { openImageSelectModal } from '~/components/Dialog/dialog-registry';
@@ -74,7 +75,8 @@ import {
   TrainingImagesTagViewer,
 } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
-import { BaseModel, constants } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import {
   IMAGE_MIME_TYPE,
@@ -1813,9 +1815,9 @@ const AttestDiv = () => {
       </Text>
       <List size="sm" type="ordered">
         <List.Item mb={2}>
-          Consent: If the content depicts the likeness of a real person, I am either that person
-          or have obtained clear, explicit consent from that person for their likeness to be used
-          in this creation of this model.
+          Consent: If the content depicts the likeness of a real person, I am either that person or
+          have obtained clear, explicit consent from that person for their likeness to be used in
+          this creation of this model.
         </List.Item>
         <List.Item mb={2}>
           Responsibility: I understand that I am solely responsible for ensuring that all necessary

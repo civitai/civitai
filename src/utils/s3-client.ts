@@ -1,3 +1,4 @@
+import type { _Object } from '@aws-sdk/client-s3';
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -10,7 +11,6 @@ import {
   S3Client as AwsS3Client,
   UploadPartCommand,
   ListObjectsV2Command,
-  _Object,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server';

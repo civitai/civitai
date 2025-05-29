@@ -5,7 +5,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ProfileImage } from '~/server/selectors/image.selector';
+import type { ProfileImage } from '~/server/selectors/image.selector';
 
 export function UserAvatarProfilePicture({
   id,

@@ -2,7 +2,7 @@ import { Button, Group, LoadingOverlay, Modal, Stack } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { Form, InputRTE, useForm } from '~/libs/form';

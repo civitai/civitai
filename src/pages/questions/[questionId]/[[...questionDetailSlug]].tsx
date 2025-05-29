@@ -1,5 +1,5 @@
 import { Container, Group, Loader, Stack, Title, Center } from '@mantine/core';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';

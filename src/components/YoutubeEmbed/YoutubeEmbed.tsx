@@ -1,4 +1,5 @@
-import { Box, BoxProps } from '@mantine/core';
+import type { BoxProps } from '@mantine/core';
+import { Box } from '@mantine/core';
 import clsx from 'clsx';
 
 export const YoutubeEmbed = ({

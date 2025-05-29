@@ -1,6 +1,7 @@
 import type { MantineTheme } from '@mantine/core';
-import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
-import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import type { Icon, IconProps } from '@tabler/icons-react';
+import { IconBolt, IconCurrencyDollar } from '@tabler/icons-react';
+import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
@@ -579,11 +580,20 @@ export function getEcosystemFromBaseModel(baseModel: string) {
       .find(([, baseModelSet]) => (baseModelSet.baseModels as string[]).includes(baseModel))?.[0]
       ?.toLowerCase() ?? 'multi';
 
+  // for (const item of [
+  //   'wanvideo1_3b_t2v',
+  //   'wanvideo14b_t2v',
+  //   'wanvideo14b_i2v_480p',
+  //   'wanvideo14b_i2v_720p',
+  // ]) {
+  //   if (ecosystem === item) return 'wanvideo';
+  // }
+
   return ecosystem
     .replace('pony', 'sdxl')
-    ?.replace('illustrious', 'sdxl')
-    ?.replace('noobai', 'sdxl')
-    ?.replace('sd3_5m', 'sd3');
+    .replace('illustrious', 'sdxl')
+    .replace('noobai', 'sdxl')
+    .replace('sd3_5m', 'sd3');
 }
 
 /*
@@ -1334,6 +1344,10 @@ export const newOrderConfig = {
   cosmetics: {
     badgeIds: { acolyte: 858, knight: 859, templar: 860 },
   },
+  limits: {
+    knightVoteLimit: 5,
+    templarVoteLimit: 2,
+  },
 };
 
 export const buzzBulkBonusMultipliers = [
@@ -1343,7 +1357,8 @@ export const buzzBulkBonusMultipliers = [
   [400000, 1.2],
 ];
 
-export const NOW_PAYMENTS_FIXED_FEE = 100; // !.00 USD
+export const NOW_PAYMENTS_FIXED_FEE = 100; // 1.00 USD
+export const COINBASE_FIXED_FEE = 0; // 0.00 USD
 
 export const specialCosmeticRewards = {
   annualRewards: {

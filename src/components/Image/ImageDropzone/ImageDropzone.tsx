@@ -1,7 +1,9 @@
 import { Input, Text, useComputedColorScheme, useMantineTheme } from '@mantine/core';
-import { Dropzone, DropzoneProps } from '@mantine/dropzone';
+import type { DropzoneProps } from '@mantine/dropzone';
+import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
-import { DragEvent, useState } from 'react';
+import type { DragEvent } from 'react';
+import { useState } from 'react';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { fetchBlob } from '~/utils/file-utils';

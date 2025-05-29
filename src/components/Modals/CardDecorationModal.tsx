@@ -1,6 +1,6 @@
 import { Button, Center, Grid, Group, Loader, Modal, Paper, Stack } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { CosmeticEntity } from '~/shared/utils/prisma/enums';
+import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { IconArrowRight } from '@tabler/icons-react';
 import { z } from 'zod';
 
@@ -11,11 +11,11 @@ import {
 } from '~/components/Cosmetics/cosmetics.util';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 import classes from './CardDecorationModal.module.scss';
 

@@ -1,6 +1,7 @@
 import { Anchor, Text } from '@mantine/core';
 import type { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
-import React, { ReactElement } from 'react';
+import type { ReactElement } from 'react';
+import React from 'react';
 import { constants } from '~/server/common/constants';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 

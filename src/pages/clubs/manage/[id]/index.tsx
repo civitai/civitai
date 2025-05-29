@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconAlertCircle, IconArrowLeft, IconTrash } from '@tabler/icons-react';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { z } from 'zod';

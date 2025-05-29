@@ -1,13 +1,5 @@
-import {
-  Group,
-  MantineTheme,
-  Rating,
-  Stack,
-  Text,
-  ThemeIcon,
-  useComputedColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
+import type { MantineTheme } from '@mantine/core';
+import { Group, Rating, Stack, Text, ThemeIcon, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import {
   IconArrowsHorizontal,
   IconBadges,

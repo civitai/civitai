@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { UseQueryModelReturn } from '~/components/Model/model.utils';
+import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 
 type ModelCardMenuCtx = {
   setMenuItems?: (

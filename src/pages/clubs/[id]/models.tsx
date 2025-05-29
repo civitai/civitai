@@ -11,7 +11,7 @@ import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { ModelFilterSchema } from '../../../providers/FiltersProvider';
+import type { ModelFilterSchema } from '../../../providers/FiltersProvider';
 import { createServerSideProps } from '../../../server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({

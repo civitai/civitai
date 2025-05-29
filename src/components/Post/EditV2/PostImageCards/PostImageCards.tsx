@@ -1,11 +1,8 @@
 import { Tabs } from '@mantine/core';
 import { IconPencil, IconPhoto } from '@tabler/icons-react';
 import React from 'react';
-import {
-  ControlledImage,
-  usePostEditStore,
-  usePostPreviewContext,
-} from '~/components/Post/EditV2/PostEditProvider';
+import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { AddedImage } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import { BlockedImage } from '~/components/Post/EditV2/PostImageCards/BlockedImage';
 import { ErrorImage } from '~/components/Post/EditV2/PostImageCards/ErrorImage';

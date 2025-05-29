@@ -1,4 +1,4 @@
-import { MultiSelectProps } from '@mantine/core';
+import type { MultiSelectProps } from '@mantine/core';
 import { useQueryTools } from '~/components/Tool/tools.utils';
 import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';

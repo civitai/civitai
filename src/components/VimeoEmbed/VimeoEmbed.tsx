@@ -1,4 +1,5 @@
-import { Box, BoxProps, Loader } from '@mantine/core';
+import type { BoxProps } from '@mantine/core';
+import { Box, Loader } from '@mantine/core';
 import clsx from 'clsx';
 import { useEffect, useState } from 'react';
 import { trpc } from '~/utils/trpc';

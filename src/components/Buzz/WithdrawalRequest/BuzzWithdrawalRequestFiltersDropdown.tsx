@@ -1,3 +1,4 @@
+import type { ChipProps, ButtonProps } from '@mantine/core';
 import {
   Popover,
   Group,
@@ -5,10 +6,8 @@ import {
   Stack,
   Divider,
   Chip,
-  ChipProps,
   Button,
   Drawer,
-  ButtonProps,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
@@ -17,7 +16,7 @@ import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
+import type { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
 import classes from './BuzzWithdrawalRequestFiltersDropdown.module.scss';
 import clsx from 'clsx';
 

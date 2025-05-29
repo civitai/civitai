@@ -36,7 +36,11 @@ export default function ModelVersionEditPage() {
   return (
     <Container size="sm">
       <Stack gap="xl">
-        <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to edit your model version. Please try again later."} />
+        <ReadOnlyAlert
+          message={
+            "Civitai is currently in read-only mode and you won't be able to edit your model version. Please try again later."
+          }
+        />
         <Link legacyBehavior href={`/models/${modelVersion?.model.id}`} passHref shallow>
           <Anchor size="xs">
             <Group gap={4}>

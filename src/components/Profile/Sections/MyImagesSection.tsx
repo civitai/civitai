@@ -8,11 +8,11 @@ import { ImageCard } from '~/components/Cards/ImageCard';
 import { useDumbImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import {
   ProfileSection,
   ProfileSectionNoResults,
   ProfileSectionPreview,
-  ProfileSectionProps,
 } from '~/components/Profile/ProfileSection';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { ImageSort } from '~/server/common/enums';

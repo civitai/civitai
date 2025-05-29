@@ -1,16 +1,16 @@
 import { Anchor, Badge, Button, Chip, JsonInput, Modal, Paper, Stack, Text } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
-import {
-  MantineReactTable,
+import type {
   MRT_ColumnDef,
   MRT_PaginationState,
   MRT_SortingState,
   MRT_TableInstance,
 } from 'mantine-react-table';
+import { MantineReactTable } from 'mantine-react-table';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { Collection } from '~/components/Collection/Collection';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';

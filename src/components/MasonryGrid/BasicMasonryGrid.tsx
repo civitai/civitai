@@ -1,6 +1,7 @@
 import { ScrollArea } from '@mantine/core';
 import { useElementSize } from '@mantine/hooks';
-import { useMasonry, UseMasonryOptions, usePositioner, useResizeObserver } from 'masonic';
+import type { UseMasonryOptions } from 'masonic';
+import { useMasonry, usePositioner, useResizeObserver } from 'masonic';
 import { useState } from 'react';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 

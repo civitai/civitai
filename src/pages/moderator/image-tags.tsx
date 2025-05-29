@@ -1,3 +1,4 @@
+import type { TooltipProps } from '@mantine/core';
 import {
   ActionIcon,
   AspectRatio,
@@ -11,7 +12,6 @@ import {
   Stack,
   Text,
   Title,
-  TooltipProps,
 } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import {
@@ -35,8 +35,8 @@ import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageModerationReviewQueueImage } from '~/types/router';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageModerationReviewQueueImage } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { createSelectStore } from '~/store/select.store';

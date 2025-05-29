@@ -1,13 +1,13 @@
-import { ComponentType, forwardRef } from 'react';
-import {
-  Controller,
+import type { ComponentType } from 'react';
+import { forwardRef } from 'react';
+import type {
   ControllerFieldState,
   ControllerRenderProps,
   FieldPath,
   FieldValues,
-  useFormContext,
   UseFormStateReturn,
 } from 'react-hook-form';
+import { Controller, useFormContext } from 'react-hook-form';
 
 export function withController<
   TComponentProps extends { onChange?: (...events: any[]) => void } & Record<string, any>, //eslint-disable-line

@@ -1,12 +1,12 @@
 import dayjs from 'dayjs';
-import { ChatCompletionMessageParam } from 'openai/resources';
-import {
+import type { ChatCompletionMessageParam } from 'openai/resources';
+import type {
   ChallengePrompts,
   Prize,
   Score,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { openai } from '~/server/services/ai/openai';
-import { ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
 import { stripLeadingWhitespace } from '~/utils/string-helpers';

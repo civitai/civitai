@@ -1,5 +1,5 @@
 import { Container, Stack, Title, Group, Text, Center, Loader } from '@mantine/core';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';

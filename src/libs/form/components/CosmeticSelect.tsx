@@ -1,17 +1,16 @@
+import type { InputWrapperProps, SimpleGridProps } from '@mantine/core';
 import {
   Center,
   Indicator,
   Input,
-  InputWrapperProps,
   Paper,
   SimpleGrid,
-  SimpleGridProps,
   Stack,
   Text,
   UnstyledButton,
 } from '@mantine/core';
 import { IconBuildingStore } from '@tabler/icons-react';
-import { SimpleCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { SimpleCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import classes from './CosmeticSelect.module.scss';

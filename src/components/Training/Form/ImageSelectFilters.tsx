@@ -1,7 +1,7 @@
+import type { ChipProps } from '@mantine/core';
 import {
   Button,
   Chip,
-  ChipProps,
   Divider,
   Drawer,
   Group,
@@ -22,7 +22,8 @@ import type {
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { BaseModel, constants } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { titleCase } from '~/utils/string-helpers';

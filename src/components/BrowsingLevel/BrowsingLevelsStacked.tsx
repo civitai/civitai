@@ -1,8 +1,8 @@
 import { Group, Text } from '@mantine/core';
 import { ToggleList } from '~/components/ToggleList/ToggleList';
 import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
+import type { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
-  BrowsingLevel,
   browsingLevelDescriptions,
   browsingLevelLabels,
   browsingLevels,

@@ -2,16 +2,15 @@ import React, { useState } from 'react';
 import { z } from 'zod';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '~/components/Meta/Meta';
+import type { ActionIconProps, BadgeProps } from '@mantine/core';
 import {
   Accordion,
-  ActionIconProps,
   Alert,
   Anchor,
-  BadgeProps,
   Button,
   Card,
   Center,
@@ -35,19 +34,19 @@ import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useDidUpdate } from '@mantine/hooks';
+import type { IconProps } from '@tabler/icons-react';
 import {
   IconBrandWechat,
   IconLock,
   IconLockOpen,
   IconNotes,
   IconPencilMinus,
-  IconProps,
   IconShare3,
   IconStar,
   IconTrash,
   IconTrophy,
 } from '@tabler/icons-react';
-import { BountyEntryGetById } from '~/types/router';
+import type { BountyEntryGetById } from '~/types/router';
 import { BountyEntryDiscussion } from '~/components/Bounty/BountyEntryDiscussion';
 import { formatKBytes } from '~/utils/number-helpers';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -66,8 +65,10 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { Availability, ReviewReactions } from '~/shared/utils/prisma/enums';
-import { ConnectProps, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
+import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';

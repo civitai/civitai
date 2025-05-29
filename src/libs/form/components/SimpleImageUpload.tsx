@@ -1,13 +1,14 @@
+import type { InputWrapperProps } from '@mantine/core';
 import {
   Group,
   Input,
-  InputWrapperProps,
   LoadingOverlay,
   Paper,
   Text,
   Tooltip,
 } from '@mantine/core';
-import { Dropzone, DropzoneProps, FileWithPath } from '@mantine/dropzone';
+import type { DropzoneProps, FileWithPath } from '@mantine/dropzone';
+import { Dropzone } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
@@ -21,7 +22,7 @@ import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { DataFromFile } from '~/utils/metadata';
+import type { DataFromFile } from '~/utils/metadata';
 import { formatBytes } from '~/utils/number-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

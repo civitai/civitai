@@ -1,4 +1,5 @@
-import { Button, ButtonProps, HoverCard, Text } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, HoverCard, Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconChevronRight, IconChristmasBall, IconHeart } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

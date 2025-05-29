@@ -10,7 +10,8 @@ import {
 } from '@mantine/core';
 import { useState } from 'react';
 
-import { NestedHeading, useIntersectionObserver } from '~/hooks/useHeadingsData';
+import type { NestedHeading } from '~/hooks/useHeadingsData';
+import { useIntersectionObserver } from '~/hooks/useHeadingsData';
 
 export function TableOfContent({ headings }: Props) {
   const [activeId, setActiveId] = useState('');

@@ -29,7 +29,7 @@ import { useChatContext } from '~/components/Chat/ChatProvider';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ChatListMessage } from '~/types/router';
+import type { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import classes from '~/components/Chat/ChatList.module.css';

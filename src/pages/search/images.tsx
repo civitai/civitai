@@ -1,5 +1,6 @@
 import { Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
-import { RefinementListProps, useInstantSearch } from 'react-instantsearch';
+import type { RefinementListProps } from 'react-instantsearch';
+import { useInstantSearch } from 'react-instantsearch';
 import {
   BrowsingLevelFilter,
   ChipRefinementList,

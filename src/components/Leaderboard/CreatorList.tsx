@@ -5,7 +5,7 @@ import { Stack } from '@mantine/core';
 
 import { CreatorCard } from '~/components/Leaderboard/CreatorCard';
 import { numericString } from '~/utils/zod-helpers';
-import { LeaderboardGetModel } from '~/types/router';
+import type { LeaderboardGetModel } from '~/types/router';
 
 // const schema = z.object({
 //   position: numericString().optional(),

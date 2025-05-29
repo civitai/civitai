@@ -1,12 +1,5 @@
-import {
-  Stack,
-  FileInput,
-  Progress,
-  FileInputProps,
-  Group,
-  Text,
-  Box,
-} from '@mantine/core';
+import type { FileInputProps } from '@mantine/core';
+import { Stack, FileInput, Progress, Group, Text, Box } from '@mantine/core';
 import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useS3Upload } from '~/hooks/useS3Upload';
@@ -17,8 +10,8 @@ import { toStringList } from '~/utils/array-helpers';
 import { useDidUpdate } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import { bytesToKB } from '~/utils/number-helpers';
-import { ModelFileInput } from '~/server/schema/model-file.schema';
-import { ModelFileType } from '~/server/common/constants';
+import type { ModelFileInput } from '~/server/schema/model-file.schema';
+import type { ModelFileType } from '~/server/common/constants';
 import classes from './FileInputUpload.module.scss';
 import clsx from 'clsx';
 

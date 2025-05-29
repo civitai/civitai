@@ -1,3 +1,4 @@
+import type { ThemeIconProps } from '@mantine/core';
 import {
   Badge,
   getPrimaryShade,
@@ -8,11 +9,11 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  ThemeIconProps,
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import type { IconProps } from '@tabler/icons-react';
 import {
   IconAutomaticGearbox,
   IconBrush,
@@ -22,7 +23,6 @@ import {
   IconPinFilled,
   IconPinned,
   IconPinnedOff,
-  IconProps,
   IconUserPlus,
 } from '@tabler/icons-react';
 import { useCallback } from 'react';
@@ -47,7 +47,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { ImagesAsPostModel } from '~/server/controllers/image.controller';
+import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { generationPanel } from '~/store/generation.store';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

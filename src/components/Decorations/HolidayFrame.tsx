@@ -1,7 +1,7 @@
 import { Lightbulb } from './Lightbulb';
 import { useLocalStorage } from '@mantine/hooks';
 import clsx from 'clsx';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import classes from './HolidayFrame.module.scss';
 
 const cosmeticTypeImage = {

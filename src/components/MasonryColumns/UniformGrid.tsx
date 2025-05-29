@@ -1,7 +1,7 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import React, { useMemo } from 'react';
-import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import classes from './UniformGrid.module.scss';
 

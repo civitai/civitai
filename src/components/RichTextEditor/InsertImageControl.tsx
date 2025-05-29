@@ -1,8 +1,5 @@
-import {
-  RichTextEditor,
-  RichTextEditorControlProps,
-  useRichTextEditorContext,
-} from '@mantine/tiptap';
+import type { RichTextEditorControlProps } from '@mantine/tiptap';
+import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconPhoto } from '@tabler/icons-react';
 import { useRef } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';

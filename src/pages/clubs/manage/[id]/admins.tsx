@@ -1,5 +1,5 @@
 import { Button, Group, Stack, Title, Text, Tabs } from '@mantine/core';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { dbRead } from '~/server/db/client';

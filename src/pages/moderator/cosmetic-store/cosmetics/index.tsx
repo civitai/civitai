@@ -30,9 +30,9 @@ import { Meta } from '~/components/Meta/Meta';
 import { PreviewCard } from '~/components/Modals/CardDecorationModal';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { CosmeticGetById } from '~/types/router';
+import type { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { CosmeticGetById } from '~/types/router';
 
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

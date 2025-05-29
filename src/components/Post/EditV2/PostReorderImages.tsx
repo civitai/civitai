@@ -1,23 +1,17 @@
-import {
-  DndContext,
-  DragEndEvent,
-  PointerSensor,
-  UniqueIdentifier,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
+import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, arrayMove, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Button } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
 import { IconArrowsMaximize, IconArrowsSort, IconCheck } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
-import { CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { ControlledImage, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 
 export function PostReorderImages() {
   const [images, setImages] = usePostEditStore((state) => [

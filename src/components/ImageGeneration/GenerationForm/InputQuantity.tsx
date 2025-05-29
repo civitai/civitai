@@ -1,4 +1,5 @@
-import { NumberInput, NumberInputProps } from '@mantine/core';
+import type { NumberInputProps } from '@mantine/core';
+import { NumberInput } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { withController } from '~/libs/form/hoc/withController';
 

@@ -1,3 +1,4 @@
+import type { ChipProps, ButtonProps } from '@mantine/core';
 import {
   Popover,
   Group,
@@ -5,10 +6,8 @@ import {
   Stack,
   Divider,
   Chip,
-  ChipProps,
   Button,
   Drawer,
-  ButtonProps,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
@@ -18,7 +17,7 @@ import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
-import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
+import type { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import classes from './CosmeticsFiltersDropdown.module.scss';
 import clsx from 'clsx';

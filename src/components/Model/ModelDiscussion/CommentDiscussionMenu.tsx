@@ -1,4 +1,5 @@
-import { ActionIcon, Menu, MenuProps, Text } from '@mantine/core';
+import type { MenuProps } from '@mantine/core';
+import { ActionIcon, Menu, Text } from '@mantine/core';
 import { closeAllModals, closeModal, openConfirmModal } from '@mantine/modals';
 import {
   IconDotsVertical,
@@ -19,7 +20,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { CommentGetAllItem } from '~/types/router';
+import type { CommentGetAllItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

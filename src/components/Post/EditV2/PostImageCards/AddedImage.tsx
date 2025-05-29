@@ -63,8 +63,8 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { BlockedReason } from '~/server/common/enums';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { VideoMetadata } from '~/server/schema/media.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
+import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
 import {
   getBaseModelResourceTypes,
@@ -74,7 +74,7 @@ import {
 import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
-import { MyRecentlyAddedModels } from '~/types/router';
+import type { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import { showErrorNotification } from '~/utils/notifications';

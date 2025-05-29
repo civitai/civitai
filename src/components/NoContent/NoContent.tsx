@@ -1,4 +1,5 @@
-import { Stack, StackProps, Text, ThemeIcon } from '@mantine/core';
+import type { StackProps } from '@mantine/core';
+import { Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 
 const ICON_CONTAINER_SIZE_RATIO = 1.6;

@@ -1,5 +1,5 @@
-import { BuiltInProviderType } from 'next-auth/providers';
-import { ButtonProps } from '@mantine/core';
+import type { BuiltInProviderType } from 'next-auth/providers';
+import type { ButtonProps } from '@mantine/core';
 import { socialItems } from './Social';
 import { env } from '~/env/client';
 

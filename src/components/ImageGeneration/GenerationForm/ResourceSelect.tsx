@@ -1,14 +1,15 @@
-import { Button, ButtonProps, GroupProps, Input, InputWrapperProps } from '@mantine/core';
+import type { ButtonProps, GroupProps, InputWrapperProps } from '@mantine/core';
+import { Button, Input } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
-import {
+import type {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
 
 export const ResourceSelect = ({
   value,

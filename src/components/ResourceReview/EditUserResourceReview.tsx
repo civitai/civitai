@@ -12,7 +12,7 @@ import {
 } from '~/components/ResourceReview/resourceReview.utils';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { Form, InputRTE, InputTextArea, useForm } from '~/libs/form';
-import {
+import type {
   ResourceReviewModel,
   ResourceReviewSimpleModel,
 } from '~/server/selectors/resourceReview.selector';

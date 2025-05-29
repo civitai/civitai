@@ -1,10 +1,10 @@
+import type { MantineSize } from '@mantine/core';
 import {
   Box,
   Container,
   Divider,
   Drawer,
   Group,
-  MantineSize,
   NavLink,
   Skeleton,
   Stack,
@@ -12,7 +12,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { usePathname } from 'next/navigation';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';

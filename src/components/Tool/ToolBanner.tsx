@@ -7,7 +7,7 @@ import { useImageFilters } from '~/components/Image/image.utils';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { useQueryTools } from '~/components/Tool/tools.utils';
-import { FilterKeys } from '~/providers/FiltersProvider';
+import type { FilterKeys } from '~/providers/FiltersProvider';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { slugit } from '~/utils/string-helpers';
 

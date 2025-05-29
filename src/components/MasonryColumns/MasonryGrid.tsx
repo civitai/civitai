@@ -7,7 +7,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import React, { useMemo } from 'react';
-import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';

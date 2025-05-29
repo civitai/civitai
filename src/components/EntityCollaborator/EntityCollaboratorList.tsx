@@ -1,11 +1,13 @@
 import { Button, Stack, Text } from '@mantine/core';
-import { CreatorCardPropsV2, CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
+import type { CreatorCardPropsV2 } from '~/components/CreatorCard/CreatorCard';
+import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import {
   useEntityCollaboratorsMutate,
   useGetEntityCollaborators,
 } from '~/components/EntityCollaborator/entityCollaborator.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { EntityCollaboratorStatus, EntityType } from '~/shared/utils/prisma/enums';
+import type { EntityType } from '~/shared/utils/prisma/enums';
+import { EntityCollaboratorStatus } from '~/shared/utils/prisma/enums';
 
 export const EntityCollaboratorList = ({
   entityId,

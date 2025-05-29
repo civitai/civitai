@@ -1,5 +1,5 @@
 import { Stack, Text, List, Title } from '@mantine/core';
-import { ContextModalProps } from '@mantine/modals';
+import type { ContextModalProps } from '@mantine/modals';
 
 export default function QuestionInfoModal({ context, id }: ContextModalProps) {
   return (

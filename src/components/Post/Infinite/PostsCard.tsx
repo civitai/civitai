@@ -13,7 +13,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { PostReactions } from '~/components/Reaction/Reactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
-import { PostsInfiniteModel } from '~/server/services/post.service';
+import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import classes from './PostsCard.module.css';
 

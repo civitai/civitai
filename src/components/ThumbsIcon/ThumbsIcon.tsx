@@ -1,10 +1,10 @@
 import { useComputedColorScheme } from '@mantine/core';
+import type { IconProps } from '@tabler/icons-react';
 import {
   IconThumbDown,
   IconThumbDownFilled,
   IconThumbUp,
   IconThumbUpFilled,
-  IconProps,
 } from '@tabler/icons-react';
 
 export function ThumbsUpIcon({ filled, ...iconProps }: Props) {

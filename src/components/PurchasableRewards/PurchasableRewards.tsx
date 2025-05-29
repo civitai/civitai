@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
+import type { ChipProps } from '@mantine/core';
 import {
   Center,
   Chip,
-  ChipProps,
   Group,
   Loader,
   LoadingOverlay,
@@ -29,7 +29,7 @@ import {
   useQueryPurchasableRewards,
   useUserPurchasedRewards,
 } from '~/components/PurchasableRewards/purchasableRewards.util';
-import { GetPaginatedPurchasableRewardsSchema } from '~/server/schema/purchasable-reward.schema';
+import type { GetPaginatedPurchasableRewardsSchema } from '~/server/schema/purchasable-reward.schema';
 import { PurchasableRewardViewMode } from '~/server/common/enums';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -42,7 +42,7 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { formatDate } from '~/utils/date-helpers';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
-import { PurchasableRewardGetPaged } from '~/types/router';
+import type { PurchasableRewardGetPaged } from '~/types/router';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';

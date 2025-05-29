@@ -1,4 +1,5 @@
-import { Input, InputWrapperProps, Rating, RatingProps } from '@mantine/core';
+import type { InputWrapperProps, RatingProps } from '@mantine/core';
+import { Input, Rating } from '@mantine/core';
 
 export function RatingWrapper({
   id,

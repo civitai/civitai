@@ -1,4 +1,5 @@
-import { Badge, BadgeProps, HoverCard, Text, ThemeIcon, useMantineTheme } from '@mantine/core';
+import type { BadgeProps } from '@mantine/core';
+import { Badge, HoverCard, Text, ThemeIcon, useMantineTheme } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
@@ -13,7 +14,7 @@ import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { BountyGetAll } from '~/types/router';
+import type { BountyGetAll } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { BountyContextMenu } from '../Bounty/BountyContextMenu';

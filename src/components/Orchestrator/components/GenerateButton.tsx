@@ -1,4 +1,5 @@
-import { Button, ButtonProps, Text } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Text } from '@mantine/core';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 type SharedMediaProps = {
   width?: number;

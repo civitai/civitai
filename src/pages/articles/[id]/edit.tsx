@@ -1,5 +1,5 @@
 import { Center, Container, Loader } from '@mantine/core';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import React from 'react';
 import { z } from 'zod';
 

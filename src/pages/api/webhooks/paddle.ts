@@ -1,12 +1,12 @@
 import type { EventEntity } from '@paddle/paddle-node-sdk';
 import { EventName } from '@paddle/paddle-node-sdk';
-import { NextApiRequest, NextApiResponse } from 'next';
-import { Readable } from 'node:stream';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
 import { getPaddle } from '~/server/paddle/client';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { userCapCache } from '~/server/services/creator-program.service';
 import {
   getBuzzPurchaseItem,

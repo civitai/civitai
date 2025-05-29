@@ -1,4 +1,5 @@
-import { useCallback, Dispatch, SetStateAction } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
+import { useCallback } from 'react';
 import { create } from 'zustand';
 import { removeEmpty } from '~/utils/object-helpers';
 

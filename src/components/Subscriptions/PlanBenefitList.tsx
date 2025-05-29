@@ -1,13 +1,5 @@
-import {
-  Anchor,
-  DefaultMantineColor,
-  Divider,
-  List,
-  Stack,
-  Text,
-  ThemeIcon,
-  ThemeIconVariant,
-} from '@mantine/core';
+import type { DefaultMantineColor, ThemeIconVariant } from '@mantine/core';
+import { Anchor, Divider, List, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconAdCircleOff, IconCircleCheck, IconCircleX } from '@tabler/icons-react';
 
 export const benefitIconSize = 18;

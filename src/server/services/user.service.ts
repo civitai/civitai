@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import {
@@ -29,8 +29,8 @@ import {
   userFollowsCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
   ComputeDeviceFingerprintInput,
   DeleteUserInput,
   GetAllUsersInput,
@@ -41,8 +41,8 @@ import {
   UpdateContentSettingsInput,
   UserMeta,
   UserSettingsInput,
-  userSettingsSchema,
 } from '~/server/schema/user.schema';
+import { userSettingsSchema } from '~/server/schema/user.schema';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
@@ -76,14 +76,16 @@ import { encryptText, generateKey, generateSecretHash } from '~/server/utils/key
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import type {
+  BountyEngagementType,
+  CosmeticType,
+  ModelEngagementType,
+} from '~/shared/utils/prisma/enums';
 import {
   ArticleEngagementType,
-  BountyEngagementType,
   CollectionMode,
   CollectionType,
   CosmeticSource,
-  CosmeticType,
-  ModelEngagementType,
   ModelStatus,
 } from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
@@ -92,7 +94,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 import { profileImageSelect } from '../selectors/image.selector';
-import {
+import type {
   ToggleUserArticleEngagementsInput,
   UserByReferralCodeSchema,
   UserSettingsSchema,

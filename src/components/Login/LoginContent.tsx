@@ -1,7 +1,7 @@
 import { Alert, Code, Paper, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconExclamationMark, IconMail } from '@tabler/icons-react';
 import dayjs from 'dayjs';
-import { BuiltInProviderType } from 'next-auth/providers';
+import type { BuiltInProviderType } from 'next-auth/providers';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
@@ -14,7 +14,8 @@ import { providers, SocialButton } from '~/components/Social/SocialButton';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { setCookie } from '~/utils/cookies-helpers';
-import { LoginRedirectReason, loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
+import type { LoginRedirectReason } from '~/utils/login-helpers';
+import { loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function LoginContent(args: {

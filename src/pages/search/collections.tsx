@@ -17,7 +17,7 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { SearchLayout } from '~/components/Search/SearchLayout';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import classes from '~/components/Search/SearchLayout.module.scss';
 
 export default function CollectionSearch() {

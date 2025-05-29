@@ -1,3 +1,4 @@
+import type { ChipProps, ButtonProps } from '@mantine/core';
 import {
   Popover,
   Group,
@@ -5,10 +6,8 @@ import {
   Stack,
   Divider,
   Chip,
-  ChipProps,
   Button,
   Drawer,
-  ButtonProps,
   useComputedColorScheme,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
@@ -16,7 +15,7 @@ import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
+import type { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
 import classes from './PurchasableRewardsModeratorFiltersDropdown.module.scss';
 import clsx from 'clsx';

@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import React from 'react';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -28,7 +28,7 @@ import {
 } from '~/libs/form';
 import { constants } from '~/server/common/constants';
 import { upsertClubTierInput } from '~/server/schema/club.schema';
-import { ClubTier } from '~/types/router';
+import type { ClubTier } from '~/types/router';
 
 const formSchema = upsertClubTierInput;
 

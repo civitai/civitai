@@ -1,8 +1,9 @@
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { userFollowsCache } from '~/server/redis/caches';
-import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
-import { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
+import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import { getModeratedTags } from '~/server/services/system-cache';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 

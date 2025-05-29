@@ -14,7 +14,7 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
-import { ClubGetAll } from '~/types/router';
+import type { ClubGetAll } from '~/types/router';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { IconAlertCircle, IconArticle, IconFiles, IconUsers } from '@tabler/icons-react';
 import { abbreviateNumber } from '../../utils/number-helpers';

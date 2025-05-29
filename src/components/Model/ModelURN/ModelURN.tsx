@@ -1,9 +1,9 @@
 import { ActionIcon, Code, Group, Popover, Stack, Text, Tooltip } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { IconCheck, IconCopy, IconInfoSquareRounded } from '@tabler/icons-react';
-import React, { useMemo } from 'react';
-import { BaseModel } from '~/server/common/constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { useMemo } from 'react';
+import type { BaseModel } from '~/server/common/constants';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/utils/string-helpers';
 import classes from './ModelURN.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

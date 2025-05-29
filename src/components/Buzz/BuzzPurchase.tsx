@@ -28,9 +28,9 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { buzzBulkBonusMultipliers, constants } from '~/server/common/constants';
-import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { Price } from '~/shared/utils/prisma/models';
+import type { Price } from '~/shared/utils/prisma/models';
 import {
   formatCurrencyForDisplay,
   formatPriceForDisplay,
@@ -43,6 +43,7 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
+import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -529,6 +530,25 @@ export const BuzzPurchase = ({
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
 
             <Stack gap="xs" mt="md">
+              {features.coinbasePayments && (
+                <BuzzCoinbaseButton
+                  unitAmount={unitAmount}
+                  buzzAmount={buzzAmount}
+                  onPurchaseSuccess={onPurchaseSuccess}
+                  disabled={!ctaEnabled}
+                  purchaseSuccessMessage={purchaseSuccessMessage}
+                />
+              )}
+              {features.nowpaymentPayments && (
+                <BuzzNowPaymentsButton
+                  unitAmount={unitAmount}
+                  buzzAmount={buzzAmount}
+                  onPurchaseSuccess={onPurchaseSuccess}
+                  disabled={!ctaEnabled}
+                  purchaseSuccessMessage={purchaseSuccessMessage}
+                />
+              )}
+
               <BuzzPurchasePaymentButton
                 unitAmount={unitAmount}
                 buzzAmount={buzzAmount}
@@ -538,6 +558,21 @@ export const BuzzPurchase = ({
                 disabled={!ctaEnabled}
                 purchaseSuccessMessage={purchaseSuccessMessage}
               />
+
+              {(features.nowpaymentPayments || features.coinbasePayments) && (
+                <Stack align="center">
+                  <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
+                    Never purchased with Crypto before?{' '}
+                    <Anchor
+                      href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Learn how
+                    </Anchor>
+                  </AlertWithIcon>
+                </Stack>
+              )}
 
               <Stack gap={0} align="center" my={4}>
                 <p className="mb-0 text-xs opacity-50">
@@ -558,16 +593,6 @@ export const BuzzPurchase = ({
                   onValidate={onValidate}
                 />
               )} */}
-
-              {features.cryptoPayments && (
-                <BuzzNowPaymentsButton
-                  unitAmount={unitAmount}
-                  buzzAmount={buzzAmount}
-                  onPurchaseSuccess={onPurchaseSuccess}
-                  disabled={!ctaEnabled}
-                  purchaseSuccessMessage={purchaseSuccessMessage}
-                />
-              )}
 
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">

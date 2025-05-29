@@ -1,4 +1,5 @@
-import { AutocompleteProps, Group, Select, Stack, Text } from '@mantine/core';
+import type { AutocompleteProps } from '@mantine/core';
+import { Group, Select, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconChevronDown } from '@tabler/icons-react';
@@ -13,20 +14,17 @@ import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/user
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import {
-  ReverseSearchIndexKey,
-  reverseSearchIndexMap,
-  SearchIndexKey,
-  searchIndexMap,
-} from '~/components/Search/search.types';
+import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/search.types';
+import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/search.types';
 
-import { SearchIndexDataMap, useHitsTransformed } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { useHitsTransformed } from '~/components/Search/search.utils2';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IndexToLabel } from '~/components/Search/useSearchState';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
-import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
+import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { BrowsingLevelFilter } from './CustomSearchComponents';

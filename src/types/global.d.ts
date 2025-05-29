@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { MantineSize } from '@mantine/core';
-import { FileWithPath } from '@mantine/dropzone';
-import { ImageAnalysisInput } from '~/server/schema/image.schema';
-import { TrainingResults } from '~/server/schema/model-file.schema';
-import { LabelTypes } from '~/store/training.store';
+import type { MantineSize } from '@mantine/core';
+import type { FileWithPath } from '@mantine/dropzone';
+import type { ImageAnalysisInput } from '~/server/schema/image.schema';
+import type { TrainingResults } from '~/server/schema/model-file.schema';
+import type { LabelTypes } from '~/store/training.store';
 
 export {};
 

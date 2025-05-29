@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';

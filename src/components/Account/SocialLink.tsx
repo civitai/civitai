@@ -2,7 +2,7 @@ import { Group, Text } from '@mantine/core';
 import { IconPencil, IconTrash } from '@tabler/icons-react';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { GetUserLinksResult } from '~/server/controllers/user-link.controller';
+import type { GetUserLinksResult } from '~/server/controllers/user-link.controller';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 

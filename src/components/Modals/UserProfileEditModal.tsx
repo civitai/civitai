@@ -1,10 +1,10 @@
+import type { ChipProps } from '@mantine/core';
 import {
   BackgroundImage,
   Box,
   Button,
   Center,
   Chip,
-  ChipProps,
   CloseButton,
   Divider,
   Group,
@@ -35,7 +35,8 @@ import {
   InputCosmeticSelect,
   InputChipGroup,
 } from '~/libs/form';
-import { ProfileSectionSchema, userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
+import type { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
+import { userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
@@ -49,18 +50,19 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticType, LinkType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
-import {
+import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
-import { UserWithProfile } from '~/types/router';
-import { UserPublicSettingsSchema, userUpdateSchema } from '~/server/schema/user.schema';
+import type { UserWithProfile } from '~/types/router';
+import type { UserPublicSettingsSchema } from '~/server/schema/user.schema';
+import { userUpdateSchema } from '~/server/schema/user.schema';
 import { isEqual } from 'lodash-es';
 import { ProfilePictureAlert } from '../User/ProfilePictureAlert';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';

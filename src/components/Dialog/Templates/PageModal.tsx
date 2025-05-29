@@ -1,4 +1,5 @@
-import { ModalProps, Modal } from '@mantine/core';
+import type { ModalProps } from '@mantine/core';
+import { Modal } from '@mantine/core';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 export function PageModal({ children, ...props }: ModalProps) {

@@ -1,3 +1,4 @@
+import type { ComboboxItem } from '@mantine/core';
 import {
   ActionIcon,
   Box,
@@ -7,14 +8,13 @@ import {
   Input,
   Paper,
   Select,
-  ComboboxItem,
   Stack,
   Text,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconCalendar, IconCalendarDue, IconX } from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useMemo, useState } from 'react';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { useQueryCosmetic, useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
@@ -32,12 +32,10 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import {
-  CosmeticShopItemMeta,
-  upsertCosmeticShopItemInput,
-} from '~/server/schema/cosmetic-shop.schema';
-import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
-import { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
+import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import { upsertCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
+import type { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
+import type { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
 
 const formSchema = upsertCosmeticShopItemInput;

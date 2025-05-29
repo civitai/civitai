@@ -1,4 +1,4 @@
-import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
+import type { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { Center, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';

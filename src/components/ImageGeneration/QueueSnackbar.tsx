@@ -15,7 +15,7 @@ import { generationStatusColors } from '~/shared/constants/generation.constants'
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { generationPanel } from '~/store/generation.store';
 import { useRouter } from 'next/router';
-import { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/client';
 import React from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';

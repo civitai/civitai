@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { updateImagesFlag } from '~/server/services/image.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';

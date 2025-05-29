@@ -1,5 +1,6 @@
 import React, { forwardRef } from 'react';
-import { Badge, Center, ComboboxItem, Group, Stack, ThemeIcon } from '@mantine/core';
+import type { ComboboxItem } from '@mantine/core';
+import { Badge, Center, Group, Stack, ThemeIcon } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import {
   IconBookmark,
@@ -12,7 +13,7 @@ import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import styles from './common.module.scss';

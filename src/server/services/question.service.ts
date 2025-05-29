@@ -1,9 +1,9 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { isNotTag } from './../schema/tag.schema';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
-import {
+import type {
   GetQuestionsInput,
   SetQuestionAnswerInput,
   UpsertQuestionInput,

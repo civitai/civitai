@@ -1,3 +1,4 @@
+import type { MantineSize } from '@mantine/core';
 import {
   ActionIcon,
   Anchor,
@@ -5,7 +6,6 @@ import {
   Button,
   Divider,
   Group,
-  MantineSize,
   Popover,
   Stack,
   Text,
@@ -46,7 +46,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

@@ -10,7 +10,8 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { PostsQueryInput } from '../../../server/schema/post.schema';
 import { PostFiltersDropdown } from '../../../components/Post/Infinite/PostFiltersDropdown';
-import PostsInfinite, { PostsInfiniteState } from '../../../components/Post/Infinite/PostsInfinite';
+import type { PostsInfiniteState } from '../../../components/Post/Infinite/PostsInfinite';
+import PostsInfinite from '../../../components/Post/Infinite/PostsInfinite';
 import { PostCard } from '../../../components/Cards/PostCard';
 import { createServerSideProps } from '../../../server/utils/server-side-helpers';
 

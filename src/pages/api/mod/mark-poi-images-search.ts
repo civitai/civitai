@@ -1,11 +1,12 @@
 import { chunk } from 'lodash-es';
-import { SearchResponse } from 'meilisearch';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { SearchResponse } from 'meilisearch';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { IMAGES_SEARCH_INDEX, METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { metricsSearchClient, searchClient, updateDocs } from '~/server/meilisearch/client';
-import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import type { Task } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { checkable, includesPoi } from '~/utils/metadata/audit';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';

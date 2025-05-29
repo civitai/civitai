@@ -1,12 +1,13 @@
-import { Chip, Group, Input, InputWrapperProps } from '@mantine/core';
+import { NSFWLevel } from '@civitai/client';
+import type { GroupProps, InputWrapperProps } from '@mantine/core';
+import { Chip, Group, Input } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import { useCallback, useState } from 'react';
-import {
-  browsingLevels,
-  browsingLevelLabels,
-  BrowsingLevel,
-} from '~/shared/constants/browsingLevel.constants';
+import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
+import { NsfwLevel } from '~/server/common/enums';
+import type { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import classes from './BrowsingLevelInput.module.scss';
 

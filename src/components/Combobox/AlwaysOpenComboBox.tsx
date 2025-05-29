@@ -1,7 +1,8 @@
 import { Combobox, ComboboxInput, ComboboxOptions, ComboboxOption } from '@headlessui/react';
 import { Divider, Input, Loader, ScrollArea, Text } from '@mantine/core';
-import React, { Key, useState } from 'react';
-import { ComboboxOption as ComboboxOptionProps } from '~/components/Combobox/combobox.types';
+import type { Key } from 'react';
+import React, { useState } from 'react';
+import type { ComboboxOption as ComboboxOptionProps } from '~/components/Combobox/combobox.types';
 
 type Props<T extends Key, TOption extends ComboboxOptionProps> = {
   value?: T[];

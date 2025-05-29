@@ -1,4 +1,4 @@
-import { TransactionInfo } from '@civitai/client';
+import type { TransactionInfo } from '@civitai/client';
 import { ActionIcon, Card, Popover, Text, Tooltip } from '@mantine/core';
 import { IconBolt, IconProgressBolt } from '@tabler/icons-react';
 import { capitalize } from '~/utils/string-helpers';

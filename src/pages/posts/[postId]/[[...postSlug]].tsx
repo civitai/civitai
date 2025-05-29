@@ -1,4 +1,4 @@
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 
 import { PostDetail } from '~/components/Post/Detail/PostDetail';
 import { hasEntityAccess } from '~/server/services/common.service';

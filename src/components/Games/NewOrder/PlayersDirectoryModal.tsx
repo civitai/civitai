@@ -33,7 +33,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { NoContent } from '~/components/NoContent/NoContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { GetPlayersItem } from '~/types/router';
+import type { GetPlayersItem } from '~/types/router';
 
 export default function PlayersDirectoryModal() {
   const dialog = useDialogContext();

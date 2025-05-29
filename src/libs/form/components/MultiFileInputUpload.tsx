@@ -1,21 +1,22 @@
+import type { InputWrapperProps } from '@mantine/core';
 import {
   ActionIcon,
   Group,
   Input,
-  InputWrapperProps,
   Progress,
   Stack,
   Text,
   Tooltip,
 } from '@mantine/core';
-import { Dropzone, DropzoneProps, FileWithPath } from '@mantine/dropzone';
+import type { DropzoneProps, FileWithPath } from '@mantine/dropzone';
+import { Dropzone } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
 import { IconFileUpload, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 
 import { useS3Upload } from '~/hooks/useS3Upload';
 import { MIME_TYPES } from '~/server/common/mime-types';
-import { BaseFileSchema } from '~/server/schema/file.schema';
+import type { BaseFileSchema } from '~/server/schema/file.schema';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { bytesToKB, formatBytes, formatSeconds } from '~/utils/number-helpers';
 import classes from './MultiFileInputUpload.module.scss';

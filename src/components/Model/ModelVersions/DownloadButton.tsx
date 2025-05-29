@@ -1,7 +1,7 @@
+import type { ButtonProps } from '@mantine/core';
 import {
   Badge,
   Button,
-  ButtonProps,
   Group,
   Tooltip,
   createPolymorphicComponent,

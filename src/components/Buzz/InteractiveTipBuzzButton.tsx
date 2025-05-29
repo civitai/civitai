@@ -1,3 +1,4 @@
+import type { UnstyledButtonProps } from '@mantine/core';
 import {
   ActionIcon,
   Group,
@@ -5,7 +6,6 @@ import {
   Stack,
   Text,
   UnstyledButton,
-  UnstyledButtonProps,
   useMantineTheme,
 } from '@mantine/core';
 import { useInterval, useLocalStorage } from '@mantine/hooks';

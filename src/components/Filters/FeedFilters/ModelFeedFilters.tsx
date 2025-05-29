@@ -1,11 +1,12 @@
-import { ActionIcon, Button, Group, GroupProps, Popover } from '@mantine/core';
+import type { GroupProps } from '@mantine/core';
+import { ActionIcon, Button, Group, Popover } from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons-react';
 
 import { SortFilter } from '~/components/Filters';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { useModelQueryParams } from '~/components/Model/model.utils';
-import { PeriodMode } from '~/server/schema/base.schema';
+import type { PeriodMode } from '~/server/schema/base.schema';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

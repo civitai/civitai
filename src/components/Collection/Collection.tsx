@@ -1,4 +1,5 @@
-import { Badge, BadgeProps, Group, MantineSpacing } from '@mantine/core';
+import type { BadgeProps, MantineSpacing } from '@mantine/core';
+import { Badge, Group } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Fragment } from 'react';
 import OneKeyMap from '@essentials/one-key-map';

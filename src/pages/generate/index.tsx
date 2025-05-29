@@ -10,7 +10,8 @@ import { Meta } from '~/components/Meta/Meta';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { GenerationPanelView, useGenerationStore } from '~/store/generation.store';
+import type { GenerationPanelView } from '~/store/generation.store';
+import { useGenerationStore } from '~/store/generation.store';
 import { getLoginLink } from '~/utils/login-helpers';
 
 /**

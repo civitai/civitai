@@ -2,7 +2,8 @@ import { Drawer, Menu, Text, UnstyledButton, useMantineTheme } from '@mantine/co
 import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
-import { FilterButton, FilterButtonProps } from '~/components/Buttons/FilterButton';
+import type { FilterButtonProps } from '~/components/Buttons/FilterButton';
+import { FilterButton } from '~/components/Buttons/FilterButton';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import classes from './SelectMenu.module.scss';
 

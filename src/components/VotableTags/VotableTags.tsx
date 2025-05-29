@@ -1,4 +1,5 @@
-import { ActionIcon, Center, Group, GroupProps, Loader } from '@mantine/core';
+import type { GroupProps } from '@mantine/core';
+import { ActionIcon, Center, Group, Loader } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useEffect, useMemo } from 'react';
@@ -9,7 +10,7 @@ import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
 import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
+import type { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import { NsfwLevel } from '~/server/common/enums';

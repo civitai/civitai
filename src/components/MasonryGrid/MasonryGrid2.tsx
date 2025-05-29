@@ -6,10 +6,10 @@ import {
   LoadingOverlay,
   useComputedColorScheme,
 } from '@mantine/core';
+import type { UseMasonryOptions } from 'masonic';
 import {
   useContainerPosition,
   useMasonry,
-  UseMasonryOptions,
   usePositioner,
   useResizeObserver,
   useScroller,

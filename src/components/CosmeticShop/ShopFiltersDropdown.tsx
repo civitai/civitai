@@ -1,3 +1,4 @@
+import type { ChipProps, ButtonProps } from '@mantine/core';
 import {
   Popover,
   Group,
@@ -5,10 +6,8 @@ import {
   Stack,
   Divider,
   Chip,
-  ChipProps,
   Button,
   Drawer,
-  ButtonProps,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
@@ -17,7 +16,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
-import { GetShopInput } from '~/server/schema/cosmetic-shop.schema';
+import type { GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 import classes from './ShopFiltersDropdown.module.scss';
 import clsx from 'clsx';
 

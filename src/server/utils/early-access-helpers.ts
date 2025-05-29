@@ -1,5 +1,5 @@
 import { constants } from '~/server/common/constants';
-import { UserMeta } from '~/server/schema/user.schema';
+import type { UserMeta } from '~/server/schema/user.schema';
 import { increaseDate, maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 

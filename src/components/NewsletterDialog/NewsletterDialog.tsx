@@ -3,10 +3,8 @@ import { useLocalStorage } from '@mantine/hooks';
 import { useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';
-import {
-  updateSubscriptionSchema,
-  UpdateSubscriptionSchema,
-} from '~/server/schema/newsletter.schema';
+import type { UpdateSubscriptionSchema } from '~/server/schema/newsletter.schema';
+import { updateSubscriptionSchema } from '~/server/schema/newsletter.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { increaseDate } from '~//utils/date-helpers';

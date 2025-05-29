@@ -7,7 +7,7 @@ import { Form, InputNumber, useForm } from '~/libs/form';
 import { showSuccessNotification } from '~/utils/notifications';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 const schema = clubTransactionSchema.omit({ clubId: true });

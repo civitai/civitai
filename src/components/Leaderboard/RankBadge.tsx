@@ -1,4 +1,5 @@
-import { BadgeProps, Box, Group, MantineColor, MantineSize, Text, Tooltip } from '@mantine/core';
+import type { BadgeProps, MantineColor, MantineSize } from '@mantine/core';
+import { Box, Group, Text, Tooltip } from '@mantine/core';
 import { IconCrown } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';

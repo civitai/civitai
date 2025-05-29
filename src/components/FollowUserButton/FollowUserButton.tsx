@@ -1,5 +1,6 @@
-import { Button, ButtonProps } from '@mantine/core';
-import { MouseEventHandler } from 'react';
+import type { ButtonProps } from '@mantine/core';
+import { Button } from '@mantine/core';
+import type { MouseEventHandler } from 'react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

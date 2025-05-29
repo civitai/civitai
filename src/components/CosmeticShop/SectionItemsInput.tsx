@@ -1,14 +1,13 @@
+import type { InputWrapperProps, ComboboxItem } from '@mantine/core';
 import {
   Box,
   Button,
   Center,
   Group,
   Input,
-  InputWrapperProps,
   Loader,
   Paper,
   Select,
-  ComboboxItem,
   Stack,
   Text,
   Grid,
@@ -23,9 +22,9 @@ import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';
+import type { DragEndEvent } from '@dnd-kit/core';
 import {
   DndContext,
-  DragEndEvent,
   PointerSensor,
   rectIntersection,
   UniqueIdentifier,
@@ -35,11 +34,11 @@ import {
 import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { CosmeticShopItemGetById } from '~/types/router';
+import type { CosmeticShopItemGetById } from '~/types/router';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useQueryCosmeticShopItemsPaged } from '~/components/CosmeticShop/cosmetic-shop.util';
-import { GetPaginatedCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
+import type { GetPaginatedCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
 import { isDefined } from '~/utils/type-guards';
 
 type ShopItemSchema = { title: string; description?: string; id: number };

@@ -1,10 +1,5 @@
-import {
-  Alert,
-  Badge,
-  BadgeProps,
-  Button,
-  Text,
-} from '@mantine/core';
+import type { BadgeProps } from '@mantine/core';
+import { Alert, Badge, Button, Text } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Router from 'next/router';

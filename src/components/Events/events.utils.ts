@@ -1,5 +1,5 @@
 import { trpc } from '~/utils/trpc';
-import { EventInput } from '~/server/schema/event.schema';
+import type { EventInput } from '~/server/schema/event.schema';
 import dayjs from 'dayjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { IconPencilMinus, IconTrash, IconUser } from '@tabler/icons-react';
 import { Button, Group, Paper, Stack, Text, Title } from '@mantine/core';
-import { ClubTier } from '~/types/router';
+import type { ClubTier } from '~/types/router';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { constants } from '~/server/common/constants';

@@ -1,6 +1,6 @@
+import type { BadgeProps, TooltipProps } from '@mantine/core';
 import {
   Badge,
-  BadgeProps,
   Button,
   Center,
   Group,
@@ -8,7 +8,6 @@ import {
   Stack,
   Table,
   Tooltip,
-  TooltipProps,
   Text,
   Alert,
   Divider,

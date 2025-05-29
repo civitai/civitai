@@ -9,7 +9,7 @@ import { SocialIconOther } from '~/components/ShareButton/Icons/SocialIconOther'
 import { SocialIconReddit } from '~/components/ShareButton/Icons/SocialIconReddit';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CollectItemInput } from '~/server/schema/collection.schema';
+import type { CollectItemInput } from '~/server/schema/collection.schema';
 import { QS } from '~/utils/qs';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { requireLogin } from '~/components/Login/requireLogin';

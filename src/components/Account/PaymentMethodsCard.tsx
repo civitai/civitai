@@ -1,3 +1,4 @@
+import type { GroupProps } from '@mantine/core';
 import {
   Accordion,
   Button,
@@ -5,7 +6,6 @@ import {
   Center,
   Divider,
   Group,
-  GroupProps,
   Loader,
   Stack,
   Text,
@@ -19,7 +19,7 @@ import { useMutateStripe, useUserPaymentMethods } from '~/components/Stripe/stri
 import { IconCreditCard, IconTrash } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
-import { UserPaymentMethod } from '~/types/router';
+import type { UserPaymentMethod } from '~/types/router';
 import { booleanString } from '~/utils/zod-helpers';
 import { useRouter } from 'next/router';
 import { z } from 'zod';

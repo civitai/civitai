@@ -1,7 +1,9 @@
-import { Group, Input, InputWrapperProps, MantineSize, Text } from '@mantine/core';
+import type { CSSObject, InputWrapperProps, MantineSize } from '@mantine/core';
+import { Group, Input, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
+import type { RichTextEditorProps } from '@mantine/tiptap';
+import { Link, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { Color } from '@tiptap/extension-color';
 import Heading from '@tiptap/extension-heading';
@@ -10,15 +12,8 @@ import Placeholder from '@tiptap/extension-placeholder';
 import TextStyle from '@tiptap/extension-text-style';
 import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
-import {
-  BubbleMenu,
-  Editor,
-  Extension,
-  Extensions,
-  mergeAttributes,
-  nodePasteRule,
-  useEditor,
-} from '@tiptap/react';
+import type { Editor, Extensions } from '@tiptap/react';
+import { BubbleMenu, Extension, mergeAttributes, nodePasteRule, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { CSSProperties, useEffect, useImperativeHandle, useRef } from 'react';
 import slugify from 'slugify';
@@ -42,7 +37,7 @@ import classes from './RichTextEditorComponent.module.scss';
 //   xl: '90px',
 // };
 
-const mapEditorSize: Omit<Record<MantineSize, CSSProperties>, 'xs'> = {
+const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
   sm: {
     minHeight: 30,
     fontSize: 14,

@@ -13,18 +13,15 @@ import {
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconCloudOff, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import React, { useContext, useEffect, useRef } from 'react';
-import {
-  Configure,
-  InstantSearch,
-  InstantSearchProps,
-  useInstantSearch,
-} from 'react-instantsearch';
+import type { InstantSearchProps } from 'react-instantsearch';
+import { Configure, InstantSearch, useInstantSearch } from 'react-instantsearch';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
-import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 // import classes from '~/components/Search/SearchLayout.module.scss';
 import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';

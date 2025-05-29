@@ -5,13 +5,13 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
+import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
   NamePlateCosmetic,
 } from '~/server/selectors/cosmetic.selector';
-import { ProfileImage } from '~/server/selectors/image.selector';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { ProfileImage } from '~/server/selectors/image.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { getInitials } from '~/utils/string-helpers';

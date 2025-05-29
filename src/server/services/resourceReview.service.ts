@@ -3,13 +3,14 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import {
   resourceReviewSelect,
   resourceReviewSimpleSelect,
 } from '~/server/selectors/resourceReview.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   BlockedByUsers,
@@ -23,9 +24,9 @@ import {
 } from '~/server/services/user.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagingData } from '~/server/utils/pagination-helpers';
-import { ResourceReviewCreate } from '~/types/router';
-import { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
-import {
+import type { ResourceReviewCreate } from '~/types/router';
+import type { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
+import type {
   CreateResourceReviewInput,
   GetRatingTotalsInput,
   GetResourceReviewPagedInput,
@@ -33,7 +34,6 @@ import {
   GetUserResourceReviewInput,
   UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
 export const getResourceReview = async ({
@@ -158,7 +158,7 @@ export const getResourceReviewsInfinite = async ({
       rating: true,
       recommended: true,
       user: { select: userWithCosmeticsSelect },
-      helper: { select: { imageCount: true } },
+      // helper: { select: { imageCount: true } },
       model: include?.includes('model')
         ? {
             select: { id: true, name: true },

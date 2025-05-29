@@ -1,5 +1,17 @@
-import { Button, Center, Loader, Paper, Stack, Text, Title } from '@mantine/core';
-import { InferGetServerSidePropsType } from 'next';
+import {
+  Anchor,
+  Box,
+  Button,
+  Center,
+  Container,
+  Grid,
+  Loader,
+  Paper,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
+import type { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { dbRead } from '~/server/db/client';

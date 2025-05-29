@@ -1,7 +1,7 @@
 import { Menu } from '@mantine/core';
 import { IconFlag } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { LoginRedirectReason } from '~/utils/login-helpers';
+import type { LoginRedirectReason } from '~/utils/login-helpers';
 
 export function ReportMenuItem({
   loginReason = 'report-content',

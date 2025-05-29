@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { ModelHashType } from '~/shared/utils/prisma/enums';
-import { ModelFileType } from '../common/constants';
+import type { ModelHashType } from '~/shared/utils/prisma/enums';
+import type { ModelFileType } from '../common/constants';
 import { modelFileSelect } from './modelFile.selector';
 import { modelHashSelect } from './modelHash.selector';
 

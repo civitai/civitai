@@ -1,12 +1,11 @@
+import type { GroupProps, HighlightProps } from '@mantine/core';
 import {
   ActionIcon,
   Badge,
   Button,
   Divider,
   Group,
-  GroupProps,
   Highlight,
-  HighlightProps,
   Skeleton,
   Stack,
   Text,

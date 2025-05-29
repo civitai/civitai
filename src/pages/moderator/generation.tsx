@@ -1,13 +1,14 @@
 import { ActionIcon, Button, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { IconPlus, IconTrash } from '@tabler/icons-react';
-import { MantineReactTable, MRT_ColumnDef, MRT_PaginationState } from 'mantine-react-table';
+import type { MRT_ColumnDef, MRT_PaginationState } from 'mantine-react-table';
+import { MantineReactTable } from 'mantine-react-table';
 import { useCallback, useMemo, useState } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { useUnsupportedResources } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { GenerationGetResources } from '~/types/router';
+import type { GenerationGetResources } from '~/types/router';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 

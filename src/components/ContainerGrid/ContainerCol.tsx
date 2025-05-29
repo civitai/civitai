@@ -2,10 +2,9 @@
 import React, { forwardRef } from 'react';
 
 import { useContainerGridContext } from './ContainerGrid.context';
-// import useStyles from './ContainerCol.styles';
-import { Box, ColSpan, DefaultProps, useProps } from '@mantine/core';
-import classes from './ContainerCol.module.scss';
-import clsx from 'clsx';
+import useStyles from './ContainerCol.styles';
+import type { ColSpan, DefaultProps } from '@mantine/core';
+import { Box, useProps } from '@mantine/core';
 
 export interface ColProps extends DefaultProps, React.ComponentPropsWithoutRef<'div'> {
   /** Default col span */

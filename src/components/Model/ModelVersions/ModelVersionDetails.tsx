@@ -1,3 +1,4 @@
+import type { MantineTheme } from '@mantine/core';
 import {
   Accordion,
   Anchor,
@@ -33,8 +34,8 @@ import {
   IconPhotoPlus,
   IconShare3,
 } from '@tabler/icons-react';
-import { TRPCClientErrorBase } from '@trpc/client';
-import { DefaultErrorShape } from '@trpc/server';
+import type { TRPCClientErrorBase } from '@trpc/client';
+import type { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -101,12 +102,8 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  baseModelLicenses,
-  CAROUSEL_LIMIT,
-  constants,
-  ModelFileType,
-} from '~/server/common/constants';
+import type { ModelFileType } from '~/server/common/constants';
+import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -120,7 +117,7 @@ import {
   ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';

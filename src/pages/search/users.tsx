@@ -3,7 +3,7 @@ import { useInstantSearch } from 'react-instantsearch';
 
 import { SortBy } from '~/components/Search/CustomSearchComponents';
 import { SearchHeader } from '~/components/Search/SearchHeader';
-import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
+import type { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout } from '~/components/Search/SearchLayout';

@@ -48,7 +48,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { useQueryVaultItems } from '../../components/Vault/vault.util';
-import {
+import type {
   GetPaginatedVaultItemsSchema,
   VaultItemMetadataSchema,
 } from '~/server/schema/vault.schema';
@@ -58,7 +58,7 @@ import { isEqual, uniqBy } from 'lodash-es';
 import { useDebouncedValue } from '@mantine/hooks';
 import { VaultItemsFiltersDropdown } from '~/components/Vault/VaultItemsFiltersDropdown';
 import { IconX } from '@tabler/icons-react';
-import { VaultItemGetPaged } from '~/types/router';
+import type { VaultItemGetPaged } from '~/types/router';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';

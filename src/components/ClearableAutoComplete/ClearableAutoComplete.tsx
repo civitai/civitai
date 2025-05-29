@@ -1,4 +1,5 @@
-import { Autocomplete, AutocompleteProps, CloseButton } from '@mantine/core';
+import type { AutocompleteProps } from '@mantine/core';
+import { Autocomplete, CloseButton } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { forwardRef, useRef } from 'react';
 

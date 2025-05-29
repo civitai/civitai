@@ -1,4 +1,5 @@
-import { Anchor, AnchorProps } from '@mantine/core';
+import type { AnchorProps } from '@mantine/core';
+import { Anchor } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export function ContentPolicyLink(props: Props) {

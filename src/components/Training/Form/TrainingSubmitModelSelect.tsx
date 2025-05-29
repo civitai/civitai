@@ -1,3 +1,4 @@
+import type { MantineColor } from '@mantine/core';
 import {
   Anchor,
   Badge,
@@ -5,7 +6,6 @@ import {
   Group,
   Indicator,
   Input,
-  MantineColor,
   SegmentedControl,
   Stack,
   Text,
@@ -18,17 +18,20 @@ import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/Reso
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { baseModelSets } from '~/server/common/constants';
-import {
+import type {
   TrainingDetailsBaseModelList,
+  TrainingDetailsObj,
+} from '~/server/schema/model-version.schema';
+import {
   trainingDetailsBaseModels15,
   trainingDetailsBaseModels35,
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsHunyuan,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
-  TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import type { TrainingRun, TrainingRunUpdate } from '~/store/training.store';
 import {
   defaultBase,
   defaultBaseType,
@@ -37,8 +40,6 @@ import {
   defaultEngine,
   defaultEngineVideo,
   getDefaultTrainingParams,
-  TrainingRun,
-  TrainingRunUpdate,
   trainingStore,
 } from '~/store/training.store';
 import { stringifyAIR } from '~/utils/string-helpers';

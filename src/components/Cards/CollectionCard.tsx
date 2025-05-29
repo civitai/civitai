@@ -10,11 +10,11 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { SimpleUser } from '~/server/selectors/user.selector';
-import { MediaType } from '~/shared/utils/prisma/enums';
-import { CollectionGetInfinite } from '~/types/router';
+import type { NsfwLevel } from '~/server/common/enums';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
+import type { SimpleUser } from '~/server/selectors/user.selector';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import type { CollectionGetInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

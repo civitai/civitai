@@ -4,9 +4,9 @@ import {
   throwBadRequestError,
   throwDbError,
 } from '~/server/utils/errorHandling';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { imageSelect } from '~/server/selectors/image.selector';
-import {
+import type {
   ToggleClubMembershipStatusInput,
   ClubMembershipOnClubInput,
   CreateClubMembershipInput,
@@ -27,7 +27,7 @@ import {
 import { userContributingClubs } from '~/server/services/club.service';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { ImageMetaProps } from '../schema/image.schema';
+import type { ImageMetaProps } from '../schema/image.schema';
 import { clubMembershipDetailSelect } from '../selectors/club.selector';
 import { dbWrite } from '../db/client';
 

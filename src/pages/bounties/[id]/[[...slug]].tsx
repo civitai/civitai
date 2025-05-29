@@ -1,3 +1,4 @@
+import type { BadgeProps } from '@mantine/core';
 import {
   Badge,
   Button,
@@ -7,7 +8,6 @@ import {
   Stack,
   Text,
   Title,
-  BadgeProps,
   Tooltip,
   Accordion,
   Center,
@@ -21,7 +21,7 @@ import {
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 
@@ -38,8 +38,9 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Availability, BountyEngagementType, BountyMode } from '~/shared/utils/prisma/enums';
-import { BountyGetById } from '~/types/router';
+import type { BountyEngagementType } from '~/shared/utils/prisma/enums';
+import { Availability, BountyMode } from '~/shared/utils/prisma/enums';
+import type { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
   IconAward,
@@ -64,10 +65,8 @@ import {
   useQueryBounty,
 } from '~/components/Bounty/bounty.utils';
 import { CurrencyConfig, constants } from '~/server/common/constants';
-import {
-  DescriptionTable,
-  Props as DescriptionTableProps,
-} from '~/components/DescriptionTable/DescriptionTable';
+import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import produce from 'immer';

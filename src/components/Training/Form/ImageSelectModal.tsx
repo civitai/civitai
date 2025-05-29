@@ -28,10 +28,8 @@ import {
 import type { FetchNextPageOptions } from '@tanstack/react-query';
 import { groupBy } from 'lodash-es';
 import React, { createContext, useContext, useMemo, useState } from 'react';
-import {
-  DescriptionTable,
-  Props as DescriptionTableProps,
-} from '~/components/DescriptionTable/DescriptionTable';
+import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -41,10 +39,8 @@ import type {
   ImageSelectTrainingFilter,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
-import {
-  TextToImageSteps,
-  useGetTextToImageRequests,
-} from '~/components/ImageGeneration/utils/generationRequestHooks';
+import type { TextToImageSteps } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -56,7 +52,8 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
+import { imageMetaSchema } from '~/server/schema/image.schema';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,

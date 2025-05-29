@@ -1,11 +1,9 @@
+import type { ActionIconProps, BadgeProps, ButtonProps } from '@mantine/core';
 import {
   ActionIcon,
-  ActionIconProps,
   Anchor,
   Badge,
-  BadgeProps,
   Button,
-  ButtonProps,
   Card,
   CloseButton,
   Group,
@@ -16,6 +14,7 @@ import {
   rgba,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
+import type { IconProps } from '@tabler/icons-react';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -32,7 +31,6 @@ import {
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPhoto,
-  IconProps,
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
@@ -50,7 +48,7 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';

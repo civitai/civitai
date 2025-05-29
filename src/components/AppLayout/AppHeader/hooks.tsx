@@ -31,7 +31,7 @@ import { useSystemCollections } from '~/components/Collections/collection.utils'
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { LoginRedirectReason } from '~/utils/login-helpers';
+import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 
 export type UserMenuItem = {

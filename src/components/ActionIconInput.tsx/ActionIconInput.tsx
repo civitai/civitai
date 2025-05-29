@@ -1,4 +1,5 @@
-import { ActionIconProps, Group, Popover, PopoverProps, TextInput } from '@mantine/core';
+import type { ActionIconProps, PopoverProps } from '@mantine/core';
+import { ActionIcon, Group, Popover, TextInput } from '@mantine/core';
 import { getHotkeyHandler, useClickOutside } from '@mantine/hooks';
 import { useState } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

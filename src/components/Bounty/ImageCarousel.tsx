@@ -1,10 +1,11 @@
 import { ActionIcon, Card, Center, Loader } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { ImageGuard2, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
+import type { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import {
   ExplainHiddenImages,

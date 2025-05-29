@@ -20,10 +20,10 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
+import type { ChartOptions } from 'chart.js';
 import {
   CategoryScale,
   Chart as ChartJS,
-  ChartOptions,
   LinearScale,
   LineElement,
   PointElement,
@@ -32,7 +32,7 @@ import {
 } from 'chart.js';
 import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
 import dayjs from 'dayjs';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import Image from 'next/image';
 import { forwardRef, Fragment, useMemo, useRef, useState } from 'react';
 import { Line } from 'react-chartjs-2';
@@ -47,7 +47,8 @@ import { Lightbulb } from '~/components/Decorations/Lightbulb';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EventContributors } from '~/components/Events/EventContributors';
 import { EventRewards } from '~/components/Events/EventRewards';
-import { EventPartners, useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
+import type { EventPartners } from '~/components/Events/events.utils';
+import { useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
 import { SectionCard } from '~/components/Events/SectionCard';
 import { WelcomeCard } from '~/components/Events/WelcomeCard';
 import { HeroCard } from '~/components/HeroCard/HeroCard';

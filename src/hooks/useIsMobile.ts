@@ -1,4 +1,4 @@
-import { MantineSize } from '@mantine/core';
+import type { MantineSize } from '@mantine/core';
 import { useContainerQuery, useMediaQuery } from '~/components/ContainerProvider/useContainerQuery';
 
 export function useIsMobile(options?: { breakpoint?: MantineSize; type?: 'media' | 'container' }) {

@@ -1,8 +1,8 @@
+import type { ChipProps } from '@mantine/core';
 import {
   ActionIcon,
   Button,
   Chip,
-  ChipProps,
   Divider,
   Drawer,
   Group,
@@ -19,16 +19,17 @@ import { uniq } from 'lodash-es';
 import React, { useState } from 'react';
 import { useSortBy } from 'react-instantsearch';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal2';
-import {
+import type {
   ResourceFilter,
-  resourceSort,
   ResourceSort,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { resourceSort } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { activeBaseModels, BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { activeBaseModels } from '~/server/common/constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { sortByModelTypes } from '~/utils/array-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';

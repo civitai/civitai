@@ -1,11 +1,13 @@
-import { Box, BoxProps, ThemeIcon, useMantineTheme } from '@mantine/core';
+import type { BoxProps } from '@mantine/core';
+import { Box, ThemeIcon, useMantineTheme } from '@mantine/core';
 import { IconRefresh } from '@tabler/icons-react';
 
 import React, { useEffect, useRef, useState } from 'react';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { ScrollAreaContext, useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { isMobileDevice } from '~/hooks/useIsMobile';
-import { UseScrollRestoreProps, useScrollRestore } from '~/hooks/useScrollRestore';
+import type { UseScrollRestoreProps } from '~/hooks/useScrollRestore';
+import { useScrollRestore } from '~/hooks/useScrollRestore';
 import clsx from 'clsx';
 
 export function ScrollArea({

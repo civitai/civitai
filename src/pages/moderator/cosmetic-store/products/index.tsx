@@ -32,7 +32,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
-import {
+import type {
   CosmeticShopItemMeta,
   GetPaginatedCosmeticShopItemInput,
 } from '~/server/schema/cosmetic-shop.schema';

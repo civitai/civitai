@@ -1,4 +1,5 @@
 import { uniqBy } from 'lodash-es';
+import type { CardProps } from '@mantine/core';
 import {
   ActionIcon,
   BackgroundImage,
@@ -7,7 +8,6 @@ import {
   Group,
   Stack,
   Text,
-  CardProps,
   Image,
   useMantineTheme,
   useComputedColorScheme,
@@ -19,13 +19,13 @@ import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
 import { constants, creatorCardStats, creatorCardStatsDefaults } from '~/server/common/constants';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 import { UserStatBadges, UserStatBadgesV2 } from '../UserStatBadges/UserStatBadges';
-import {
+import type {
   BadgeCosmetic,
   ProfileBackgroundCosmetic,
   SimpleCosmetic,
@@ -33,7 +33,7 @@ import {
 import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { BadgeDisplay, Username } from '../User/Username';
-import { UserPublicSettingsSchema } from '~/server/schema/user.schema';
+import type { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import classes from './CreatorCard.module.css';

@@ -1,20 +1,11 @@
-import {
-  Stack,
-  Text,
-  MantineSize,
-  Group,
-  ActionIcon,
-  lighten,
-  darken,
-  useMantineTheme,
-  useComputedColorScheme,
-} from '@mantine/core';
+import type { MantineSize } from '@mantine/core';
+import { Stack, Text, Group, ActionIcon, lighten, darken, useMantineTheme, useComputedColorScheme } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
-import { DownloadGetAll } from '~/types/router';
+import type { DownloadGetAll } from '~/types/router';
 import { slugit } from '~/utils/string-helpers';
 
 export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {

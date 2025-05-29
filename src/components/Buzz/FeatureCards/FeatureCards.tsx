@@ -1,4 +1,14 @@
-import { Button, ButtonProps, Center, List, Paper, Stack, Text, Title, Group } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import {
+  Button,
+  Center,
+  List,
+  Paper,
+  Stack,
+  Text,
+  Title,
+  Group,
+} from '@mantine/core';
 import {
   IconArrowRight,
   IconBarbell,
@@ -12,7 +22,7 @@ import {
   IconShoppingCart,
 } from '@tabler/icons-react';
 import React from 'react';
-import { MouseEvent } from 'react';
+import type { MouseEvent } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';

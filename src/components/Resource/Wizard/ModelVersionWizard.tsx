@@ -2,7 +2,8 @@ import { Alert, Anchor, Button, Group, Stack, Stepper, Text, Title } from '@mant
 import { Availability, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { IconArrowLeft } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { NextRouter, useRouter } from 'next/router';
+import type { NextRouter } from 'next/router';
+import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -13,7 +14,7 @@ import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersion
 import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { ModelById, ModelVersionById } from '~/types/router';
+import type { ModelById, ModelVersionById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';

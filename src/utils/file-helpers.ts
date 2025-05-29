@@ -1,5 +1,5 @@
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
-import { ModelFileInput } from '~/server/schema/model-file.schema';
+import type { ModelFileInput } from '~/server/schema/model-file.schema';
 
 export function getModelFileFormat(filename: string): ModelFileFormat {
   if (filename.endsWith('.safetensors') || filename.endsWith('.sft')) return 'SafeTensor';

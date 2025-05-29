@@ -1,5 +1,6 @@
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
-import { EntityAccessWithKey, getUserEntityAccess } from './common.service';
+import type { EntityAccessWithKey } from './common.service';
+import { getUserEntityAccess } from './common.service';
 
 const PRIVATE_RESOURCE_ACCESS_CACHE_EXPIRY = 60 * 60 * 4;
 

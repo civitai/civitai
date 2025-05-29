@@ -1,5 +1,6 @@
 import { Text, Title } from '@mantine/core';
-import React, { Component, ErrorInfo } from 'react';
+import type { ErrorInfo } from 'react';
+import React, { Component } from 'react';
 
 type Props = { children: React.ReactNode };
 type State = { hasError: boolean; error?: Error; stack?: string };

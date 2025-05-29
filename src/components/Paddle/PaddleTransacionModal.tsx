@@ -1,3 +1,4 @@
+import type { ModalProps } from '@mantine/core';
 import {
   Button,
   Center,
@@ -5,7 +6,6 @@ import {
   Loader,
   Title,
   Modal,
-  ModalProps,
   Divider,
   Text,
   Group,
@@ -28,8 +28,8 @@ import { usePaddle } from '~/providers/PaddleProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { useMutatePaddle } from '~/components/Paddle/util';
+import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
 import {
-  CaptchaState,
   TurnstilePrivacyNotice,
   TurnstileWidget,
 } from '~/components/TurnstileWidget/TurnstileWidget';

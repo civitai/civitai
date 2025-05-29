@@ -21,7 +21,7 @@ import {
   useMutateClub,
   useQueryClubMembership,
 } from '~/components/Club/club.utils';
-import { GetInfiniteClubMembershipsSchema } from '~/server/schema/clubMembership.schema';
+import type { GetInfiniteClubMembershipsSchema } from '~/server/schema/clubMembership.schema';
 import { ClubMembershipSort } from '~/server/common/enums';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';

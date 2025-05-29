@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { bareNotification } from '~/server/notifications/base.notifications';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';

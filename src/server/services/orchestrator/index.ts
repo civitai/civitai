@@ -1,5 +1,5 @@
 import type { WorkflowStatus, WorkflowStepJobQueuePosition } from '@civitai/client';
-import { formatGenerationResponse } from '~/server/services/orchestrator/common';
+import type { formatGenerationResponse } from '~/server/services/orchestrator/common';
 
 export type NormalizedGeneratedImageResponse = AsyncReturnType<
   typeof formatGenerationResponse

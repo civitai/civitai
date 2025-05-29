@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetSignalsAccessTokenResponse } from '~/server/schema/signals.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetSignalsAccessTokenResponse } from '~/server/schema/signals.schema';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 export async function getAccessToken({ id }: GetByIdInput) {

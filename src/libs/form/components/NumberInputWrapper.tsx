@@ -1,4 +1,5 @@
-import { CloseButton, NumberInput, NumberInputProps, Text } from '@mantine/core';
+import type { NumberInputProps } from '@mantine/core';
+import { CloseButton, NumberInput, Text } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { forwardRef, useEffect, useRef } from 'react';
 import { constants } from '~/server/common/constants';

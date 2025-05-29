@@ -3,7 +3,8 @@ import CustomParseFormat from 'dayjs/plugin/customParseFormat';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
-import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
+import type { UnpublishReason } from '~/server/common/moderation-helpers';
+import { unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   baseQuerySchema,
   getByIdSchema,
@@ -150,16 +151,13 @@ export const getDownloadSchema = z.object({
 });
 export type GetDownloadSchema = z.infer<typeof getDownloadSchema>;
 
-export type ModelGallerySettingsSchema = z.infer<typeof modelGallerySettingsSchema>;
-export const modelGallerySettingsSchema = z.object({
-  users: z.number().array().optional(),
-  tags: z.number().array().optional(),
-  images: z.number().array().optional(),
-  level: z.number().optional(),
-  pinnedPosts: z
-    .record(z.string(), z.number().array().max(constants.modelGallery.maxPinnedPosts))
-    .optional(),
-});
+export type ModelGallerySettingsSchema = {
+  users?: number[] | undefined;
+  tags?: number[] | undefined;
+  images?: number[] | undefined;
+  level?: number | undefined;
+  pinnedPosts?: Record<string, number[]> | undefined;
+};
 
 export type ModelGallerySettingsInput = z.infer<typeof modelGallerySettingsInput>;
 export const modelGallerySettingsInput = z.object({

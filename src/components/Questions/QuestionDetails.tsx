@@ -14,7 +14,7 @@ import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
 import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { QuestionDetailProps } from '~/server/controllers/question.controller';
+import type { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
 import { IconDotsVertical, IconEdit, IconMessageCircle, IconTrash } from '@tabler/icons-react';

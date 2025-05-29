@@ -1,4 +1,5 @@
-import { Text, Tooltip, TooltipProps } from '@mantine/core';
+import type { TooltipProps } from '@mantine/core';
+import { Text, Tooltip } from '@mantine/core';
 
 const variants: Record<string, Partial<TooltipProps>> = {
   smallRounded: {

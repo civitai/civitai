@@ -1,3 +1,4 @@
+import type { InputWrapperProps } from '@mantine/core';
 import {
   ActionIcon,
   Autocomplete,
@@ -5,12 +6,11 @@ import {
   Center,
   Group,
   Input,
-  InputWrapperProps,
   TextInput,
   UnstyledButton,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedState, useDisclosure } from '@mantine/hooks';
-import { TagTarget } from '~/shared/utils/prisma/enums';
+import type { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconPlus, IconX } from '@tabler/icons-react';
 import { useCallback, useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';

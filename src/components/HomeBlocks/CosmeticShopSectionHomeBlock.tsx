@@ -4,7 +4,7 @@ import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBloc
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ShopItem } from '~/components/Shop/ShopItem';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
 
 export function CosmeticShopSectionHomeBlock({ showAds, ...props }: Props) {

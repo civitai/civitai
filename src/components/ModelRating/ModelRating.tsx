@@ -1,4 +1,5 @@
-import { Group, Rating, RatingProps, Text } from '@mantine/core';
+import type { RatingProps } from '@mantine/core';
+import { Group, Rating, Text } from '@mantine/core';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function ModelRating({ rank, ...props }: Props) {

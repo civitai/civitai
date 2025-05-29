@@ -1,4 +1,4 @@
-import { Theme } from 'next-auth';
+import type { Theme } from 'next-auth';
 import { createEmail } from '~/server/email/templates/base.email';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 

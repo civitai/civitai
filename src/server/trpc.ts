@@ -1,10 +1,11 @@
 import { initTRPC, TRPCError } from '@trpc/server';
-import { NextApiRequest } from 'next';
+import type { NextApiRequest } from 'next';
 import semver from 'semver';
 import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import type { Context } from './createContext';

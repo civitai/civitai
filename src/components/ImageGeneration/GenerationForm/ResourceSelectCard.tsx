@@ -1,10 +1,10 @@
+import type { GroupProps } from '@mantine/core';
 import {
   ActionIcon,
   Anchor,
   Badge,
   Button,
   Group,
-  GroupProps,
   Overlay,
   Paper,
   Popover,
@@ -22,12 +22,12 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import type { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
-import { GenerationResourceSchema } from '~/server/schema/generation.schema';
+import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 

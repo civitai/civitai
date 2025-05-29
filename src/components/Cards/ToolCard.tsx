@@ -6,7 +6,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { generationPanel, generationStore } from '~/store/generation.store';
-import { ToolGetAllModel } from '~/types/router';
+import type { ToolGetAllModel } from '~/types/router';
 import { slugit } from '~/utils/string-helpers';
 
 export function ToolCard({ data }: Props) {

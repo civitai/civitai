@@ -5,7 +5,7 @@ import { LeaderboardMetrics } from '~/components/Leaderboard/LeaderboardMetrics'
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { LeaderboardGetModel } from '~/types/router';
+import type { LeaderboardGetModel } from '~/types/router';
 import { useInView } from '~/hooks/useInView';
 import { useEffect } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

@@ -8,10 +8,10 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import type { ChartOptions } from 'chart.js';
 import {
   CategoryScale,
   Chart as ChartJS,
-  ChartOptions,
   Colors,
   Legend,
   LinearScale,

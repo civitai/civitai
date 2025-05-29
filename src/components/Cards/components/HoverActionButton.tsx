@@ -1,5 +1,6 @@
 import React from 'react';
-import { Badge, MantineColor, ThemeIcon, ThemeIconProps, UnstyledButtonProps } from '@mantine/core';
+import type { MantineColor, ThemeIconProps, UnstyledButtonProps } from '@mantine/core';
+import { Badge, ThemeIcon } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 import classes from './HoverActionButton.module.scss';
 import clsx from 'clsx';

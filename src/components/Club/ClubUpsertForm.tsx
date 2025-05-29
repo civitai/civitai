@@ -1,3 +1,4 @@
+import type { TooltipProps } from '@mantine/core';
 import {
   Alert,
   Button,
@@ -7,7 +8,6 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
-  TooltipProps,
   SimpleGrid,
   Paper,
   ActionIcon,
@@ -49,13 +49,13 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { upsertClubInput } from '~/server/schema/club.schema';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { constants } from '~/server/common/constants';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getInitials } from '~/utils/string-helpers';
-import { ClubGetById } from '~/types/router';
+import type { ClubGetById } from '~/types/router';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

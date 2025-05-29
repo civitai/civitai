@@ -3,8 +3,9 @@ import React, { useEffect } from 'react';
 import { trpc } from '~/utils/trpc';
 import { Button, Center, Loader, Stack, Text } from '@mantine/core';
 import { Form, InputClubResourceManagementInput, useForm } from '~/libs/form';
-import { SupportedClubEntities, upsertClubResourceInput } from '~/server/schema/club.schema';
-import { z } from 'zod';
+import type { SupportedClubEntities } from '~/server/schema/club.schema';
+import { upsertClubResourceInput } from '~/server/schema/club.schema';
+import type { z } from 'zod';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { showSuccessNotification } from '~/utils/notifications';
 

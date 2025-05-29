@@ -20,8 +20,8 @@ import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { CommentGetCommentsById } from '~/types/router';
+import type { ReactionDetails } from '~/server/selectors/reaction.selector';
+import type { CommentGetCommentsById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

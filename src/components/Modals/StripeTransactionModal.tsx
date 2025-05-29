@@ -19,7 +19,7 @@ import type { StripeElementsOptions, StripePaymentElementOptions } from '@stripe
 import { useStripePromise } from '~/providers/StripeProvider';
 import { useStripeTransaction } from '~/components/Buzz/useStripeTransaction';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
-import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { closeAllModals } from '@mantine/modals';
 import { usePaymentIntent, useUserPaymentMethods } from '~/components/Stripe/stripe.utils';

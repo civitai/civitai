@@ -13,7 +13,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ImageSort } from '~/server/common/enums';
-import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import classes from './ResourceReviewCarousel.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

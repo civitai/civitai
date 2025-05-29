@@ -1,6 +1,7 @@
 import { Text, TextProps, Tooltip } from '@mantine/core';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { IconInfoSquareRounded, IconProps } from '@tabler/icons-react';
+import type { IconProps } from '@tabler/icons-react';
+import { IconInfoSquareRounded } from '@tabler/icons-react';
 
 const instructions: Partial<Record<ModelType, string>> = {
   [ModelType.Checkpoint]: '#fine-tuned-model-checkpoints-dreambooth-models',

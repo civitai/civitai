@@ -1,5 +1,5 @@
-import { VideoEnhancementStepTemplate } from '@civitai/client';
-import { VideoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
+import type { VideoEnhancementStepTemplate } from '@civitai/client';
+import type { VideoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
 
 export async function createVideoEnhancementStep({
   sourceUrl,

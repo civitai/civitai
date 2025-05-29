@@ -1,5 +1,7 @@
-import { Button, ButtonProps } from '@mantine/core';
-import React, { MouseEventHandler, useRef, useState } from 'react';
+import type { ButtonProps } from '@mantine/core';
+import { Button } from '@mantine/core';
+import type { MouseEventHandler } from 'react';
+import { useRef, useState } from 'react';
 
 export const ConfirmButton = ({
   children,

@@ -19,8 +19,9 @@ import { NewOrderJoin } from '~/components/Games/NewOrder/NewOrderJoin';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useGameSounds } from '~/hooks/useGameSounds';
 import { useStorage } from '~/hooks/useStorage';
-import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
-import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
+import type { NewOrderDamnedReason } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
+import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { NewOrderSidebar } from '~/components/Games/NewOrder/NewOrderSidebar';
 import { Meta } from '~/components/Meta/Meta';
@@ -66,6 +67,7 @@ export default Page(
     const [selectedQueue, setSelectedQueue] = useState<NewOrderRankType | 'Inquisitor' | null>(
       null
     );
+    const [imageStatus, setImageStatus] = useState<'loading' | 'error' | 'idle'>('idle');
     const filters = selectedQueue ? { queueType: selectedQueue } : undefined;
 
     const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
@@ -121,6 +123,7 @@ export default Page(
       const shouldLevelUp =
         progression && progression.xpIntoLevel + gainedExp >= progression.xpForNextLevel;
       if (shouldLevelUp) levelUp();
+      setImageStatus('loading');
 
       await addRating({ imageId: currentImage.id, rating, damnedReason }).catch(() => null); // errors are handled in the hook
 
@@ -204,6 +207,9 @@ export default Page(
                             className={clsx('h-full max-w-full rounded-lg object-contain')}
                             type="image"
                             width={700}
+                            onLoadStart={() => setImageStatus('loading')}
+                            onLoad={() => setImageStatus('idle')}
+                            onError={() => setImageStatus('error')}
                             contain
                           />
                           {currentUser?.isModerator && (
@@ -236,6 +242,7 @@ export default Page(
                     </Card>
                     <NewOrderImageRater
                       muted={muted}
+                      disabled={imageStatus === 'loading' || imageStatus === 'error'}
                       onVolumeClick={() => setMuted((prev) => !prev)}
                       onSkipClick={handleSkipRating}
                       onRatingClick={({ rating, damnedReason }) =>

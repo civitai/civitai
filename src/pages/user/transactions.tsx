@@ -20,11 +20,11 @@ import { useMemo, useState } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
+import type {
   BuzzTransactionDetails,
   GetUserBuzzTransactionsSchema,
-  TransactionType,
 } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';

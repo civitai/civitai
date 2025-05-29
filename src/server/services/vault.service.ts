@@ -1,9 +1,9 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission, VaultSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
+import type {
   GetPaginatedVaultItemsSchema,
   VaultItemFilesSchema,
   VaultItemsAddModelVersionSchema,

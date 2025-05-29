@@ -3,14 +3,14 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { trainingSettings } from '~/components/Training/Form/TrainingParams';
-import { constants } from '~/server/common/constants';
+import type { constants } from '~/server/common/constants';
 import type {
   TrainingDetailsBaseModel,
   TrainingDetailsObj,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
-import { EngineTypes, TrainingBaseModelType } from '~/utils/training';
+import type { EngineTypes, TrainingBaseModelType } from '~/utils/training';
 
 export type ImageDataType = {
   url: string;

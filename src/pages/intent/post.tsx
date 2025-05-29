@@ -24,8 +24,9 @@ import {
   orchestratorMediaTransmitter,
   useExternalMetaStore,
 } from '~/store/post-image-transmitter.store';
+import { createImageElement } from '~/utils/image-utils';
 import { getLoginLink } from '~/utils/login-helpers';
-import { getVideoData, loadImage } from '~/utils/media-preprocessors';
+import { getVideoData } from '~/utils/media-preprocessors';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
@@ -238,7 +239,7 @@ export default function IntentPost() {
           );
         }
 
-        loadImage(objUrl)
+        createImageElement(objUrl)
           .catch((e) => {
             console.log(e);
             throw new Error('Could not fetch media from that url');

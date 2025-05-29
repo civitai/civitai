@@ -36,9 +36,10 @@ import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { getPlanDetails, PlanCard } from '~/components/Subscriptions/PlanCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
-import { JoinRedirectReason, joinRedirectReasons } from '~/utils/join-helpers';
+import type { JoinRedirectReason } from '~/utils/join-helpers';
+import { joinRedirectReasons } from '~/utils/join-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './index.module.scss';
 
@@ -165,27 +166,28 @@ export default function Pricing() {
               </AlertWithIcon>
             </Center>
           )}
-          {features.cryptoPayments && features.disablePayments && (
-            <Center>
-              <AlertWithIcon
-                color="yellow"
-                iconColor="yellow"
-                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
-                iconSize={28}
-                py={11}
-                maw="calc(50% - 8px)"
-              >
-                <Stack gap={0}>
-                  <Text lh={1.2}>
-                    You can still purchase Buzz using crypto!{' '}
-                    <Anchor href="/purchase/buzz" color="yellow.7">
-                      Buy now
-                    </Anchor>
-                  </Text>
-                </Stack>
-              </AlertWithIcon>
-            </Center>
-          )}
+          {(features.nowpaymentPayments || features.coinbasePayments) &&
+            features.disablePayments && (
+              <Center>
+                <AlertWithIcon
+                  color="yellow"
+                  iconColor="yellow"
+                  icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+                  iconSize={28}
+                  py={11}
+                  maw="calc(50% - 8px)"
+                >
+                  <Stack spacing={0}>
+                    <Text lh={1.2}>
+                      You can still purchase Buzz using crypto!{' '}
+                      <Anchor href="/purchase/buzz" color="yellow.7">
+                        Buy now
+                      </Anchor>
+                    </Text>
+                  </Stack>
+                </AlertWithIcon>
+              </Center>
+            )}
           {subscription?.isBadState && (
             <AlertWithIcon
               color="red"

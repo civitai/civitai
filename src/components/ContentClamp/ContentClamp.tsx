@@ -1,4 +1,5 @@
-import { MantineSize, Spoiler, SpoilerProps, Text } from '@mantine/core';
+import type { MantineSize, SpoilerProps } from '@mantine/core';
+import { Spoiler, Text } from '@mantine/core';
 
 export function ContentClamp({
   children,

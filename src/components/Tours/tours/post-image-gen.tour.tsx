@@ -1,4 +1,4 @@
-import { StepWithData } from '~/types/tour';
+import type { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
 
 export const postGenerationTour: StepWithData[] = [

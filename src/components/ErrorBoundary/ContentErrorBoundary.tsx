@@ -1,4 +1,5 @@
-import { Component, ErrorInfo, Fragment, ReactNode } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
+import { Component, Fragment } from 'react';
 
 interface Props {
   children: ReactNode;

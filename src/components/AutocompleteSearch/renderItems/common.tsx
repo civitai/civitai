@@ -1,6 +1,8 @@
 import React, { forwardRef } from 'react';
-import { Anchor, ComboboxItem, Center, useComputedColorScheme } from '@mantine/core';
-import { IconBadge, IconBadgeProps } from '~/components/IconBadge/IconBadge';
+import type { ComboboxItem } from '@mantine/core';
+import { Anchor, Center, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import type { IconBadgeProps } from '~/components/IconBadge/IconBadge';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 export const ViewMoreItem = forwardRef<HTMLDivElement, ComboboxItem>(({ value, ...props }, ref) => {
   return (

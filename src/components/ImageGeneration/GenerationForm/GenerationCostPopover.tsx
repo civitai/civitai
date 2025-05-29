@@ -1,14 +1,13 @@
-import { WorkflowCost } from '@civitai/client';
-import { ActionIcon, Group, NumberInput, Popover, PopoverProps, Text } from '@mantine/core';
+import type { WorkflowCost } from '@civitai/client';
+import type { PopoverProps } from '@mantine/core';
+import { ActionIcon, createStyles, Group, NumberInput, Popover, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import {
-  DescriptionTable,
-  Props as DescriptionTableProps,
-} from '~/components/DescriptionTable/DescriptionTable';
+import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useTipStore } from '~/store/tip.store';
 import classes from './GenerationCostPopover.module.scss';

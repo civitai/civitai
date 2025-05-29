@@ -1,4 +1,5 @@
-import { Chip, ChipProps, ChipGroupProps, Group } from '@mantine/core';
+import type { ChipProps, ChipGroupProps } from '@mantine/core';
+import { Chip, Group } from '@mantine/core';
 import styles from './PresetOptions.module.scss';
 
 export function PresetOptions({

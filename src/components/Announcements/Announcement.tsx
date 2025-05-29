@@ -1,9 +1,10 @@
-import { ActionIcon, Button, ButtonVariant, Title, useMantineTheme } from '@mantine/core';
+import type { ButtonVariant } from '@mantine/core';
+import { ActionIcon, Button, Title, useMantineTheme } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { AnnouncementDTO } from '~/server/services/announcement.service';
+import type { AnnouncementDTO } from '~/server/services/announcement.service';
 import {
   dismissAnnouncements,
   useAnnouncementsStore,

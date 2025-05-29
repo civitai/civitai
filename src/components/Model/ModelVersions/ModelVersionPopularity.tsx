@@ -1,4 +1,5 @@
-import { Group, Loader, MantineColor, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import type { MantineColor } from '@mantine/core';
+import { Group, Loader, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconTemperature } from '@tabler/icons-react';
 import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/model-version.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

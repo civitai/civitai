@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import client from '~/server/http/nowpayments/nowpayments.caller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
@@ -55,7 +55,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         case 'finished':
         case 'partially_paid':
         default: // temporary as we test
-          await processBuzzOrder(event.payment_id as string | number);
+          await processBuzzOrder(
+            event.payment_id as string | number,
+            event.payment_status as string
+          );
           break;
         // throw new Error('Unhandled relevant event!');
       }

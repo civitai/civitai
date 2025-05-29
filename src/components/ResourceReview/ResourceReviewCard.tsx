@@ -14,7 +14,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { IconPhoto, IconMessageCircle2 } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ResourceReviewInfiniteModel } from '~/types/router';
+import type { ResourceReviewInfiniteModel } from '~/types/router';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel }) {

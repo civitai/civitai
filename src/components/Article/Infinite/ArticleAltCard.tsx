@@ -11,7 +11,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { ArticleContextMenu } from '../ArticleContextMenu';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { AssociatedResourceArticleCardData } from '~/server/controllers/model.controller';
+import type { AssociatedResourceArticleCardData } from '~/server/controllers/model.controller';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import React from 'react';
 import classes from './ArticleAltCard.module.scss';

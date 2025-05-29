@@ -1,4 +1,5 @@
-import { Group, GroupProps } from '@mantine/core';
+import type { GroupProps } from '@mantine/core';
+import { Group } from '@mantine/core';
 import { ToolFiltersDropdown } from '~/components/Tool/ToolFiltersDropdown';
 import { SortFilter } from '../SortFilter';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';

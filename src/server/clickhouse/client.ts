@@ -1,5 +1,6 @@
-import { ClickHouseClient, createClient } from '@clickhouse/client';
-import {
+import type { ClickHouseClient } from '@clickhouse/client';
+import { createClient } from '@clickhouse/client';
+import type {
   ArticleEngagementType,
   BountyEngagementType,
   EntityMetric_EntityType_Type,
@@ -10,18 +11,18 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
-import { ProhibitedSources } from '~/server/schema/user.schema';
-import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
+import type { ProhibitedSources } from '~/server/schema/user.schema';
+import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
-import { Session } from 'next-auth';
-import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
-import { NewOrderImageRatingStatus } from '~/server/common/enums';
+import type { Session } from 'next-auth';
+import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
+import type { NewOrderImageRatingStatus } from '~/server/common/enums';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(

@@ -1,12 +1,13 @@
-import { Button, ButtonProps, Divider, Input, InputWrapperProps, Stack, Text } from '@mantine/core';
+import type { ButtonProps, InputWrapperProps } from '@mantine/core';
+import { Button, Divider, Input, Stack, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useMemo } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
 import { getDisplayName } from '~/utils/string-helpers';
-import { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { ResourceSelectHandler } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
 export type ResourceSelectMultipleProps = {

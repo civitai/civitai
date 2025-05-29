@@ -1,25 +1,13 @@
-import React, {
-  useMemo,
-  useCallback,
-  useRef,
-  useEffect,
-  useState,
-  KeyboardEventHandler,
-} from 'react';
-import { Editor, Transforms, Range, createEditor, Descendant } from 'slate';
+import type { KeyboardEventHandler } from 'react';
+import React, { useMemo, useCallback, useRef, useEffect, useState } from 'react';
+import type { Descendant } from 'slate';
+import { Editor, Transforms, Range, createEditor } from 'slate';
 import { withHistory } from 'slate-history';
-import {
-  Slate,
-  Editable,
-  ReactEditor,
-  withReact,
-  useSelected,
-  useFocused,
-  RenderElementProps,
-  RenderLeafProps,
-} from 'slate-react';
+import type { RenderElementProps, RenderLeafProps } from 'slate-react';
+import { Slate, Editable, ReactEditor, withReact, useSelected, useFocused } from 'slate-react';
 
-import { CustomEditor, MentionElement, ModelElement } from './index';
+import type { CustomEditor, ModelElement } from './index';
+import { MentionElement } from './index';
 import ReactDOM from 'react-dom';
 import { getThemeColor, rgba, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import { parsePromptResources, splitPromptResources } from '~/utils/prompt-helpers';

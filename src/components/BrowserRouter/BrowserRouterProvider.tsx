@@ -1,6 +1,6 @@
 import Router, { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useRef } from 'react';
-import { UrlObject } from 'url';
+import type { UrlObject } from 'url';
 import { resolveHref } from 'next/dist/client/resolve-href';
 import { QS } from '~/utils/qs';
 import { create } from 'zustand';

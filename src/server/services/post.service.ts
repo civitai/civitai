@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -8,16 +8,13 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { thumbnailCache, userContentOverviewCache } from '~/server/redis/caches';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { externalMetaSchema, ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import {
-  editPostImageSelect,
-  PostImageEditProps,
-  PostImageEditSelect,
-  postSelect,
-} from '~/server/selectors/post.selector';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import type { ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
+import { externalMetaSchema } from '~/server/schema/image.schema';
+import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
+import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
@@ -65,11 +62,11 @@ import {
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
-import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
+import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { CacheTTL } from '../common/constants';
-import {
+import type {
   AddPostTagInput,
   AddResourceToPostImageInput,
   GetPostTagsInput,

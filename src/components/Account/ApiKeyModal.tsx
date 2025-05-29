@@ -1,3 +1,4 @@
+import type { ModalProps } from '@mantine/core';
 import {
   Box,
   Button,
@@ -5,12 +6,11 @@ import {
   CopyButton,
   Group,
   Modal,
-  ModalProps,
   Stack,
   Text,
 } from '@mantine/core';
 import { IconClipboard } from '@tabler/icons-react';
-import { TypeOf } from 'zod';
+import type { TypeOf } from 'zod';
 import { Form, InputText, useForm } from '~/libs/form';
 import { addApiKeyInputSchema } from '~/server/schema/api-key.schema';
 import { KeyScope } from '~/shared/utils/prisma/enums';

@@ -1,8 +1,10 @@
 import { ReactRenderer } from '@tiptap/react';
-import { SuggestionOptions } from '@tiptap/suggestion';
-import tippy, { Instance as TippyInstance } from 'tippy.js';
+import type { SuggestionOptions } from '@tiptap/suggestion';
+import type { Instance as TippyInstance } from 'tippy.js';
+import tippy from 'tippy.js';
 
-import { MentionListRef, MentionList } from '~/components/RichTextEditor/MentionList';
+import type { MentionListRef } from '~/components/RichTextEditor/MentionList';
+import { MentionList } from '~/components/RichTextEditor/MentionList';
 
 type Options = { defaultSuggestions?: Array<{ id: number; label: string }> };
 

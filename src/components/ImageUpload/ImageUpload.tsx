@@ -1,15 +1,14 @@
+import type { DragEndEvent, DragStartEvent, UniqueIdentifier } from '@dnd-kit/core';
 import {
   closestCenter,
   DndContext,
-  DragEndEvent,
   DragOverlay,
-  DragStartEvent,
   PointerSensor,
-  UniqueIdentifier,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
+import type { InputWrapperProps } from '@mantine/core';
 import {
   ActionIcon,
   Alert,
@@ -18,7 +17,6 @@ import {
   Group,
   HoverCard,
   Input,
-  InputWrapperProps,
   Loader,
   LoadingOverlay,
   Overlay,
@@ -28,8 +26,10 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { Dropzone, FileWithPath } from '@mantine/dropzone';
-import { useDidUpdate, useListState, UseListStateHandlers } from '@mantine/hooks';
+import type { FileWithPath } from '@mantine/dropzone';
+import { Dropzone } from '@mantine/dropzone';
+import type { UseListStateHandlers } from '@mantine/hooks';
+import { useDidUpdate, useListState } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconPencil,
@@ -47,7 +47,7 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { formatBytes } from '~/utils/number-helpers';
 import styles from './ImageUpload.module.css';
 import clsx from 'clsx';

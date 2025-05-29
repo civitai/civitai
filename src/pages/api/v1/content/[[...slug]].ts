@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { publicApiContext, publicApiContext2 } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';

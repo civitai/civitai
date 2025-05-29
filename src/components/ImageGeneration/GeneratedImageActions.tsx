@@ -8,8 +8,8 @@ import { useState } from 'react';
 import { SortFilter } from '~/components/Filters';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
+import type { UpdateImageStepMetadataArgs } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
-  UpdateImageStepMetadataArgs,
   useGetTextToImageRequests,
   useUpdateImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';

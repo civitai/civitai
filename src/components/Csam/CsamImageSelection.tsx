@@ -14,7 +14,7 @@ import {
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCallback } from 'react';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { ModerationImageModel } from '~/server/services/image.service';
+import type { ModerationImageModel } from '~/server/services/image.service';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

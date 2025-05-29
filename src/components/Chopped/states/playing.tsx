@@ -1,7 +1,9 @@
-import { Alert, Box, BoxProps, Button, Group, Progress, Stack, Text, Title } from '@mantine/core';
+import type { BoxProps } from '@mantine/core';
+import { Alert, Box, Button, Group, Progress, Stack, Text, Title } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { IconBrush, IconSend } from '@tabler/icons-react';
-import React, { DragEvent, useEffect, useState } from 'react';
+import type { DragEvent } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ChoppedJudgeComment,
   ChoppedJudgeReaction,
@@ -10,7 +12,7 @@ import {
   ChoppedUserSubmission,
 } from '~/components/Chopped/chopped.components';
 import { useChoppedServer } from '~/components/Chopped/chopped.connection';
-import { Judge, RoundStatus, Theme } from '~/components/Chopped/chopped.shared-types';
+import type { Judge, RoundStatus, Theme } from '~/components/Chopped/chopped.shared-types';
 import { useChoppedStore, useChoppedUserId, useIsHost } from '~/components/Chopped/chopped.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';

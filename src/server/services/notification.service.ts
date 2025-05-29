@@ -1,17 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { NotificationCategory } from '~/server/common/enums';
+import type { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { notificationSingleRowFull } from '~/server/jobs/send-notifications';
 import { logToAxiom } from '~/server/logging/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
-import {
-  notificationCache,
-  NotificationCategoryCount,
-} from '~/server/notifications/notification-cache';
+import type { NotificationCategoryCount } from '~/server/notifications/notification-cache';
+import { notificationCache } from '~/server/notifications/notification-cache';
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
-import {
+import type {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
   ToggleNotificationSettingInput,

@@ -1,4 +1,4 @@
-import { VotableTagConnectorInput } from '~/server/schema/tag.schema';
+import type { VotableTagConnectorInput } from '~/server/schema/tag.schema';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import {
@@ -16,7 +16,7 @@ import {
   alpha,
 } from '@mantine/core';
 import { useCallback, useRef } from 'react';
-import { TagType } from '~/shared/utils/prisma/enums';
+import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBigDown,
   IconArrowBigUp,
@@ -30,7 +30,7 @@ import { getTagDisplayName } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Countdown } from '~/components/Countdown/Countdown';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import {
   votableTagColors,
   getIsSafeBrowsingLevel,

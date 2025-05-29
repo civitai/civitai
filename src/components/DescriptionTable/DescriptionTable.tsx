@@ -1,7 +1,8 @@
-import { Group, Paper, PaperProps, Table, TableProps, Text } from '@mantine/core';
-import clsx from 'clsx';
+import type { PaperProps, TableProps } from '@mantine/core';
+import { Group, Paper, Table, Text } from '@mantine/core';
 import React from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import clsx from 'clsx';
 
 export function DescriptionTable({
   items,

@@ -12,8 +12,8 @@ import {
   Stack,
   Textarea,
   Title,
-  TooltipProps,
 } from '@mantine/core';
+import type { TooltipProps } from '@mantine/core';
 import {
   IconExternalLink,
   IconPlus,
@@ -37,7 +37,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { useInView } from '~/hooks/useInView';
 import { NsfwLevel } from '~/server/common/enums';
-import { SanityImage } from '~/server/routers/research.router';
+import type { SanityImage } from '~/server/routers/research.router';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

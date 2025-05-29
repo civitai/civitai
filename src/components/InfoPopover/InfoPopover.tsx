@@ -1,11 +1,7 @@
-import {
-  ActionIconProps,
-  HoverCard,
-  Popover as MantinePopover,
-  PopoverProps,
-  Text,
-} from '@mantine/core';
-import { Icon, IconInfoCircle, IconProps } from '@tabler/icons-react';
+import type { ActionIconProps, PopoverProps } from '@mantine/core';
+import { ActionIcon, HoverCard, Popover as MantinePopover, Text } from '@mantine/core';
+import type { Icon, IconProps } from '@tabler/icons-react';
+import { IconInfoCircle } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { forwardRef } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

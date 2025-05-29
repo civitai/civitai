@@ -1,13 +1,7 @@
-import {
-  closestCenter,
-  DndContext,
-  DragEndEvent,
-  PointerSensor,
-  UniqueIdentifier,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
+import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
+import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import type { ComboboxItem } from '@mantine/core';
 import {
   Stack,
   Text,
@@ -19,24 +13,24 @@ import {
   Loader,
   Alert,
   Badge,
-  ComboboxItem,
   Box,
 } from '@mantine/core';
-import { AssociationType } from '~/shared/utils/prisma/enums';
+import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconGripVertical, IconTrash, IconUser } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { forwardRef, useEffect, useState } from 'react';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
-import { AssociatedResourceModel } from '~/server/selectors/model.selector';
-import { ModelGetAssociatedResourcesSimple } from '~/types/router';
+import type { AssociatedResourceModel } from '~/server/selectors/model.selector';
+import type { ModelGetAssociatedResourcesSimple } from '~/types/router';
 import { trpc } from '~/utils/trpc';
-import { QuickSearchDropdown, QuickSearchDropdownProps } from '../Search/QuickSearchDropdown';
+import type { QuickSearchDropdownProps } from '../Search/QuickSearchDropdown';
+import { QuickSearchDropdown } from '../Search/QuickSearchDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   getIsSafeBrowsingLevel,
   allBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number }>;

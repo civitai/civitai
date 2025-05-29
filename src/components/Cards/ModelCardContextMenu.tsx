@@ -9,7 +9,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
-import { UseQueryModelReturn } from '~/components/Model/model.utils';
+import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

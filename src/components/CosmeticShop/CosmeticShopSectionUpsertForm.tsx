@@ -11,12 +11,10 @@ import {
   useForm,
 } from '~/libs/form';
 import { z } from 'zod';
-import { CosmeticShopSectionGetById } from '~/types/router';
+import type { CosmeticShopSectionGetById } from '~/types/router';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
-import {
-  CosmeticShopSectionMeta,
-  upsertCosmeticShopSectionInput,
-} from '~/server/schema/cosmetic-shop.schema';
+import type { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
+import { upsertCosmeticShopSectionInput } from '~/server/schema/cosmetic-shop.schema';
 import { constants } from '~/server/common/constants';
 
 const formSchema = upsertCosmeticShopSectionInput.extend({

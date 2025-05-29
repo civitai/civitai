@@ -1,5 +1,7 @@
-import { ActionIcon, ActionIconProps, Text, Tooltip } from '@mantine/core';
-import { IconHelpCircle, IconProps } from '@tabler/icons-react';
+import type { ActionIconProps } from '@mantine/core';
+import { ActionIcon, Text, Tooltip } from '@mantine/core';
+import type { IconProps } from '@tabler/icons-react';
+import { IconHelpCircle } from '@tabler/icons-react';
 import { forwardRef } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

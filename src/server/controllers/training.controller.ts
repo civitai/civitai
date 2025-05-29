@@ -1,11 +1,11 @@
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
-import { CustomImageResourceTrainingStep } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
+import type { CustomImageResourceTrainingStep } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { getModel } from '~/server/services/model.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import {

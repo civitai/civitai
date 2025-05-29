@@ -1,3 +1,4 @@
+import type { ButtonProps } from '@mantine/core';
 import {
   Popover,
   Indicator,
@@ -6,7 +7,6 @@ import {
   Drawer,
   ScrollArea,
   Group,
-  ButtonProps,
   useComputedColorScheme,
 } from '@mantine/core';
 import { IconFilter, IconChevronDown } from '@tabler/icons-react';

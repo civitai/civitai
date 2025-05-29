@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
-import { Context } from '~/server/createContext';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import {
+import type { Context } from '~/server/createContext';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
   ModelFileCreateInput,
   ModelFileUpdateInput,
   ModelFileUpsertInput,

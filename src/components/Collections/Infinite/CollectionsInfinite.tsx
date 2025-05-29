@@ -7,7 +7,7 @@ import {
 } from '~/components/Collections/collection.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { GetAllCollectionsInfiniteSchema } from '~/server/schema/collection.schema';
+import type { GetAllCollectionsInfiniteSchema } from '~/server/schema/collection.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';

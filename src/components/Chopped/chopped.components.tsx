@@ -1,3 +1,4 @@
+import type { ThemeIconProps, MantineColor } from '@mantine/core';
 import {
   ActionIcon,
   Button,
@@ -13,8 +14,6 @@ import {
   TextInput,
   NumberInput,
   ThemeIcon,
-  ThemeIconProps,
-  MantineColor,
   Menu,
 } from '@mantine/core';
 import {
@@ -37,22 +36,23 @@ import {
   IconVolume,
   IconVolumeOff,
 } from '@tabler/icons-react';
-import React, { Component, ErrorInfo, useState } from 'react';
+import type { ErrorInfo } from 'react';
+import React, { Component, useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import type { Submission, Round } from '~/components/Chopped/chopped.shared-types';
 import {
   GameState,
   GlobalState,
   JoinGame,
   NewGame,
-  Submission,
-  Round,
 } from '~/components/Chopped/chopped.shared-types';
 import { ComputeCost, useChoppedStore, useIsHost } from '~/components/Chopped/chopped.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { useCallback, ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { useCallback } from 'react';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { generationPanel } from '~/store/generation.store';
 import { useBase64Audio } from '~/server/utils/audio-utils';

@@ -1,7 +1,8 @@
 import { Air } from '@civitai/client';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
-import { BaseModel, baseModelSets, getEcosystemFromBaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { baseModelSets, getEcosystemFromBaseModel } from '~/server/common/constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';

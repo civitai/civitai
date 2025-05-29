@@ -15,7 +15,7 @@ import {
   Title,
 } from '@mantine/core';
 import { closeModal, openConfirmModal } from '@mantine/modals';
-import { CsamReportType } from '~/shared/utils/prisma/enums';
+import type { CsamReportType } from '~/shared/utils/prisma/enums';
 import { IconExternalLink, IconPhoto } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 
@@ -25,8 +25,8 @@ import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.st
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { Form, InputCheckboxGroup, InputRadioGroup, useForm } from '~/libs/form';
 import { withController } from '~/libs/form/hoc/withController';
+import type { CsamReportFormInput } from '~/server/schema/csam.schema';
 import {
-  CsamReportFormInput,
   csamCapabilitiesDictionary,
   csamContentsDictionary,
   csamReportDetails,

@@ -4,7 +4,7 @@ import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
 import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
-import { BaseModelSetType } from '~/server/common/constants';
+import type { BaseModelSetType } from '~/server/common/constants';
 import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

@@ -1,7 +1,7 @@
 import { Table } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import ReactMarkdown from 'react-markdown';
-import { Options } from 'react-markdown';
+import type { Options } from 'react-markdown';
 import clsx from 'clsx';
 import ContentErrorBoundary from '~/components/ErrorBoundary/ContentErrorBoundary';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

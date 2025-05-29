@@ -2,10 +2,8 @@ import { Menu } from '@mantine/core';
 import { IconDeviceTabletStar } from '@tabler/icons-react';
 import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import {
-  CardDecorationModal,
-  Props as CardDecorationModalProps,
-} from '~/components/Modals/CardDecorationModal';
+import type { Props as CardDecorationModalProps } from '~/components/Modals/CardDecorationModal';
+import { CardDecorationModal } from '~/components/Modals/CardDecorationModal';
 
 export function AddArtFrameMenuItem(props: CardDecorationModalProps) {
   const currentCosmetic = props.currentCosmetic;

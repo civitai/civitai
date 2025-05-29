@@ -70,7 +70,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { AdUnitSide_1, AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Flags } from '~/shared/utils';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSearchParams } from 'next/navigation';

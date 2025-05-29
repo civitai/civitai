@@ -13,8 +13,9 @@ import {
   Text,
 } from '@mantine/core';
 import { Form, InputClubResourceManagementInput, useForm } from '~/libs/form';
-import { SupportedClubEntities, upsertClubResourceInput } from '~/server/schema/club.schema';
-import { z } from 'zod';
+import type { SupportedClubEntities } from '~/server/schema/club.schema';
+import { upsertClubResourceInput } from '~/server/schema/club.schema';
+import type { z } from 'zod';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { showSuccessNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -24,7 +25,7 @@ import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 // import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';
 // import { dialogStore } from '../Dialog/dialogStore';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 const schema = upsertClubResourceInput;
 

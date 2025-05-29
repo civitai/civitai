@@ -2,12 +2,14 @@ import { tagsNeedingReview } from '~/libs/tags';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { FeatureFlagKey } from '~/server/services/feature-flags.service';
-import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
+import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
+import { TagType } from '~/shared/utils/prisma/enums';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
-import { BrowsingSettingsAddon, DEFAULT_BROWSING_SETTINGS_ADDONS } from '../common/constants';
+import type { BrowsingSettingsAddon } from '../common/constants';
+import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '../common/constants';
 
 const log = createLogger('system-cache', 'green');
 

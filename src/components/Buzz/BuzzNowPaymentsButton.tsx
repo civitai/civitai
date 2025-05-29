@@ -1,7 +1,7 @@
 import { Anchor, Button, Stack, Text } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
+import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
 import { useMutateNowPayments, useNowPaymentsStatus } from '~/components/NowPayments/util';
 import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
@@ -53,21 +53,13 @@ export const BuzzNowPaymentsButton = ({
             })}`
           : ''}
       </Button>
-      <Text size="xs" color="dimmed" mt={8}>
-        Crypto purchases include a $
-        {formatCurrencyForDisplay(NOW_PAYMENTS_FIXED_FEE, undefined, { decimals: true })} fee to
-        cover network expenses.
-      </Text>
-      <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
-        Never purchased with Crypto before?{' '}
-        <Anchor
-          href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn how
-        </Anchor>
-      </AlertWithIcon>
+      {NOW_PAYMENTS_FIXED_FEE > 0 && (
+        <Text size="xs" color="dimmed" mt={8}>
+          Crypto purchases include a $
+          {formatCurrencyForDisplay(NOW_PAYMENTS_FIXED_FEE, undefined, { decimals: true })} fee to
+          cover network expenses.
+        </Text>
+      )}
     </Stack>
   );
 };

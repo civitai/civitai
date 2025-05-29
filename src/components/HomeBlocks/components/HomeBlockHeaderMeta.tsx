@@ -3,7 +3,7 @@ import React from 'react';
 import { Button, Group, Text, Title, TypographyStylesProvider } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconArrowRight } from '@tabler/icons-react';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';

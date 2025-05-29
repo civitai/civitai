@@ -1,11 +1,11 @@
 import { MetricTimeframe, ModelModifier } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { ModelSort } from '~/server/common/enums';
-import { Context } from '~/server/createContext';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
-import { ModelVersionMeta } from '~/server/schema/model-version.schema';
+import type { Context } from '~/server/createContext';
+import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { getAllModelsSchema } from '~/server/schema/model.schema';
-import { RecommendationRequest } from '~/server/schema/recommenders.schema';
+import type { RecommendationRequest } from '~/server/schema/recommenders.schema';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVersionById } from '~/server/services/model-version.service';

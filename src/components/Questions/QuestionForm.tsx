@@ -10,12 +10,12 @@ import {
   Title,
 } from '@mantine/core';
 import { useForm, Form, InputText, InputMultiSelect, InputRTE } from '~/libs/form';
-import { QuestionDetailProps } from '~/server/controllers/question.controller';
+import type { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { upsertQuestionSchema } from '~/server/schema/question.schema';
 import { trpc } from '~/utils/trpc';
 import { z } from 'zod';
-import { TRPCClientErrorBase } from '@trpc/client';
-import { DefaultErrorShape } from '@trpc/server';
+import type { TRPCClientErrorBase } from '@trpc/client';
+import type { DefaultErrorShape } from '@trpc/server';
 import { showNotification } from '@mantine/notifications';
 import { IconArrowLeft, IconCheck, IconLock, IconX } from '@tabler/icons-react';
 import { slugit } from '~/utils/string-helpers';

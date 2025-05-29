@@ -7,19 +7,17 @@ import { useEffect } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
-import {
-  ImagesQueryParamSchema,
-  useImageFilters,
-  useQueryImages,
-} from '~/components/Image/image.utils';
+import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
+import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
-import { ImagesContextState, ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
+import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { ImageGetInfinite } from '~/types/router';
+import type { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type ImagesInfiniteProps = {

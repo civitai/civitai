@@ -1,7 +1,7 @@
 import { Button, Checkbox, Divider, Text, UnstyledButton } from '@mantine/core';
 import React, { useMemo, useState } from 'react';
 import { AlwaysOpenCombobox } from '~/components/Combobox/AlwaysOpenComboBox';
-import { ComboboxOption } from '~/components/Combobox/combobox.types';
+import type { ComboboxOption } from '~/components/Combobox/combobox.types';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import type { PostEditImageDetail } from '~/server/services/post.service';
 import { getDisplayName } from '~/utils/string-helpers';

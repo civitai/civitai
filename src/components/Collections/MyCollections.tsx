@@ -14,7 +14,7 @@ import { CollectionContributorPermission } from '~/shared/utils/prisma/enums';
 import { IconPlaylistX, IconSearch } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CollectionGetAllUserModel } from '~/types/router';
+import type { CollectionGetAllUserModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 

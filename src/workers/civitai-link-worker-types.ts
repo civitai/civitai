@@ -1,5 +1,5 @@
-import { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
-import {
+import type { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
+import type {
   ActivitiesResponse,
   Command,
   ResponseResourcesList,

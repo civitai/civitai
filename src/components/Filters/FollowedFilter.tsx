@@ -1,4 +1,4 @@
-import { ButtonProps } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
 import { IconUsersGroup, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';

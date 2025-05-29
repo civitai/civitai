@@ -1,7 +1,7 @@
 import { Center, Container, Loader } from '@mantine/core';
 import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { MediaUploadSettingsProvider } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 
 export const CollectionUploadSettingsWrapper = ({
   collectionIds,

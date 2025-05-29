@@ -12,7 +12,7 @@ import {
   shouldDisplayUserNullState,
 } from '~/components/Profile/profile.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
+import type { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';

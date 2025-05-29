@@ -1,4 +1,5 @@
-import { Box, Group, SegmentedControl, SegmentedControlProps, Stack } from '@mantine/core';
+import type { SegmentedControlProps } from '@mantine/core';
+import { Box, Group, SegmentedControl, Stack } from '@mantine/core';
 import { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';

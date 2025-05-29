@@ -1,5 +1,6 @@
 import React from 'react';
-import { SegmentedControl, SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
+import type { SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
+import { SegmentedControl } from '@mantine/core';
 import classes from './FeedContentToggle.module.scss';
 
 const statuses: SegmentedControlItem[] = [

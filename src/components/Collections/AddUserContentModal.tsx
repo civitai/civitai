@@ -38,7 +38,7 @@ import {
   addSimpleImagePostInput,
   bulkSaveCollectionItemsInput,
 } from '~/server/schema/collection.schema';
-import { ImageGetInfinite } from '~/types/router';
+import type { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useCollection } from './collection.utils';

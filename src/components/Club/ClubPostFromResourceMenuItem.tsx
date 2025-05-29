@@ -1,6 +1,6 @@
 import { Menu } from '@mantine/core';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { SupportedClubPostEntities } from '~/server/schema/club.schema';
+import type { SupportedClubPostEntities } from '~/server/schema/club.schema';
 // import { dialogStore } from '../Dialog/dialogStore';
 import { useQueryUserContributingClubs } from './club.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

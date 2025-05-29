@@ -1,3 +1,4 @@
+import type { StackProps } from '@mantine/core';
 import {
   Anchor,
   Box,
@@ -11,7 +12,6 @@ import {
   Menu,
   Spoiler,
   Stack,
-  StackProps,
   Text,
   Textarea,
   Title,
@@ -51,9 +51,9 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
-import { isTypingOutput } from '~/server/schema/chat.schema';
+import type { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
-import { ChatAllMessages } from '~/types/router';
+import type { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { runPayout } from '~/server/jobs/deliver-creator-compensation';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';

@@ -7,9 +7,9 @@ import {
   IconVolume,
   IconVolumeOff,
 } from '@tabler/icons-react';
+import type { MouseEventHandler } from 'react';
 import React, {
   forwardRef,
-  MouseEventHandler,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -19,7 +19,8 @@ import React, {
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { VimeoEmbed } from '../VimeoEmbed/VimeoEmbed';
 import { useLocalStorage, useTimeout } from '@mantine/hooks';
-import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
+import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
+import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import clsx from 'clsx';
 import styles from './EdgeVideo.module.scss';

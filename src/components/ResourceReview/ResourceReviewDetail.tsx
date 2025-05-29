@@ -29,7 +29,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { PostSort } from '~/server/common/enums';
-import { ResourceReviewDetailModel } from '~/server/services/resourceReview.service';
+import type { ResourceReviewDetailModel } from '~/server/services/resourceReview.service';
 import { formatDate } from '~/utils/date-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';

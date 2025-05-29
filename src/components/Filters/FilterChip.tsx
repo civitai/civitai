@@ -1,4 +1,5 @@
-import { ChipProps, Chip } from '@mantine/core';
+import type { ChipProps } from '@mantine/core';
+import { Chip } from '@mantine/core';
 import classes from './FilterChip.module.scss';
 
 export function FilterChip({ children, ...props }: ChipProps) {

@@ -1,4 +1,4 @@
-import { MantineSpacing } from '@mantine/core';
+import type { MantineSpacing } from '@mantine/core';
 import { useMediaQuery as useMantineMediaQuery } from '@mantine/hooks';
 import { useCallback } from 'react';
 import {

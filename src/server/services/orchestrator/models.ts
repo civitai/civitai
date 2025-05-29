@@ -1,8 +1,8 @@
 import { getResource, invalidateResource } from '@civitai/client';
 import { chunk } from 'lodash-es';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { getCurrentLSN } from '~/server/db/db-helpers';
-import { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
+import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
 import { resourceDataCache } from '~/server/services/model-version.service';
 import {
   createOrchestratorClient,

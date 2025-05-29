@@ -9,7 +9,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
-import { UpsertAnnouncementSchema } from '~/server/schema/announcement.schema';
+import type { UpsertAnnouncementSchema } from '~/server/schema/announcement.schema';
 import { trpc } from '~/utils/trpc';
 
 const schema = z.object({ page: z.coerce.number().default(1) });

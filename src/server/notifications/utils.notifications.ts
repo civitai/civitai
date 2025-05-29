@@ -1,6 +1,6 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
-import { BareNotification } from '~/server/notifications/base.notifications';
+import type { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';

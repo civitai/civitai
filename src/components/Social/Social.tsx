@@ -1,13 +1,14 @@
-import { Button, ButtonProps } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button } from '@mantine/core';
+import type { IconProps } from '@tabler/icons-react';
 import {
-  IconProps,
   IconBrandDiscord,
   IconBrandGithub,
   IconBrandGoogle,
   IconBrandReddit,
   IconMail,
 } from '@tabler/icons-react';
-import { BuiltInProviderType } from 'next-auth/providers';
+import type { BuiltInProviderType } from 'next-auth/providers';
 import classes from './Social.module.css';
 import clsx from 'clsx';
 

@@ -1,6 +1,6 @@
+import type { AutocompleteItem, AutocompleteProps } from '@mantine/core';
 import {
   ActionIcon,
-  AutocompleteProps,
   Code,
   ComboboxData,
   ComboboxItem,
@@ -26,14 +26,8 @@ import React, {
   useState,
   Fragment,
 } from 'react';
-import {
-  Configure,
-  InstantSearch,
-  InstantSearchProps,
-  SearchBoxProps,
-  useInstantSearch,
-  useSearchBox,
-} from 'react-instantsearch';
+import type { InstantSearchProps, SearchBoxProps } from 'react-instantsearch';
+import { Configure, InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
@@ -49,13 +43,10 @@ import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderIte
 import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { SearchIndexDataMap, useHitsTransformed } from '~/components/Search/search.utils2';
-import {
-  ReverseSearchIndexKey,
-  SearchIndexKey,
-  reverseSearchIndexMap,
-  searchIndexMap,
-} from '~/components/Search/search.types';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { useHitsTransformed } from '~/components/Search/search.utils2';
+import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/search.types';
+import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/search.types';
 import { isDefined, paired } from '~/utils/type-guards';
 import { ApplyCustomFilter, BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { QS } from '~/utils/qs';

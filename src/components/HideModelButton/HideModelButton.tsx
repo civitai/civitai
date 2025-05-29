@@ -1,7 +1,8 @@
 import { trpc } from '~/utils/trpc';
-import { Button, ButtonProps, Menu } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Menu } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
-import { MouseEventHandler } from 'react';
+import type { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 

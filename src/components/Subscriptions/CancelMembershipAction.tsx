@@ -1,4 +1,5 @@
-import { Button, ButtonProps, Image, Loader, Menu, Modal, Text } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Image, Loader, Menu, Modal, Text } from '@mantine/core';
 import { useCallback } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';

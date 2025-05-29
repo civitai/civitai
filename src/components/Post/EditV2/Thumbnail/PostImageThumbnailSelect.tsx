@@ -18,8 +18,8 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { MIME_TYPES } from '~/server/common/mime-types';
-import { SetVideoThumbnailInput } from '~/server/schema/image.schema';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import type { SetVideoThumbnailInput } from '~/server/schema/image.schema';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { roundDownToPowerOfTwo } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';

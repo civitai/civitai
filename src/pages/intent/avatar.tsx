@@ -20,8 +20,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
+import { createImageElement } from '~/utils/image-utils';
 import { getLoginLink } from '~/utils/login-helpers';
-import { loadImage } from '~/utils/media-preprocessors';
 import { showSuccessNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -100,8 +100,7 @@ export default function IntentAvatar() {
         );
         setLoading(false);
       } else {
-        const objUrl = URL.createObjectURL(blob);
-        loadImage(objUrl)
+        createImageElement(blob)
           .then(() => {
             const file = new File([blob], url?.split('/').slice(-1)[0] ?? 'avatar-file', {
               type: blob.type,

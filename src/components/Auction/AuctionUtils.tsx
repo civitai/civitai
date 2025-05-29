@@ -1,14 +1,5 @@
-import {
-  ActionIcon,
-  ActionIconProps,
-  Button,
-  ButtonProps,
-  Group,
-  Paper,
-  Stack,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import type { ActionIconProps, ButtonProps } from '@mantine/core';
+import { ActionIcon, Button, Group, Paper, Stack, Text, Tooltip } from '@mantine/core';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import NumberFlow from '@number-flow/react';
 import { IconCheck, IconGavel, IconUsers, IconX } from '@tabler/icons-react';
@@ -25,7 +16,7 @@ import {
 } from '~/components/Signals/SignalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
-import { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';

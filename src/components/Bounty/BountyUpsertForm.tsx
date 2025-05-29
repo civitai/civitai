@@ -60,7 +60,7 @@ import {
 import { activeBaseModels, constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
-import { BaseFileSchema } from '~/server/schema/file.schema';
+import type { BaseFileSchema } from '~/server/schema/file.schema';
 import {
   BountyEntryMode,
   BountyMode,
@@ -68,7 +68,7 @@ import {
   Currency,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
-import { BountyGetById } from '~/types/router';
+import type { BountyGetById } from '~/types/router';
 import { dateWithoutTimezone, stripTime } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';

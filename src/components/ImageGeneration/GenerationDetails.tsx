@@ -1,8 +1,7 @@
-import { Accordion, AccordionControlProps, Text } from '@mantine/core';
-import {
-  DescriptionTable,
-  Props as DescriptionTableProps,
-} from '~/components/DescriptionTable/DescriptionTable';
+import type { AccordionControlProps } from '@mantine/core';
+import { Accordion, Text } from '@mantine/core';
+import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 

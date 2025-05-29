@@ -1,3 +1,4 @@
+import type { MantineColorScheme } from '@mantine/core'
 import { MantineColorScheme, ColorSchemeScript, createTheme, MantineProvider } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 
