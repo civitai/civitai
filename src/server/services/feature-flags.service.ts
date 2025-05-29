@@ -121,8 +121,8 @@ const featureFlags = createFeatureFlags({
   changelogEdit: ['granted'],
   annualMemberships: ['public'],
   disablePayments: ['public'],
-  coinbasePayments: ['mod'],
-  nowpaymentPayments: ['public'],
+  coinbasePayments: ['public'],
+  nowpaymentPayments: [],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
