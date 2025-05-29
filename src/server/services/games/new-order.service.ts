@@ -253,7 +253,10 @@ export async function addImageRating({
     return false;
   }
 
-  if (valueInQueue.value >= 5 && valueInQueue.rank === NewOrderRankType.Knight) {
+  if (
+    valueInQueue.value >= newOrderConfig.limits.knightVoteLimit &&
+    valueInQueue.rank === NewOrderRankType.Knight
+  ) {
     // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
     await valueInQueue.pool.reset({ id: imageId });
     signalClient
@@ -267,7 +270,10 @@ export async function addImageRating({
     return false;
   }
 
-  if (valueInQueue.value >= 2 && valueInQueue.rank === NewOrderRankType.Templar) {
+  if (
+    valueInQueue.value >= newOrderConfig.limits.templarVoteLimit &&
+    valueInQueue.rank === NewOrderRankType.Templar
+  ) {
     // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
     await valueInQueue.pool.reset({ id: imageId });
     signalClient
@@ -315,9 +321,11 @@ export async function addImageRating({
   await valueInQueue.pool.increment({ id: imageId });
 
   const reachedKnightVoteLimit =
-    valueInQueue.rank === NewOrderRankType.Knight && valueInQueue.value + 1 >= 5;
+    valueInQueue.rank === NewOrderRankType.Knight &&
+    valueInQueue.value + 1 >= newOrderConfig.limits.knightVoteLimit;
   const reachedTemplarVoteLimit =
-    valueInQueue.rank === NewOrderRankType.Templar && valueInQueue.value + 1 >= 2;
+    valueInQueue.rank === NewOrderRankType.Templar &&
+    valueInQueue.value + 1 >= newOrderConfig.limits.templarVoteLimit;
 
   // Now, process what to do with the image:
   if (reachedKnightVoteLimit) {
@@ -355,16 +363,9 @@ export async function addImageRating({
     const rating = Number(ratings[0].split('-')[1]);
 
     if (rating !== currentNsfwLevel && !processed) {
-      // Check if lower:
-      if (rating < currentNsfwLevel) {
-        // Raise to templars because they lowered the rating.
-        await addImageToQueue({
-          imageIds: imageId,
-          rankType: NewOrderRankType.Templar,
-          priority: 1,
-        });
-      } else if (rating > currentNsfwLevel && Flags.increaseByBits(rating) !== currentNsfwLevel) {
-        // Raise to templars because the diff. is more than 1 level up:
+      // Raise to templars because the diff is more than 1 level down
+      if (rating < currentNsfwLevel && Flags.distance(rating, currentNsfwLevel) > 1) {
+        movedQueue = true;
         await addImageToQueue({
           imageIds: imageId,
           rankType: NewOrderRankType.Templar,

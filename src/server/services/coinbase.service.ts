@@ -1,10 +1,10 @@
 import { env } from 'process';
 import { logToAxiom } from '../logging/client';
 import Decimal from 'decimal.js';
-import { CreateBuzzCharge } from '~/server/schema/coinbase.schema';
+import type { CreateBuzzCharge } from '~/server/schema/coinbase.schema';
 import { COINBASE_FIXED_FEE } from '~/server/common/constants';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
-import { Coinbase } from '~/server/http/coinbase/coinbase.schema';
+import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 import { grantBuzzPurchase } from '~/server/services/buzz.service';
 
 const log = async (data: MixedObject) => {
@@ -12,11 +12,9 @@ const log = async (data: MixedObject) => {
 };
 
 export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number }) => {
-  const successUrl =
-    `${env.NEXTAUTH_URL}/payment/nowpayments?` +
-    new URLSearchParams([['buzzAmount', input.buzzAmount.toString()]]);
-
   const orderId = `${input.userId}-${input.buzzAmount}-${new Date().getTime()}`;
+  const successUrl =
+    `${env.NEXTAUTH_URL}/payment/coinbase?` + new URLSearchParams([['orderId', orderId]]);
 
   const charge = await coinbaseCaller.createCharge({
     name: `Buzz purchase`,
@@ -65,6 +63,15 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
       externalTransactionId: internalOrderId,
       provider: 'coinbase',
       chargeId: eventData.id,
+      type: 'info',
+    });
+
+    await log({
+      message: 'Buzz purchase granted successfully',
+      userId,
+      buzzAmount,
+      transactionId,
+      orderId: internalOrderId,
     });
 
     return {

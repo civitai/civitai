@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
 import { clavata } from '~/server/integrations/clavata';
@@ -53,5 +53,5 @@ export default ModEndpoint(
       });
     }
   },
-  ['POST']
+  ['GET']
 );

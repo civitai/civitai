@@ -1344,6 +1344,10 @@ export const newOrderConfig = {
   cosmetics: {
     badgeIds: { acolyte: 858, knight: 859, templar: 860 },
   },
+  limits: {
+    knightVoteLimit: 5,
+    templarVoteLimit: 2,
+  },
 };
 
 export const buzzBulkBonusMultipliers = [
@@ -1353,8 +1357,8 @@ export const buzzBulkBonusMultipliers = [
   [400000, 1.2],
 ];
 
-export const NOW_PAYMENTS_FIXED_FEE = 100; // !.00 USD
-export const COINBASE_FIXED_FEE = 100; // !.00 USD
+export const NOW_PAYMENTS_FIXED_FEE = 100; // 1.00 USD
+export const COINBASE_FIXED_FEE = 0; // 0.00 USD
 
 export const specialCosmeticRewards = {
   annualRewards: {
