@@ -35,7 +35,7 @@ const prioritySchema = z.nativeEnum(Priority).default('low').catch('low');
 
 export type BaseVideoGenerationSchema = typeof baseVideoGenerationSchema;
 export const baseVideoGenerationSchema = z.object({
-  priority: prioritySchema,
+  priority: prioritySchema.optional(),
   /** temporary property to satisfy type constraints */
   workflow: z.string().optional(),
   process: z.enum(['txt2vid', 'img2vid']).default('txt2vid'),

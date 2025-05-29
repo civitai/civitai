@@ -21,7 +21,10 @@ export const mochiGenerationConfig = VideoGenerationConfig2({
   metadataDisplayProps: ['process'],
   schema,
   processes: ['txt2vid'],
-  transformFn: (data) => ({ ...data, process: 'txt2vid' }),
+  transformFn: (data) => {
+    delete data.priority;
+    return { ...data, process: 'txt2vid' };
+  },
   inputFn: (args): MochiVideoGenInput => {
     return { ...args };
   },
