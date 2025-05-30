@@ -411,19 +411,7 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
           workflowId: workflow.id as string,
           // ensure that job status is set to 'succeeded' if workflow status is set to 'succeedeed'
           step: workflow.status === 'succeeded' ? { ...step, status: workflow.status } : step,
-          resources: [...resources, ...injectable].filter((resource) => {
-            const metadataResources =
-              (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
-            const mr = metadataResources.find((x) => x.id === resource.id);
-
-            if (mr && mr.epochNumber) {
-              // Avoids attaching wrong epoch details to resources. The only source of truth we have for that
-              // is the metadata since it's pretty much impossible to tie air <-> modelVersion.
-              return resource.epochDetails?.epochNumber === mr.epochNumber;
-            }
-
-            return true; // Default behavior.
-          }),
+          resources: [...resources, ...injectable],
         })
       ),
     };
