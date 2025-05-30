@@ -28,7 +28,7 @@ export async function createVideoGenStep(args: VideoGenerationSchema2) {
     $type: 'videoGen' as const,
     priority,
     input: config.inputFn(args as any),
-    metadata: { params: removeEmpty(config.transformFn(rest as any)) },
+    metadata: { params: removeEmpty(config.metadataFn(rest as any)) },
   };
 }
 
