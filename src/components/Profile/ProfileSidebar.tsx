@@ -34,7 +34,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { UserContextMenu } from '~/components/Profile/old/OldProfileLayout';
+import { UserContextMenu } from '~/components/Profile/UserContextMenu';
 import { UserStats } from '~/components/Profile/UserStats';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { Username } from '~/components/User/Username';
