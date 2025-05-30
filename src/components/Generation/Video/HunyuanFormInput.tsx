@@ -17,7 +17,7 @@ export function HunyuanFormInput() {
     <>
       <InputResourceSelectMultipleStandalone
         name="resources"
-        options={{ resources: baseModelResourceTypes.HyV1 }}
+        options={{ resources: baseModelResourceTypes.HyV1, canGenerate: true }}
         buttonLabel="Add additional resource"
       />
       <InputTextArea

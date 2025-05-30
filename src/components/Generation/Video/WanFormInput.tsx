@@ -16,10 +16,7 @@ import {
   wanDuration,
   wanBaseModelMap,
 } from '~/server/orchestrator/wan/wan.schema';
-import {
-  baseModelResourceTypes,
-  getBaseModelResourceTypes,
-} from '~/shared/constants/generation.constants';
+import { getBaseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { useEffect, useMemo } from 'react';
@@ -27,7 +24,7 @@ import { useEffect, useMemo } from 'react';
 export function WanFormInput() {
   const form = useFormContext();
   const process = form.watch('process');
-  const baseModel = form.getValues('baseModel');
+  const baseModel = form.watch('baseModel');
   const isTxt2Img = process === 'txt2vid';
 
   const availableBaseModels = useMemo(
@@ -39,12 +36,11 @@ export function WanFormInput() {
   );
 
   useEffect(() => {
-    const baseModel = form.getValues('baseModel');
     if (!availableBaseModels.find((x) => x.value === baseModel)) {
       const defaultModel = availableBaseModels.find((x) => x.default) ?? availableBaseModels[0];
       if (defaultModel) form.setValue('baseModel', defaultModel.value);
     }
-  }, [availableBaseModels]);
+  }, [availableBaseModels, baseModel]);
 
   const resources = getBaseModelResourceTypes(baseModel) ?? [];
 
@@ -62,7 +58,7 @@ export function WanFormInput() {
       {!!resources?.length && (
         <InputResourceSelectMultipleStandalone
           name="resources"
-          options={{ resources }}
+          options={{ resources, canGenerate: true }}
           buttonLabel="Add additional resource"
         />
       )}
