@@ -4,7 +4,6 @@ import { ModalsProvider } from '@mantine/modals';
 import dynamic from 'next/dynamic';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { openChatShareModal } from '~/components/Chat/ChatShareModal';
-import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard';
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
@@ -14,7 +13,7 @@ import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditMod
 const QuestionsInfoModal = dynamic(() => import('~/components/Questions/QuestionInfoModal'));
 
 const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'));
-const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
+
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
@@ -29,10 +28,6 @@ const ManageClubPostModal = dynamic(() => import('~/components/Modals/ManageClub
 const ChatShareModal = dynamic(() => import('~/components/Chat/ChatShareModal'));
 
 const registry = {
-  'civitai-link-wizard': {
-    Component: CivitaiLinkWizard,
-    fn: openCivitaiLinkModal,
-  },
   associateModels: {
     Component: AssociateModelsModal,
     fn: openAssociateModelsModal,
