@@ -134,7 +134,12 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
       <Group px="md" py="xs">
         <Tooltip label="Filters & sorting" position="bottom" withArrow>
           <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
-            <ThemeIcon size={42} color="gray" radius="xl" p={11} className={classes.filterButton}>
+            <ThemeIcon
+              size={42}
+              className="bg-gray-1 text-black dark:bg-dark-6 dark:text-white"
+              radius="xl"
+              p={11}
+            >
               <IconChevronsLeft />
             </ThemeIcon>
           </UnstyledButton>

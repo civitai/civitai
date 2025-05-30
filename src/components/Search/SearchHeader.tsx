@@ -94,9 +94,7 @@ export const SearchHeader = () => {
           >
             <IconCategory />
           </ThemeIcon>
-          <Text size="sm" inline>
-            Models
-          </Text>
+          Models
         </Group>
       ),
       value: MODELS_SEARCH_INDEX,
@@ -113,9 +111,7 @@ export const SearchHeader = () => {
               >
                 <IconPhoto />
               </ThemeIcon>
-              <Text size="sm" inline>
-                Images
-              </Text>
+              Images
             </Group>
           ),
           value: IMAGES_SEARCH_INDEX,
@@ -132,9 +128,7 @@ export const SearchHeader = () => {
           >
             <IconFileText />
           </ThemeIcon>
-          <Text size="sm" inline>
-            Articles
-          </Text>
+          Articles
         </Group>
       ),
       value: ARTICLES_SEARCH_INDEX,
@@ -150,9 +144,7 @@ export const SearchHeader = () => {
           >
             <IconLayoutCollage />
           </ThemeIcon>
-          <Text size="sm" inline>
-            Collections
-          </Text>
+          Collections
         </Group>
       ),
       value: COLLECTIONS_SEARCH_INDEX,
@@ -169,9 +161,7 @@ export const SearchHeader = () => {
               >
                 <IconMoneybag />
               </ThemeIcon>
-              <Text size="sm" inline>
-                Bounties
-              </Text>
+              Bounties
             </Group>
           ),
           value: BOUNTIES_SEARCH_INDEX,
@@ -188,9 +178,7 @@ export const SearchHeader = () => {
           >
             <IconUsers />
           </ThemeIcon>
-          <Text size="sm" inline>
-            Users
-          </Text>
+          Users
         </Group>
       ),
       value: USERS_SEARCH_INDEX,
@@ -207,9 +195,7 @@ export const SearchHeader = () => {
               >
                 <IconTools />
               </ThemeIcon>
-              <Text size="sm" inline>
-                Tools
-              </Text>
+              Tools
             </Group>
           ),
           value: TOOLS_SEARCH_INDEX,
@@ -250,10 +236,10 @@ export const SearchHeader = () => {
             <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
               <ThemeIcon
                 size={42}
-                color="gray"
+                className="bg-gray-1 text-black dark:bg-dark-6 dark:text-white"
                 radius="xl"
                 p={11}
-                className={searchLayoutClasses.filterButton}
+                // className={searchLayoutClasses.filterButton}
               >
                 <IconFilter />
               </ThemeIcon>
@@ -265,6 +251,7 @@ export const SearchHeader = () => {
             value={index}
             data={data}
             onChange={onChangeIndex}
+            withItemsBorders={false}
           />
         </Group>
       </Box>

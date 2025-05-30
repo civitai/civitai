@@ -9,12 +9,12 @@ export function SectionCard({
   ...cardProps
 }: Props) {
   return (
-    <Card className="bg-gray-0 p-16 md:p-32 dark:bg-dark-6" radius="lg" {...cardProps}>
+    <Card className="bg-gray-0 p-4 md:p-8 dark:bg-dark-6" radius="lg" {...cardProps}>
       <Stack align="center" gap={48}>
         {(title || subtitle) && (
           <Stack gap={4} align={headerAlign}>
             {title && (
-              <Title order={2} size={32} className={`text-${headerAlign}`}>
+              <Title order={2} size={32} ta={headerAlign}>
                 {title}
               </Title>
             )}

@@ -1,8 +1,7 @@
-import type { AutocompleteProps } from '@mantine/core';
+import type { AutocompleteProps, ComboboxData } from '@mantine/core';
 import {
   ActionIcon,
   Code,
-  ComboboxData,
   ComboboxItem,
   Group,
   HoverCard,

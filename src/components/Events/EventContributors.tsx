@@ -38,7 +38,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
   return (
     <Grid gutter={48}>
       <Grid.Col span={{ base: 12, sm: 'auto' }}>
-        <Card radius="lg" h="100%" className="bg-gray-0 p-32 dark:bg-dark-6">
+        <Card radius="lg" h="100%" className="bg-gray-0 p-4 md:p-8 dark:bg-dark-6">
           <Stack gap="xl">
             <Stack gap={0}>
               <Text fz={32} fw="bold">

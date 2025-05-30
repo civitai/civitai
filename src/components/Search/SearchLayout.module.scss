@@ -21,7 +21,7 @@ $SIDEBAR_SIZE: 377px;
   background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-6));
 
   svg {
-    color: light-dark(var(--mantine-color-dark-6), inherit);
+    color: light-dark(inherit, var(--mantine-color-dark-6));
   }
 }
 
@@ -31,8 +31,8 @@ $SIDEBAR_SIZE: 377px;
   width: $SIDEBAR_SIZE; // SIDEBAR_SIZE
 
   transition: margin 200ms ease;
-  border-right: 1px solid light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-1));
-  background: light-dark(var(--mantine-color-dark-7), var(--mantine-color-gray-0));
+  border-right: 1px solid light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7));
   display: flex;
   flex-direction: column;
 
