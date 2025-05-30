@@ -369,6 +369,7 @@ export const REDIS_SYS_KEYS = {
     DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
     FEATURE_STATUS: 'system:feature-status',
     BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
+    LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',

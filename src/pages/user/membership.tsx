@@ -67,7 +67,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    if (!features?.isGreen || !features?.canBuyBuzz) {
+    if (!features?.canBuyBuzz) {
       return {
         redirect: {
           destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/user/membership?sync-account=blue`,

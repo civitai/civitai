@@ -1372,3 +1372,11 @@ export const specialCosmeticRewards = {
     872, // bulk buzz buy - background
   ],
 };
+
+export type LiveFeatureFlags = {
+  buzzGiftCards: boolean;
+};
+
+export const DEFAULT_LIVE_FEATURE_FLAGS = {
+  buzzGiftCards: true,
+};

@@ -46,6 +46,7 @@ import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { joinRedirectReasons } from '~/utils/join-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
+import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 
 export default function Pricing() {
   const router = useRouter();
@@ -55,6 +56,7 @@ export default function Pricing() {
     reason: JoinRedirectReason;
   };
   const features = useFeatureFlags();
+  const liveFeatures = useLiveFeatureFlags();
   const redirectReason = joinRedirectReasons[reason];
   const paymentProvider = usePaymentProvider();
 
@@ -67,9 +69,7 @@ export default function Pricing() {
     interval,
   });
 
-  const refreshingSubscription = usePaddleSubscriptionRefresh();
-
-  const isLoading = productsLoading || subscriptionLoading || refreshingSubscription;
+  const isLoading = productsLoading;
 
   const currentMembershipUnavailable =
     (subscription && !subscription?.product?.active) ||
@@ -174,7 +174,9 @@ export default function Pricing() {
               </AlertWithIcon>
             </Center>
           )}
-          {(features.nowpaymentPayments || features.coinbasePayments) &&
+          {(features.nowpaymentPayments ||
+            features.coinbasePayments ||
+            liveFeatures.buzzGiftCards) &&
             features.disablePayments && (
               <Center>
                 <AlertWithIcon
@@ -186,12 +188,24 @@ export default function Pricing() {
                   maw="calc(50% - 8px)"
                 >
                   <Stack spacing={0}>
-                    <Text lh={1.2}>
-                      You can still purchase Buzz using crypto!{' '}
-                      <Anchor href="/purchase/buzz" color="yellow.7">
-                        Buy now
-                      </Anchor>
-                    </Text>
+                    <Text lh={1.2}>You can still purchase Buzz: </Text>
+                    <Group>
+                      {(features.nowpaymentPayments || features.coinbasePayments) && (
+                        <Anchor href="/purchase/buzz" color="yellow.7">
+                          Buy with Crypto
+                        </Anchor>
+                      )}
+                      {liveFeatures.buzzGiftCards && (
+                        <Anchor
+                          href="https://buybuzz.io/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          color="yellow.7"
+                        >
+                          Buy a Gift Card
+                        </Anchor>
+                      )}
+                    </Group>
                   </Stack>
                 </AlertWithIcon>
               </Center>
@@ -447,7 +461,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, features }) => {
     await ssg?.subscriptions.getPlans.prefetch({});
     await ssg?.subscriptions.getUserSubscription.prefetch();
-    if (!isDev && (!features?.isGreen || !features?.canBuyBuzz))
+    if (!isDev && !features?.canBuyBuzz)
       return {
         redirect: {
           destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?sync-account=blue`,
