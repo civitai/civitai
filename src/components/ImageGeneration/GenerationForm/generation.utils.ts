@@ -321,7 +321,7 @@ export function ResourceSelectHandler(options?: ResourceSelectOptions) {
   function hasMatch(data: GenerationResource) {
     let match = true;
     if (types.length && !types.includes(data.model.type)) match = false;
-    else if (baseModels.length && !types.includes(data.model.type)) match = false;
+    else if (baseModels.length && !baseModels.includes(data.baseModel)) match = false;
     return match;
   }
 
