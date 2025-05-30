@@ -59,7 +59,7 @@ function RenderFilters() {
 
   const filters = [
     browsingSettingsAddons.settings.disablePoi
-      ? `poi != true OR user.id = ${currentUser?.id}`
+      ? `poi != true OR user.username = ${currentUser?.username}`
       : null,
     browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
   ].filter(isDefined);
