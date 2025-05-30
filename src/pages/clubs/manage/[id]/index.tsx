@@ -30,7 +30,6 @@ import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-// import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
