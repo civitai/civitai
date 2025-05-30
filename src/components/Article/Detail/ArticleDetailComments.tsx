@@ -1,5 +1,5 @@
 import { Stack, Group, Text, Loader, Center, Divider, Title, Button, Modal } from '@mantine/core';
-import { Comment, useCommentStyles } from '~/components/CommentsV2';
+import { Comment, useCommentStyles } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
 import { IconAlertCircle, IconMessageCancel } from '@tabler/icons-react';

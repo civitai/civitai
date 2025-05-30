@@ -1,5 +1,5 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import { Comment, useCommentStyles } from '~/components/CommentsV2';
+import { Comment, useCommentStyles } from '~/components/CommentsV2/Comment/Comment';
 import { CommentsProvider, useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
 
 export function CommentReplies({ commentId, userId }: { commentId: number; userId?: number }) {

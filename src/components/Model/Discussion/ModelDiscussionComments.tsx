@@ -1,5 +1,5 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import { Comment } from '~/components/CommentsV2';
+import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import type { CommentV2BadgeProps } from '~/components/CommentsV2/CommentsProvider';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
