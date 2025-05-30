@@ -1428,7 +1428,7 @@ export const resourceDataCache = createCachedArray({
   cacheNotFound: false,
   lookupFn: async (ids) => {
     if (!ids.length) return {};
-    const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`
+    const dbResults = await dbWrite.$queryRaw<GenerationResourceDataModel[]>`
       SELECT
         mv."id",
         mv."name",
