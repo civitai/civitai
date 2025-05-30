@@ -35,8 +35,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
-import { UserContextMenu } from '~/components/Profile/old/OldProfileLayout';
+import { UserContextMenu } from '~/components/Profile/UserContextMenu';
 import { UserStats } from '~/components/Profile/UserStats';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { Username } from '~/components/User/Username';
@@ -48,6 +47,7 @@ import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const mapSize: Record<
@@ -128,9 +128,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     <Button
       leftSection={isMobile ? undefined : <IconPencilMinus size={16} />}
       size={sizeOpts.button}
-      onClick={() => {
-        openUserProfileEditModal({});
-      }}
+      onClick={() => openUserProfileEditModal()}
       style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
       radius="xl"
       fullWidth

@@ -33,7 +33,10 @@ import {
 } from '~/components/Stripe/memberships.util';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
-import { getPlanDetails, PlanCard } from '~/components/Subscriptions/PlanCard';
+import { PlanCard } from '~/components/Subscriptions/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
+import { env } from '~/env/client';
+import { isDev } from '~/env/other';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';

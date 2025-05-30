@@ -50,11 +50,11 @@ import {
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
+import { openCivitaiLinkWizardModal } from '~/components/Dialog/dialog-registry';
 import classes from './CivitaiLinkPopover.module.scss';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
@@ -275,7 +275,7 @@ function InstancesManager() {
 
   const handleAddClick = () => {
     deselectInstance();
-    openContext('civitai-link-wizard', {});
+    openCivitaiLinkWizardModal();
   };
 
   const showControls = status !== 'no-socket-connection';
@@ -359,7 +359,7 @@ function GetStarted() {
         <Button
           leftSection={<IconPlus size={18} />}
           radius={0}
-          onClick={() => openContext('civitai-link-wizard', {})}
+          onClick={() => openCivitaiLinkWizardModal()}
         >
           Get Started
         </Button>

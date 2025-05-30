@@ -12,12 +12,12 @@ import {
   useMantineTheme,
   rgba,
 } from '@mantine/core';
-import { closeAllModals } from '@mantine/modals';
 import { IconLock } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import type { z } from 'zod';
 import { CommentSectionItem } from '~/components/CommentSection/CommentSectionItem';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -116,7 +116,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                         You must be logged in to add a comment
                       </Text>
                       <Link href={`/login?returnUrl=${router.asPath}`}>
-                        <Button onClick={() => closeAllModals()} size="compact-xs">
+                        <Button size="compact-xs" onClick={() => dialogStore.closeLatest()}>
                           Log In
                         </Button>
                       </Link>

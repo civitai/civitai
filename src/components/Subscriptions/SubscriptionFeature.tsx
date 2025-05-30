@@ -4,7 +4,7 @@ import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
-import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';

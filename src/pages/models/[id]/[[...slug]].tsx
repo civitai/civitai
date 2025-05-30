@@ -66,7 +66,9 @@ import { Collection } from '~/components/Collection/Collection';
 import {
   openAddToCollectionModal,
   openMigrateModelToCollectionModal,
+  openBlockModelTagsModal,
   openReportModal,
+  openUnpublishModal,
 } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
@@ -105,7 +107,6 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
@@ -847,7 +848,7 @@ export default function ModelDetailsV2({
                               <Menu.Item
                                 color="yellow"
                                 leftSection={<IconBan size={14} stroke={1.5} />}
-                                onClick={() => openContext('unpublishModel', { modelId: model.id })}
+                                onClick={() => openUnpublishModal({ props: { modelId: model.id } })}
                               >
                                 Unpublish as Violation
                               </Menu.Item>
@@ -941,7 +942,9 @@ export default function ModelDetailsV2({
                             <HideModelButton as="menu-item" modelId={model.id} />
                             <Menu.Item
                               leftSection={<IconTagOff size={14} stroke={1.5} />}
-                              onClick={() => openContext('blockModelTags', { modelId: model.id })}
+                              onClick={() =>
+                                openBlockModelTagsModal({ props: { modelId: model.id } })
+                              }
                             >
                               Hide content with these tags
                             </Menu.Item>

@@ -3,7 +3,6 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import { Meta } from '~/components/Meta/Meta';
 import { Questions } from '~/components/Questions/Questions.Provider';
-import { openContextModal } from '@mantine/modals';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -28,13 +27,13 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 //   },
 // });
 
-const openModal = () =>
-  openContextModal({
-    modal: 'questionsInfo',
-    title: <Title order={2}>Additional Info</Title>,
-    size: 960,
-    innerProps: {},
-  });
+const openModal = () => undefined;
+// openContextModal({
+//   modal: 'questionsInfo',
+//   title: <Title order={2}>Additional Info</Title>,
+//   size: 960,
+//   innerProps: {},
+// });
 
 export default function QuestionsList() {
   const currentUser = useCurrentUser();

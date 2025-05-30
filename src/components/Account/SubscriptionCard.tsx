@@ -2,7 +2,7 @@ import { Button, Card, Stack, Center, Loader, Title, Text, Group, Box } from '@m
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconSettings } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

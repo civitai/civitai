@@ -3,10 +3,7 @@ import {
   ProfileSection,
   ProfileSectionPreview,
 } from '~/components/Profile/ProfileSection';
-import classes from '~/components/Profile/ProfileSection.module.css';
-
-import { useInView } from '~/hooks/useInView';
-import { IconArrowRight, IconPencilMinus, IconTrendingUp } from '@tabler/icons-react';
+import { IconArrowRight, IconPencilMinus } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { ArticleSort } from '~/server/common/enums';
 import { useQueryArticles } from '~/components/Article/article.utils';
@@ -15,6 +12,7 @@ import { Button, Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import classes from '~/components/Profile/ProfileSection.module.css';
 
 const MAX_ARTICLES_DISPLAY = 32;
 export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {

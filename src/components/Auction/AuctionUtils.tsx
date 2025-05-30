@@ -226,7 +226,6 @@ export const BidModelButton = ({
       trainedWords: [],
       canGenerate: true,
       hasAccess: true,
-      covered: true,
     });
 
     router.push(`/auctions/${destAuction.auctionBase.slug}`).catch();

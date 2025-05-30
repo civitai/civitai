@@ -22,9 +22,9 @@ import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
+import { openAssociateModelsModal } from '~/components/Dialog/dialog-registry';
 
 export function AssociatedModels({
   fromId,
@@ -60,7 +60,7 @@ export function AssociatedModels({
   const combinedData = [...data, ...recommendedResources];
 
   const handleManageClick = () => {
-    openContext('associateModels', { fromId, type, versionId });
+    openAssociateModelsModal({ props: { fromId, type, versionId } });
   };
 
   if (!isOwnerOrModerator && !combinedData.length) return null;

@@ -25,7 +25,7 @@ export const sourceImageSchema = z.object({
 });
 
 export const seedSchema = z.number().nullish();
-const prioritySchema = z.nativeEnum(Priority).default('low').catch('low');
+const prioritySchema = z.nativeEnum(Priority).optional().catch('low');
 
 // const baseGenerationSchema = z.object({
 //   priority: prioritySchema,
@@ -43,6 +43,8 @@ export const baseVideoGenerationSchema = z.object({
 
 export type ResourceInput = z.input<typeof resourceSchema>;
 export const resourceSchema = z.object({
+  id: z.number(),
   air: z.string(),
   strength: z.number().default(1),
+  epochNumber: z.number().optional(),
 });

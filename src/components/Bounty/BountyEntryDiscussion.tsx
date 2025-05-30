@@ -1,7 +1,9 @@
-import { Stack, Text, Loader, Center, Divider } from '@mantine/core';
-import { RootThreadProvider, CreateComment, Comment } from '~/components/CommentsV2';
-import classes from '~/components/CommentsV2/Comment/Comment.module.css';
+import { Stack, Group, Text, Loader, Center, Divider, Paper } from '@mantine/core';
+import { Comment } from '~/components/CommentsV2/Comment/Comment';
+import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
+import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
 import { ReturnToRootThread } from '../CommentsV2/ReturnToRootThread';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 
 type Props = {
   bountyEntryId: number;

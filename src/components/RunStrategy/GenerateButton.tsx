@@ -42,7 +42,7 @@ export function GenerateButton({
       ? generationPanel.open({
           type: 'modelVersion',
           id: vId,
-          epochNumbers: epochNumber ? [`${vId}@${epochNumber}`] : undefined,
+          epoch: epochNumber,
         })
       : generationPanel.open();
 

@@ -1,12 +1,10 @@
 import { Menu } from '@mantine/core';
-import { IconClubs, IconHeart } from '@tabler/icons-react';
+import { IconClubs } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { SupportedClubEntities } from '~/server/schema/club.schema';
-import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { AddResourceToClubModal } from './AddResourceToClubModal';
 import { dialogStore } from '../Dialog/dialogStore';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 export function AddToClubMenuItem({ entityType, entityId, resource }: Props) {
   const features = useFeatureFlags();
@@ -28,7 +26,7 @@ export function AddToClubMenuItem({ entityType, entityId, resource }: Props) {
         },
       });
     } else {
-      openManageClubPostModal({ entityType, entityId });
+      // openManageClubPostModal({ entityType, entityId });
     }
   };
 

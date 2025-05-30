@@ -110,26 +110,14 @@ export const draftInjectableResources = [
     }),
   } as InjectableResource,
 ];
-const baseInjectableResources = {
-  civit_nsfw: {
-    id: 106916,
-    triggerWord: 'civit_nsfw',
-    triggerType: 'negative',
-  } as InjectableResource,
-  safe_neg: { id: 250712, triggerWord: 'safe_neg', triggerType: 'negative' } as InjectableResource,
-  safe_pos: { id: 250708, triggerWord: 'safe_pos', triggerType: 'positive' } as InjectableResource,
-};
-export const allInjectableResourceIds = [
-  ...Object.values(baseInjectableResources),
-  ...draftInjectableResources,
-].map((x) => x.id);
+
+export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
 
 export function getInjectablResources(baseModelSetType: BaseModelSetType) {
   const isSdxl = getIsSdxl(baseModelSetType);
   let value = baseModelSetType;
   if (isSdxl) value = 'SDXL';
   return {
-    ...baseInjectableResources,
     draft: draftInjectableResources.find((x) => x.baseModelSetType === value),
   };
 }
