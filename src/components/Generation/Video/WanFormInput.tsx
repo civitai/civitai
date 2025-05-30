@@ -62,7 +62,7 @@ export function WanFormInput() {
       {!!resources?.length && (
         <InputResourceSelectMultipleStandalone
           name="resources"
-          options={{ resources: [...resources, ...baseModelResourceTypes.WanVideo] }}
+          options={{ resources }}
           buttonLabel="Add additional resource"
         />
       )}
