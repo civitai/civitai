@@ -1,36 +1,38 @@
-import { Badge, CloseButton, Stack, Text, Group, Card, Switch } from '@mantine/core';
+import { Badge, CloseButton, Stack, Text, Group, Card, Switch, Modal } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { AssociateModels } from '~/components/AssociatedModels/AssociateModels';
 import { useToggleResourceRecommendationMutation } from '~/components/AssociatedModels/recommender.utils';
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
-const { openModal, Modal } = createContextModal<{
+export default function AssociateModelsModal({
+  fromId,
+  type,
+  versionId,
+}: {
   fromId: number;
   type: AssociationType;
   versionId?: number;
-}>({
-  name: 'associateModels',
-  withCloseButton: false,
-  size: 600,
-  Element: ({ context, props: { fromId, type, versionId } }) => {
-    const features = useFeatureFlags();
-    const { data } = trpc.model.getById.useQuery({ id: fromId });
-    const { toggleResourceRecommendation, isLoading } = useToggleResourceRecommendationMutation();
+}) {
+  const dialog = useDialogContext();
+  const features = useFeatureFlags();
+  const { data } = trpc.model.getById.useQuery({ id: fromId });
+  const { toggleResourceRecommendation, isLoading } = useToggleResourceRecommendationMutation();
 
-    const selectedVersion = data?.modelVersions.find((v) => v.id === versionId);
+  const selectedVersion = data?.modelVersions.find((v) => v.id === versionId);
 
-    const handleToggleAIRecommendations = async () => {
-      if (!versionId || !features.recommenders) return;
-      await toggleResourceRecommendation({ resourceId: versionId }).catch(() => null);
-    };
+  const handleToggleAIRecommendations = async () => {
+    if (!versionId || !features.recommenders) return;
+    await toggleResourceRecommendation({ resourceId: versionId }).catch(() => null);
+  };
 
-    return (
+  return (
+    <Modal {...dialog} withCloseButton={false}>
       <Stack>
         <Group wrap="nowrap" justify="space-between">
           <Text>{`Manage ${type} Resources`}</Text>
-          <CloseButton onClick={context.close} />
+          <CloseButton onClick={dialog.onClose} />
         </Group>
         {features.recommenders && (
           <Card withBorder>
@@ -54,11 +56,8 @@ const { openModal, Modal } = createContextModal<{
             </Group>
           </Card>
         )}
-        <AssociateModels fromId={fromId} type={type} onSave={context.close} />
+        <AssociateModels fromId={fromId} type={type} onSave={dialog.onClose} />
       </Stack>
-    );
-  },
-});
-
-export const openAssociateModelsModal = openModal;
-export default Modal;
+    </Modal>
+  );
+}

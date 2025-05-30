@@ -7,7 +7,6 @@ import {
   verticalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { trpc } from '~/utils/trpc';
 import type { HomeBlockGetAll } from '~/types/router';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -22,6 +21,7 @@ import {
   Loader,
   Stack,
   Text,
+  Modal,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
@@ -29,20 +29,19 @@ import { IconGripVertical, IconInfoCircle, IconPlus, IconTrash } from '@tabler/i
 import { CSS } from '@dnd-kit/utilities';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import classes from './ManageHomeBlocksModal.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-const { openModal: openManageHomeBlocksModal, Modal } = createContextModal({
-  name: 'manageHomeBlocks',
-  title: 'Manage Home Page',
-  size: 'md',
-  Element: ({ context, props }) => {
-    return <ManageHomeBlocks {...props} onClose={context.close} />;
-  },
-});
+export default function ManageHomeBlocksModal() {
+  const dialog = useDialogContext();
 
-export { openManageHomeBlocksModal };
-export default Modal;
+  return (
+    <Modal {...dialog} title="Manage Home Page" size="md">
+      <ManageHomeBlocks onClose={dialog.onClose} />
+    </Modal>
+  );
+}
 
 type Props = { onClose: VoidFunction };
 function ManageHomeBlocks({ onClose }: Props) {

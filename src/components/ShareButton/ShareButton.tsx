@@ -7,13 +7,12 @@ import { SocialIconCollect } from '~/components/ShareButton/Icons/SocialIconColl
 import { SocialIconCopy } from '~/components/ShareButton/Icons/SocialIconCopy';
 import { SocialIconOther } from '~/components/ShareButton/Icons/SocialIconOther';
 import { SocialIconReddit } from '~/components/ShareButton/Icons/SocialIconReddit';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { CollectItemInput } from '~/server/schema/collection.schema';
 import { QS } from '~/utils/qs';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { requireLogin } from '~/components/Login/requireLogin';
-import { openAddToCollectionModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openChatShareModal } from '~/components/Dialog/dialog-registry';
 
 export function ShareButton({
   children,
@@ -89,7 +88,7 @@ export function ShareButton({
     shareLinks.unshift({
       type: 'Send Chat',
       onClick: (e: React.MouseEvent) =>
-        requireLogin({ uiEvent: e, cb: () => openContext('chatShareModal', { message: url }) }),
+        requireLogin({ uiEvent: e, cb: () => openChatShareModal({ props: { message: url } }) }),
       render: <SocialIconChat />,
     });
   }

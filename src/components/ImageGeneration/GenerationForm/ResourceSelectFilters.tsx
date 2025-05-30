@@ -18,7 +18,7 @@ import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react'
 import { uniq } from 'lodash-es';
 import React, { useState } from 'react';
 import { useSortBy } from 'react-instantsearch';
-import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal2';
+import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import type {
   ResourceFilter,
   ResourceSort,

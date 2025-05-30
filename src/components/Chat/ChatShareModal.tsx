@@ -13,6 +13,7 @@ import {
   Text,
   TextInput,
   Tooltip,
+  Modal,
 } from '@mantine/core';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -26,114 +27,112 @@ import {
 import produce from 'immer';
 import React, { useEffect, useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import classes from '~/components/Chat/ChatList.module.css';
-import clsx from 'clsx';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import classes from './ChatList.module.css';
+import { clsx } from 'clsx';
 
-const { openModal: openChatShareModal, Modal } = createContextModal<{ message: string }>({
-  name: 'chatShareModal',
-  title: 'Send Chat',
-  size: 'sm',
-  Element: ({ context, props }) => {
-    const currentUser = useCurrentUser();
-    const { setState } = useChatContext();
-    const queryUtils = trpc.useUtils();
-    const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
-    const [searchInput, setSearchInput] = useState<string>('');
-    const [selectedChat, setSelectedChat] = useState<number | undefined>(undefined);
-    const [isSending, setIsSending] = useState(false);
+export default function ChatShareModal(props: { message: string }) {
+  const dialog = useDialogContext();
 
-    const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
+  const currentUser = useCurrentUser();
+  const { setState } = useChatContext();
+  const queryUtils = trpc.useUtils();
+  const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
+  const [searchInput, setSearchInput] = useState<string>('');
+  const [selectedChat, setSelectedChat] = useState<number | undefined>(undefined);
+  const [isSending, setIsSending] = useState(false);
 
-    useEffect(() => {
-      if (!data) return;
+  const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
 
-      const activeData = data.filter((d) => {
-        const tStatus = d.chatMembers.find((cm) => cm.userId === currentUser?.id)?.status;
-        if (tStatus === ChatMemberStatus.Joined) return d;
-      });
+  useEffect(() => {
+    if (!data) return;
 
-      const activeFiltered =
-        searchInput.length > 0
-          ? activeData.filter((d) => {
-              if (
-                d.chatMembers
-                  .filter((cm) => cm.userId !== currentUser?.id)
-                  .some((cm) => cm.user.username?.toLowerCase().includes(searchInput))
-              )
-                return d;
-            })
-          : activeData;
-
-      activeFiltered.sort((a, b) => {
-        const aDate = a.messages[0]?.createdAt ?? a.createdAt;
-        const bDate = b.messages[0]?.createdAt ?? b.createdAt;
-        return aDate < bDate ? 1 : -1;
-      });
-
-      setFilteredData(activeFiltered);
-    }, [currentUser?.id, data, searchInput]);
-
-    const { mutate } = trpc.chat.createMessage.useMutation({
-      onSuccess(data) {
-        queryUtils.chat.getInfiniteMessages.setInfiniteData(
-          { chatId: data.chatId },
-          produce((old) => {
-            if (!old) return old;
-
-            const lastPage = old.pages[old.pages.length - 1];
-
-            lastPage.items.push(data);
-          })
-        );
-
-        queryUtils.chat.getAllByUser.setData(
-          undefined,
-          produce((old) => {
-            if (!old) return old;
-
-            const thisChat = old.find((o) => o.id === data.chatId);
-            if (!thisChat) return old;
-            thisChat.messages = [
-              {
-                content: data.content,
-                contentType: data.contentType,
-                createdAt: new Date(data.createdAt),
-              },
-            ];
-          })
-        );
-        setState((prev) => ({ ...prev, existingChatId: selectedChat, open: true }));
-        context.close();
-        setIsSending(false);
-      },
-      onError(error) {
-        setIsSending(false);
-        showErrorNotification({
-          title: 'Failed to send message.',
-          error: new Error(error.message),
-          autoClose: false,
-        });
-      },
+    const activeData = data.filter((d) => {
+      const tStatus = d.chatMembers.find((cm) => cm.userId === currentUser?.id)?.status;
+      if (tStatus === ChatMemberStatus.Joined) return d;
     });
 
-    const handleClick = () => {
-      if (!selectedChat) return;
+    const activeFiltered =
+      searchInput.length > 0
+        ? activeData.filter((d) => {
+            if (
+              d.chatMembers
+                .filter((cm) => cm.userId !== currentUser?.id)
+                .some((cm) => cm.user.username?.toLowerCase().includes(searchInput))
+            )
+              return d;
+          })
+        : activeData;
 
-      setIsSending(true);
-      mutate({
-        chatId: selectedChat,
-        content: props.message,
+    activeFiltered.sort((a, b) => {
+      const aDate = a.messages[0]?.createdAt ?? a.createdAt;
+      const bDate = b.messages[0]?.createdAt ?? b.createdAt;
+      return aDate < bDate ? 1 : -1;
+    });
+
+    setFilteredData(activeFiltered);
+  }, [currentUser?.id, data, searchInput]);
+
+  const { mutate } = trpc.chat.createMessage.useMutation({
+    onSuccess(data) {
+      queryUtils.chat.getInfiniteMessages.setInfiniteData(
+        { chatId: data.chatId },
+        produce((old) => {
+          if (!old) return old;
+
+          const lastPage = old.pages[old.pages.length - 1];
+
+          lastPage.items.push(data);
+        })
+      );
+
+      queryUtils.chat.getAllByUser.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+
+          const thisChat = old.find((o) => o.id === data.chatId);
+          if (!thisChat) return old;
+          thisChat.messages = [
+            {
+              content: data.content,
+              contentType: data.contentType,
+              createdAt: new Date(data.createdAt),
+            },
+          ];
+        })
+      );
+      setState((prev) => ({ ...prev, existingChatId: selectedChat, open: true }));
+      dialog.onClose();
+      setIsSending(false);
+    },
+    onError(error) {
+      setIsSending(false);
+      showErrorNotification({
+        title: 'Failed to send message.',
+        error: new Error(error.message),
+        autoClose: false,
       });
-    };
+    },
+  });
 
-    return (
+  const handleClick = () => {
+    if (!selectedChat) return;
+
+    setIsSending(true);
+    mutate({
+      chatId: selectedChat,
+      content: props.message,
+    });
+  };
+
+  return (
+    <Modal {...dialog} title="Send Chat" size="sm">
       <Stack gap={0} h="100%">
         <Box p="sm" pt={0}>
           <TextInput
@@ -142,14 +141,14 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
             value={searchInput}
             onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
             rightSection={
-              <LegacyActionIcon
+              <ActionIcon
                 onClick={() => {
                   setSearchInput('');
                 }}
                 disabled={!searchInput.length}
               >
                 <IconX size={16} />
-              </LegacyActionIcon>
+              </ActionIcon>
             }
           />
         </Box>
@@ -258,9 +257,6 @@ const { openModal: openChatShareModal, Modal } = createContextModal<{ message: s
           Send
         </Button>
       </Stack>
-    );
-  },
-});
-
-export { openChatShareModal };
-export default Modal;
+    </Modal>
+  );
+}

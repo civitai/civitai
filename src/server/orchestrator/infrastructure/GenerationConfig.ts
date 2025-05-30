@@ -52,9 +52,13 @@ export function VideoGenerationConfig2<
     return whatIfFn(parsed);
   }
 
-  function inputFn(data: SchemaOutput): TOutput {
+  function metadataFn(data: SchemaOutput) {
     const softValidated = schema.parse(data) as SchemaOutput;
-    const transformed = transformFn?.(softValidated) ?? softValidated;
+    return transformFn?.(softValidated) ?? softValidated;
+  }
+
+  function inputFn(data: SchemaOutput): TOutput {
+    const transformed = metadataFn(data);
     const result = args.inputFn(transformed as any);
     const seed =
       !('seed' in result) || !result.seed ? Math.floor(Math.random() * maxRandomSeed) : result.seed;
@@ -69,6 +73,7 @@ export function VideoGenerationConfig2<
     validate,
     softValidate,
     getWhatIfValues,
+    metadataFn,
     inputFn,
     transformFn,
   };

@@ -5,7 +5,7 @@ import { useRouter } from 'next/router';
 import React, { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
-import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import {
   getAllAvailableProfileSections,
   ProfileSectionComponent,

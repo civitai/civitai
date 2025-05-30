@@ -54,7 +54,6 @@ import { saveAs } from 'file-saver';
 import { capitalize, isEqual, uniq } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import pLimit from 'p-limit';
-import type { ReactNode } from 'react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -73,6 +72,8 @@ import {
   TrainingImagesSwitchLabel,
   TrainingImagesTags,
   TrainingImagesTagViewer,
+  blankTagStr,
+  labelDescriptions,
 } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import type { BaseModel } from '~/server/common/constants';
@@ -130,8 +131,6 @@ const AutoLabelModal = dynamic(() =>
 
 const MAX_FILES_ALLOWED = 1000;
 
-export const blankTagStr = '@@none@@';
-
 const limit = pLimit(10);
 
 // TODO [bw] is this enough? do we want jfif?
@@ -150,32 +149,6 @@ const minWidth = 256;
 const minHeight = 256;
 const maxWidth = 2048;
 const maxHeight = 2048;
-
-export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
-  tag: (
-    <Stack gap={0}>
-      <Text>Short, comma-separated descriptions.</Text>
-      <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
-      <Text mt="sm">
-        Preferred for <Badge color="violet">SD1</Badge> and <Badge color="grape">SDXL</Badge>{' '}
-        models.
-      </Text>
-    </Stack>
-  ),
-  caption: (
-    <Stack gap={0}>
-      <Text>Natural language, long-form sentences.</Text>
-      <Text fs="italic">
-        Ex: &quot;There is a dolphin in the ocean. It is jumping out against a gorgeous backdrop of
-        a setting sun.&quot;
-      </Text>
-      <Text mt="sm">
-        Preferred for <Badge color="red">Flux</Badge>, <Badge color="pink">SD3</Badge>, and{' '}
-        <Badge color="teal">Video</Badge> models.
-      </Text>
-    </Stack>
-  ),
-};
 
 const LabelSelectModal = ({
   modelId,

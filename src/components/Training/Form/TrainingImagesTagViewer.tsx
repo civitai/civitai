@@ -1,7 +1,6 @@
 import type { SegmentedControlProps } from '@mantine/core';
 import {
   Accordion,
-  ActionIcon,
   Badge,
   Button,
   Chip,
@@ -30,7 +29,6 @@ import React, { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
 import { TrainingEditTagsModal } from '~/components/Training/Form/TrainingEditTagsModal';
-import { blankTagStr, labelDescriptions } from '~/components/Training/Form/TrainingImages';
 import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { ImageDataType, LabelTypes } from '~/store/training.store';
@@ -44,6 +42,34 @@ import {
 import { titleCase } from '~/utils/string-helpers';
 import styles from './TrainingImagesTagViewer.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+
+export const blankTagStr = '@@none@@';
+
+export const labelDescriptions: { [p in LabelTypes]: React.ReactNode } = {
+  tag: (
+    <Stack gap={0}>
+      <Text>Short, comma-separated descriptions.</Text>
+      <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
+      <Text mt="sm">
+        Preferred for <Badge color="violet">SD1</Badge> and <Badge color="grape">SDXL</Badge>{' '}
+        models.
+      </Text>
+    </Stack>
+  ),
+  caption: (
+    <Stack gap={0}>
+      <Text>Natural language, long-form sentences.</Text>
+      <Text fs="italic">
+        Ex: &quot;There is a dolphin in the ocean. It is jumping out against a gorgeous backdrop of
+        a setting sun.&quot;
+      </Text>
+      <Text mt="sm">
+        Preferred for <Badge color="red">Flux</Badge>, <Badge color="pink">SD3</Badge>, and{' '}
+        <Badge color="teal">Video</Badge> models.
+      </Text>
+    </Stack>
+  ),
+};
 
 export const TrainingImagesLabelTypeSelect = ({
   modelId,

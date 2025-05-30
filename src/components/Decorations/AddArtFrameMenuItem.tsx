@@ -1,9 +1,8 @@
 import { Menu } from '@mantine/core';
 import { IconDeviceTabletStar } from '@tabler/icons-react';
 import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openCardDecorationModal } from '~/components/Dialog/dialog-registry';
 import type { Props as CardDecorationModalProps } from '~/components/Modals/CardDecorationModal';
-import { CardDecorationModal } from '~/components/Modals/CardDecorationModal';
 
 export function AddArtFrameMenuItem(props: CardDecorationModalProps) {
   const currentCosmetic = props.currentCosmetic;
@@ -18,7 +17,7 @@ export function AddArtFrameMenuItem(props: CardDecorationModalProps) {
         claimKey: currentCosmetic.claimKey,
       }).catch(() => null); // error is handled in the custom hook
     } else {
-      dialogStore.trigger({ component: CardDecorationModal, props });
+      openCardDecorationModal({ props });
     }
   };
 

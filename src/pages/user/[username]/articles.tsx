@@ -17,7 +17,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
-import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { Page } from '~/components/AppLayout/Page';
 import { dbRead } from '~/server/db/client';
 

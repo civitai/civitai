@@ -10,9 +10,10 @@ import {
   UnstyledButton,
   Divider,
   ThemeIcon,
+  Center,
+  Loader,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
-import { useCommentsContext, useRootThreadContext } from '../CommentsProvider';
 import { CreateComment } from './CreateComment';
 import { CommentForm } from './CommentForm';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -24,7 +25,6 @@ import {
   IconArrowBackUp,
   IconEye,
   IconEyeOff,
-  IconArrowsMaximize,
   IconPinned,
   IconPinnedOff,
 } from '@tabler/icons-react';
@@ -39,13 +39,17 @@ import { DeleteComment } from './DeleteComment';
 import { CommentProvider, useCommentV2Context } from './CommentProvider';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
 import { useMutateComment } from '../commentv2.utils';
-import { CommentReplies } from '../CommentReplies';
 import { constants } from '../../../server/common/constants';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
-import type { Comment } from '~/server/services/commentsv2.service';
+import { type Comment } from '~/server/services/commentsv2.service';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import {
+  useRootThreadContext,
+  useCommentsContext,
+  CommentsProvider,
+} from '~/components/CommentsV2/CommentsProvider';
 import classes from './Comment.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -311,5 +315,50 @@ export function CommentContent({
         <UnstyledButton onClick={onToggleReplies} className={classes.repliesIndicator} />
       )}
     </Group>
+  );
+}
+
+function CommentReplies({ commentId, userId }: { commentId: number; userId?: number }) {
+  const { level, badges } = useCommentsContext();
+
+  return (
+    <Stack mt="md" className={classes.replyInset}>
+      <CommentsProvider
+        entityType="comment"
+        entityId={commentId}
+        badges={badges}
+        level={(level ?? 0) + 1}
+      >
+        {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
+          isLoading ? (
+            <Center>
+              <Loader variant="bars" />
+            </Center>
+          ) : (
+            <Stack>
+              {data?.map((comment) => (
+                <Comment key={comment.id} comment={comment} />
+              ))}
+              {!!remaining && !showMore && (
+                <Divider
+                  label={
+                    <Group gap="xs" align="center">
+                      <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                        Show {remaining} More
+                      </Text>
+                    </Group>
+                  }
+                  labelPosition="center"
+                  variant="dashed"
+                />
+              )}
+              {created.map((comment) => (
+                <Comment key={comment.id} comment={comment} />
+              ))}
+            </Stack>
+          )
+        }
+      </CommentsProvider>
+    </Stack>
   );
 }

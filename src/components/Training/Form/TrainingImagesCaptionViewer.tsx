@@ -12,7 +12,6 @@ import {
 import { IconFilter, IconPhoto, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { HighlightWithinTextarea } from 'react-highlight-within-textarea';
-import { blankTagStr } from '~/components/Training/Form/TrainingImages';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { ImageDataType } from '~/store/training.store';
 import {
@@ -24,6 +23,7 @@ import {
 } from '~/store/training.store';
 import { useDebouncer } from '~/utils/debouncer';
 import 'draft-js/dist/Draft.css';
+import { blankTagStr } from '~/components/Training/Form/TrainingImagesTagViewer';
 import styles from './TrainingImagesCaptionViewer.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

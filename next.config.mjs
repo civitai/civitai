@@ -33,7 +33,7 @@ export default defineNextConfig(
       version: packageJson.version,
     },
     webpack: (config, options) => {
-      if(!options.isServer && includeCircularDependencyPlugin) {
+      if(isDev && !options.isServer) {
         config.plugins.push(
           new CircularDependencyPlugin({
             exclude: /node_modules|\.d\.ts/, // Ignore types and external modules

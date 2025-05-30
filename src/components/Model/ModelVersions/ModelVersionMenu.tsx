@@ -12,7 +12,6 @@ import {
   IconShieldHalf,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
@@ -22,6 +21,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { openUnpublishModal } from '~/components/Dialog/dialog-registry';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -158,9 +158,11 @@ export function ModelVersionMenu({
             color="yellow"
             leftSection={<IconBan size={14} stroke={1.5} />}
             onClick={() =>
-              openContext('unpublishModel', {
-                modelId: modelId,
-                versionId: modelVersionId,
+              openUnpublishModal({
+                props: {
+                  modelId: modelId,
+                  versionId: modelVersionId,
+                },
               })
             }
           >

@@ -1,6 +1,6 @@
 import { ActionIcon, Menu } from '@mantine/core';
 import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons-react';
-import { useCommentsContext } from '~/components/CommentsV2';
+import { useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
 import { useCommentV2Context } from '~/components/CommentsV2/Comment/CommentProvider';
 import { DeleteComment } from '~/components/CommentsV2/Comment/DeleteComment';
 import { openReportModal } from '~/components/Dialog/dialog-registry';

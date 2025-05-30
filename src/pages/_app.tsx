@@ -52,7 +52,6 @@ import { civitaiTokenCookieName } from '~/libs/auth';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
-import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
@@ -71,6 +70,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';

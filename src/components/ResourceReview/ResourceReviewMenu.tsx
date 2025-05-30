@@ -11,7 +11,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 
-import { ToggleLockComments } from '~/components/CommentsV2';
+import { ToggleLockComments } from '~/components/CommentsV2/ToggleLockComments';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

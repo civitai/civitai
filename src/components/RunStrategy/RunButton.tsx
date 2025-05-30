@@ -1,13 +1,13 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Tooltip } from '@mantine/core';
 import { IconPlayerPlay } from '@tabler/icons-react';
-import { openContext } from '~/providers/CustomModalsProvider';
+import { openRunStrategyModal } from '~/components/Dialog/dialog-registry';
 
 export function RunButton({ modelVersionId, ...props }: { modelVersionId: number } & ButtonProps) {
   return (
     <Tooltip label="Run Model" withArrow position="top">
       <Button
-        onClick={() => openContext('runStrategy', { modelVersionId })}
+        onClick={() => openRunStrategyModal({ props: { modelVersionId } })}
         color="green"
         {...props}
         style={{

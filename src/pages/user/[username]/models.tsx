@@ -11,7 +11,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
-import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { UserDraftModels } from '~/components/User/UserDraftModels';
 import UserTrainingModels from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
