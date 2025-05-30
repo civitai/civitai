@@ -31,6 +31,9 @@ const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddT
 const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
 export const openBlockModelTagsModal = createDialogTrigger(BlockModelTagsModal);
 
+const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'));
+export const openUnpublishModal = createDialogTrigger(UnpublishModal);
+
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
 // TODO.Justin - allow image owners to request image rating change
 export const openSetBrowsingLevelModal = (props: { imageId: number; nsfwLevel: number }) =>

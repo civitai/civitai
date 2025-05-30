@@ -10,7 +10,6 @@ import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsMod
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
-import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 
 const QuestionsInfoModal = dynamic(() => import('~/components/Questions/QuestionInfoModal'));
@@ -21,7 +20,7 @@ const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/Civitai
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
-const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'));
+
 const ManageHomeBlocksModal = dynamic(
   () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
 );
@@ -32,10 +31,6 @@ const ManageClubPostModal = dynamic(() => import('~/components/Modals/ManageClub
 const ChatShareModal = dynamic(() => import('~/components/Chat/ChatShareModal'));
 
 const registry = {
-  unpublishModel: {
-    Component: UnpublishModal,
-    fn: openUnpublishModal,
-  },
   runStrategy: {
     Component: RunStrategyModal,
     fn: openRunStrategyModal,

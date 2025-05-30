@@ -69,6 +69,7 @@ import {
   openMigrateModelToCollectionModal,
   openBlockModelTagsModal,
   openReportModal,
+  openUnpublishModal,
 } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
@@ -847,7 +848,7 @@ export default function ModelDetailsV2({
                               <Menu.Item
                                 color="yellow"
                                 icon={<IconBan size={14} stroke={1.5} />}
-                                onClick={() => openContext('unpublishModel', { modelId: model.id })}
+                                onClick={() => openUnpublishModal({ props: { modelId: model.id } })}
                               >
                                 Unpublish as Violation
                               </Menu.Item>
