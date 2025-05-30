@@ -12,12 +12,12 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { Currency } from '~/shared/utils/prisma/enums';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { IconFiles } from '@tabler/icons-react';
-import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { openBountyEntryFilesModal } from '~/components/Dialog/dialog-registry';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -122,7 +122,9 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                         e.preventDefault();
                         e.stopPropagation();
                         openBountyEntryFilesModal({
-                          bountyEntry: data,
+                          props: {
+                            bountyEntry: data,
+                          },
                         });
                       }}
                       keepIconOnHover

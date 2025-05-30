@@ -18,7 +18,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
 import { useBuzzButtonStyles } from '~/components/Buzz/styles';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
@@ -114,32 +113,32 @@ const BuzzPurchasePaymentButton = ({
       priceId,
     };
 
-    openStripeTransactionModal(
-      {
-        unitAmount,
-        message: (
-          <Stack>
-            <Text>
-              You are about to purchase{' '}
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
-            </Text>
-            <Text>Please fill in your data and complete your purchase.</Text>
-          </Stack>
-        ),
-        successMessage,
-        onSuccess: async (stripePaymentIntentId) => {
-          // We do it here just in case, but the webhook should also do it
-          await completeStripeBuzzPurchaseMutation({
-            amount: buzzAmount,
-            details: metadata,
-            stripePaymentIntentId,
-          });
-        },
-        metadata: metadata,
-        // paymentMethodTypes: ['card'],
-      },
-      { fullScreen: isMobile }
-    );
+    // openStripeTransactionModal(
+    //   {
+    //     unitAmount,
+    //     message: (
+    //       <Stack>
+    //         <Text>
+    //           You are about to purchase{' '}
+    //           <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
+    //         </Text>
+    //         <Text>Please fill in your data and complete your purchase.</Text>
+    //       </Stack>
+    //     ),
+    //     successMessage,
+    //     onSuccess: async (stripePaymentIntentId) => {
+    //       // We do it here just in case, but the webhook should also do it
+    //       await completeStripeBuzzPurchaseMutation({
+    //         amount: buzzAmount,
+    //         details: metadata,
+    //         stripePaymentIntentId,
+    //       });
+    //     },
+    //     metadata: metadata,
+    //     // paymentMethodTypes: ['card'],
+    //   },
+    //   { fullScreen: isMobile }
+    // );
   };
 
   const handlePaddleSubmit = async () => {

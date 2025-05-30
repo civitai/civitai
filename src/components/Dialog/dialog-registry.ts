@@ -43,6 +43,20 @@ export const openCivitaiLinkWizardModal = createDialogTrigger(CivitaiLinkWizardM
 const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'));
 export const openAssociateModelsModal = createDialogTrigger(AssociateModelsModal);
 
+const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'));
+export const openBountyEntryFilesModal = createDialogTrigger(BountyEntryFilesModal);
+
+const ChatShareModal = dynamic(() => import('~/components/Chat/ChatShareModal'));
+export const openChatShareModal = createDialogTrigger(ChatShareModal);
+
+const UserProfileEditModal = dynamic(() => import('~/components/Modals/UserProfileEditModal'));
+export const openUserProfileEditModal = createDialogTrigger(UserProfileEditModal);
+
+const CivitaiLinkSuccessModal = dynamic(
+  () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
+);
+export const openCivitaiLinkSuccessModal = createDialogTrigger(CivitaiLinkSuccessModal);
+
 const ManageHomeBlocksModal = dynamic(
   () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
 );

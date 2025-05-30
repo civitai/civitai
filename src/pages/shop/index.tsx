@@ -24,7 +24,6 @@ import {
   useShopLastViewed,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
 import type { CosmeticShopSectionMeta, GetShopInput } from '~/server/schema/cosmetic-shop.schema';
-import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
@@ -37,6 +36,7 @@ import { formatPriceForDisplay } from '~/utils/number-helpers';
 import merchProducts from '~/utils/shop/civitai-merch-products.json';
 import projectOdysseyProducts from '~/utils/shop/project-odyssey-products.json';
 import clsx from 'clsx';
+import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
 
 const merchSections = {
   civitai: {
@@ -107,7 +107,7 @@ export default function CosmeticShopMain() {
                 <Button
                   leftIcon={<IconPencilMinus size={16} />}
                   onClick={() => {
-                    openUserProfileEditModal({});
+                    openUserProfileEditModal();
                   }}
                   sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
                   radius="xl"

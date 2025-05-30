@@ -13,7 +13,6 @@ import {
   Flex,
   Modal,
 } from '@mantine/core';
-import { openContextModal } from '@mantine/modals';
 import {
   IconCheck,
   IconChevronRight,
@@ -28,6 +27,7 @@ import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { CivitaiLinkDownloadButton } from './CivitaiLinkDownloadButton';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { openCivitaiLinkSuccessModal } from '~/components/Dialog/dialog-registry';
 
 export default function CivitaiLinkWizardModal() {
   const dialog = useDialogContext();
@@ -50,13 +50,7 @@ export default function CivitaiLinkWizardModal() {
 
   useEffect(() => {
     if (connected) {
-      openContextModal({
-        modal: 'civitai-link-success',
-        withCloseButton: false,
-        closeOnClickOutside: false,
-        closeOnEscape: false,
-        innerProps: {},
-      });
+      openCivitaiLinkSuccessModal();
     }
   }, [connected]);
 

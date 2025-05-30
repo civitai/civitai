@@ -4,8 +4,6 @@ import {
   Card,
   Grid,
   Group,
-  Input,
-  Paper,
   Stack,
   Title,
   Text,
@@ -16,12 +14,12 @@ import { IconPencilMinus, IconInfoSquareRounded } from '@tabler/icons-react';
 import { z } from 'zod';
 
 import { useSession } from 'next-auth/react';
-import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';
 import { profilePictureSchema, usernameInputSchema } from '~/server/schema/user.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
 
 const schema = z.object({
   id: z.number(),
@@ -71,7 +69,7 @@ export function ProfileCard() {
             <Button
               leftIcon={<IconPencilMinus size={16} />}
               onClick={() => {
-                openUserProfileEditModal({});
+                openUserProfileEditModal();
               }}
               sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
               radius="xl"

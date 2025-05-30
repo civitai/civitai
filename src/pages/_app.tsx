@@ -53,7 +53,6 @@ import { civitaiTokenCookieName } from '~/libs/auth';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
-import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
@@ -179,14 +178,10 @@ function MyApp(props: CustomAppProps) {
                                                       <BaseLayout>
                                                         {isProd && <TrackPageView />}
                                                         <ChatContextProvider>
-                                                          <CustomModalsProvider>
-                                                            {getLayout(
-                                                              <Component {...pageProps} />
-                                                            )}
-                                                            {/* <StripeSetupSuccessProvider /> */}
-                                                            <DialogProvider />
-                                                            <RoutedDialogProvider />
-                                                          </CustomModalsProvider>
+                                                          {getLayout(<Component {...pageProps} />)}
+                                                          {/* <StripeSetupSuccessProvider /> */}
+                                                          <DialogProvider />
+                                                          <RoutedDialogProvider />
                                                         </ChatContextProvider>
                                                       </BaseLayout>
                                                     </AuctionContextProvider>
