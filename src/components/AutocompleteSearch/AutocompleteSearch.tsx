@@ -202,11 +202,15 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   );
 
   const isModels = targetIndex === 'models';
+  const isImages = targetIndex === 'images';
   const supportsPoi = ['models', 'images'].includes(targetIndex);
   const supportsMinor = ['models', 'images'].includes(targetIndex);
   const filters = [
-    supportsPoi && browsingSettingsAddons.settings.disablePoi
+    isModels && supportsPoi && browsingSettingsAddons.settings.disablePoi
       ? `poi != true OR user.id = ${currentUser?.id}`
+      : null,
+    isImages && supportsPoi && browsingSettingsAddons.settings.disablePoi
+      ? `poi != true OR user.username = ${currentUser?.username}`
       : null,
     supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
     isModels && !currentUser?.isModerator

@@ -451,7 +451,7 @@ export const REDIS_KEYS = {
     CATEGORIES: 'system:categories',
   },
   CACHES: {
-    FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',
+    FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     USER_COSMETICS: 'packed:caches:user-cosmetics',

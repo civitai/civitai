@@ -22,7 +22,6 @@ import { ClubManagementNavigation } from '~/components/Club/ClubManagementNaviga
 import { InputText } from '~/libs/form';
 import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-// import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import UserProfileEntry from '~/pages/user/[username]';
 import { useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

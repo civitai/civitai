@@ -176,8 +176,8 @@ export function AssociateModels({
                   {associatedResources.map((association) => (
                     <SortableItem key={association.item.id} id={association.item.id}>
                       <Card withBorder pl={4} pr={6} pt={4} pb={6}>
-                        <Group position="apart">
-                          <Group align="center" spacing="xs">
+                        <Group position="apart" noWrap>
+                          <Group align="center" spacing="xs" noWrap>
                             <IconGripVertical />
                             <Stack spacing={4}>
                               <Text size="md" lineClamp={2}>

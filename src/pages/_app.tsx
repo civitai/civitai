@@ -72,6 +72,7 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -178,10 +179,14 @@ function MyApp(props: CustomAppProps) {
                                                       <BaseLayout>
                                                         {isProd && <TrackPageView />}
                                                         <ChatContextProvider>
-                                                          {getLayout(<Component {...pageProps} />)}
-                                                          {/* <StripeSetupSuccessProvider /> */}
-                                                          <DialogProvider />
-                                                          <RoutedDialogProvider />
+                                                          <CustomModalsProvider>
+                                                            {getLayout(
+                                                              <Component {...pageProps} />
+                                                            )}
+                                                            {/* <StripeSetupSuccessProvider /> */}
+                                                            <DialogProvider />
+                                                            <RoutedDialogProvider />
+                                                          </CustomModalsProvider>
                                                         </ChatContextProvider>
                                                       </BaseLayout>
                                                     </AuctionContextProvider>

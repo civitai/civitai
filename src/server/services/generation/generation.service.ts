@@ -24,10 +24,8 @@ import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage
 import { modelsSearchIndex } from '~/server/search-index';
 import { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { hasEntityAccess } from '~/server/services/common.service';
-import {
-  ModelFileCached,
-  getFilesForModelVersionCache,
-} from '~/server/services/model-file.service';
+import type { ModelFileCached } from '~/server/services/model-file.service';
+import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/services/model-version.service';
 import { resourceDataCache } from '~/server/services/model-version.service';
 import { getFeaturedModels } from '~/server/services/model.service';
@@ -698,7 +696,12 @@ export async function getResourceData(
     const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
     if (trainingFile) {
       const epoch = args.find((x) => x.id === resource.id)?.epoch;
-      return getTrainingFileEpochNumberDetails(trainingFile, epoch);
+      const details = getTrainingFileEpochNumberDetails(trainingFile, epoch);
+      if (details?.isExpired) {
+        delete resource.epochNumber;
+        return null;
+      }
+      return details;
     }
   }
 

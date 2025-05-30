@@ -29,12 +29,19 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import React, {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
-import { uniqBy } from 'lodash-es';
+import { filter, uniqBy } from 'lodash-es';
 import { DatePicker } from '@mantine/dates';
 import dayjs from 'dayjs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -263,13 +270,16 @@ export const BrowsingLevelFilter = ({
   ...props
 }: { attributeName: string; filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
   const browsingLevel = useBrowsingLevelDebounced();
-  const browsingLevelArray = Flags.instanceToArray(browsingLevel);
-  const browsingLevelFilter = attributeName
-    ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
-    : null;
-  const filters = (_filters ? [..._filters, browsingLevelFilter] : [browsingLevelFilter]).filter(
-    isDefined
-  );
+
+  const filters = useMemo(() => {
+    const browsingLevelArray = Flags.instanceToArray(browsingLevel);
+    const browsingLevelFilter = attributeName
+      ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
+      : null;
+    const filterList = Array.isArray(_filters) ? _filters : [_filters];
+
+    return [...filterList, browsingLevelFilter].filter(isDefined);
+  }, [browsingLevel, attributeName, _filters]);
 
   return <ApplyCustomFilter filters={filters} {...props} />;
 };
@@ -439,15 +449,16 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
 export const ApplyCustomFilter = ({
   filters: _filters,
   ...props
-}: { filters: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
-  const filters = Array.isArray(_filters) ? _filters : [_filters];
-  const { refine } = useConfigure({
-    ...props,
-    filters: filters.map((f) => `(${f})`).join(' AND '),
-  });
+}: { filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
+  const filters = useMemo(() => {
+    const filterList = Array.isArray(_filters) ? _filters : [_filters];
+    return filterList.map((f) => `(${f})`).join(' AND ');
+  }, [_filters]);
+
+  const { refine } = useConfigure({ ...props, filters });
 
   useEffect(() => {
-    refine(filters.map((f) => `(${f})`).join(' AND '));
+    refine({ filters });
   }, [filters]);
 
   return null;
