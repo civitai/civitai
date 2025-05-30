@@ -1,16 +1,5 @@
 import type { ButtonProps, ThemeIconVariant } from '@mantine/core';
-import {
-  Box,
-  Button,
-  Card,
-  Center,
-  createStyles,
-  Group,
-  Select,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Box, Button, Card, Center, Group, Select, Stack, Text, Title } from '@mantine/core';
 import {
   IconBolt,
   IconCategory,
@@ -69,7 +58,7 @@ export const getPlanDetails: (
         iconVariant: 'light' as ThemeIconVariant,
         content: (
           <Text>
-            <Text span color={(metadata?.monthlyBuzz ?? 0) === 0 ? undefined : 'yellow.7'}>
+            <Text span c={(metadata?.monthlyBuzz ?? 0) === 0 ? undefined : 'yellow.7'}>
               {numberWithCommas(metadata?.monthlyBuzz ?? 0)} Buzz per month
             </Text>
           </Text>
@@ -83,7 +72,7 @@ export const getPlanDetails: (
             iconVariant: 'light' as ThemeIconVariant,
             content: (
               <Text>
-                <Text span color={(metadata?.monthlyBuzz ?? 0) === 0 ? undefined : 'green.7'}>
+                <Text span c={(metadata?.monthlyBuzz ?? 0) === 0 ? undefined : 'green.7'}>
                   +
                   {numberWithCommas(Math.floor((metadata?.monthlyBuzz ?? 0) * HOLIDAY_PROMO_VALUE))}{' '}
                   Blue Buzz for December
@@ -105,7 +94,7 @@ export const getPlanDetails: (
                 </Text>
               ) : (
                 <Text>
-                  <Text span color="yellow.7">
+                  <Text span c="yellow.7">
                     {(((metadata?.purchasesMultiplier ?? 1) - 1) * 100).toFixed(0)}% Bonus Buzz on
                     purchases
                   </Text>
@@ -206,7 +195,7 @@ export const getPlanDetails: (
           metadata.badgeType === 'animated' ? (
             <Text lh={1}>
               Unique{' '}
-              <Text lh={1} weight={700} component="span">
+              <Text lh={1} fw={700} span>
                 Animated
               </Text>{' '}
               Supporter Badge each month

@@ -33,6 +33,8 @@ import type { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import classes from './ChatList.module.css';
+import { clsx } from 'clsx';
 
 export default function ChatShareModal(props: { message: string }) {
   const dialog = useDialogContext();
@@ -139,14 +141,14 @@ export default function ChatShareModal(props: { message: string }) {
             value={searchInput}
             onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
             rightSection={
-              <LegacyActionIcon
+              <ActionIcon
                 onClick={() => {
                   setSearchInput('');
                 }}
                 disabled={!searchInput.length}
               >
                 <IconX size={16} />
-              </LegacyActionIcon>
+              </ActionIcon>
             }
           />
         </Box>

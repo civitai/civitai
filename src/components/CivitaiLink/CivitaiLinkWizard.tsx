@@ -77,7 +77,7 @@ export default function CivitaiLinkWizardModal() {
 
   return (
     <Modal {...dialog} title="Civitai Link Setup">
-      <Stepper active={active} onStepClick={setActive} breakpoint="sm" allowNextStepsSelect={false}>
+      <Stepper active={active} onStepClick={setActive} allowNextStepsSelect={false}>
         <Stepper.Step label="About Civitai Link" description="Learn what it does">
           <Stack mt="sm">
             <Stack gap={4}>

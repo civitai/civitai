@@ -318,40 +318,8 @@ export function CommentContent({
   );
 }
 
-export const useCommentStyles = createStyles((theme) => ({
-  highlightedComment: {
-    background: theme.fn.rgba(theme.colors.blue[5], 0.2),
-    margin: `-${theme.spacing.xs}px`,
-    padding: `${theme.spacing.xs}px`,
-    borderRadius: theme.radius.sm,
-  },
-  groupWrap: {
-    position: 'relative',
-  },
-  repliesIndicator: {
-    position: 'absolute',
-    top: 26 + 8,
-    width: 2,
-    height: 'calc(100% - 26px - 8px)',
-    background: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.31)',
-    // Size of the image / 2, minus the size of the border / 2
-    left: 26 / 2 - 2 / 2,
-    '&:hover': {
-      background: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)',
-    },
-  },
-  replyInset: {
-    // Size of the image / 2, minus the size of the border / 2
-    marginLeft: -12,
-  },
-  rootCommentReplyInset: {
-    paddingLeft: 46,
-  },
-}));
-
 function CommentReplies({ commentId, userId }: { commentId: number; userId?: number }) {
   const { level, badges } = useCommentsContext();
-  const { classes } = useCommentStyles();
 
   return (
     <Stack mt="md" className={classes.replyInset}>
@@ -374,7 +342,7 @@ function CommentReplies({ commentId, userId }: { commentId: number; userId?: num
               {!!remaining && !showMore && (
                 <Divider
                   label={
-                    <Group spacing="xs" align="center">
+                    <Group gap="xs" align="center">
                       <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                         Show {remaining} More
                       </Text>

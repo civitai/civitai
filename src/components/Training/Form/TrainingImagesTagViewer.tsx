@@ -1,7 +1,6 @@
 import type { SegmentedControlProps } from '@mantine/core';
 import {
   Accordion,
-  ActionIcon,
   Badge,
   Button,
   Chip,
@@ -48,7 +47,7 @@ export const blankTagStr = '@@none@@';
 
 export const labelDescriptions: { [p in LabelTypes]: React.ReactNode } = {
   tag: (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       <Text>Short, comma-separated descriptions.</Text>
       <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
       <Text mt="sm">
