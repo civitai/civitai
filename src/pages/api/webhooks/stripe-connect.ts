@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { env } from '~/env/server';
 import type Stripe from 'stripe';
-// import { buffer } from 'micro';
 import type { Readable } from 'node:stream';
 import { updateByStripeConnectAccount } from '../../../server/services/user-payment-configuration.service';
 
