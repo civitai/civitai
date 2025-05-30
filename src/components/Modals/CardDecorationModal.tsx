@@ -63,7 +63,12 @@ const schema = z.object({
   cosmetic: cosmeticInputSchema.nullish(),
 });
 
-export function CardDecorationModal({ entityType, entityId, image, currentCosmetic }: Props) {
+export default function CardDecorationModal({
+  entityType,
+  entityId,
+  image,
+  currentCosmetic,
+}: Props) {
   const dialog = useDialogContext();
   const form = useForm({ schema, defaultValues: { cosmetic: currentCosmetic } });
   const { classes } = useStyles();

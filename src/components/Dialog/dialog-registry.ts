@@ -62,6 +62,12 @@ const ManageHomeBlocksModal = dynamic(
 );
 export const openManageHomeBlocksModal = createDialogTrigger(ManageHomeBlocksModal);
 
+const CardDecorationModal = dynamic(() => import('~/components/Modals/CardDecorationModal'));
+export const openCardDecorationModal = createDialogTrigger(CardDecorationModal);
+
+const LoginModal = dynamic(() => import('~/components/Login/LoginModal'));
+export const openLoginModal = createDialogTrigger(LoginModal);
+
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
 // TODO.Justin - allow image owners to request image rating change
 export const openSetBrowsingLevelModal = (props: { imageId: number; nsfwLevel: number }) =>

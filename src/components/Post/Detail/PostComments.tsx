@@ -1,10 +1,7 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import {
-  RootThreadProvider,
-  CreateComment,
-  Comment,
-  useCommentStyles,
-} from '~/components/CommentsV2';
+import { Comment, useCommentStyles } from '~/components/CommentsV2';
+import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
+import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
 
 type PostCommentsProps = {

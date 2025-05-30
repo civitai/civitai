@@ -1,10 +1,7 @@
 import { Box, createStyles, Group, Text, Center, Loader } from '@mantine/core';
-import {
-  CommentsProvider,
-  CreateComment,
-  Comment,
-  RootThreadProvider,
-} from '~/components/CommentsV2';
+import { Comment } from '~/components/CommentsV2';
+import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
+import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 
 type Props = CommentConnectorInput & {

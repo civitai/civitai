@@ -13,7 +13,6 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
-import { useCommentsContext, useRootThreadContext } from '../CommentsProvider';
 import { CreateComment } from './CreateComment';
 import { CommentForm } from './CommentForm';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -25,7 +24,6 @@ import {
   IconArrowBackUp,
   IconEye,
   IconEyeOff,
-  IconArrowsMaximize,
   IconPinned,
   IconPinnedOff,
 } from '@tabler/icons-react';
@@ -47,6 +45,7 @@ import { openReportModal } from '~/components/Dialog/dialog-registry';
 import type { Comment } from '~/server/services/commentsv2.service';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useRootThreadContext, useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
 
 type Store = {
   id?: number;
