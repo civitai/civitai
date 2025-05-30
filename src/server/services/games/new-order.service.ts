@@ -330,7 +330,9 @@ export async function addImageRating({
   // Now, process what to do with the image:
   if (reachedKnightVoteLimit) {
     // Image is now rated by enough players, we can process it.
-    const ratings = await getImageRatingsCounter(imageId).getAll();
+    const _ratings = await getImageRatingsCounter(imageId).getAll();
+    // Ensure we only consider ratings that are not zero:
+    const ratings = _ratings.filter((r) => Number(r.split('-')[1]) !== 0);
     let processed = false;
 
     if (ratings.length === 0) {
@@ -397,7 +399,9 @@ export async function addImageRating({
   // Process Templar rating:
   if (reachedTemplarVoteLimit) {
     // Image is now rated by enough players, we can process it.
-    const ratings = await getImageRatingsCounter(imageId).getAll();
+    const _ratings = await getImageRatingsCounter(imageId).getAll();
+    // Ensure we only consider ratings that are not zero:
+    const ratings = _ratings.filter((r) => Number(r.split('-')[1]) !== 0);
     let processed = false;
 
     if (ratings.length === 0) {
