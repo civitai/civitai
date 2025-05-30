@@ -1,4 +1,3 @@
-import type { MantineNumberSize } from '@mantine/core';
 import { Checkbox, Input, Stack } from '@mantine/core';
 import { Flags } from '~/shared/utils';
 import {
@@ -24,7 +23,7 @@ export function FlagInput({ flag, value = 0, spacing, label, mapLabel, onChange 
   const options = flagOptions[flag];
 
   return (
-    <Stack spacing={spacing}>
+    <Stack gap={spacing}>
       {typeof label === 'string' ? <Input.Label>{label}</Input.Label> : label}
       {options.map((option) => {
         const checked = Flags.hasFlag(value, option.value);
@@ -50,5 +49,5 @@ type Props = {
   mapLabel?: (data: { value: number; label: string }) => React.ReactNode;
   onChange?: (value: number) => void;
   value?: number;
-  spacing?: MantineNumberSize;
+  spacing?: MantineSpacing;
 };

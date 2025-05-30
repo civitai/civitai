@@ -20,6 +20,7 @@ import { useInView } from '~/hooks/useInView';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { EdgeVideoBase } from '~/components/EdgeMedia/EdgeVideoBase';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 function ReviewTrainingData() {
   const router = useRouter();
@@ -111,18 +112,18 @@ function ReviewTrainingData() {
   ) : (
     <>
       <div className="container flex max-w-lg justify-end gap-3 p-3">
-        <ActionIcon
+        <LegacyActionIcon
           component={NextLink}
           href={`/models/${data?.modelId}?modelVersionId=${versionId}`}
           target="_blank"
         >
           <IconExternalLink />
-        </ActionIcon>
+        </LegacyActionIcon>
         <Popover width={300} withArrow withinPortal shadow="sm">
           <Popover.Target>
-            <ActionIcon>
+            <LegacyActionIcon>
               <IconInfoSquareRounded />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Popover.Target>
           <Popover.Dropdown>
             <DescriptionTable items={details} />

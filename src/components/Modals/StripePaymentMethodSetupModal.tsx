@@ -10,7 +10,7 @@ export const StripePaymentMethodSetupModal = ({ message, title, ...props }: Prop
     <Modal {...dialog} size="lg" withCloseButton={false}>
       <Stack>
         {title ?? (
-          <Text size="lg" weight={700}>
+          <Text size="lg" fw={700}>
             Add new payment method
           </Text>
         )}

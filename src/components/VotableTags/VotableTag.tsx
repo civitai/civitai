@@ -11,6 +11,9 @@ import {
   Divider,
   Menu,
   UnstyledButton,
+  useComputedColorScheme,
+  lighten,
+  alpha,
 } from '@mantine/core';
 import { useCallback, useRef } from 'react';
 import type { TagType } from '~/shared/utils/prisma/enums';
@@ -36,6 +39,7 @@ import { IconDotsVertical } from '@tabler/icons-react';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type VotableTagProps = VotableTagConnectorInput & {
   tagId: number;
@@ -102,24 +106,23 @@ export function VotableTag({
   const moderatorVariant = highlightContested && needsReview;
 
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark', { getInitialValueInEffect: false });
   const isNsfw = !getIsSafeBrowsingLevel(nsfwLevel);
-  const { color, shade } = votableTagColors[nsfwLevel][theme.colorScheme];
+  const { color, shade } = votableTagColors[nsfwLevel][colorScheme];
   const voteColor = isNsfw ? theme.colors[color][shade] : theme.colors.blue[5];
-  const badgeColor = theme.fn.variant({
+  const badgeColor = theme.variantColorResolver({
     color: moderatorVariant ? 'grape' : color,
-    variant: theme.colorScheme === 'dark' ? (isNsfw ? 'light' : 'filled') : 'light',
+    variant: colorScheme === 'dark' ? (isNsfw ? 'light' : 'filled') : 'light',
+    theme,
   });
-  const badgeBorder = theme.fn.lighten(
+  const badgeBorder = lighten(
     needsReview || !concrete
       ? theme.colors.yellow[8]
       : badgeColor.background ?? theme.colors.gray[4],
     0.05
   );
-  const badgeBg = theme.fn.rgba(badgeColor.background ?? theme.colors.gray[4], 0.3);
-  const progressBg = theme.fn.rgba(
-    badgeColor.background ?? theme.colors.gray[4],
-    isNsfw ? 0.4 : 0.8
-  );
+  const badgeBg = alpha(badgeColor.background ?? theme.colors.gray[4], 0.3);
+  const progressBg = alpha(badgeColor.background ?? theme.colors.gray[4], isNsfw ? 0.4 : 0.8);
   const opacity = 0.2 + (Math.max(Math.min(score, 10), 0) / 10) * 0.8;
 
   if (upvoteDate) lastUpvote = upvoteDate;
@@ -171,7 +174,7 @@ export function VotableTag({
     <Badge
       radius="sm"
       key={tagId}
-      sx={{
+      style={{
         position: 'relative',
         background: badgeBg,
         borderColor: badgeBorder,
@@ -192,7 +195,7 @@ export function VotableTag({
       pl={canVote ? 3 : 4}
       pr={!!currentUser ? 0 : undefined}
     >
-      <Group spacing={0} noWrap>
+      <Group gap={0} wrap="nowrap">
         {canVote && (
           <LoginPopover>
             <UnstyledButton onClick={handleUpvote} className="z-10">
@@ -201,7 +204,7 @@ export function VotableTag({
                 fill={
                   vote === 1
                     ? voteColor
-                    : theme.colorScheme === 'dark'
+                    : colorScheme === 'dark'
                     ? 'rgba(255, 255, 255, 0.3)'
                     : 'rgba(0, 0, 0, 0.3)'
                 }
@@ -218,7 +221,7 @@ export function VotableTag({
                 fill={
                   vote === -1
                     ? voteColor
-                    : theme.colorScheme === 'dark'
+                    : colorScheme === 'dark'
                     ? 'rgba(255, 255, 255, 0.3)'
                     : 'rgba(0, 0, 0, 0.3)'
                 }
@@ -228,24 +231,18 @@ export function VotableTag({
           </LoginPopover>
         )}
         {!canVote && (
-          <ActionIcon variant="transparent" size="sm" onClick={handleRemove}>
+          <LegacyActionIcon variant="transparent" size="sm" onClick={handleRemove}>
             <IconX strokeWidth={2.5} size=".75rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         )}
         {needsReview && (
-          <IconFlag
-            size={12}
-            strokeWidth={4}
-            color={theme.colorScheme === 'dark' ? theme.colors.orange[9] : theme.colors.yellow[4]}
-            style={{ marginRight: 2 }}
-          />
+          <IconFlag size={12} strokeWidth={4} className="mr-0.5 text-yellow-4 dark:text-orange-9" />
         )}
         {!concrete && (
           <IconHourglassEmpty
             size={12}
             strokeWidth={4}
-            color={theme.colorScheme === 'dark' ? theme.colors.orange[9] : theme.colors.yellow[4]}
-            style={{ marginRight: 2 }}
+            className="mr-0.5 text-yellow-4 dark:text-orange-9"
           />
         )}
         <Text
@@ -260,9 +257,9 @@ export function VotableTag({
         {!!currentUser && (
           <Menu withinPortal withArrow>
             <Menu.Target>
-              <ActionIcon size="sm">
+              <LegacyActionIcon size="sm">
                 <IconDotsVertical strokeWidth={2.5} size=".75rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
               <TagContexDropdown tagId={tagId} name={name} />
@@ -278,27 +275,27 @@ export function VotableTag({
       <HoverCard withArrow width={300} shadow="md" openDelay={500}>
         <HoverCard.Target>{badge}</HoverCard.Target>
         <HoverCard.Dropdown>
-          <Text color="yellow" weight={500}>
+          <Text c="yellow" fw={500}>
             Up for consideration
           </Text>
           <Text size="sm">
             {`Someone has started a vote for this tag. It must reach a score of ${constants.tagVoting.upvoteThreshold} before it will be applied to this image.`}
           </Text>
           <Text size="sm">
-            <Text weight={500} component="span">
+            <Text fw={500} component="span">
               Current Score
             </Text>
             : {score}
           </Text>
           <Divider
             label={
-              <Group spacing={4}>
+              <Group gap={4}>
                 <IconClock size={12} /> Voting Period Remaining
               </Group>
             }
             mt="sm"
           />
-          <Text weight={500} size="sm" color="dimmed">
+          <Text fw={500} size="sm" c="dimmed">
             <Countdown endTime={votingEnds} />
           </Text>
         </HoverCard.Dropdown>

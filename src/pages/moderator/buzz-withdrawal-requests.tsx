@@ -22,7 +22,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { DatePicker } from '@mantine/dates';
+import { DatePickerInput } from '@mantine/dates';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconCashBanknote,
@@ -45,6 +45,7 @@ import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SortFilter } from '~/components/Filters';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BuzzWithdrawalRequestSort } from '~/server/common/enums';
@@ -108,8 +109,8 @@ const UpdateBuzzWithdrawalRequest = ({
 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="md">
-      <Group position="apart" mb="md">
-        <Text size="lg" weight="bold">
+      <Group justify="space-between" mb="md">
+        <Text size="lg" fw="bold">
           Confirm the status change
         </Text>
       </Group>
@@ -117,16 +118,16 @@ const UpdateBuzzWithdrawalRequest = ({
       <Stack>
         <Text>
           You are about to set{' '}
-          <Text component="span" weight="bold">
+          <Text component="span" fw="bold">
             ({requestIds.length})
           </Text>{' '}
           withdrawal request to{' '}
-          <Text component="span" weight="bold" color={WithdrawalRequestBadgeColor[status]}>
+          <Text component="span" fw="bold" color={WithdrawalRequestBadgeColor[status]}>
             {getDisplayName(status)}
           </Text>
           .
         </Text>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Textarea
             name="note"
             label="Add a note (optional)"
@@ -192,28 +193,28 @@ export default function ModeratorBuzzWithdrawalRequests() {
         key="approve-btn"
         {...tooltipProps}
       >
-        <ActionIcon
+        <LegacyActionIcon
           onClick={() => {
             handleUpdateRequest(requestIds, BuzzWithdrawalRequestStatus.Approved);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Approved]}
         >
           <IconCheck />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Tooltip>
     );
   };
   const rejectBtn = (requestIds: string[]) => {
     return (
       <Tooltip label="Reject withdrawal request." key="reject-btn" {...tooltipProps}>
-        <ActionIcon
+        <LegacyActionIcon
           onClick={() => {
             handleUpdateRequest(requestIds, BuzzWithdrawalRequestStatus.Rejected);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Rejected]}
         >
           <IconX />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Tooltip>
     );
   };
@@ -221,7 +222,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
   const revertBtn = (requestId: string) =>
     features.buzzWithdrawalTransfer ? (
       <Tooltip label="Revert stripe transfer. Use with care" key="revert-btn" {...tooltipProps}>
-        <ActionIcon
+        <LegacyActionIcon
           onClick={() => {
             handleUpdateRequest([requestId], BuzzWithdrawalRequestStatus.Reverted);
           }}
@@ -229,7 +230,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
           key="revert-btn"
         >
           <IconCashBanknoteOff />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Tooltip>
     ) : null;
 
@@ -241,14 +242,14 @@ export default function ModeratorBuzzWithdrawalRequests() {
         key="transfer-btn"
         {...tooltipProps}
       >
-        <ActionIcon
+        <LegacyActionIcon
           onClick={() => {
             handleUpdateRequest([requestId], BuzzWithdrawalRequestStatus.Transferred);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Transferred]}
         >
           <IconCashBanknote />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Tooltip>
     ) : null;
   };
@@ -256,22 +257,22 @@ export default function ModeratorBuzzWithdrawalRequests() {
   const externallyResolvedBtn = (requestId: string) =>
     features.buzzWithdrawalTransfer ? (
       <Tooltip label="Resolved externally" key="externally-resolved-btn" {...tooltipProps}>
-        <ActionIcon
+        <LegacyActionIcon
           onClick={() => {
             handleUpdateRequest([requestId], BuzzWithdrawalRequestStatus.ExternallyResolved);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.ExternallyResolved]}
         >
           <IconExternalLink size={22} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Tooltip>
     ) : null;
 
   return (
     <Container size="lg">
-      <Stack spacing={0} mb="xl">
+      <Stack gap={0} mb="xl">
         <Title order={1}>User Buzz Withdrawal Requests</Title>
-        <Text size="sm" color="dimmed">
+        <Text size="sm" c="dimmed">
           Review and approve or decline user withdrawal requests. You can also view a
           request&rsquo;s details and history as well as the user&rsquo;s account details.
         </Text>
@@ -281,7 +282,6 @@ export default function ModeratorBuzzWithdrawalRequests() {
           <SortFilter
             type="buzzWithdrawalRequests"
             value={filters.sort}
-            compact={false}
             disabled={selectionEnabled}
             onChange={(x) => setFilters({ ...filters, sort: x as BuzzWithdrawalRequestSort })}
           />
@@ -326,27 +326,27 @@ export default function ModeratorBuzzWithdrawalRequests() {
             </Group>
           )}
         </Group>
-        <Group position="apart">
+        <Group justify="space-between">
           <Group>
-            <DatePicker
+            <DatePickerInput
               label="From"
               placeholder="Start date"
               value={filters.from ?? undefined}
               onChange={(date) => {
                 setFilters({ ...filters, from: date ?? undefined });
               }}
-              clearButtonLabel="Clear"
               disabled={selectionEnabled}
+              clearable
             />
-            <DatePicker
+            <DatePickerInput
               label="To"
               placeholder="End date"
               value={filters.to ?? undefined}
               onChange={(date) => {
                 setFilters({ ...filters, to: date ?? undefined });
               }}
-              clearButtonLabel="Clear"
               disabled={selectionEnabled}
+              clearable
             />
             <TextInput
               label="Filter by username"
@@ -434,7 +434,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                 return (
                   <tr key={request.id}>
                     <td>
-                      <Stack spacing={0}>
+                      <Stack gap={0}>
                         <UserAvatar size="sm" user={request.user} withUsername linkToProfile />
                         {request.requestedToProvider ===
                           UserPaymentConfigurationProvider.Tipalti && (
@@ -443,7 +443,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                             rel="noopener noreferrer"
                             target="_blank"
                           >
-                            <Group spacing={2} noWrap>
+                            <Group gap={2} wrap="nowrap">
                               <IconExternalLink size={16} /> <Text size="sm">Tipalti Account</Text>
                             </Group>
                           </Anchor>
@@ -462,7 +462,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                             ? WithdrawalRequestBadgeColor[request.status]
                             : undefined
                         }
-                        weight={showColorTransferedAmount ? 'bold' : undefined}
+                        fw={showColorTransferedAmount ? 'bold' : undefined}
                       >
                         $
                         {formatCurrencyForDisplay(
@@ -472,7 +472,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                       </Text>
                     </td>
                     <td>
-                      <Group spacing="xs" noWrap>
+                      <Group gap="xs" wrap="nowrap">
                         <Text>{request.requestedToProvider}</Text>
                         {request.requestedToProvider ===
                           UserPaymentConfigurationProvider.Tipalti && (
@@ -483,9 +483,9 @@ export default function ModeratorBuzzWithdrawalRequests() {
                             withinPortal
                             label="Once approved, Tipalti items must be resolved in the Tipalti dashboard. Resolving them there will update the status here automatically."
                           >
-                            <ActionIcon color="blue">
+                            <LegacyActionIcon color="blue">
                               <IconInfoTriangleFilled size={16} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </Tooltip>
                         )}
                       </Group>
@@ -499,7 +499,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                       {selectionEnabled ? (
                         <Checkbox
                           checked={isSelected}
-                          onChange={(event) => {
+                          onChange={() => {
                             setSelection((curr) => ({
                               ...curr,
                               values: !isSelected
@@ -511,7 +511,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                           radius="lg"
                         />
                       ) : (
-                        <Group noWrap>
+                        <Group wrap="nowrap">
                           {buttons}
                           <BuzzWithdrawalRequestHistory history={request.history} />
                         </Group>
@@ -522,10 +522,10 @@ export default function ModeratorBuzzWithdrawalRequests() {
               })}
             </tbody>
             {pagination && pagination.totalPages > 1 && (
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                 <Pagination
-                  page={filters.page}
+                  value={filters.page}
                   onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                   total={pagination.totalPages}
                 />

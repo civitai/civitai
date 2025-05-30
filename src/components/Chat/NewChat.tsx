@@ -10,6 +10,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function NewChat() {
   const { state, setState } = useChatContext();
@@ -119,7 +120,7 @@ export function NewChat() {
             color="yellow"
             variant="light"
             onClick={handleAck}
-            leftIcon={<IconCheck />}
+            leftSection={<IconCheck />}
             mt={10}
             fullWidth
             disabled={acking}
@@ -132,8 +133,8 @@ export function NewChat() {
   }
 
   return (
-    <Stack spacing={0} h="100%">
-      <Group p="sm" position="apart">
+    <Stack gap={0} h="100%">
+      <Group p="sm" justify="space-between">
         <Text>New Chat</Text>
         <ChatActions />
       </Group>
@@ -164,7 +165,7 @@ export function NewChat() {
             .slice(4)}
         />
       </Box>
-      <Box p="sm" sx={{ flexGrow: 1 }}>
+      <Box p="sm" style={{ flexGrow: 1 }}>
         {state.selectedUsers.length === 0 ? (
           <Center mt="md">
             <Text>Select at least 1 user above</Text>
@@ -174,7 +175,7 @@ export function NewChat() {
             {state.selectedUsers.map((u) => (
               <Group key={u.id}>
                 <UserAvatar user={u} size="md" withUsername />
-                <ActionIcon
+                <LegacyActionIcon
                   title="Remove user"
                   onClick={() =>
                     setState((prev) => ({
@@ -184,14 +185,14 @@ export function NewChat() {
                   }
                 >
                   <IconX />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Group>
             ))}
           </Group>
         )}
       </Box>
       <Divider />
-      <Group p="sm" position="center">
+      <Group p="sm" justify="center">
         <Button
           disabled={isCreating}
           variant="light"

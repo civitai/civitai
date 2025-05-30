@@ -11,7 +11,6 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  createStyles,
 } from '@mantine/core';
 import { CollectionType, ModelStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -59,6 +58,9 @@ import {
   openReportModal,
 } from '~/components/Dialog/dialog-registry';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import classes from './ModelCategoryCard.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -69,7 +71,6 @@ export function ModelCategoryCard({
   data: AssociatedResourceModelCardData;
   height: number;
 }) {
-  const { classes, cx } = useStyles();
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
@@ -99,24 +100,24 @@ export function ModelCategoryCard({
   const { setMenuItems } = useModelCardContextMenu();
 
   const modelText = (
-    <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
+    <Text fz={14} fw={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
       {name}
     </Text>
   );
 
   const modelBadges = (
     <>
-      <Badge className={cx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
+      <Badge className={clsx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
         {getDisplayName(data.type)}
       </Badge>
       {data.status !== ModelStatus.Published && (
-        <Badge className={cx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">
+        <Badge className={clsx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">
           {data.status}
         </Badge>
       )}
       {data.status === ModelStatus.Published && inEarlyAccess && (
         <Badge
-          className={cx(classes.floatingBadge, classes.earlyAccessBadge)}
+          className={clsx(classes.floatingBadge, classes.earlyAccessBadge)}
           radius="sm"
           size="sm"
         >
@@ -128,7 +129,7 @@ export function ModelCategoryCard({
 
   const modelDownloads = (
     <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
-      <Text size={12}>{abbreviateNumber(rank.downloadCount)}</Text>
+      <Text fz={12}>{abbreviateNumber(rank.downloadCount)}</Text>
     </IconBadge>
   );
 
@@ -136,7 +137,7 @@ export function ModelCategoryCard({
     <IconBadge
       className={classes.statBadge}
       icon={
-        <Text color={hasReview ? 'success.5' : undefined} inline>
+        <Text c={hasReview ? 'success.5' : undefined} inline>
           <ThumbsUpIcon size={14} filled={hasReview} />
         </Text>
       }
@@ -157,7 +158,7 @@ export function ModelCategoryCard({
     component: (
       <LoginRedirect reason="report-model" key="report">
         <Menu.Item
-          icon={<IconFlag size={14} stroke={1.5} />}
+          leftSection={<IconFlag size={14} stroke={1.5} />}
           onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             e.preventDefault();
             e.stopPropagation();
@@ -176,7 +177,7 @@ export function ModelCategoryCard({
         component: (
           <LoginRedirect reason="report-content" key="report-image">
             <Menu.Item
-              icon={<IconFlag size={14} stroke={1.5} />}
+              leftSection={<IconFlag size={14} stroke={1.5} />}
               onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -195,7 +196,7 @@ export function ModelCategoryCard({
     component: (
       <Menu.Item
         key="block-tags"
-        icon={<IconTagOff size={14} stroke={1.5} />}
+        leftSection={<IconTagOff size={14} stroke={1.5} />}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
@@ -275,13 +276,13 @@ export function ModelCategoryCard({
     <MasonryCard shadow="sm" {...props} className={classes.card}>
       <Indicator
         disabled={!isNew && !isUpdated}
-        withBorder
         size={24}
         radius="sm"
         label={isUpdated ? 'Updated' : 'New'}
         color="red"
         styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
-        sx={{ opacity: isHidden ? 0.1 : undefined }}
+        style={{ opacity: isHidden ? 0.1 : undefined }}
+        withBorder
       >
         <Link
           href={`/models/${id}/${slugit(name)}`}
@@ -299,14 +300,14 @@ export function ModelCategoryCard({
                   {contextMenuItems.length > 0 && (
                     <Menu position="left-start" withArrow offset={-5}>
                       <Menu.Target>
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="transparent"
                           p={0}
                           onClick={(e: React.MouseEvent) => {
                             e.preventDefault();
                             e.stopPropagation();
                           }}
-                          sx={{
+                          style={{
                             width: 30,
                             position: 'absolute',
                             top: 10,
@@ -319,7 +320,7 @@ export function ModelCategoryCard({
                             color="#fff"
                             style={{ filter: `drop-shadow(0 0 2px #000)` }}
                           />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>
                         {contextMenuItems.map((el) => (
@@ -328,11 +329,11 @@ export function ModelCategoryCard({
                       </Menu.Dropdown>
                     </Menu>
                   )}
-                  <Group spacing={4} className={classes.cardBadges}>
+                  <Group gap={4} className={classes.cardBadges}>
                     <ImageGuard2.BlurToggle />
                     {modelBadges}
                   </Group>
-                  <AspectRatio ratio={1} sx={{ width: '100%', overflow: 'hidden' }}>
+                  <AspectRatio ratio={1} style={{ width: '100%', overflow: 'hidden' }}>
                     <div className={classes.blur}>
                       <MediaHash {...image} />
                     </div>
@@ -353,15 +354,15 @@ export function ModelCategoryCard({
             </ImageGuard2>
           )}
 
-          <Stack className={classes.info} spacing={8}>
+          <Stack className={classes.info} gap={8}>
             <Group
               mx="xs"
-              position="apart"
-              sx={{
+              justify="space-between"
+              style={{
                 zIndex: 10,
               }}
             >
-              <Group spacing={8}>
+              <Group gap={8}>
                 <CivitaiLinkManageButton
                   modelId={id}
                   modelName={name}
@@ -369,12 +370,14 @@ export function ModelCategoryCard({
                   hashes={data.hashes}
                   tooltipProps={{
                     position: 'right',
-                    transition: 'slide-right',
+                    transitionProps: {
+                      transition: 'slide-right',
+                    },
                     variant: 'smallRounded',
                   }}
                 >
                   {({ color, onClick, ref, icon }) => (
-                    <ActionIcon
+                    <LegacyActionIcon
                       component="button"
                       className={classes.hoverable}
                       ref={ref}
@@ -385,7 +388,7 @@ export function ModelCategoryCard({
                       onClick={onClick}
                     >
                       {icon}
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   )}
                 </CivitaiLinkManageButton>
                 {features.imageGeneration && data.canGenerate && (
@@ -396,11 +399,11 @@ export function ModelCategoryCard({
                       </ThemeIcon>
                     </HoverCard.Target>
                     <HoverCard.Dropdown>
-                      <Stack spacing={4}>
-                        <Text size="sm" weight="bold">
+                      <Stack gap={4}>
+                        <Text size="sm" fw="bold">
                           Available for generation
                         </Text>
-                        <Text size="sm" color="dimmed">
+                        <Text size="sm" c="dimmed">
                           This resource has versions available for image generation
                         </Text>
                       </Stack>
@@ -411,16 +414,16 @@ export function ModelCategoryCard({
               {data.user.image && (
                 <CivitaiTooltip
                   position="left"
-                  transition="slide-left"
+                  transitionProps={{ transition: 'slide-left' }}
                   variant="smallRounded"
                   label={
-                    <Text size="xs" weight={500}>
+                    <Text size="xs" fw={500}>
                       {data.user.username}
                     </Text>
                   }
                 >
                   <Box
-                    sx={{ borderRadius: '50%' }}
+                    style={{ borderRadius: '50%' }}
                     onClick={(e: React.MouseEvent<HTMLDivElement>) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -438,12 +441,12 @@ export function ModelCategoryCard({
               )}
             </Group>
 
-            <Stack className={classes.content} spacing={6} p="xs">
-              <Group position="left" spacing={4}>
+            <Stack className={classes.content} gap={6} p="xs">
+              <Group justify="start" gap={4}>
                 {modelText}
               </Group>
-              <Group position="apart" spacing={4}>
-                <Group spacing={4} align="center">
+              <Group justify="space-between" gap={4}>
+                <Group gap={4} align="center">
                   {modelLikes}
                   {modelComments}
                   {modelDownloads}
@@ -456,117 +459,3 @@ export function ModelCategoryCard({
     </MasonryCard>
   );
 }
-
-const useStyles = createStyles((theme) => {
-  return {
-    card: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-    },
-
-    blur: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-    },
-    image: {
-      width: '100%',
-      objectPosition: 'top',
-    },
-    link: {
-      display: 'block',
-    },
-
-    content: {
-      background: theme.fn.gradient({
-        from: 'rgba(37,38,43,0.8)',
-        to: 'rgba(37,38,43,0)',
-        deg: 0,
-      }),
-      // backdropFilter: 'blur(13px) saturate(160%)',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    },
-
-    info: {
-      position: 'absolute',
-      bottom: 0,
-      right: 0,
-      left: 0,
-      zIndex: 10,
-    },
-
-    cardBadges: {
-      position: 'absolute',
-      top: theme.spacing.xs,
-      left: theme.spacing.xs,
-      zIndex: 10,
-    },
-
-    typeBadge: {
-      background: 'rgb(30 133 230 / 40%)',
-    },
-
-    floatingBadge: {
-      color: 'white',
-      // backdropFilter: 'blur(7px)',
-      boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-    },
-
-    statusBadge: {
-      background: theme.fn.rgba(theme.colors.yellow[theme.fn.primaryShade()], 0.4),
-    },
-
-    earlyAccessBadge: {
-      background: theme.fn.rgba(theme.colors.green[theme.fn.primaryShade()], 0.4),
-    },
-
-    floatingAvatar: {
-      position: 'absolute',
-      bottom: theme.spacing.xs,
-      right: theme.spacing.xs,
-      zIndex: 10,
-    },
-
-    statBadge: {
-      background: 'rgba(212,212,212,0.2)',
-      color: 'white',
-    },
-
-    userAvatar: {
-      opacity: 0.8,
-      boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
-      transition: 'opacity .25s ease',
-      position: 'relative',
-
-      '&::before': {
-        content: '""',
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        borderRadius: theme.radius.xl,
-        boxShadow: 'inset 0 0 0px 1px rgba(255,255,255,0.8)',
-      },
-
-      '&:hover': {
-        opacity: 1,
-      },
-    },
-
-    hoverable: {
-      opacity: 0.8,
-      boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
-      transition: 'opacity .25s ease',
-      position: 'relative',
-      '&:hover': {
-        opacity: 1,
-      },
-    },
-  };
-});

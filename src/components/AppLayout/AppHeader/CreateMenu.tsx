@@ -29,7 +29,7 @@ export function CreateMenu() {
         {features.imageGeneration ? (
           <div className="flex items-center">
             <GenerateButton
-              canGenerate={true}
+              canGenerate
               variant="light"
               py={8}
               pl={12}
@@ -38,10 +38,9 @@ export function CreateMenu() {
               radius="sm"
               mode="toggle"
               // Quick hack to avoid svg from going over the button. cc: Justin 👀
-              sx={() => ({ borderTopRightRadius: 0, borderBottomRightRadius: 0 })}
-              compact
+              size="compact-sm"
               data-activity="create:navbar"
-              className="h-auto px-3 py-2 @md:pr-1"
+              className="h-auto !px-2 py-2 @md:rounded-r-none @md:pr-1"
             />
             <Button
               variant="light"
@@ -49,8 +48,7 @@ export function CreateMenu() {
               px={4}
               h="auto"
               radius="sm"
-              sx={() => ({ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 })}
-              className="@max-md:hidden"
+              className="rounded-l-none @max-md:hidden"
             >
               <IconChevronDown stroke={2} size={20} />
             </Button>

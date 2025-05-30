@@ -11,7 +11,7 @@
   background-color: theme('colors.gray.1');
 }
 
-:global(.dark) {
+:global([data-mantine-color-scheme="dark"]) {
   .item {
     background-color: theme('colors.dark.6');
 

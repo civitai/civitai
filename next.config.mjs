@@ -3,11 +3,13 @@ import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import packageJson from './package.json' assert { type: 'json' };
 import CircularDependencyPlugin from 'circular-dependency-plugin';
+import path from 'node:path';
 
 const isProd = process.env.NODE_ENV === 'production';
 const isDev = process.env.NODE_ENV === 'development';
 const analyze = process.env.ANALYZE === 'true';
 const includeCircularDependencyPlugin = process.env.CIRCULAR_DEPENDENCY_PLUGIN === 'true';
+const shouldOptimizeImports = (isDev && analyze) || isProd;
 
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,
@@ -270,6 +272,11 @@ export default defineNextConfig(
         {
           source: '/creators-program',
           destination: '/creator-program',
+          permanent: true,
+        },
+        {
+          source: '/research/rater',
+          destination: '/games/knights-of-new-order',
           permanent: true,
         },
       ];

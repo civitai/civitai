@@ -1,0 +1,91 @@
+.actions {
+  @container (max-width: theme('screens.sm')) {
+    width: 100%;
+  }
+}
+
+.titleWrapper {
+  gap: var(--mantine-spacing-xs);
+
+  @container (max-width: theme('screens.md')) {
+    gap: calc(var(--mantine-spacing-xs) * 0.4);
+  }
+}
+
+.title {
+  word-break: break-word;
+
+  @container (max-width: theme('screens.md')) {
+    font-size: 24px;
+    width: 100%;
+    padding-bottom: 0;
+  }
+}
+
+.engagementBar {
+  @container (max-width: theme('screens.sm')) {
+    display: none;
+  }
+}
+
+.mobileCarousel {
+  display: none;
+
+  @container (max-width: theme('screens.md')) {
+    display: block;
+  }
+}
+
+.desktopCarousel {
+  display: block;
+
+  @container (max-width: theme('screens.md')) {
+    display: none;
+  }
+}
+
+.modelBadgeText {
+  font-size: var(--mantine-font-size-md);
+
+  @container (max-width: theme('screens.md')) {
+    font-size: var(--mantine-font-size-sm);
+  }
+}
+
+.discussionActionButton {
+  @container (max-width: theme('screens.sm')) {
+    width: 100%;
+  }
+}
+
+.control {
+  svg {
+    width: 24px;
+    height: 24px;
+
+    @container (max-width: theme('screens.sm')) {
+      min-width: 16px;
+      min-height: 16px;
+    }
+  }
+}
+
+.headerButton {
+  width: 32px;
+  height: 32px;
+
+  > svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  @container (min-width: theme('screens.md')) {
+    width: 44px;
+    height: 44px;
+
+    > svg {
+      width: 20px;
+      height: 20px;
+    }
+  }
+}

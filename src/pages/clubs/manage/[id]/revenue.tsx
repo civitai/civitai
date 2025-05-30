@@ -90,8 +90,8 @@ export default function Revenue({ id }: InferGetServerSidePropsType<typeof getSe
   if (!club) return <NotFound />;
 
   return (
-    <Stack spacing="md">
-      <Group position="apart">
+    <Stack gap="md">
+      <Group justify="space-between">
         <Title order={2}>Club Revenue</Title>
 
         <Group>

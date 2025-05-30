@@ -1,14 +1,4 @@
-import {
-  Box,
-  Button,
-  Container,
-  createStyles,
-  Group,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-} from '@mantine/core';
+import { Button, Container, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   Icon3dCubeSphere,
@@ -20,10 +10,11 @@ import {
 import { Meta } from '~/components/Meta/Meta';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+
+import classes from '~/styles/utils.module.scss';
+import clsx from 'clsx';
 
 export default function CivitaiVault() {
-  const { classes, cx } = useStyles();
   const isMobile = useIsMobile();
 
   return (
@@ -33,11 +24,11 @@ export default function CivitaiVault() {
         description="Civitai O.D.O.R is the next generation open-source text-to-scent model. Get a whiff of creativity utilizing the most powerful sense the human body has: Smell."
       />
       <Container size="md" mb="lg">
-        <Stack spacing={40}>
-          <Group position="apart">
-            <Stack spacing={12}>
+        <Stack gap={40}>
+          <Group justify="space-between">
+            <Stack gap={12}>
               <Title className={classes.heroTitle}>O.D.O.R</Title>
-              <Text className={classes.heroText} sx={{ lineHeight: 1.25 }}>
+              <Text className={classes.heroText} style={{ lineHeight: 1.25 }}>
                 Optimized Diffusion of Olfactory Representations
               </Text>
             </Stack>
@@ -55,10 +46,10 @@ export default function CivitaiVault() {
               View Whitepaper
             </Button>
           </Group>
-          <Box className={classes.gradientContainer}>
+          <div className="relative mb-6">
             <YoutubeEmbed videoId="7j_sakwGK8M" />
-          </Box>
-          <Stack spacing={12}>
+          </div>
+          <Stack gap={12}>
             <Title className={classes.heading3} order={3}>
               Open-sourcing text-to-scent
             </Title>
@@ -66,13 +57,13 @@ export default function CivitaiVault() {
               {`ODOR is to your nose what Stable Diffusion is for your eyes. Get a whiff of creativity utilizing the most powerful sense the human body has: Smell.`}
             </Text>
           </Stack>
-          <Stack spacing={60}>
-            <Group noWrap>
+          <Stack gap={60}>
+            <Group wrap="nowrap">
               <ThemeIcon size={72} variant="light" color="green" radius={1000}>
                 <IconAccessible size={40} />
               </ThemeIcon>
 
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Title className={classes.heading4} order={4}>
                   A generation model for anyone
                 </Title>
@@ -81,12 +72,12 @@ export default function CivitaiVault() {
                 </Text>
               </Stack>
             </Group>
-            <Group noWrap>
+            <Group wrap="nowrap">
               <ThemeIcon size={72} variant="light" color="blue" radius={1000}>
                 <IconPepper size={40} />
               </ThemeIcon>
 
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Title className={classes.heading4} order={4}>
                   Nothing to hold your nose at
                 </Title>
@@ -95,12 +86,12 @@ export default function CivitaiVault() {
                 </Text>
               </Stack>
             </Group>
-            <Group noWrap>
+            <Group wrap="nowrap">
               <ThemeIcon size={72} variant="light" color="green" radius={1000}>
                 <Icon3dCubeSphere size={40} />
               </ThemeIcon>
 
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Title className={classes.heading4} order={4}>
                   Breathe in the future
                 </Title>
@@ -109,12 +100,12 @@ export default function CivitaiVault() {
                 </Text>
               </Stack>
             </Group>
-            <Group noWrap>
+            <Group wrap="nowrap">
               <ThemeIcon size={72} variant="light" color="blue" radius={1000}>
                 <IconAirConditioning size={40} />
               </ThemeIcon>
 
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Title className={classes.heading4} order={4}>
                   Think it, type it, smell it
                 </Title>
@@ -123,13 +114,13 @@ export default function CivitaiVault() {
                 </Text>
               </Stack>
             </Group>
-            <Group noWrap>
+            <Group wrap="nowrap">
               <ThemeIcon size={72} variant="light" color="yellow" radius={1000}>
                 <IconLungsOff size={40} />
               </ThemeIcon>
 
-              <Stack spacing={0}>
-                <Title className={classes.heading4} order={4} color="yellow">
+              <Stack gap={0}>
+                <Title className={clsx(classes.heading4, 'text-yellow-6')} order={4}>
                   WARNING
                 </Title>
                 <Text>
@@ -138,7 +129,7 @@ export default function CivitaiVault() {
               </Stack>
             </Group>
           </Stack>
-          <Group noWrap>
+          <Group wrap="nowrap">
             <Button
               variant="filled"
               color="blue"
@@ -161,14 +152,14 @@ export default function CivitaiVault() {
               View the Models
             </Button>
           </Group>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text
               size="xs"
-              color="dimmed"
+              c="dimmed"
             >{`* Some smells may be confusing or difficult to distinguish to inexperienced users.`}</Text>
             <Text
               size="xs"
-              color="dimmed"
+              c="dimmed"
             >{`** While ODOR brings a new dimension to sensory technology, its full bouquet of features blossoms in the fertile ground of imagination. As we continue to explore the frontiers of possibility, remember that the essence of discovery often lies in the journey, not just the destination. Happy explorations!`}</Text>
           </Stack>
         </Stack>
@@ -176,44 +167,3 @@ export default function CivitaiVault() {
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  cta: {
-    height: 52,
-  },
-  heroTitle: {
-    fontSize: 32,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
-    [containerQuery.largerThan('md')]: {
-      fontSize: 40,
-    },
-  },
-  heroText: {
-    fontSize: 14,
-    fontWeight: 500,
-  },
-  heading3: {
-    fontSize: 32,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
-  },
-  heading4: {
-    fontSize: 20,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
-  },
-
-  gradientContainer: {
-    position: 'relative',
-    marginBottom: 24,
-  },
-  gradientBox: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: 'linear-gradient(180deg, rgba(26, 27, 30, 0.00) 50%, #1A1B1E 100%)',
-  },
-}));

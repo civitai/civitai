@@ -70,8 +70,8 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing="md">
-        <Stack spacing="md">
+      <Stack gap="md">
+        <Stack gap="md">
           <InputSimpleImageUpload
             name="image"
             label="Header Image"
@@ -109,11 +109,11 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
             description="Items that will be sold in this section. The order displayed here is the order they will appear in"
           />
         </Stack>
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button
               loading={upsertingShopSection}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onCancel?.();

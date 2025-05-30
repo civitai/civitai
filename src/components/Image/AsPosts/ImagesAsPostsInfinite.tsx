@@ -48,6 +48,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { GalleryModerationModal } from './GalleryModerationModal';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 
@@ -158,8 +159,8 @@ export default function ImagesAsPostsInfinite({
         style={{ flex: 1 }}
       >
         <MasonryContainer>
-          <Stack spacing="md">
-            <Group spacing="xs">
+          <Stack gap="md">
+            <Group gap="xs">
               <Title order={2} data-tour="model:gallery">
                 Gallery
               </Title>
@@ -169,7 +170,7 @@ export default function ImagesAsPostsInfinite({
                     <Button
                       variant="outline"
                       size="xs"
-                      leftIcon={<IconPlus size={16} />}
+                      leftSection={<IconPlus size={16} />}
                       onClick={() => handleAddPostClick()}
                     >
                       Add Post
@@ -178,7 +179,7 @@ export default function ImagesAsPostsInfinite({
                   {canReview && (
                     <LoginRedirect reason="create-review">
                       <Button
-                        leftIcon={<IconStar size={16} />}
+                        leftSection={<IconStar size={16} />}
                         variant="outline"
                         size="xs"
                         onClick={() => handleAddPostClick({ reviewing: true })}
@@ -189,25 +190,25 @@ export default function ImagesAsPostsInfinite({
                   )}
                 </Group>
               )}
-              <Group ml="auto" spacing={8}>
+              <Group ml="auto" gap={8}>
                 <SortFilter type="modelImages" />
-                <MediaFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
+                <MediaFiltersDropdown filterType="modelImages" size="compact-sm" hideBaseModels />
                 {showModerationOptions && (
                   <>
                     {!!gallerySettings?.hiddenImages.length && (
                       <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="light"
                           radius="xl"
                           color="red"
                           onClick={() => setShowHidden((h) => !h)}
                         >
                           {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </ButtonTooltip>
                     )}
                     <ButtonTooltip label="Gallery Moderation Preferences">
-                      <ActionIcon
+                      <LegacyActionIcon
                         variant="filled"
                         radius="xl"
                         onClick={() =>
@@ -218,14 +219,14 @@ export default function ImagesAsPostsInfinite({
                         }
                       >
                         <IconSettings size={16} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </ButtonTooltip>
                   </>
                 )}
               </Group>
             </Group>
             {showPOIWarning && (
-              <Text size="sm" color="dimmed" lh={1.1}>
+              <Text size="sm" c="dimmed" lh={1.1}>
                 This resource is intended to depict a real person. All images that use this resource
                 are scanned for mature themes and manually reviewed by a moderator in accordance
                 with our{' '}
@@ -244,7 +245,7 @@ export default function ImagesAsPostsInfinite({
               </Text>
             )}
             {hasModerationPreferences ? (
-              <Text size="xs" color="dimmed" mt="-md">
+              <Text size="xs" c="dimmed" mt="-md">
                 Some images have been hidden based on moderation preferences set by the creator,{' '}
                 <Link legacyBehavior href={`/images?modelVersionId=${selectedVersionId}`} passHref>
                   <Anchor span>view all images using this resource</Anchor>
@@ -309,7 +310,7 @@ export default function ImagesAsPostsInfinite({
                     loadCondition={!isFetching}
                     style={{ gridColumn: '1/-1' }}
                   >
-                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                    <Center p="xl" style={{ height: 36 }} mt="md">
                       <Loader />
                     </Center>
                   </InViewLoader>
@@ -320,7 +321,7 @@ export default function ImagesAsPostsInfinite({
                 <ThemeIcon size={128} radius={100}>
                   <IconCloudOff size={80} />
                 </ThemeIcon>
-                <Text size={32} align="center">
+                <Text fz={32} align="center">
                   No results found
                 </Text>
                 <Text align="center">

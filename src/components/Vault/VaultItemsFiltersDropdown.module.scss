@@ -1,0 +1,24 @@
+.content {
+  height: auto;
+  max-height: calc(100dvh - var(--header-height));
+  overflow-y: auto;
+}
+
+.body {
+  padding: 0 16px 16px 16px;
+  overflow-y: auto;
+}
+
+.header {
+  padding: 4px 8px;
+}
+
+.close {
+  width: 32px;
+  height: 32px;
+
+  > svg {
+    width: 24px;
+    height: 24px;
+  }
+}

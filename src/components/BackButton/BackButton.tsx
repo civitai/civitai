@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import type { UrlObject } from 'url';
 import { ActionIcon, Group } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function NavigateBack({
   url,
@@ -52,10 +53,10 @@ export function BackButton({
   return (
     <NavigateBack url={url} as={as} options={options}>
       {({ onClick }) => (
-        <Group spacing="xs" onClick={onClick}>
-          <ActionIcon>
+        <Group gap="xs" onClick={onClick}>
+          <LegacyActionIcon color="gray" variant="subtle">
             <IconArrowLeft />
-          </ActionIcon>
+          </LegacyActionIcon>
           {children}
         </Group>
       )}

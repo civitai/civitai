@@ -1,0 +1,41 @@
+@keyframes fillEffect {
+  to {
+    width: 100%;
+    opacity: 0.3;
+    /* Uncomment if needed */
+    /* background-color: red; */
+  }
+}
+
+.popoverContent {
+  position: relative;
+  z-index: 3;
+}
+
+.confirming {
+  &::before {
+    content: '';
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 0;
+    background-color: var(--mantine-color-red-6);
+    /* Replace with Mantine's red[6] */
+    opacity: 0;
+    animation: fillEffect var(--confirmation-timeout, 5000ms) linear forwards;
+  }
+}
+
+.tipAmount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--mantine-color-yellow-7);
+  /* Replace with Mantine's yellow[7] */
+  font-size: 16px;
+  padding: 0;
+  line-height: 1;
+  outline: 0;
+  display: inline-block;
+}

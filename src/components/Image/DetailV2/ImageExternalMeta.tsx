@@ -26,7 +26,7 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
         {/* TODO make URLs */}
         {hasSource && (
           <div className="flex justify-between gap-3">
-            <Text color="dimmed" className="text-nowrap leading-snug">
+            <Text c="dimmed" className="text-nowrap leading-snug">
               Source
             </Text>
             {external.source?.name ? (
@@ -41,7 +41,7 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
         )}
         {hasReference && (
           <div className="flex justify-between gap-3">
-            <Text color="dimmed" className="text-nowrap leading-snug">
+            <Text c="dimmed" className="text-nowrap leading-snug">
               Media URL
             </Text>
             <Text className="leading-snug">{external.referenceUrl}</Text>
@@ -49,7 +49,7 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
         )}
         {hasCreate && (
           <div className="flex justify-between gap-3">
-            <Text color="dimmed" className="text-nowrap leading-snug">
+            <Text c="dimmed" className="text-nowrap leading-snug">
               Create URL
             </Text>
             <Text className="leading-snug">{external.createUrl}</Text>
@@ -61,7 +61,7 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
             <Text className="font-semibold">Other metadata</Text>
             {Object.entries(external.details ?? {}).map(([k, v]) => (
               <div key={k} className="flex justify-between gap-3">
-                <Text color="dimmed" className="text-nowrap leading-snug">
+                <Text c="dimmed" className="text-nowrap leading-snug">
                   {titleCase(k)}
                 </Text>
                 <Text className="leading-snug">{v.toString()}</Text>

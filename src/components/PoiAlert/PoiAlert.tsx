@@ -27,7 +27,7 @@ export function PoiAlert({ type = 'Model', ...alertProps }: Props) {
       and non-commercial use is permitted.
       <br />
       <br />
-      <Text weight={500} component="strong" td="underline">
+      <Text fw={500} component="strong" td="underline">
         If you are this person or a legal representative of this person
       </Text>
       , and would like to request the removal of this {type === 'Bounty' ? 'bounty' : 'resource'},

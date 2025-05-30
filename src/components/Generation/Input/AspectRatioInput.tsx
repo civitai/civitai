@@ -160,7 +160,8 @@ export function CustomAspectRatio({
             max={maxResolution}
             step={64}
             value={size?.width}
-            onChange={(width) => setSize((size) => ({ ...size, width }))}
+            allowDecimal={false}
+            onChange={(width) => setSize((size) => ({ ...size, width: Number(width) }))}
           />
           <NumberInput
             label="height"
@@ -168,7 +169,8 @@ export function CustomAspectRatio({
             max={maxResolution}
             step={64}
             value={size?.height}
-            onChange={(height) => setSize((size) => ({ ...size, height }))}
+            allowDecimal={false}
+            onChange={(height) => setSize((size) => ({ ...size, height: Number(height) }))}
           />
         </div>
         <div className="grid grid-cols-[min-content,min-content,auto] gap-2">
@@ -219,7 +221,7 @@ function AspectRatioCard({
         <Paper withBorder className="h-8  border-2" style={{ aspectRatio: rw / rh }}></Paper>
       </div>
       <Text className="font-semibold">{ratio}</Text>
-      <Text size="sm" color="dimmed">
+      <Text size="sm" c="dimmed">
         {rounded.width}x{rounded.height}
       </Text>
     </Card>

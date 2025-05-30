@@ -45,8 +45,8 @@ export const HowToButton = ({
         rel="nofollow noreferrer"
         td="underline"
         size="xs"
-        color="dimmed"
-        sx={{ lineHeight: 1 }}
+        c="dimmed"
+        style={{ lineHeight: 1 }}
       >
         <IconInfoSquareRounded size={size} {...iconProps} />
       </Text>

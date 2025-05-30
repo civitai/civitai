@@ -24,6 +24,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { DeleteQuestion } from '~/components/Questions/DeleteQuestion';
 import { QuestionAnswerComments } from '~/components/Questions/QuestionAnswerComments';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function QuestionDetails({ question }: { question: QuestionDetailProps }) {
   const user = useCurrentUser();
@@ -44,16 +45,16 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
 
   return (
     <Card p="sm" withBorder>
-      <Stack spacing="xs">
-        <Group position="apart" noWrap align="center">
+      <Stack gap="xs">
+        <Group justify="space-between" wrap="nowrap" align="center">
           <Title order={1}>{question.title}</Title>
           {/* TODO - add additional actions and remove condition here */}
           {(isOwner || isModerator) && (
-            <Menu position="bottom-end" transition="pop-top-right">
+            <Menu position="bottom-end" transitionProps={{ transition: 'pop-top-right' }}>
               <Menu.Target>
-                <ActionIcon variant="outline">
+                <LegacyActionIcon variant="outline">
                   <IconDotsVertical size={16} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Menu.Target>
               <Menu.Dropdown>
                 {(isOwner || isModerator) && (
@@ -61,7 +62,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
                     <DeleteQuestion id={question.id}>
                       <Menu.Item
                         color={theme.colors.red[6]}
-                        icon={<IconTrash size={14} stroke={1.5} />}
+                        leftSection={<IconTrash size={14} stroke={1.5} />}
                       >
                         Delete Question
                       </Menu.Item>
@@ -70,7 +71,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
                       <Menu.Item
                         component={Link}
                         href={`/questions/${question.id}/${questionTitle}?edit=true`}
-                        icon={<IconEdit size={14} stroke={1.5} />}
+                        leftSection={<IconEdit size={14} stroke={1.5} />}
                         shallow
                       >
                         Edit question
@@ -82,7 +83,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
             </Menu>
           )}
         </Group>
-        <Group spacing={4}>
+        <Group gap={4}>
           {question.tags.map((tag) => (
             <Badge key={tag.id} color="blue" component="a" size="sm" radius="sm">
               {tag.name}
@@ -101,7 +102,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
           linkToProfile
         />
         <RenderHtml html={question.content} />
-        <Group spacing="xs" position="apart">
+        <Group gap="xs" justify="space-between">
           <FavoriteBadge
             userReacted={question.userReactions.some((x) => x.reaction === ReviewReactions.Heart)}
             count={question.rank?.heartCountAllTime}
@@ -110,7 +111,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
           />
           <ReactionBadge
             color={showComments ? 'blue' : undefined}
-            leftIcon={<IconMessageCircle size={18} />}
+            leftSection={<IconMessageCircle size={18} />}
             onClick={() => setShowComments((v) => !v)}
             tooltip="Comments"
           >

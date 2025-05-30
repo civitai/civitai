@@ -1,17 +1,19 @@
 import type { ButtonProps, MenuItemProps } from '@mantine/core';
-import { Button, createPolymorphicComponent, Group, Menu, Tooltip } from '@mantine/core';
+import { Button, createPolymorphicComponent, Group, Menu, Tooltip, useComputedColorScheme, useMantineTheme, alpha } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
 import { forwardRef } from 'react';
 
 const _MultiActionButton = forwardRef<HTMLButtonElement, Props>(
   ({ children, menuItems, menuTooltip, variant = 'filled', ...props }, ref) => {
     const hasMenuItems = menuItems.length > 0;
+    const theme = useMantineTheme();
+    const colorScheme = useComputedColorScheme('dark');
 
     let menuButton = (
       <Button
         variant={variant}
         px={4}
-        sx={() => ({ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 })}
+        style={() => ({ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 })}
       >
         <IconChevronDown stroke={1.5} size={18} />
       </Button>
@@ -26,9 +28,9 @@ const _MultiActionButton = forwardRef<HTMLButtonElement, Props>(
     const menu = hasMenuItems && (
       <Menu
         position="bottom-end"
-        styles={(theme) => ({
-          itemRightSection: { display: 'flex', marginLeft: theme.spacing.xs },
-        })}
+        styles={{
+          itemSection: { display: 'flex', marginLeft: theme.spacing.xs },
+        }}
       >
         <Menu.Target>{menuButton}</Menu.Target>
         <Menu.Dropdown>{menuItems}</Menu.Dropdown>
@@ -36,19 +38,19 @@ const _MultiActionButton = forwardRef<HTMLButtonElement, Props>(
     );
 
     return (
-      <Group spacing={0} noWrap>
+      <Group gap={0} wrap="nowrap">
         <Button
           ref={ref}
           variant={variant}
           {...props}
-          sx={(theme) =>
+          style={
             hasMenuItems
               ? {
                   borderTopRightRadius: 0,
                   borderBottomRightRadius: 0,
                   flexGrow: 1,
-                  borderRight: `2px solid ${theme.fn.rgba(
-                    theme.colorScheme === 'dark' ? theme.colors.dark[9] : '#fff',
+                  borderRight: `2px solid ${alpha(
+                    colorScheme === 'dark' ? theme.colors.dark[9] : '#fff',
                     0.5
                   )}`,
                 }

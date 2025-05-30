@@ -284,7 +284,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
 
       <Table className="table-auto">
         <thead>
-          <tr>
+          <tr className="text-left">
             <th>Tier</th>
             <th>Cap</th>
           </tr>
@@ -296,7 +296,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
             }
 
             return (
-              <tr key={cap.tier}>
+              <tr key={cap.tier} className="*:p-1">
                 <td className="font-bold">{capitalize(cap.tier)} Member</td>
                 <td>
                   <p>
@@ -307,12 +307,12 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
                     {!cap.limit ? (
                       'no cap'
                     ) : cap.percentOfPeakEarning ? (
-                      <span>
+                      <span className="flex">
                         a <CurrencyIcon currency={Currency.BUZZ} className="inline" />
                         {abbreviateNumber(cap.limit)} cap
                       </span>
                     ) : (
-                      <span>
+                      <span className="flex">
                         <CurrencyIcon currency={Currency.BUZZ} className="inline" />
                         {abbreviateNumber(cap.limit)}
                       </span>

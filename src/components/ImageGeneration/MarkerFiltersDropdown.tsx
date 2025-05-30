@@ -62,8 +62,7 @@ export function DumbMarkerFiltersDropdown({
           label={filterLength ? filterLength : undefined}
           size={14}
           zIndex={10}
-          showZero={false}
-          dot={false}
+          disabled={!filterLength}
           inline
         >
           <Popover.Target>
@@ -73,11 +72,11 @@ export function DumbMarkerFiltersDropdown({
           </Popover.Target>
         </Indicator>
         <Popover.Dropdown maw={576} w="100%">
-          <ScrollArea.Autosize maxHeight={'calc(90vh - var(--header-height) - 56px)'} type="hover">
-            <Stack spacing={8}>
+          <ScrollArea.Autosize mah={'calc(90vh - var(--header-height) - 56px)'} type="hover">
+            <Stack gap={8}>
               {!hideMediaTypes && (
                 <>
-                  <Divider label="Generation Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+                  <Divider label="Generation Type" className="text-sm font-bold" />
                   <div className="flex gap-2">
                     <FilterChip
                       checked={!filters.tags?.length}
@@ -100,7 +99,7 @@ export function DumbMarkerFiltersDropdown({
                   </div>
                 </>
               )}
-              <Divider label="Reactions" labelProps={{ weight: 'bold', size: 'sm' }} />
+              <Divider label="Reactions" className="text-sm font-bold" />
               <div className="flex gap-2">
                 {Object.values(GenerationReactType).map((marker) => {
                   return (

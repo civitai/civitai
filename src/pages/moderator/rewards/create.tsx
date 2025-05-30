@@ -17,7 +17,7 @@ export default function PurchasableRewardCreate() {
       <Meta title="Create Rewards" deIndex />
       <Container size="md">
         <Stack>
-          <Group spacing="md" noWrap>
+          <Group gap="md" wrap="nowrap">
             <BackButton url="/moderator/rewards" />
             <Title>Create Purchasable Reward</Title>
           </Group>

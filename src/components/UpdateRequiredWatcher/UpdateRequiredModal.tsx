@@ -16,7 +16,7 @@ export default function UpdateRequiredModal() {
         <Button onClick={() => window.location.reload()} radius="xl" size="lg">
           Update Now 🎉
         </Button>
-        <Group spacing={4}>
+        <Group gap={4}>
           <Text>😬</Text>
           <Text
             variant="link"

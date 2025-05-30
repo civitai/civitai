@@ -74,7 +74,7 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <Text size="sm" tt="uppercase" weight="bold">
+      <Text size="sm" tt="uppercase" fw="bold">
         Resource Reviews
       </Text>
       {isMuted ? (

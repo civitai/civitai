@@ -1,0 +1,32 @@
+.root {
+  user-select: none;
+  background-color: theme('colors.blue.8/.2');
+  color: theme('colors.white');
+  padding-left: 8px;
+  padding-right: 8px;
+
+  & > span {
+    line-height: 1;
+  }
+}
+
+.red {
+  background-color: theme('colors.red.9/.6');
+}
+
+.showButton {
+  pointer-events: auto;
+  color: light-dark(var(--mantine-color-gray-9), var(--mantine-color-white)) !important;
+  background-color: light-dark(
+    alpha(var(--mantine-color-gray-0), 0.6),
+    alpha(var(--mantine-color-dark-6), 0.6)
+  ) !important;
+  box-shadow: var(--mantine-shadow-sm);
+
+  &:hover {
+    background-color: light-dark(
+      alpha(var(--mantine-color-gray-0), 0.7),
+      alpha(var(--mantine-color-dark-6), 0.7)
+    ) !important;
+  }
+}

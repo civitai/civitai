@@ -16,11 +16,10 @@ import {
   Slider,
   Switch,
   Textarea,
-  TransferList,
 } from '@mantine/core';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
-import { DatePicker, TimeInput } from '@mantine/dates';
+import { DatePickerInput, TimeInput } from '@mantine/dates';
 import { FileInputUpload } from '~/components/FileInputUpload/FileInputUpload';
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
 import { RatingWrapper } from '~/libs/form/components/RatingWrapper';
@@ -47,7 +46,6 @@ export const InputNumber = withController(NumberInputWrapper, ({ field }) => ({
   value: field.value,
 }));
 export const InputTextArea = withController(Textarea);
-export const InputTransferList = withController(TransferList);
 export const InputSelect = withController(SelectWrapper);
 export const InputMultiSelect = withController(MultiSelectWrapper);
 export const InputSegmentedControl = withController(SegmentedControlWrapper);
@@ -60,7 +58,7 @@ export const InputColorPicker = withController(ColorPicker);
 export const InputColorInput = withController(ColorInput);
 export const InputChips = withController(Chip.Group);
 export const InputAutocomplete = withController(Autocomplete);
-export const InputDatePicker = withController(DatePicker);
+export const InputDatePicker = withController(DatePickerInput);
 export const InputRating = withController(RatingWrapper);
 export const InputSlider = withController(Slider);
 export const InputFileInput = withController(FileInput);

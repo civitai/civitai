@@ -3,7 +3,6 @@ import { useInstantSearch, usePagination, useSearchBox } from 'react-instantsear
 import type { SegmentedControlItem } from '@mantine/core';
 import {
   Box,
-  createStyles,
   Group,
   SegmentedControl,
   Stack,
@@ -12,6 +11,7 @@ import {
   Title,
   Tooltip,
   UnstyledButton,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconCategory,
@@ -25,7 +25,10 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
-import { useSearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { useSearchLayout } from '~/components/Search/SearchLayout';
+import searchLayoutClasses from '~/components/Search/SearchLayout.module.scss';
+import classes from './SearchHeader.module.scss';
+
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
   ARTICLES_SEARCH_INDEX,
@@ -38,54 +41,8 @@ import {
 } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isDefined } from '~/utils/type-guards';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { searchIndexMap } from '~/components/Search/search.types';
 
-const useStyles = createStyles((theme) => ({
-  wrapper: {
-    [containerQuery.smallerThan('sm')]: {
-      overflow: 'auto',
-      maxWidth: '100%',
-    },
-  },
-  label: {
-    paddingTop: 6,
-    paddingBottom: 6,
-    paddingLeft: 6,
-    paddingRight: 10,
-  },
-  root: {
-    backgroundColor: 'transparent',
-    gap: 8,
-    [containerQuery.smallerThan('sm')]: {
-      overflow: 'visible',
-      maxWidth: '100%',
-    },
-  },
-  control: {
-    border: 'none !important',
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-    svg: {
-      color: theme.colorScheme === 'dark' ? theme.colors.gray[1] : theme.colors.dark[6],
-    },
-    borderRadius: theme.radius.xl,
-  },
-  active: { borderRadius: theme.radius.xl },
-  controlActive: {
-    borderRadius: theme.radius.xl,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[3] : theme.colors.dark[6],
-    svg: {
-      color: theme.colorScheme === 'dark' ? undefined : theme.colors.gray[1],
-    },
-    '& label': {
-      color: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[1],
-
-      '&:hover': {
-        color: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
-      },
-    },
-  },
-}));
 export const SearchHeader = () => {
   const { uiState, status } = useInstantSearch();
   const { setSearchParamsByUiState, ...states } = useSearchStore((state) => state);
@@ -93,10 +50,9 @@ export const SearchHeader = () => {
   const { query } = useSearchBox();
   const { nbHits } = usePagination();
   const features = useFeatureFlags();
+  const theme = useMantineTheme();
 
   const router = useRouter();
-  const { classes, theme } = useStyles();
-  const { classes: searchLayoutStyles } = useSearchLayoutStyles();
   const { sidebarOpen, setSidebarOpen } = useSearchLayout();
 
   const onChangeIndex = (value: string) => {
@@ -129,7 +85,7 @@ export const SearchHeader = () => {
   const data: SegmentedControlItem[] = [
     {
       label: (
-        <Group align="center" spacing={8} noWrap>
+        <Group align="center" gap={8} wrap="nowrap">
           <ThemeIcon
             size={30}
             color={index === MODELS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -148,7 +104,7 @@ export const SearchHeader = () => {
     features.imageSearch
       ? {
           label: (
-            <Group align="center" spacing={8} noWrap>
+            <Group align="center" gap={8} wrap="nowrap">
               <ThemeIcon
                 size={30}
                 color={index === IMAGES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -167,7 +123,7 @@ export const SearchHeader = () => {
       : undefined,
     {
       label: (
-        <Group align="center" spacing={8} noWrap>
+        <Group align="center" gap={8} wrap="nowrap">
           <ThemeIcon
             size={30}
             color={index === ARTICLES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -185,7 +141,7 @@ export const SearchHeader = () => {
     },
     {
       label: (
-        <Group align="center" spacing={8} noWrap>
+        <Group align="center" gap={8} wrap="nowrap">
           <ThemeIcon
             size={30}
             color={index === COLLECTIONS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -204,7 +160,7 @@ export const SearchHeader = () => {
     features.bounties
       ? {
           label: (
-            <Group align="center" spacing={8} noWrap>
+            <Group align="center" gap={8} wrap="nowrap">
               <ThemeIcon
                 size={30}
                 color={index === BOUNTIES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -223,7 +179,7 @@ export const SearchHeader = () => {
       : undefined,
     {
       label: (
-        <Group align="center" spacing={8} noWrap>
+        <Group align="center" gap={8} wrap="nowrap">
           <ThemeIcon
             size={30}
             color={index === USERS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -242,7 +198,7 @@ export const SearchHeader = () => {
     features.toolSearch
       ? {
           label: (
-            <Group align="center" spacing={8} noWrap>
+            <Group align="center" gap={8} wrap="nowrap">
               <ThemeIcon
                 size={30}
                 color={index === TOOLS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
@@ -278,7 +234,7 @@ export const SearchHeader = () => {
     return (
       <>
         <span>{nbHits > 0 ? `${hitsString} results for ` : `No results for `}</span>
-        <Text color="blue" span>
+        <Text c="blue" span>
           &lsquo;{query}&rsquo;
         </Text>
       </>
@@ -288,8 +244,8 @@ export const SearchHeader = () => {
   return (
     <Stack>
       <Title order={3}>{titleString}</Title>
-      <Box sx={{ overflow: 'hidden' }}>
-        <Group spacing="xs" noWrap className={classes.wrapper}>
+      <Box style={{ overflow: 'hidden' }}>
+        <Group gap="xs" wrap="nowrap" className={classes.wrapper}>
           <Tooltip label="Filters & sorting" position="bottom" withArrow>
             <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
               <ThemeIcon
@@ -297,7 +253,7 @@ export const SearchHeader = () => {
                 color="gray"
                 radius="xl"
                 p={11}
-                className={searchLayoutStyles.filterButton}
+                className={searchLayoutClasses.filterButton}
               >
                 <IconFilter />
               </ThemeIcon>

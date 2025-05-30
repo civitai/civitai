@@ -6,7 +6,6 @@ import {
   Badge,
   Button,
   Center,
-  createStyles,
   Divider,
   Group,
   HoverCard,
@@ -58,32 +57,9 @@ import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-
-// TODO make this an importable var
-const useStyles = createStyles((theme) => ({
-  header: {
-    position: 'sticky',
-    top: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    transition: 'box-shadow 150ms ease',
-    zIndex: 10,
-
-    '&::after': {
-      content: '""',
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2]
-      }`,
-    },
-  },
-
-  scrolled: {
-    boxShadow: theme.shadows.sm,
-  },
-}));
+import styles from './UserModelsTable.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 type TrainingFileData = {
   type: string;
@@ -147,7 +123,6 @@ export const trainingStatusFields: {
 const modelsLimit = 10;
 
 export default function UserTrainingModels() {
-  const { classes, cx } = useStyles();
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const { copied, copy } = useClipboard();
@@ -262,11 +237,11 @@ export default function UserTrainingModels() {
         {/* TODO [bw] this should probably be transitioned to a filterable/sortable table, like in reports.tsx */}
         <Table
           verticalSpacing="md"
-          fontSize="md"
+          className="text-base"
           striped={hasTraining}
           highlightOnHover={hasTraining}
         >
-          <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
+          <thead className={clsx(styles.header, { [styles.scrolled]: scrolled })}>
             <tr>
               <th>Name</th>
               <th>Type</th>
@@ -335,7 +310,7 @@ export default function UserTrainingModels() {
                     }}
                   >
                     <td>
-                      <Group spacing={4}>
+                      <Group gap={4}>
                         <Text>{mv.model.name}</Text>
                         {mv.name !== mv.model.name && <Text>({mv.name})</Text>}
                       </Group>
@@ -356,13 +331,13 @@ export default function UserTrainingModels() {
                     </td>
                     <td>
                       {mv.trainingStatus ? (
-                        <Group spacing="sm">
+                        <Group gap="sm">
                           <HoverCard shadow="md" width={300} zIndex={100} withArrow>
                             <HoverCard.Target>
                               <Badge
                                 color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}
                               >
-                                <Group spacing={6} noWrap>
+                                <Group gap={6} wrap="nowrap">
                                   {splitUppercase(
                                     mv.trainingStatus === TrainingStatus.InReview
                                       ? 'Ready'
@@ -403,16 +378,16 @@ export default function UserTrainingModels() {
                               size="xs"
                               color="gray"
                               py={0}
-                              sx={{ fontSize: 12, fontWeight: 600, height: 20 }}
+                              style={{ fontSize: 12, fontWeight: 600, height: 20 }}
                               component="a"
                               href="/support-portal"
                               target="_blank"
-                              onMouseUp={(e) => {
+                              onMouseUp={(e: React.MouseEvent<HTMLAnchorElement>) => {
                                 e.preventDefault();
                                 e.stopPropagation();
                               }}
                             >
-                              <Group noWrap spacing={6}>
+                              <Group wrap="nowrap" gap={6}>
                                 Open Support Ticket <IconExternalLink size={12} />
                               </Group>
                             </Button>
@@ -438,13 +413,13 @@ export default function UserTrainingModels() {
                       <Text>{startStr}</Text>
                     </td>
                     <td>
-                      <Group spacing={8} noWrap>
+                      <Group gap={8} wrap="nowrap">
                         {!hasFiles || !hasTrainingParams ? (
                           <IconAlertCircle color="orange" />
                         ) : (
                           <IconCircleCheck color="green" />
                         )}
-                        <Stack spacing={4}>
+                        <Stack gap={4}>
                           {/* technically this step 1 alert should never happen */}
                           {/*{!hasVersion && <Text inherit>Needs basic model data (Step 1)</Text>}*/}
                           {!hasFiles && <Text inherit>Needs training files (Step 2)</Text>}
@@ -457,25 +432,26 @@ export default function UserTrainingModels() {
                       </Group>
                     </td>
                     <td>
-                      <Group position="right" spacing={8} pr="xs" noWrap>
+                      <Group justify="flex-end" gap={8} pr="xs" wrap="nowrap">
                         {mv.trainingStatus === TrainingStatus.InReview && (
                           <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
                             <Button
                               component="a"
                               radius="xl"
-                              size="sm"
-                              onClick={(e) => e.stopPropagation()}
-                              compact
+                              onClick={(e: React.MouseEvent<HTMLAnchorElement>) =>
+                                e.stopPropagation()
+                              }
+                              size="compact-sm"
                             >
                               Review
                             </Button>
                           </Link>
                         )}
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="filled"
                           radius="xl"
                           size="md"
-                          onMouseUp={(e) => {
+                          onMouseUp={(e: React.MouseEvent<HTMLButtonElement>) => {
                             e.preventDefault();
                             e.stopPropagation();
                             if (e.button !== 0) return;
@@ -489,17 +465,19 @@ export default function UserTrainingModels() {
                           }}
                         >
                           <IconFileDescription size={16} />
-                        </ActionIcon>
-                        <ActionIcon
+                        </LegacyActionIcon>
+                        <LegacyActionIcon
                           color="red"
                           variant="light"
                           size="md"
                           radius="xl"
-                          onMouseUp={(e) => !isNotDeletable && handleDelete(e, mv)}
+                          onMouseUp={(e: React.MouseEvent<HTMLButtonElement>) =>
+                            !isNotDeletable && handleDelete(e, mv)
+                          }
                           disabled={isNotDeletable}
                         >
                           <IconTrash size={16} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
                     </td>
                   </tr>
@@ -521,15 +499,15 @@ export default function UserTrainingModels() {
         </Table>
       </ScrollArea>
       {pagination.totalPages > 1 && (
-        <Group position="apart">
+        <Group justify="space-between">
           <Text>Total {pagination.totalItems} items</Text>
-          <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
+          <Pagination value={page} onChange={setPage} total={pagination.totalPages} />
         </Group>
       )}
       <Modal
         opened={opened}
         title="Training Details"
-        overflow="inside"
+        scrollAreaComponent={ScrollArea.Autosize}
         onClose={close}
         size="lg"
         centered
@@ -555,13 +533,13 @@ export default function UserTrainingModels() {
             {
               label: 'Job ID',
               value: (
-                <Group spacing="xs">
+                <Group gap="xs">
                   <Text>{jobId ?? 'Unknown'}</Text>
                   {!!jobId && (
                     <ButtonTooltip withinPortal withArrow label="Copy - send this to support!">
-                      <ActionIcon size={18} p={0} onClick={() => copy(jobId)}>
+                      <LegacyActionIcon size={18} p={0} onClick={() => copy(jobId)}>
                         {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </ButtonTooltip>
                   )}
                 </Group>
@@ -570,7 +548,7 @@ export default function UserTrainingModels() {
             {
               label: 'History',
               value: (
-                <Stack spacing={5}>
+                <Stack gap={5}>
                   {modalData.file?.metadata?.trainingResults?.history
                     ? (modalData.file?.metadata?.trainingResults?.history || []).map((h) => (
                         <Group key={h.time}>
@@ -660,7 +638,7 @@ export default function UserTrainingModels() {
                     versionId: modalData.id as number,
                     type: 'Training Data',
                   })}
-                  sx={{ flex: 1 }}
+                  style={{ flex: 1 }}
                 >
                   <Text align="center">{`Download (${formatKBytes(modalData.file?.sizeKB)})`}</Text>
                 </DownloadButton>

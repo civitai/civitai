@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   Center,
-  createStyles,
   Group,
   Loader,
   Menu,
@@ -16,6 +15,8 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -44,7 +45,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import {
@@ -118,23 +119,12 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles(() => ({
-  ctaContainer: {
-    width: '100%',
-    flexWrap: 'wrap',
-    ['> *']: { flexGrow: 1 },
-
-    [containerQuery.largerThan('sm')]: {
-      ['> *']: { flexGrow: 0 },
-    },
-  },
-}));
+import classes from './ModelVersionDetails.module.scss';
+import clsx from 'clsx';
 
 export function ModelVersionDetails({
   model,
@@ -143,8 +133,9 @@ export function ModelVersionDetails({
   onBrowseClick,
   onFavoriteClick,
 }: Props) {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
-  const { classes, cx } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -156,7 +147,7 @@ export function ModelVersionDetails({
     key: 'model-version-details-accordions',
     defaultValue: ['version-details'],
   });
-  const adContainerRef = useRef<HTMLDialogElement | null>(null);
+  const adContainerRef = useRef<HTMLDivElement | null>(null);
 
   const {
     isLoadingAccess,
@@ -349,7 +340,7 @@ export function ModelVersionDetails({
     {
       label: 'Type',
       value: (
-        <Group spacing={0} noWrap position="apart">
+        <Group gap={0} wrap="nowrap" justify="space-between">
           <Badge radius="sm" px={5}>
             {getDisplayName(model.type)} {model.checkpointType}
           </Badge>
@@ -366,7 +357,7 @@ export function ModelVersionDetails({
     {
       label: 'Stats',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           {!downloadsDisabled && (
             <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Downloads">
               <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
@@ -438,14 +429,14 @@ export function ModelVersionDetails({
       label: 'Base Model',
       value:
         version.baseModel === 'ODOR' ? (
-          <Group spacing={8} position="apart" noWrap>
+          <Group gap={8} justify="space-between" wrap="nowrap">
             <Text component={Link} href="/product/odor" target="_blank">
               {version.baseModel}{' '}
             </Text>
             <HowToButton href="https://youtu.be/7j_sakwGK8M" tooltip="What is this?" />
           </Group>
         ) : (
-          <Group spacing={8} position="apart" noWrap>
+          <Group gap={8} justify="space-between" wrap="nowrap">
             <Text>
               {version.baseModel}{' '}
               {version.baseModelType && version.baseModelType === 'Standard'
@@ -462,7 +453,7 @@ export function ModelVersionDetails({
     {
       label: 'Training',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           {version.steps && (
             <Badge size="sm" radius="sm" color="teal">
               Steps: {version.steps.toLocaleString()}
@@ -480,7 +471,7 @@ export function ModelVersionDetails({
     {
       label: 'Usage Tips',
       value: (
-        <Group spacing={4}>
+        <Group gap={4}>
           {version.clipSkip && (
             <Badge size="sm" radius="sm" color="cyan">
               Clip Skip: {version.clipSkip.toLocaleString()}
@@ -526,8 +517,8 @@ export function ModelVersionDetails({
     },
     {
       label: (
-        <Group spacing="xs">
-          <Text weight={500}>AIR</Text>
+        <Group gap="xs">
+          <Text fw={500}>AIR</Text>
           <URNExplanation size={20} />
         </Group>
       ),
@@ -543,8 +534,8 @@ export function ModelVersionDetails({
     },
     {
       label: (
-        <Group spacing="xs">
-          <Text weight={500}>Bounty</Text>
+        <Group gap="xs">
+          <Text fw={500}>Bounty</Text>
         </Group>
       ),
       value: (
@@ -557,11 +548,11 @@ export function ModelVersionDetails({
   ];
 
   const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
-    <Group position="apart" noWrap spacing={0}>
+    <Group justify="space-between" wrap="nowrap" gap={0}>
       <Group>
         <VerifiedText file={file} />
-        <Group spacing={4}>
-          <Text size="xs" color="dimmed">
+        <Group gap={4}>
+          <Text size="xs" c="dimmed">
             {file.type === 'Pruned Model' ? 'Pruned ' : ''}
             {file.metadata.format}
           </Text>
@@ -578,20 +569,20 @@ export function ModelVersionDetails({
         key={file.id}
         component="a"
         py={4}
-        icon={<VerifiedText file={file} iconOnly />}
+        leftSection={<VerifiedText file={file} iconOnly />}
         {...getDownloadProps(file)}
       >
         {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)}){' '}
         {file.visibility !== 'Public' && (
           <Tooltip label="Only visible to you" position="top" withArrow>
-            <ThemeIcon color="blue" size="xs" sx={{ alignSelf: 'center' }} ml="xs">
+            <ThemeIcon color="blue" size="xs" style={{ alignSelf: 'center' }} ml="xs">
               <IconLock />
             </ThemeIcon>
           </Tooltip>
         )}
       </Menu.Item>
     ) : (
-      <Menu.Item key={file.id} py={4} icon={<VerifiedText file={file} iconOnly />} disabled>
+      <Menu.Item key={file.id} py={4} leftSection={<VerifiedText file={file} iconOnly />} disabled>
         {`${startCase(file.type)}${
           ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
         } (${formatKBytes(file.sizeKB)})`}
@@ -603,14 +594,14 @@ export function ModelVersionDetails({
       key={file.id}
       radius={0}
       py="xs"
-      sx={(theme) => ({
-        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-      })}
+      style={{
+        backgroundColor: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+      }}
     >
-      <Stack spacing={4}>
-        <Group position="apart" noWrap>
-          <Group spacing={4}>
-            <Text size="xs" weight={500} lineClamp={2}>
+      <Stack gap={4}>
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap={4}>
+            <Text size="xs" fw={500} lineClamp={2}>
               {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
             </Text>
             {file.visibility !== 'Public' ? (
@@ -622,10 +613,9 @@ export function ModelVersionDetails({
           <Button
             component="a"
             variant="subtle"
-            size="xs"
             {...getDownloadProps(file)}
             disabled={archived}
-            compact
+            size="compact-xs"
           >
             Download
           </Button>
@@ -672,9 +662,10 @@ export function ModelVersionDetails({
       model.allowDifferentLicense);
 
   return (
-    <ContainerGrid gutter="xl" gutterSm="sm" gutterMd="xl">
+    <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid.Col xs={12} sm={5} md={4} orderSm={2} ref={adContainerRef}>
+      {/* TODO: Mantine7: check ref type issues */}
+      <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
         <Stack>
           {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
@@ -695,7 +686,7 @@ export function ModelVersionDetails({
               Request a Review
             </Button>
           ) : showPublishButton ? (
-            <Stack spacing={4}>
+            <Stack gap={4}>
               {couldGenerate && isOwnerOrMod && (
                 <GenerateButton
                   model={model}
@@ -731,11 +722,11 @@ export function ModelVersionDetails({
 
               {scheduledPublishDate && isOwnerOrMod && (
                 <Stack>
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <ThemeIcon color="gray" variant="filled" radius="xl">
                       <IconClock size={20} />
                     </ThemeIcon>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       Scheduled for {dayjs(scheduledPublishDate).format('MMMM D, h:mma')}
                     </Text>
                   </Group>
@@ -743,9 +734,9 @@ export function ModelVersionDetails({
               )}
             </Stack>
           ) : (
-            <Stack spacing={4}>
-              <Group spacing="xs" className={classes.ctaContainer}>
-                <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
+            <Stack gap={4}>
+              <Group gap="xs" className={classes.ctaContainer}>
+                <Group gap="xs" className="flex-1 *:grow" wrap="nowrap">
                   {couldGenerate && (
                     <GenerateButton
                       model={model}
@@ -755,7 +746,7 @@ export function ModelVersionDetails({
                       canGenerate={canGenerate}
                       data-tour="model:create"
                       data-activity="create:model"
-                      sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                      style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                       disabled={isLoadingAccess || !!model.mode}
                       generationPrice={
                         !hasGeneratePermissions &&
@@ -782,9 +773,9 @@ export function ModelVersionDetails({
                             ref={ref}
                             color={color}
                             onClick={onClick}
-                            leftIcon={icon}
+                            leftSection={icon}
                             disabled={!primaryFile}
-                            sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                            style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                             fullWidth
                           >
                             {label}
@@ -797,7 +788,7 @@ export function ModelVersionDetails({
                               onClick={onClick}
                               disabled={!primaryFile}
                               variant="light"
-                              sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                              style={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                               fullWidth
                             >
                               {icon}
@@ -823,7 +814,7 @@ export function ModelVersionDetails({
                         {...getDownloadProps(primaryFile)}
                         tooltip="Download"
                         disabled={!primaryFile || archived || isLoadingAccess}
-                        sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                        style={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                         iconOnly
                       />
                     ) : (
@@ -840,7 +831,7 @@ export function ModelVersionDetails({
                                 : undefined
                             }
                             disabled={!primaryFile || archived || isLoadingAccess}
-                            sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                            style={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                             iconOnly
                           />
                         </Menu.Target>
@@ -861,7 +852,7 @@ export function ModelVersionDetails({
                           : undefined
                       }
                       disabled={!primaryFile || archived || isLoadingAccess}
-                      sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                      style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                     >
                       <Text align="center">
                         {primaryFile ? (
@@ -877,7 +868,7 @@ export function ModelVersionDetails({
                     </DownloadButton>
                   )}
                 </Group>
-                <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
+                <Group gap="xs" className="flex-1 *:grow" wrap="nowrap">
                   <Tooltip label="Share" position="top" withArrow>
                     <div>
                       <ShareButton
@@ -885,7 +876,7 @@ export function ModelVersionDetails({
                         title={model.name}
                         collect={{ modelId: model.id, type: CollectionType.Model }}
                       >
-                        <Button sx={{ paddingLeft: 8, paddingRight: 8 }} color="gray" fullWidth>
+                        <Button style={{ paddingLeft: 8, paddingRight: 8 }} color="gray" fullWidth>
                           <IconShare3 size={24} />
                         </Button>
                       </ShareButton>
@@ -901,7 +892,7 @@ export function ModelVersionDetails({
                               onFavoriteClick({ versionId: version.id, setTo: !isFavorite })
                             }
                             color={isFavorite ? 'green' : 'gray'}
-                            sx={{ paddingLeft: 8, paddingRight: 8 }}
+                            style={{ paddingLeft: 8, paddingRight: 8 }}
                             fullWidth
                           >
                             <ThumbsUpIcon color="#fff" filled={isFavorite} size={24} />
@@ -919,7 +910,7 @@ export function ModelVersionDetails({
                           withArrow
                         >
                           <Button
-                            sx={{ paddingLeft: 8, paddingRight: 8 }}
+                            style={{ paddingLeft: 8, paddingRight: 8 }}
                             color={isInVault ? 'green' : 'gray'}
                             onClick={toggleVaultItem}
                             disabled={isLoading}
@@ -1031,9 +1022,9 @@ export function ModelVersionDetails({
             >
               {({ modelId, modelVersionId, userReview, loading }) => (
                 <Card p={8} withBorder>
-                  <Stack spacing={8}>
-                    <Group spacing={8} position="apart" noWrap>
-                      <Group spacing={8} noWrap>
+                  <Stack gap={8}>
+                    <Group gap={8} justify="space-between" wrap="nowrap">
+                      <Group gap={8} wrap="nowrap">
                         {loading ? (
                           <Loader size="xs" />
                         ) : userReview ? (
@@ -1063,7 +1054,7 @@ export function ModelVersionDetails({
                           size="xs"
                         />
                       ) : (
-                        <Group noWrap spacing={4}>
+                        <Group wrap="nowrap" gap={4}>
                           <Button
                             size="xs"
                             color="gray"
@@ -1106,8 +1097,7 @@ export function ModelVersionDetails({
               content: { padding: 0 },
               item: {
                 overflow: 'hidden',
-                borderColor:
-                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+                borderColor: colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
                 boxShadow: theme.shadows.sm,
               },
               control: {
@@ -1128,11 +1118,15 @@ export function ModelVersionDetails({
                         passHref
                         legacyBehavior
                       >
-                        <Anchor variant="text" onClick={(e) => e.stopPropagation()} inherit>
+                        <Anchor
+                          variant="text"
+                          onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                          inherit
+                        >
                           {collection.name}
                         </Anchor>
                       </Link>
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         Collection
                         {collection.itemCount > 0
                           ? ` - ${collection.itemCount.toLocaleString()} items`
@@ -1142,10 +1136,10 @@ export function ModelVersionDetails({
                     {isOwnerOrMod ? (
                       <Anchor
                         size="sm"
-                        className={cx(
-                          settingShowcase && 'text-dark-2 cursor-not-allowed pointer-events-none'
+                        className={clsx(
+                          settingShowcase && 'pointer-events-none cursor-not-allowed text-dark-2'
                         )}
-                        onClick={(e) => {
+                        onClick={(e: React.MouseEvent) => {
                           e.stopPropagation();
                           e.preventDefault();
                           if (model.user.username)
@@ -1172,19 +1166,19 @@ export function ModelVersionDetails({
             )}
             <Accordion.Item value="version-details">
               <Accordion.Control>
-                <Group position="apart">
+                <Group justify="space-between">
                   Details
                   {showEditButton && (
                     <Menu withinPortal>
                       <Menu.Target>
-                        <Anchor size="sm" onClick={(e) => e.stopPropagation()}>
+                        <Anchor size="sm" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                           Edit
                         </Anchor>
                       </Menu.Target>
                       <Menu.Dropdown>
                         <Menu.Item
                           component={Link}
-                          onClick={(e) => e.stopPropagation()}
+                          onClick={(e: React.MouseEvent) => e.stopPropagation()}
                           href={`/models/${version.modelId}/edit`}
                           className={!features.canWrite ? 'pointer-events-none' : undefined}
                         >
@@ -1192,7 +1186,7 @@ export function ModelVersionDetails({
                         </Menu.Item>
                         <Menu.Item
                           component={Link}
-                          onClick={(e) => e.stopPropagation()}
+                          onClick={(e: React.MouseEvent) => e.stopPropagation()}
                           href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                           className={!features.canWrite ? 'pointer-events-none' : undefined}
                         >
@@ -1209,7 +1203,7 @@ export function ModelVersionDetails({
                   labelWidth="30%"
                   withBorder
                   paperProps={{
-                    sx: {
+                    style: {
                       borderLeft: 0,
                       borderRight: 0,
                       borderBottom: 0,
@@ -1222,14 +1216,14 @@ export function ModelVersionDetails({
             {isDownloadable && (
               <Accordion.Item
                 value="version-files"
-                sx={(theme) => ({
+                style={{
                   marginTop: theme.spacing.md,
                   marginBottom: !model.locked ? theme.spacing.md : undefined,
                   borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
-                })}
+                }}
               >
                 <Accordion.Control disabled={archived}>
-                  <Group position="apart">
+                  <Group justify="space-between">
                     {filesVisibleCount > 0
                       ? `${filesVisibleCount === 1 ? '1 File' : `${filesVisibleCount} Files`}`
                       : 'Files'}
@@ -1243,12 +1237,12 @@ export function ModelVersionDetails({
                   </Group>
                 </Accordion.Control>
                 <Accordion.Panel>
-                  <Stack spacing={2}>
+                  <Stack gap={2}>
                     {hasVisibleFiles ? (
                       downloadFileItems
                     ) : (
                       <Center p="xl">
-                        <Text size="md" color="dimmed">
+                        <Text size="md" c="dimmed">
                           This version is missing files
                         </Text>
                       </Center>
@@ -1261,7 +1255,7 @@ export function ModelVersionDetails({
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
                 <Accordion.Panel>
-                  <Stack spacing={2}>
+                  <Stack gap={2}>
                     {version.recommendedResources.map((resource) => (
                       <Card
                         key={resource.id}
@@ -1269,23 +1263,21 @@ export function ModelVersionDetails({
                         href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
                         radius={0}
                         py="xs"
-                        sx={(theme) => ({
+                        style={{
                           cursor: 'pointer',
                           backgroundColor:
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[6]
-                              : theme.colors.gray[0],
-                        })}
+                            colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                        }}
                         data-activity="follow-recommendation:details"
                       >
-                        <Stack spacing={4}>
-                          <Group position="apart" spacing={8} noWrap>
-                            <Text size="xs" weight={500} lineClamp={2}>
+                        <Stack gap={4}>
+                          <Group justify="space-between" gap={8} wrap="nowrap">
+                            <Text size="xs" fw={500} lineClamp={2}>
                               {resource.model.name}
                             </Text>
                             <Badge size="xs">{getDisplayName(resource.model.type)}</Badge>
                           </Group>
-                          <Text color="dimmed" size="xs">
+                          <Text c="dimmed" size="xs">
                             {resource.name}
                           </Text>
                         </Stack>
@@ -1299,9 +1291,9 @@ export function ModelVersionDetails({
               <Accordion.Item value="version-description">
                 <Accordion.Control>About this version</Accordion.Control>
                 <Accordion.Panel px="sm" pb="sm">
-                  <Stack spacing={4}>
+                  <Stack gap={4}>
                     {version.description && (
-                      <Box sx={{ p: { fontSize: 14, marginBottom: 10 } }}>
+                      <Box style={{ p: { fontSize: 14, marginBottom: 10 } }}>
                         <ContentClamp
                           maxHeight={200}
                           controlRef={controlRef}
@@ -1322,7 +1314,7 @@ export function ModelVersionDetails({
                           })
                         }
                         tabIndex={0}
-                        sx={{ cursor: 'pointer' }}
+                        style={{ cursor: 'pointer' }}
                       >
                         Show more
                       </Text>
@@ -1342,8 +1334,8 @@ export function ModelVersionDetails({
           {onSite && (
             <Group
               align="flex-start"
-              position="right"
-              spacing={4}
+              justify="flex-end"
+              gap={4}
               mt={-10}
               mb={-5}
               style={{ opacity: 0.5 }}
@@ -1355,21 +1347,26 @@ export function ModelVersionDetails({
             </Group>
           )}
 
-          <Group position="apart" align="flex-start" noWrap>
+          <Group justify="space-between" align="flex-start" wrap="nowrap">
             {model.type === 'Checkpoint' && (
-              <Group spacing={4} noWrap style={{ flex: 1, overflow: 'hidden' }} align="flex-start">
+              <Group
+                gap={4}
+                wrap="nowrap"
+                style={{ flex: 1, overflow: 'hidden' }}
+                align="flex-start"
+              >
                 <IconLicense size={16} />
                 <Text
                   size="xs"
-                  color="dimmed"
-                  sx={{
+                  c="dimmed"
+                  style={{
                     whiteSpace: 'nowrap',
                     lineHeight: 1.1,
                   }}
                 >
                   License{model.licenses.length > 0 ? 's' : ''}:
                 </Text>
-                <Stack spacing={0}>
+                <Stack gap={0}>
                   {license && (
                     <Text
                       component="a"
@@ -1378,8 +1375,8 @@ export function ModelVersionDetails({
                       td="underline"
                       target="_blank"
                       size="xs"
-                      color="dimmed"
-                      sx={{ lineHeight: 1.1 }}
+                      c="dimmed"
+                      style={{ lineHeight: 1.1 }}
                     >
                       {license.name}
                     </Text>
@@ -1390,8 +1387,8 @@ export function ModelVersionDetails({
                         variant="text"
                         td="underline"
                         size="xs"
-                        color="dimmed"
-                        sx={{ lineHeight: 1.1 }}
+                        c="dimmed"
+                        style={{ lineHeight: 1.1 }}
                       >
                         Addendum
                       </Anchor>
@@ -1405,9 +1402,9 @@ export function ModelVersionDetails({
                       href={url}
                       td="underline"
                       size="xs"
-                      color="dimmed"
+                      c="dimmed"
                       target="_blank"
-                      sx={{ lineHeight: 1.1 }}
+                      style={{ lineHeight: 1.1 }}
                     >
                       {name}
                     </Text>
@@ -1415,15 +1412,15 @@ export function ModelVersionDetails({
                 </Stack>
               </Group>
             )}
-            <PermissionIndicator spacing={5} size={28} permissions={model} ml="auto" />
+            <PermissionIndicator gap={5} size={28} permissions={model} ml="auto" />
           </Group>
           {license?.notice && (
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               {license.notice}
             </Text>
           )}
           {license?.poweredBy && (
-            <Text size="xs" weight={500}>
+            <Text size="xs" fw={500}>
               {license.poweredBy}
             </Text>
           )}
@@ -1435,19 +1432,12 @@ export function ModelVersionDetails({
           {model.poi && <PoiAlert />}
           {!model.nsfw && !model.poi && <AdUnitSide_2 />}
         </Stack>
-      </ContainerGrid.Col>
+      </ContainerGrid2.Col>
 
-      <ContainerGrid.Col
-        xs={12}
-        sm={7}
-        md={8}
-        orderSm={1}
-        sx={(theme: MantineTheme) => ({
-          [containerQuery.largerThan('xs')]: {
-            padding: `0 ${theme.spacing.sm}px`,
-            margin: `${theme.spacing.sm}px 0`,
-          },
-        })}
+      <ContainerGrid2.Col
+        span={{ base: 12, sm: 7, md: 8 }}
+        order={{ sm: 1 }}
+        className={classes.mainSection}
       >
         <Stack>
           {model.mode !== ModelModifier.TakenDown && !mobile && (
@@ -1464,13 +1454,13 @@ export function ModelVersionDetails({
             </ContentClamp>
           ) : null}
         </Stack>
-      </ContainerGrid.Col>
+      </ContainerGrid2.Col>
       <ScheduleModal
         opened={scheduleModalOpened}
         onClose={() => setScheduleModalOpened((current) => !current)}
         onSubmit={(date: Date) => handlePublishClick(date)}
       />
-    </ContainerGrid>
+    </ContainerGrid2>
   );
 }
 
@@ -1485,7 +1475,7 @@ type Props = {
 function VersionDescriptionModal({ description }: { description: string }) {
   const dialog = useDialogContext();
   return (
-    <Modal {...dialog} title="About this version" overflow="inside" size="lg" centered>
+    <Modal {...dialog} title="About this version" size="lg" centered>
       <RenderHtml html={description} />
     </Modal>
   );

@@ -1,14 +1,4 @@
-import {
-  ActionIcon,
-  Button,
-  Card,
-  createStyles,
-  Divider,
-  Group,
-  Skeleton,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Button, Card, Divider, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconArrowRight, IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
@@ -18,86 +8,12 @@ import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/L
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
+import clsx from 'clsx';
+import classes from './LeaderboardsHomeBlock.module.css';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; showAds?: boolean };
-
-const useStyles = createStyles<string, { columnWidth?: number; columnGap?: number }>(
-  (theme, { columnGap, columnWidth }, getRef) => ({
-    carousel: {
-      [containerQuery.smallerThan('sm')]: {
-        marginRight: -theme.spacing.md,
-        marginLeft: -theme.spacing.md,
-      },
-    },
-    nextButton: {
-      backgroundColor: `${theme.colors.gray[0]} !important`,
-      color: theme.colors.dark[9],
-      opacity: 0.65,
-      transition: 'opacity 300ms ease',
-      zIndex: 10,
-
-      '&:hover': {
-        opacity: 1,
-      },
-
-      [containerQuery.smallerThan('sm')]: {
-        display: 'none',
-      },
-    },
-
-    hidden: {
-      display: 'none !important',
-    },
-
-    grid: {
-      display: 'grid',
-      gridAutoFlow: 'column',
-      columnGap: columnGap,
-      gridAutoColumns: columnWidth,
-      gridTemplateRows: 'auto',
-      gridAutoRows: 0,
-      overflowX: 'visible',
-      paddingBottom: 4,
-
-      [containerQuery.smallerThan('sm')]: {
-        marginRight: -theme.spacing.md,
-        marginLeft: -theme.spacing.md,
-        paddingLeft: theme.spacing.md,
-      },
-    },
-    container: {
-      position: 'relative',
-      '&:hover': {
-        [`& .${getRef('scrollArea')}`]: {
-          '&::-webkit-scrollbar': {
-            opacity: 1,
-          },
-          '&::-webkit-scrollbar-thumb': {
-            backgroundColor:
-              theme.colorScheme === 'dark'
-                ? theme.fn.rgba(theme.white, 0.5)
-                : theme.fn.rgba(theme.black, 0.5),
-          },
-        },
-      },
-    },
-    scrollArea: {
-      ref: getRef('scrollArea'),
-      overflow: 'auto',
-      scrollSnapType: 'x mandatory',
-      '&::-webkit-scrollbar': {
-        background: 'transparent',
-        opacity: 0,
-        height: 8,
-      },
-      '&::-webkit-scrollbar-thumb': {
-        borderRadius: 4,
-      },
-    },
-  })
-);
 
 export const LeaderboardsHomeBlock = ({ showAds, ...props }: Props) => {
   return (
@@ -113,10 +29,6 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
     { trpc: { context: { skipBatch: true } } }
   );
   const { columnWidth, columnGap, columnCount } = useMasonryContext();
-  const { classes, cx } = useStyles({
-    columnGap,
-    columnWidth,
-  });
   const itemCount = homeBlock?.leaderboards?.length ?? 0;
   const [{ atStart, atEnd }, setScrollState] = useDebouncedState<{
     atStart: boolean;
@@ -154,14 +66,22 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
   const { leaderboards } = homeBlock ?? {};
 
   return (
-    <Stack spacing="xl">
+    <Stack gap="xl">
       <div>
         <HomeBlockHeaderMeta metadata={metadata} />
       </div>
 
       <div className={classes.container}>
         <div className={classes.scrollArea} ref={viewportRef} onScroll={onScroll}>
-          <div className={classes.grid}>
+          <div
+            className={classes.grid}
+            style={
+              {
+                '--column-gap': `${columnGap}px`,
+                '--column-width': `${columnWidth}px`,
+              } as React.CSSProperties
+            }
+          >
             {isLoading || !leaderboards
               ? Array.from({ length: 14 }).map((_, index) => (
                   <Skeleton key={index} width="100%" height={300} />
@@ -177,22 +97,21 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
                       h="100%"
                       style={{ scrollSnapAlign: 'start' }}
                     >
-                      <Group position="apart" align="center">
+                      <Group justify="space-between" align="center">
                         <Text size="lg">{leaderboard.title}</Text>
                         <Button
                           component={Link}
                           href={`/leaderboard/${leaderboard.id}`}
-                          rightIcon={<IconArrowRight size={16} />}
+                          rightSection={<IconArrowRight size={16} />}
                           variant="subtle"
-                          size="xs"
-                          compact
+                          size="compact-xs"
                         >
                           More
                         </Button>
                       </Group>
                       <Stack mt="md">
                         {displayedResults.length === 0 && (
-                          <Text color="dimmed">
+                          <Text c="dimmed">
                             No results have been published for this leaderboard
                           </Text>
                         )}
@@ -212,28 +131,28 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
                 })}
           </div>
         </div>
-        <ActionIcon
-          className={cx(classes.nextButton, { [classes.hidden]: atStart })}
+        <LegacyActionIcon
+          className={clsx(classes.nextButton, { [classes.hidden]: atStart })}
           radius="xl"
           size="md"
           color="gray"
           p={4}
-          sx={{ position: 'absolute', top: '50%', left: 10 }}
+          style={{ position: 'absolute', top: '50%', left: 10 }}
           onClick={() => scroll('left')}
         >
           <IconChevronLeft />
-        </ActionIcon>
-        <ActionIcon
-          className={cx(classes.nextButton, { [classes.hidden]: atEnd })}
+        </LegacyActionIcon>
+        <LegacyActionIcon
+          className={clsx(classes.nextButton, { [classes.hidden]: atEnd })}
           radius="xl"
           size="md"
           color="gray"
           p={4}
-          sx={{ position: 'absolute', top: '50%', right: 10 }}
+          style={{ position: 'absolute', top: '50%', right: 10 }}
           onClick={() => scroll('right')}
         >
           <IconChevronRight />
-        </ActionIcon>
+        </LegacyActionIcon>
       </div>
     </Stack>
   );

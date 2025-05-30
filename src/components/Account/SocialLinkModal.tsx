@@ -63,7 +63,7 @@ export function SocialLinkModal({
             label={selected?.type === LinkType.Social ? 'Social Link' : 'Sponsorship Link'}
             required
           />
-          <Group position="apart" grow>
+          <Group justify="space-between" grow>
             <Button onClick={onClose} variant="default">
               Cancel
             </Button>

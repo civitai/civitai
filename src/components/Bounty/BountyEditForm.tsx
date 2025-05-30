@@ -1,14 +1,4 @@
-import {
-  ActionIcon,
-  Anchor,
-  Button,
-  createStyles,
-  Group,
-  Stack,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Anchor, Button, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconCalendar, IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -29,18 +19,8 @@ import type { BountyGetById } from '~/types/router';
 import { BackButton } from '../BackButton/BackButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-
-const useStyles = createStyles((theme) => ({
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  fluid: {
-    maxWidth: '100% !important',
-  },
-}));
+import classes from './BountyEditForm.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const schema = updateBountyInputSchema
   .refine((data) => data.startsAt < data.expiresAt, {
@@ -54,7 +34,6 @@ const schema = updateBountyInputSchema
 
 export function BountyEditForm({ bounty }: Props) {
   const router = useRouter();
-  const { classes } = useStyles();
 
   const defaultValues = {
     ...bounty,
@@ -84,8 +63,8 @@ export function BountyEditForm({ bounty }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing="xl">
-        <Group spacing="md" noWrap>
+      <Stack gap="xl">
+        <Group gap="md" wrap="nowrap">
           <BackButton url={`/bounties/${bounty.id}`} />
           <Title className={classes.title}>Editing {bounty.name} Bounty</Title>
         </Group>
@@ -99,13 +78,13 @@ export function BountyEditForm({ bounty }: Props) {
         />
         {!alreadyStarted && (
           <Stack>
-            <Group spacing="xl" grow>
+            <Group gap="xl" grow>
               <InputDatePicker
                 className={classes.fluid}
                 name="startsAt"
                 label="Start Date"
                 placeholder="Select a starts date"
-                icon={<IconCalendar size={16} />}
+                leftSection={<IconCalendar size={16} />}
                 withAsterisk
                 minDate={minStartDate}
                 maxDate={maxStartDate}
@@ -115,19 +94,19 @@ export function BountyEditForm({ bounty }: Props) {
                 name="expiresAt"
                 label="Deadline"
                 placeholder="Select an end date"
-                icon={<IconCalendarDue size={16} />}
+                leftSection={<IconCalendarDue size={16} />}
                 withAsterisk
                 minDate={minExpiresDate}
                 maxDate={maxExpiresDate}
               />
             </Group>
-            <Text weight={590}>
+            <Text fw={590}>
               With the selected dates, your bounty will expire{' '}
-              <Text weight="bold" color="red.5" span>
+              <Text fw="bold" color="red.5" span>
                 <DaysFromNow date={stripTime(expiresAt)} inUtc />
               </Text>
               . All times are in{' '}
-              <Text weight="bold" color="red.5" span>
+              <Text fw="bold" color="red.5" span>
                 UTC
               </Text>
               .
@@ -156,28 +135,28 @@ export function BountyEditForm({ bounty }: Props) {
                 <Anchor
                   href={`/api/download/attachments/${file.id}`}
                   size="sm"
-                  weight={500}
+                  fw={500}
                   lineClamp={1}
                   download
                 >
                   {file.name}
                 </Anchor>
               ) : (
-                <Text size="sm" weight={500} lineClamp={1}>
+                <Text size="sm" fw={500} lineClamp={1}>
                   {file.name}
                 </Text>
               )}
               {/* TODO we should probably allow users to remove existing files here */}
               {!file.id && (
                 <Tooltip label="Remove">
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="sm"
                     color="red"
                     variant="transparent"
                     onClick={() => onRemove()}
                   >
                     <IconTrash />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               )}
             </>
@@ -186,7 +165,7 @@ export function BountyEditForm({ bounty }: Props) {
         {files && files.length > 0 && (
           <InputCheckbox name="ownRights" label="I own the rights to these files" mt="xs" />
         )}
-        <Group position="right">
+        <Group justify="flex-end">
           <Button type="submit" loading={updating}>
             Save
           </Button>

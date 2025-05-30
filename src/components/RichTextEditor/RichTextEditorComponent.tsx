@@ -1,5 +1,5 @@
-import type { CSSObject, InputWrapperProps, MantineSize } from '@mantine/core';
-import { createStyles, Group, Input, Text } from '@mantine/core';
+import type { InputWrapperProps, MantineSize } from '@mantine/core';
+import { Group, Input, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import type { RichTextEditorProps } from '@mantine/tiptap';
@@ -16,6 +16,7 @@ import type { Editor, Extensions } from '@tiptap/react';
 import { BubbleMenu, Extension, mergeAttributes, nodePasteRule, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useImperativeHandle, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import slugify from 'slugify';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
@@ -24,11 +25,11 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getRandomId, validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
+import classes from './RichTextEditorComponent.module.scss';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -37,7 +38,7 @@ import { getSuggestions } from './suggestion';
 //   xl: '90px',
 // };
 
-const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
+const mapEditorSize: Omit<Record<MantineSize, CSSProperties>, 'xs'> = {
   sm: {
     minHeight: 30,
     fontSize: 14,
@@ -53,36 +54,10 @@ const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
   },
 };
 
-const useStyles = createStyles((theme) => ({
-  mention: {
-    color: theme.colors.blue[4],
-  },
-  instagramEmbed: {
-    aspectRatio: '9/16',
-    maxHeight: 1060,
-    maxWidth: '50%',
-    overflow: 'hidden',
-
-    [containerQuery.smallerThan('sm')]: {
-      maxWidth: '100%',
-    },
-  },
-  strawPollEmbed: {
-    aspectRatio: '4/3',
-    maxHeight: 480,
-    // Ignoring because we want to use !important, if not then it complaints about it
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    pointerEvents: 'auto !important' as any,
-  },
-  bubbleTooltip: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-  },
-}));
-
 function openLinkWhitelistRequestModal() {
   return openModal({
     title: (
-      <Group spacing="xs">
+      <Group gap="xs">
         <IconAlertTriangle color="gold" />
         <Text size="lg">Blocked URL</Text>
       </Group>
@@ -154,7 +129,6 @@ export function RichTextEditor({
   inputClasses,
   ...props
 }: Props) {
-  const { classes } = useStyles();
   const addHeading = includeControls.includes('heading');
   const addFormatting = includeControls.includes('formatting');
   const addColors = addFormatting && includeControls.includes('colors');
@@ -238,7 +212,7 @@ export function RichTextEditor({
               showNotification({
                 id: UPLOAD_NOTIFICATION_ID,
                 loading: true,
-                disallowClose: true,
+                withCloseButton: false,
                 autoClose: false,
                 message: 'Uploading images...',
               });
@@ -349,35 +323,7 @@ export function RichTextEditor({
       error={error}
       className={inputClasses}
     >
-      <RTE
-        {...props}
-        editor={editor}
-        id={id}
-        sx={(theme) => ({
-          marginTop: description ? 5 : undefined,
-          marginBottom: error ? 5 : undefined,
-          borderColor: error ? theme.colors.red[8] : undefined,
-
-          // Fixes gapcursor color for dark mode
-          '& .ProseMirror-gapcursor:after': {
-            borderTop: `1px solid ${theme.colorScheme === 'dark' ? 'white' : 'black'}`,
-          },
-
-          '& .ProseMirror': {
-            ...mapEditorSize[editorSize],
-            // minHeight: mapEditorSizeHeight[editorSize],
-
-            '& p.is-editor-empty:first-of-type::before': {
-              color: error ? theme.colors.red[8] : undefined,
-              fontSize: 14,
-            },
-          },
-
-          '& iframe': {
-            pointerEvents: 'none',
-          },
-        })}
-      >
+      <RTE {...props} editor={editor} id={id} className={classes.ritchTextEditor}>
         {!hideToolbar && (
           <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
             {addHeading && (

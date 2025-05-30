@@ -44,7 +44,7 @@
   }
 }
 
-:global(.dark) {
+:global([data-mantine-color-scheme="dark"]) {
   .c,
   .ivit {
     fill: theme('colors.dark.0');

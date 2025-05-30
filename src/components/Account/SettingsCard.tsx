@@ -55,7 +55,7 @@ export function SettingsCard() {
         <Title order={2}>Browsing Settings</Title>
 
         <Divider label="Image Preferences" mb={-12} />
-        <Group noWrap grow>
+        <Group wrap="nowrap" grow>
           <AutoplayGifsToggle />
           <Select
             label="Preferred Format"
@@ -71,10 +71,10 @@ export function SettingsCard() {
               },
             ]}
             value={user.filePreferences?.imageFormat ?? 'metadata'}
-            onChange={(value: ImageFormat) =>
+            onChange={(value: string | null) =>
               mutate({
                 id: user.id,
-                filePreferences: { ...user.filePreferences, imageFormat: value },
+                filePreferences: { ...user.filePreferences, imageFormat: value as ImageFormat },
               })
             }
             disabled={isLoading}
@@ -82,14 +82,17 @@ export function SettingsCard() {
         </Group>
 
         <Divider label="Model File Preferences" mb={-12} />
-        <Group noWrap grow>
+        <Group wrap="nowrap" grow>
           <Select
             label="Preferred Format"
             name="fileFormat"
             data={validModelFormats}
             value={user.filePreferences?.format ?? 'SafeTensor'}
-            onChange={(value: ModelFileFormat) =>
-              mutate({ id: user.id, filePreferences: { ...user.filePreferences, format: value } })
+            onChange={(value: string | null) =>
+              mutate({
+                id: user.id,
+                filePreferences: { ...user.filePreferences, format: value as ModelFileFormat },
+              })
             }
             disabled={isLoading}
           />
@@ -101,21 +104,27 @@ export function SettingsCard() {
               label: titleCase(size),
             }))}
             value={user.filePreferences?.size ?? 'pruned'}
-            onChange={(value: ModelFileSize) =>
-              mutate({ id: user.id, filePreferences: { ...user.filePreferences, size: value } })
+            onChange={(value: string | null) =>
+              mutate({
+                id: user.id,
+                filePreferences: { ...user.filePreferences, size: value as ModelFileSize },
+              })
             }
             disabled={isLoading}
           />
           <Select
             label="Preferred Precision"
-            name="fp"
+            // name="fp"
             data={constants.modelFileFp.map((value) => ({
               value,
               label: value.toUpperCase(),
             }))}
             value={user.filePreferences?.fp ?? 'fp16'}
-            onChange={(value: ModelFileFp) =>
-              mutate({ id: user.id, filePreferences: { ...user.filePreferences, fp: value } })
+            onChange={(value: string | null) =>
+              mutate({
+                id: user.id,
+                filePreferences: { ...user.filePreferences, fp: value as ModelFileFp },
+              })
             }
             disabled={isLoading}
           />
@@ -136,8 +145,10 @@ export function SettingsCard() {
                 <div>
                   <Select
                     label={
-                      <Group mb={4} spacing="xs">
-                        <Text>Personality</Text>
+                      <Group mb={4} gap="xs">
+                        <Text size="sm" fw={500}>
+                          Personality
+                        </Text>
                         {new Date() < new Date('2025-04-21') && <Badge color="green">New</Badge>}
                       </Group>
                     }
@@ -154,9 +165,9 @@ export function SettingsCard() {
                       },
                     ]}
                     value={assistantPersonality ?? 'civbot'}
-                    onChange={(value: UserAssistantPersonality) => {
+                    onChange={(value: string | null) => {
                       if (flags.assistantPersonality) {
-                        mutateSetting({ assistantPersonality: value });
+                        mutateSetting({ assistantPersonality: value as UserAssistantPersonality });
                       }
                     }}
                   />

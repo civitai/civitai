@@ -2,8 +2,8 @@ import type { TooltipProps } from '@mantine/core';
 import {
   ActionIcon,
   Button,
-  createStyles,
   Divider,
+  Grid,
   Group,
   Input,
   Paper,
@@ -29,7 +29,7 @@ import type { z } from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -72,6 +72,8 @@ import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
+import classes from './BountyCreateForm.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -109,75 +111,8 @@ const formSchema = createBountyInputSchema
     path: ['expiresAt'],
   });
 
-const useStyles = createStyles((theme) => ({
-  radioItemWrapper: {
-    '& .mantine-Group-root': {
-      alignItems: 'stretch',
-      [containerQuery.smallerThan('sm')]: {
-        flexDirection: 'column',
-      },
-    },
-  },
-
-  radioItem: {
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-    }`,
-    borderRadius: theme.radius.sm,
-    padding: theme.spacing.xs,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-    display: 'flex',
-    flex: 1,
-
-    '& > .mantine-Radio-body, & .mantine-Radio-label': {
-      width: '100%',
-    },
-
-    '& > .mantine-Switch-body, & .mantine-Switch-labelWrapper, & .mantine-Switch-label': {
-      width: '100%',
-    },
-  },
-
-  root: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-  },
-  label: {
-    textTransform: 'capitalize',
-  },
-  active: {
-    border: `2px solid ${theme.colors.blue[5]}`,
-    backgroundColor: 'transparent',
-  },
-
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  sectionTitle: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '18px',
-    },
-  },
-  fluid: {
-    [containerQuery.smallerThan('sm')]: {
-      maxWidth: '100% !important',
-    },
-  },
-  stickySidebar: {
-    position: 'sticky',
-    top: `calc(var(--header-height) + ${theme.spacing.md}px)`,
-
-    [containerQuery.smallerThan('md')]: {
-      position: 'relative',
-      top: 0,
-    },
-  },
-}));
-
 export function BountyCreateForm() {
   const router = useRouter();
-  const { classes } = useStyles();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
 
@@ -288,22 +223,22 @@ export function BountyCreateForm() {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={32}>
-        <Group spacing="md" noWrap>
+      <Stack gap={32}>
+        <Group gap="md" wrap="nowrap">
           <BackButton url="/bounties" />
           <Title className={classes.title}>Create a new bounty</Title>
         </Group>
-        <ContainerGrid gutter="xl">
-          <ContainerGrid.Col xs={12} md={8}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
+        <ContainerGrid2 gutter="xl">
+          <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
+            <Stack gap={32}>
+              <Stack gap="xl">
                 <InputText
                   name="name"
                   label="Bounty Name"
                   placeholder="e.g.:LoRA for XYZ"
                   withAsterisk
                 />
-                <Group spacing="md" grow>
+                <Group gap="md" grow>
                   <InputSelect
                     className={classes.fluid}
                     name="type"
@@ -369,11 +304,11 @@ export function BountyCreateForm() {
                 {imageFiles.length > 0 && (
                   <SimpleGrid
                     spacing="sm"
-                    breakpoints={[
-                      { minWidth: 'xs', cols: 1 },
-                      { minWidth: 'sm', cols: 3 },
-                      { minWidth: 'md', cols: imageFiles.length > 3 ? 4 : imageFiles.length },
-                    ]}
+                    cols={{
+                      base: 1,
+                      sm: 3,
+                      md: imageFiles.length > 3 ? 4 : imageFiles.length,
+                    }}
                   >
                     {imageFiles
                       .slice()
@@ -383,7 +318,7 @@ export function BountyCreateForm() {
                           key={file.url}
                           radius="sm"
                           p={0}
-                          sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                          style={{ position: 'relative', overflow: 'hidden', height: 332 }}
                           withBorder
                         >
                           {file.status === 'success' ? (
@@ -395,21 +330,21 @@ export function BountyCreateForm() {
                                 style={{ objectFit: 'cover', height: '100%' }}
                               />
                               <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                                <ActionIcon
+                                <LegacyActionIcon
                                   variant="filled"
                                   size="lg"
                                   color="red"
                                   onClick={() => removeImage(file.url)}
                                 >
                                   <IconTrash size={26} strokeWidth={2.5} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </div>
                               {file.type === 'image' && (
                                 <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                                   <ImageMetaPopover meta={file.meta}>
-                                    <ActionIcon variant="light" color="dark" size="lg">
+                                    <LegacyActionIcon variant="light" color="dark" size="lg">
                                       <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                                    </ActionIcon>
+                                    </LegacyActionIcon>
                                   </ImageMetaPopover>
                                 </div>
                               )}
@@ -417,14 +352,16 @@ export function BountyCreateForm() {
                           ) : (
                             <>
                               <MediaHash {...file} />
-                              <Progress
-                                size="xl"
-                                value={file.progress}
-                                label={`${Math.floor(file.progress)}%`}
-                                color={file.progress < 100 ? 'blue' : 'green'}
-                                striped
-                                animate
-                              />
+                              <Progress.Root size="xl">
+                                <Progress.Section
+                                  striped
+                                  animated
+                                  value={file.progress}
+                                  color={file.progress < 100 ? 'blue' : 'green'}
+                                >
+                                  <Progress.Label>{Math.floor(file.progress)}%</Progress.Label>
+                                </Progress.Section>
+                              </Progress.Root>
                             </>
                           )}
                         </Paper>
@@ -432,13 +369,13 @@ export function BountyCreateForm() {
                   </SimpleGrid>
                 )}
                 <Stack>
-                  <Group spacing="md" grow>
+                  <Group gap="md" grow>
                     <InputDatePicker
                       className={classes.fluid}
                       name="startsAt"
                       label="Start Date"
                       placeholder="Select a start date"
-                      icon={<IconCalendar size={16} />}
+                      leftSection={<IconCalendar size={16} />}
                       withAsterisk
                       minDate={minStartDate}
                       maxDate={maxStartDate}
@@ -448,19 +385,19 @@ export function BountyCreateForm() {
                       name="expiresAt"
                       label="Deadline"
                       placeholder="Select an end date"
-                      icon={<IconCalendarDue size={16} />}
+                      leftSection={<IconCalendarDue size={16} />}
                       withAsterisk
                       minDate={minExpiresDate}
                       maxDate={maxExpiresDate}
                     />
                   </Group>
-                  <Text weight={590}>
+                  <Text fw={590}>
                     With the selected dates, your bounty will expire{' '}
-                    <Text weight="bold" color="red.5" span>
+                    <Text fw="bold" color="red.5" span>
                       <DaysFromNow date={stripTime(expiresAt)} inUtc />
                     </Text>
                     . All times are in{' '}
-                    <Text weight="bold" color="red.5" span>
+                    <Text fw="bold" color="red.5" span>
                       UTC
                     </Text>
                     .
@@ -489,7 +426,7 @@ export function BountyCreateForm() {
                     ))}
                   </InputRadioGroup>
                 )}
-                <Group spacing="md" grow>
+                <Group gap="md" grow>
                   <InputNumber
                     className={classes.fluid}
                     name="unitAmount"
@@ -498,7 +435,7 @@ export function BountyCreateForm() {
                     min={constants.bounties.minCreateAmount}
                     max={constants.bounties.maxCreateAmount}
                     step={100}
-                    icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                     format={currency !== Currency.BUZZ ? 'currency' : undefined}
                     withAsterisk
                   />
@@ -524,7 +461,7 @@ export function BountyCreateForm() {
                   )}
                 </Group>
               </Stack>
-              <Stack spacing="xl">
+              <Stack gap="xl">
                 {bountyEntryModeEnabled && (
                   <InputRadioGroup name="entryMode" label="Entry Mode" withAsterisk>
                     {Object.values(BountyEntryMode).map((value) => (
@@ -564,12 +501,12 @@ export function BountyCreateForm() {
                 )}
               </Stack>
             </Stack>
-          </ContainerGrid.Col>
-          <ContainerGrid.Col xs={12} md={4}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
             <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
-                <Stack spacing="xl">
+                <Stack gap="xl">
                   <Input.Wrapper
                     className={classes.fluid}
                     label="Preferred model format"
@@ -605,11 +542,11 @@ export function BountyCreateForm() {
               <InputSwitch
                 name="poi"
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Depicts an actual person</Text>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       For example: Tom Cruise or Tom Cruise as Maverick
                     </Text>
                   </Stack>
@@ -618,14 +555,20 @@ export function BountyCreateForm() {
               <InputSwitch
                 name="nsfw"
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Mature theme</Text>
-                      <ActionIcon radius="xl" size="xs" onClick={openBrowsingLevelGuide}>
+                      <LegacyActionIcon
+                        color="gray"
+                        variant="subtle"
+                        radius="xl"
+                        size="xs"
+                        onClick={openBrowsingLevelGuide}
+                      >
                         <IconQuestionMark />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       This bounty is intended to produce mature content.
                     </Text>
                   </Stack>
@@ -643,9 +586,9 @@ export function BountyCreateForm() {
                 </>
               )}
             </Stack>
-          </ContainerGrid.Col>
-        </ContainerGrid>
-        <Group position="right">
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
+        <Group justify="flex-end">
           <NavigateBack url="/bounties">
             {({ onClick }) => (
               <Button variant="light" color="gray" onClick={onClick}>
@@ -675,9 +618,9 @@ export function BountyCreateForm() {
 
 type RadioItemProps = { label: string; description: string };
 const RadioItem = ({ label, description }: RadioItemProps) => (
-  <Stack spacing={4}>
+  <Stack gap={4}>
     <Text inline>{label}</Text>
-    <Text size="xs" color="dimmed">
+    <Text size="xs" c="dimmed">
       {description}
     </Text>
   </Stack>

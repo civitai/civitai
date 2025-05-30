@@ -75,7 +75,7 @@ export const ModelVersionPopularity = ({
   if (!features.auctions) return <></>;
   // if we want to show this for non checkpoints, simply remove this line
   if (!isCheckpoint) return <></>;
-  if (isLoading) return <Loader size="xs" variant="bars" />;
+  if (isLoading) return <Loader size="xs" type="bars" />;
 
   const popColors: {
     [key in
@@ -108,11 +108,11 @@ export const ModelVersionPopularity = ({
   return (
     <Tooltip multiline withinPortal label={<Text>{closestPopularityInfo.description}</Text>}>
       <Group
-        spacing={4}
+        gap={4}
         style={{
           color: popColors[closestPopularityInfo.name],
         }}
-        noWrap
+        wrap="nowrap"
         className="cursor-default"
       >
         <IconTemperature size={16} />

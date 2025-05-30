@@ -1,7 +1,6 @@
 import type { MantineSize } from '@mantine/core';
 import {
   Center,
-  createStyles,
   Group,
   Paper,
   SimpleGrid,
@@ -20,6 +19,7 @@ import { getNotificationMessage } from '~/server/notifications/utils.notificatio
 import type { NotificationGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { isDefined } from '~/utils/type-guards';
+import classes from './NotificationList.module.css';
 
 export function NotificationList({
   items,
@@ -29,7 +29,6 @@ export function NotificationList({
   searchText,
 }: Props) {
   const router = useRouter();
-  const { classes } = useStyles();
 
   const fullItems = useMemo(() => {
     return items
@@ -107,8 +106,8 @@ export function NotificationList({
             data-unread={!notification.read}
             className={classes.listItem}
           >
-            <Group spacing="xl" position="apart" align="start" noWrap>
-              <Group spacing="md" align="start" noWrap>
+            <Group gap="xl" justify="space-between" align="start" wrap="nowrap">
+              <Group gap="md" align="start" wrap="nowrap">
                 {systemNotification ? (
                   <ThemeIcon variant="light" size="xl" radius="xl" color="red">
                     <IconAlertOctagon stroke={1.5} />
@@ -124,20 +123,20 @@ export function NotificationList({
                     <IconBell stroke={1.5} />
                   </ThemeIcon>
                 )}
-                <Stack spacing={0}>
-                  <Text size={textSize} weight="bold" lineClamp={truncate ? 3 : undefined}>
+                <Stack gap={0}>
+                  <Text size={textSize} fw="bold" lineClamp={truncate ? 3 : undefined}>
                     {details.message}
                   </Text>
-                  <Group spacing={2} noWrap>
+                  <Group gap={2} wrap="nowrap">
                     {notificationDetails?.content && (
                       <>
-                        <Text size="xs" color="dimmed" lineClamp={1}>
+                        <Text size="xs" c="dimmed" lineClamp={1}>
                           {notificationDetails.content}
                         </Text>
                         ・
                       </>
                     )}
-                    <Text size="xs" color="dimmed" style={{ whiteSpace: 'nowrap' }} span>
+                    <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }} span>
                       <DaysFromNow date={notification.createdAt} />
                     </Text>
                   </Group>
@@ -158,29 +157,3 @@ type Props = {
   truncate?: boolean;
   searchText: string;
 };
-
-const useStyles = createStyles((theme) => ({
-  listItem: {
-    cursor: 'pointer',
-    borderTop: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-    }`,
-    '&:first-of-type': {
-      borderTop: 'none',
-    },
-    padding: theme.spacing.sm,
-    '&[data-unread="true"]': {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-      ':hover': {
-        background:
-          theme.colorScheme === 'dark'
-            ? theme.fn.lighten(theme.colors.dark[6], 0.05)
-            : theme.fn.darken(theme.colors.gray[0], 0.05),
-      },
-    },
-    ':hover': {
-      background:
-        theme.colorScheme === 'dark' ? `rgba(255, 255, 255, 0.05)` : `rgba(0, 0, 0, 0.05)`,
-    },
-  },
-}));

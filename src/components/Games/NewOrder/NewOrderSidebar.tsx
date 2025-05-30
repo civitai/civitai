@@ -1,4 +1,4 @@
-import { Group, Navbar, Popover, ThemeIcon } from '@mantine/core';
+import { Group, AppShell, Popover, ThemeIcon } from '@mantine/core';
 import {
   IconBubbleText,
   IconChevronDown,
@@ -156,7 +156,9 @@ export function NewOrderSidebar() {
           {header}
           <Popover
             position="bottom"
-            transition="scale-y"
+            transitionProps={{
+              transition: 'scale-y',
+            }}
             width="calc(100% - 32px)"
             onChange={setOpened}
             zIndex={40}
@@ -178,14 +180,14 @@ export function NewOrderSidebar() {
           </Popover>
         </div>
       ) : (
-        <Navbar p="md" h="100%" width={{ xs: 300, sm: 360 }} zIndex={1} withBorder>
-          <Navbar.Section className="border-b border-gray-200 pb-4 dark:border-b-dark-4">
+        <AppShell.Navbar p="md" h="100%" w={{ xs: 300, sm: 360 }} zIndex={1} withBorder>
+          <AppShell.Section className="border-b border-gray-200 pb-4 dark:border-b-dark-4">
             {header}
-          </Navbar.Section>
-          <Navbar.Section mt="md" grow>
+          </AppShell.Section>
+          <AppShell.Section mt="md" grow>
             {content}
-          </Navbar.Section>
-        </Navbar>
+          </AppShell.Section>
+        </AppShell.Navbar>
       )}
       <NewOrderRulesModal opened={modalOpened} onClose={() => setModalOpened(false)} />
     </>

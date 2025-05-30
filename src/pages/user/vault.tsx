@@ -20,7 +20,6 @@ import {
   Paper,
   ScrollArea,
   Badge,
-  createStyles,
   ActionIcon,
   Anchor,
   Image,
@@ -74,6 +73,9 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { Meta } from '~/components/Meta/Meta';
 import { isDefined } from '~/utils/type-guards';
 import { sleep } from '~/server/utils/concurrency-helpers';
+import styles from './vault.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -100,29 +102,6 @@ export const getServerSideProps = createServerSideProps({
       };
   },
 });
-
-const useStyles = createStyles((theme) => ({
-  selected: { background: theme.fn.rgba(theme.colors.blue[8], 0.3), color: theme.colors.gray[0] },
-  mobileCard: {
-    position: 'relative',
-    color: 'white',
-    width: '100%',
-    borderRadius: theme.radius.md,
-    overflow: 'hidden',
-
-    ['& .mantine-Stack-root']: {
-      background: 'linear-gradient(transparent, rgba(0,0,0,.6))',
-      color: 'white',
-      position: 'absolute',
-      width: '100%',
-      maxHeight: '50%',
-      bottom: 0,
-      top: 'initial',
-      padding: theme.spacing.sm,
-      alignItems: 'flex-start',
-    },
-  },
-}));
 
 const VaultItemsAddNote = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) => {
   const dialog = useDialogContext();
@@ -171,7 +150,6 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { removeItems, removingItems } = useMutateVault();
-  const { classes, cx } = useStyles();
 
   const handleConfirm = async () => {
     if (removingItems) return;
@@ -193,11 +171,11 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
       <Stack>
         <Text size="sm">Models deleted from your Vault cannot be retrieved.</Text>
 
-        <ScrollArea.Autosize maxHeight={500}>
+        <ScrollArea.Autosize mah={500}>
           <Stack>
             {vaultItems.map((item) => (
               <Paper withBorder p="sm" radius="lg" key={item.id}>
-                <Group noWrap>
+                <Group wrap="nowrap">
                   {item.coverImageUrl && (
                     <Image
                       src={item.coverImageUrl}
@@ -207,9 +185,9 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
                       height={50}
                     />
                   )}
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text>{item.modelName}</Text>
-                    <Text color="dimmed" size="sm">
+                    <Text c="dimmed" size="sm">
                       {item.versionName}
                     </Text>
                   </Stack>
@@ -304,11 +282,11 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
   return (
     <Modal {...dialog} size="md" withCloseButton title={`Downloading ${vaultItems.length} models`}>
       <Stack>
-        <ScrollArea.Autosize maxHeight={500}>
+        <ScrollArea.Autosize mah={500}>
           <Stack>
             {vaultItems.map((item) => (
               <Paper withBorder p="sm" radius="lg" key={item.id}>
-                <Group noWrap>
+                <Group wrap="nowrap">
                   {item.coverImageUrl && (
                     <Image
                       src={item.coverImageUrl}
@@ -318,9 +296,9 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
                       height={50}
                     />
                   )}
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text>{item.modelName}</Text>
-                    <Text color="dimmed" size="sm">
+                    <Text c="dimmed" size="sm">
                       {item.versionName}
                     </Text>
                   </Stack>
@@ -332,18 +310,17 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
 
         <Checkbox.Group
           value={downloadables}
-          orientation="horizontal"
           label="Select what items to download"
           description="You can download the model, details, and images of the selected models. Only the main model file will be downloaded when doing a multi-download."
           onChange={(values) => {
             setDownloadables(values);
           }}
         >
-          {downloadableOptions.map((item) => (
-            <Checkbox key={item.value} value={item.value} label={item.label}>
-              {item.label}
-            </Checkbox>
-          ))}
+          <Group>
+            {downloadableOptions.map((item) => (
+              <Checkbox key={item.value} value={item.value} label={item.label} />
+            ))}
+          </Group>
         </Checkbox.Group>
 
         <Divider mx="-lg" />
@@ -372,9 +349,9 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
   return (
     <Menu withinPortal>
       <Menu.Target>
-        <ActionIcon ml="auto">
+        <LegacyActionIcon ml="auto">
           <IconDownload />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         {vaultItem.files.map((f) => (
@@ -383,18 +360,18 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
             component={Link}
             href={`/api/download/vault/${vaultItem.id}?type=model&fileId=${f.id}`}
           >
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text>{f.displayName}</Text>
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 {formatKBytes(f.sizeKB)}
               </Text>
             </Stack>
           </Menu.Item>
         ))}
         <Menu.Item component={Link} href={`/api/download/vault/${vaultItem.id}?type=details`}>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text>Details</Text>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               {formatKBytes(vaultItem.detailsSizeKb)}
             </Text>
           </Stack>
@@ -402,7 +379,7 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
         <Menu.Item component={Link} href={`/api/download/vault/${vaultItem.id}?type=images`}>
           <Stack>
             <Text>Images</Text>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               {formatKBytes(vaultItem.imagesSizeKb)}
             </Text>
           </Stack>
@@ -471,11 +448,11 @@ const VaultStateNotice = () => {
 
 const vaultHelp = (
   <Tooltip label="What is Civitai Vault?">
-    <ActionIcon component="a" href="/product/vault" sx={{ alignSelf: 'center' }}>
-      <Text color="dimmed" inline>
+    <LegacyActionIcon component="a" href="/product/vault" style={{ alignSelf: 'center' }}>
+      <Text c="dimmed" inline>
         <IconHelpCircle />
       </Text>
-    </ActionIcon>
+    </LegacyActionIcon>
   </Tooltip>
 );
 
@@ -485,12 +462,11 @@ const MobileVault = () => {
     {},
     { keepPreviousData: true }
   );
-  const { classes } = useStyles();
 
   return (
     <Container size="xl">
       <Stack mb="xl">
-        <Group spacing="xs">
+        <Group gap="xs">
           <Title order={1}>Civitai Vault</Title>
           {vaultHelp}
         </Group>
@@ -526,7 +502,7 @@ const MobileVault = () => {
               return (
                 <Grid.Col span={6} key={item.id}>
                   <Anchor href={`/models/${item.modelId}?modelVersionId=${item.modelVersionId}`}>
-                    <AspectRatio ratio={1} className={classes.mobileCard}>
+                    <AspectRatio ratio={1} className={styles.mobileCard}>
                       {item.coverImageUrl && (
                         <Image
                           src={item.coverImageUrl}
@@ -536,7 +512,7 @@ const MobileVault = () => {
                           height="100%"
                         />
                       )}
-                      <Stack spacing={0}>
+                      <Stack gap={0}>
                         <Text>{item.modelName}</Text>
                         <Text size="sm">{item.versionName}</Text>
                       </Stack>
@@ -575,7 +551,6 @@ export default function CivitaiVault() {
   const allSelectedInPage = useMemo(() => {
     return items.every((item) => selectedItems.find((i) => i.id === item.id));
   }, [items, selectedItems]);
-  const { classes, cx } = useStyles();
   const isMobile = useIsMobile();
 
   //#region [useEffect] cancel debounced filters
@@ -593,12 +568,12 @@ export default function CivitaiVault() {
       <Meta title="Civitai Vault" deIndex />
       <Container fluid>
         <Stack mb="xl">
-          <Group position="apart" align="flex-end">
+          <Group justify="space-between" align="flex-end">
             <Title order={1}>Civitai Vault</Title>
             {vaultHelp}
             <Group ml="auto" align="start">
               {vault && vault.storageKb > 0 && (
-                <Stack spacing={0}>
+                <Stack gap={0}>
                   <Progress
                     style={{ width: '100%', maxWidth: '400px', marginLeft: 'auto' }}
                     size="xl"
@@ -629,12 +604,12 @@ export default function CivitaiVault() {
             <LoadingOverlay visible={(isLoadingVaultItems || isRefetching) ?? false} zIndex={9} />
 
             <Stack>
-              <Group position="apart">
+              <Group justify="space-between">
                 <Group>
                   <TextInput
                     radius="xl"
                     variant="filled"
-                    icon={<IconSearch size={20} />}
+                    leftSection={<IconSearch size={20} />}
                     onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
                     value={filters.query}
                     placeholder="Models or creators..."
@@ -664,7 +639,7 @@ export default function CivitaiVault() {
                       onClick={() => {
                         setSelectedItems([]);
                       }}
-                      rightIcon={<IconX size={14} />}
+                      rightSection={<IconX size={14} />}
                     >
                       {selectedItems.length} selected
                     </Button>
@@ -772,8 +747,8 @@ export default function CivitaiVault() {
                     return (
                       <tr
                         key={item.id}
-                        className={cx({
-                          [classes.selected]: isSelected,
+                        className={clsx({
+                          [styles.selected]: isSelected,
                         })}
                       >
                         <td width={50}>
@@ -807,13 +782,13 @@ export default function CivitaiVault() {
                                 {VaultItemsStatusDetailsMap[item.status].icon}
                               </Tooltip>
                             )}
-                            <Stack spacing={0}>
+                            <Stack gap={0}>
                               <Anchor
                                 href={`/models/${item.modelId}?modelVersionId=${item.modelVersionId}`}
                               >
                                 <Text>{item.modelName}</Text>
                               </Anchor>
-                              <Text color="dimmed" size="sm">
+                              <Text c="dimmed" size="sm">
                                 {item.versionName}
                               </Text>
                             </Stack>
@@ -823,7 +798,7 @@ export default function CivitaiVault() {
                           <Anchor href={`/user/${item.creatorName}`}>{item.creatorName}</Anchor>
                         </td>
                         <td>
-                          <Group spacing={4}>
+                          <Group gap={4}>
                             <Badge size="sm" color="blue" variant="light">
                               {getDisplayName(item.type)}
                             </Badge>
@@ -833,7 +808,7 @@ export default function CivitaiVault() {
                           </Group>
                         </td>
                         <td>
-                          <Text transform="capitalize">{getDisplayName(item.category)}</Text>
+                          <Text tt="capitalize">{getDisplayName(item.category)}</Text>
                         </td>
                         <td>
                           {formatKBytes(
@@ -863,10 +838,10 @@ export default function CivitaiVault() {
                 </tbody>
               </Table>
               {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                   <Pagination
-                    page={filters.page}
+                    value={filters.page}
                     onChange={(page) => {
                       setFilters((curr) => ({ ...curr, page }));
                       window.scrollTo({ top: 0, behavior: 'smooth' });

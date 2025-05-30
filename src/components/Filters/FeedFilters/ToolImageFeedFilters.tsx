@@ -1,6 +1,6 @@
 import type { GroupProps } from '@mantine/core';
 import { Group } from '@mantine/core';
-import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
+import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -10,7 +10,6 @@ import { ImageSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
-  const { classes } = useFeedFiltersStyles();
   const currentUser = useCurrentUser();
 
   const { replace, query } = useImageQueryParams();
@@ -28,7 +27,7 @@ export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
   } = query;
 
   return (
-    <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
+    <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser && (
         <FollowedFilter
           type="images"
@@ -46,7 +45,6 @@ export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
       />
       <MediaFiltersDropdown
         className={classes.subnavDropdown}
-        size="sm"
         w="100%"
         filterType="images"
         query={{
@@ -64,7 +62,7 @@ export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
         hideMediaTypes
         hideTools
         isFeed
-        compact
+        size="compact-sm"
       />
     </Group>
   );

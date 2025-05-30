@@ -1,0 +1,22 @@
+.badge {
+  text-transform: none;
+  cursor: pointer;
+}
+
+.inner {
+  display: flex;
+}
+
+.createOption {
+  font-size: var(--mantine-font-size-sm); // Replace with Mantine's small font size variable
+  padding: var(--mantine-spacing-xs); // Replace with Mantine's spacing variable
+  border-radius: var(--mantine-radius-sm); // Replace with Mantine's small radius variable
+
+  &:hover {
+    background-color: var(--mantine-color-dark-4, #e0e0e0); // Replace with Mantine's dark[4] or gray[1]
+  }
+}
+
+.dropdown {
+  max-width: 300px !important;
+}

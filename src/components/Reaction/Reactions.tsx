@@ -18,6 +18,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
 import React from 'react';
 import clsx from 'clsx';
+import classes from './Reactions.module.css';
 
 export type ReactionMetrics = {
   likeCount?: number;
@@ -56,19 +57,19 @@ export function PostReactions({
   if (total === 0 && imageCount === 0) return null;
 
   return (
-    <Group spacing="xs" sx={{ cursor: 'default' }} {...groupProps}>
+    <Group gap="xs" style={{ cursor: 'default' }} {...groupProps}>
       {imageCount && (
-        <Group spacing={4} align="center">
+        <Group gap={4} align="center">
           <IconPhoto size={20} strokeWidth={2} />
-          <Text size="sm" weight={500}>
+          <Text size="sm" fw={500}>
             {imageCount}
           </Text>
         </Group>
       )}
       {total > 0 && (
-        <Group spacing={4} align="center">
+        <Group gap={4} align="center">
           <IconHeart size={20} strokeWidth={2} />
-          <Text size="sm" weight={500} pr={2}>
+          <Text size="sm" fw={500} pr={2}>
             {total}
           </Text>
         </Group>
@@ -150,11 +151,10 @@ export function Reactions({
         {!initialShowAll && !hasAllReactions && !readonly && (
           <Button
             variant="subtle"
-            size="xs"
             color="gray"
             radius="xs"
             px={0}
-            compact
+            size="compact-xs"
             onClick={() => setShowAll((s) => !s)}
             classNames={{ inner: 'flex gap-0.5' }}
             {...(buttonStyling ? buttonStyling('AddReaction') : {})}
@@ -270,29 +270,18 @@ function ReactionBadge({
   const { hideReactionCount, buttonStyling } = useReactionSettingsContext();
   return (
     <Button
-      size="xs"
       radius="xs"
       variant={hasReacted ? 'light' : 'subtle'}
-      sx={(theme) => ({
-        '&[data-disabled]': {
-          cursor: 'default',
-          color: theme.fn.variant({ variant: 'light', color }).color,
-          ...(!hasReacted && { background: 'transparent !important' }),
-          // TODO: there is a little pop-in here as it changes from grey to lightblue due to being disabled
-        },
-        '&:hover': {
-          background: theme.fn.rgba(theme.fn.variant({ variant: 'light', color }).background!, 0.4),
-        },
-      })}
+      className={classes.reactionBadge}
       disabled={!canClick}
       pl={2}
       pr={3}
       color={color}
-      compact
+      size="compact-xs"
       classNames={{ label: 'flex gap-1' }}
       {...buttonStyling?.(reaction, hasReacted)}
     >
-      <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
+      <Text style={{ fontSize: '1.2em', lineHeight: 1.1 }}>
         {constants.availableReactions[reaction]}
       </Text>{' '}
       {!hideReactionCount && count}
@@ -332,12 +321,12 @@ function BuzzTippingBadge({
     <Badge
       size="md"
       radius="xs"
-      py={10}
-      px={3}
       color="yellow.7"
       variant="light"
       {...(buttonStyling ? buttonStyling('BuzzTip') : {})}
-      classNames={{ inner: 'flex gap-0.5 items-center' }}
+      className="cursor-pointer px-1 py-2 hover:bg-yellow-5/20"
+      classNames={{ label: 'flex gap-0.5 items-center flex-nowrap' }}
+      styles={{ root: { paddingBlock: 0 } }}
     >
       <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
       <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>

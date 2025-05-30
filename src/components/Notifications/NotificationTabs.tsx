@@ -1,5 +1,5 @@
 import type { TabsProps } from '@mantine/core';
-import { Badge, createStyles, Tabs, Text } from '@mantine/core';
+import { Badge, Tabs, Text } from '@mantine/core';
 import {
   getCategoryDisplayName,
   useNotificationSettings,
@@ -14,14 +14,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 const categoryTabs: string[] = Object.values(NotificationCategory);
 const tabs = ['all', 'announcements', ...categoryTabs];
 
-const useStyles = createStyles(() => ({
-  tab: {
-    padding: '8px 12px',
-  },
-}));
-
 export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: Props) {
-  const { classes } = useStyles();
   const count = useQueryNotificationsCount();
   const { isLoading, hasCategory } = useNotificationSettings(enabled);
   const currentUser = useCurrentUser();
@@ -45,15 +38,14 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
   return (
     <TwScrollX>
       <Tabs
-        classNames={classes}
         variant="pills"
         radius="xl"
         color="gray"
         defaultValue="all"
-        onTabChange={handleTabChange}
+        onChange={handleTabChange}
         {...tabsProps}
       >
-        <Tabs.List sx={{ flexWrap: 'nowrap' }}>
+        <Tabs.List style={{ flexWrap: 'nowrap' }}>
           {allTabs.map((tab) => {
             const countValue = count[tab.toLowerCase() as keyof typeof count];
 
@@ -61,15 +53,24 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
               <Tabs.Tab
                 key={tab}
                 value={tab}
+                className="flex px-3 py-2"
                 rightSection={
                   !!countValue ? (
-                    <Badge color="red" variant="filled" size="xs" radius="xl" px={4}>
-                      <Text size="xs">{abbreviateNumber(countValue)}</Text>
+                    <Badge
+                      color="red"
+                      size="xs"
+                      variant="filled"
+                      radius="xl"
+                      classNames={{ label: 'flex' }}
+                    >
+                      <Text fz={12} fw={500} lh={1} span>
+                        {abbreviateNumber(countValue)}
+                      </Text>
                     </Badge>
                   ) : undefined
                 }
               >
-                <Text tt="capitalize" weight={590} inline>
+                <Text tt="capitalize" fw={590} inline>
                   {getCategoryDisplayName(tab as NotificationCategory)}
                 </Text>
               </Tabs.Tab>
@@ -83,4 +84,5 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
 
 type Props = Omit<TabsProps, 'children'> & {
   enabled?: boolean;
+  onTabChange: TabsProps['onChange'];
 };

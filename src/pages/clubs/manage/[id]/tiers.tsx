@@ -14,7 +14,6 @@ import {
 import type { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { useQueryBounty } from '~/components/Bounty/bounty.utils';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { BountyGetById } from '~/types/router';
@@ -25,17 +24,14 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import UserProfileEntry from '~/pages/user/[username]';
 import { useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import React, { useState } from 'react';
-import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { trpc } from '~/utils/trpc';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { IconAlertCircle, IconPlus } from '@tabler/icons-react';
+import { IconPlus } from '@tabler/icons-react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
-import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
+import classes from '~/components/Club/ClubPost/ClubFeed.module.scss';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -102,7 +98,6 @@ export const getServerSideProps = createServerSideProps({
 export default function ManageClubTiers({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { classes } = useClubFeedStyles();
   const { club, loading } = useQueryClub({ id });
   const {
     data: tiers = [],
@@ -118,7 +113,7 @@ export default function ManageClubTiers({
   if (loading || isLoadingTiers) return <PageLoader />;
 
   return (
-    <Stack spacing="md">
+    <Stack gap="md">
       <Title order={2}>Manage Club&rsquo;s Tiers</Title>
       <Text>
         Tiers are a way for you to offer different perks to your members. You can create as many
@@ -135,7 +130,7 @@ export default function ManageClubTiers({
       )}
       {tiers.length === 0 && !isRefetching && (
         <Center>
-          <Text color="dimmed">It looks like you have not added any tiers yet.</Text>
+          <Text c="dimmed">It looks like you have not added any tiers yet.</Text>
         </Center>
       )}
       {club && (
@@ -155,7 +150,7 @@ export default function ManageClubTiers({
               onClick={() => setAddNewTier(true)}
               loading={isRefetching}
               variant="light"
-              leftIcon={<IconPlus />}
+              leftSection={<IconPlus />}
             >
               Add new tier
             </Button>

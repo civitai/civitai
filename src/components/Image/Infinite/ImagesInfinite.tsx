@@ -109,7 +109,7 @@ export function ImagesInfiniteContent({
               // Forces a re-render whenever the amount of images fetched changes. Forces load-more if available.
               style={{ gridColumn: '1/-1' }}
             >
-              <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Center p="xl" style={{ height: 36 }} mt="md">
                 <Loader />
               </Center>
             </InViewLoader>

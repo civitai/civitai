@@ -1,4 +1,4 @@
-import type { MantineSize, SelectItem } from '@mantine/core';
+import type { MantineSize, ComboboxItem } from '@mantine/core';
 import {
   ActionIcon,
   Anchor,
@@ -53,6 +53,7 @@ import { QS } from '~/utils/qs';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const limit = constants.reportingFilterDefaults.limit;
 
@@ -121,12 +122,12 @@ export default function Reports() {
         accesorKey: 'id',
         header: '',
         Cell: ({ row: { original: report } }) => (
-          <Group spacing="xs" noWrap>
-            <Button compact size="xs" onClick={() => setSelected(report.id)}>
+          <Group gap="xs" wrap="nowrap">
+            <Button size="compact-xs" onClick={() => setSelected(report.id)}>
               Details
             </Button>
             <Tooltip label="Open reported item" withArrow>
-              <ActionIcon
+              <LegacyActionIcon
                 component="a"
                 href={getReportLink(report)}
                 target="_blank"
@@ -134,7 +135,7 @@ export default function Reports() {
                 size="sm"
               >
                 <IconExternalLink />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           </Group>
         ),
@@ -157,7 +158,7 @@ export default function Reports() {
               ({
                 label: getDisplayName(x),
                 value: x,
-              } as SelectItem)
+              } as ComboboxItem)
           ) as any,
         },
       },
@@ -176,7 +177,7 @@ export default function Reports() {
               ({
                 label: getDisplayName(x),
                 value: x,
-              } as SelectItem)
+              } as ComboboxItem)
           ) as any,
         },
       },
@@ -221,7 +222,7 @@ export default function Reports() {
             <SegmentedControl
               size="sm"
               data={Object.values(ReportEntity).map((x) => ({ label: upperFirst(x), value: x }))}
-              onChange={handleTypeChange}
+              onChange={(type) => handleTypeChange(type as ReportEntity)}
               value={type}
             />
           </Group>
@@ -240,11 +241,9 @@ export default function Reports() {
             enableHiding={false}
             enableGlobalFilter={false}
             mantineTableContainerProps={{
-              sx: { maxHeight: 'calc(100vh - 360px)' },
+              className: 'max-h-[calc(100vh-360px)]',
             }}
-            initialState={{
-              density: 'sm',
-            }}
+            initialState={{ density: 'md' }}
             state={{
               isLoading,
               pagination,
@@ -327,12 +326,8 @@ function ReportDrawer({
       padding="md"
       shadow="sm"
       zIndex={500}
-      styles={{
-        drawer: {
-          borderLeft: `1px solid ${
-            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-          }`,
-        },
+      classNames={{
+        content: 'border-l border-l-gray-3 dark:border-l-dark-4',
       }}
     >
       {report && (
@@ -340,7 +335,7 @@ function ReportDrawer({
           {href && (
             <Link legacyBehavior href={href} passHref>
               <Anchor size="sm" target="_blank">
-                <Group spacing={4}>
+                <Group gap={4}>
                   <Text inherit>View {type}</Text>
                   <IconExternalLink size={14} stroke={1.5} />
                 </Group>
@@ -365,7 +360,7 @@ function ReportDrawer({
                 minRows={2}
                 autosize
               />
-              <Group position="right">
+              <Group justify="flex-end">
                 <Button type="submit" disabled={!isDirty} loading={updateReportMutation.isLoading}>
                   Save
                 </Button>
@@ -396,7 +391,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
         return {
           label,
           value: (
-            <Stack spacing="xs">
+            <Stack gap="xs">
               {value.map((cuid, i) => {
                 if (typeof cuid !== 'string') return null;
                 return (
@@ -497,7 +492,7 @@ function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?
   return (
     <Menu>
       <Menu.Target>
-        <Badge color={statusColor} size={size} sx={{ cursor: 'pointer' }}>
+        <Badge color={statusColor} size={size} style={{ cursor: 'pointer' }}>
           {isLoading ? <Loader variant="dots" size="sm" mx="md" color={statusColor} /> : status}
         </Badge>
       </Menu.Target>

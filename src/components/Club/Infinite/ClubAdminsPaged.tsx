@@ -28,6 +28,7 @@ import { showSuccessNotification } from '../../../utils/notifications';
 import { UserAvatar } from '../../UserAvatar/UserAvatar';
 // import { ClubAdminUpdateModal } from '../ClubAdminUpsertForm';
 import type { ClubAdmin } from '../../../types/router';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ClubAdminsPaged({ clubId }: Props) {
   // TODO.clubs: Add some custom filters for admins
@@ -97,8 +98,8 @@ export function ClubAdminsPaged({ clubId }: Props) {
                       <Text>{admin.permissions.map((p) => getDisplayName(p)).join(', ')}</Text>
                     </td>
                     <td>
-                      <Group position="right">
-                        <ActionIcon
+                      <Group justify="flex-end">
+                        <LegacyActionIcon
                           variant="transparent"
                           aria-label="Update invite"
                           onClick={() => {
@@ -111,8 +112,8 @@ export function ClubAdminsPaged({ clubId }: Props) {
                           }}
                         >
                           <IconPencil />
-                        </ActionIcon>
-                        <ActionIcon
+                        </LegacyActionIcon>
+                        <LegacyActionIcon
                           variant="transparent"
                           aria-label="Delete invite"
                           loading={deletingAdmin}
@@ -121,7 +122,7 @@ export function ClubAdminsPaged({ clubId }: Props) {
                           }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
                     </td>
                   </tr>
@@ -129,10 +130,10 @@ export function ClubAdminsPaged({ clubId }: Props) {
               })}
             </tbody>
             {pagination && pagination.totalPages > 1 && (
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                 <Pagination
-                  page={filters.page}
+                  value={filters.page}
                   onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                   total={pagination.totalPages}
                 />

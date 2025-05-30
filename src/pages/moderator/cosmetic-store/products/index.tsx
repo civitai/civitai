@@ -39,6 +39,7 @@ import type {
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function CosmeticStoreProducts() {
   const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticShopItemInput, 'limit'>>({
@@ -65,16 +66,14 @@ export default function CosmeticStoreProducts() {
     openConfirmModal({
       title: 'Delete Item',
       children: (
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text size="sm">Are you sure you want to delete this Shop item?</Text>
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             Items with purchases cannot be deleted. Instead, please mark them as archived.
           </Text>
         </Stack>
       ),
-      groupProps: {
-        position: 'center',
-      },
+      groupProps: { justify: 'center' },
       labels: { confirm: 'Delete Shop Item', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => onDelete(),
@@ -85,12 +84,12 @@ export default function CosmeticStoreProducts() {
     <>
       <Meta title="Cosmetic Shop Products" deIndex />
       <Container size="lg">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Group>
             <BackButton url="/moderator/cosmetic-store" />
             <Title order={1}>Cosmetic Shop Products</Title>
           </Group>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You can add and manage shop products here. A cosmetic must be created before hand for it
             to be created into a shop product. After creating, remember to add it to a section{' '}
             <Anchor component={Link} href="/moderator/cosmetic-store/sections">
@@ -98,7 +97,7 @@ export default function CosmeticStoreProducts() {
             </Anchor>
           </Text>
         </Stack>
-        <Group position="apart" mb="md">
+        <Group justify="space-between" mb="md">
           <Group align="flex-end">
             <Button component={Link} href="/moderator/cosmetic-store/products/create" radius="xl">
               <IconPlus />
@@ -153,8 +152,8 @@ export default function CosmeticStoreProducts() {
                   return (
                     <tr key={shopItem.id}>
                       <td>
-                        <Stack spacing={0} maw={350}>
-                          <Text weight="bold">{shopItem.title}</Text>
+                        <Stack gap={0} maw={350}>
+                          <Text fw="bold">{shopItem.title}</Text>
                           {shopItem.description && (
                             <ContentClamp maxHeight={200}>
                               <RenderHtml html={shopItem.description} />
@@ -163,7 +162,7 @@ export default function CosmeticStoreProducts() {
                         </Stack>
                       </td>
                       <td>
-                        <Stack spacing={0} maw={350} align="flex-start">
+                        <Stack gap={0} maw={350} align="flex-start">
                           <Text>{shopItem.cosmetic.name}</Text>
                         </Stack>
                       </td>
@@ -189,16 +188,16 @@ export default function CosmeticStoreProducts() {
                       </td>{' '}
                       <td>{shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}</td>
                       <td>
-                        <Group spacing={4} noWrap>
-                          <ActionIcon
+                        <Group gap={4} wrap="nowrap">
+                          <LegacyActionIcon
                             component={Link}
                             href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
                           >
                             <IconEdit />
-                          </ActionIcon>
-                          <ActionIcon onClick={() => handleDeleteItem(shopItem.id)}>
+                          </LegacyActionIcon>
+                          <LegacyActionIcon onClick={() => handleDeleteItem(shopItem.id)}>
                             <IconTrash />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </Group>
                       </td>
                     </tr>
@@ -206,10 +205,10 @@ export default function CosmeticStoreProducts() {
                 })}
               </tbody>
               {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                   <Pagination
-                    page={filters.page}
+                    value={filters.page}
                     onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                     total={pagination.totalPages}
                   />

@@ -1,0 +1,27 @@
+.preview {
+  order: 1;
+
+  @container (min-width: theme('screens.xs')) {
+    order: 2;
+  }
+}
+
+.decorations {
+  order: 2;
+
+  @container (min-width: theme('screens.xs')) {
+    order: 1;
+  }
+}
+
+.hideMobile {
+  @container (max-width: calc(var(--mantine-breakpoint-xs) - 1px)) {
+    display: none;
+  }
+}
+
+.showMobile {
+  @container (min-width: theme('screens.xs')) {
+    display: none;
+  }
+}

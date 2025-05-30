@@ -1,0 +1,26 @@
+.root {
+  z-index: 400;
+}
+
+.body {
+  padding: 0 16px 16px 16px;
+  overflow: auto;
+}
+
+.content {
+  height: auto;
+}
+
+.header {
+  padding: 4px 8px;
+}
+
+.close {
+  height: 32px;
+  width: 32px;
+
+  & > svg {
+    width: 24px;
+    height: 24px;
+  }
+}

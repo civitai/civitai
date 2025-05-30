@@ -2,7 +2,7 @@ import React from 'react';
 import { createReportForm } from './create-report-form';
 import { InputRadioGroup, InputTextArea } from '~/libs/form';
 import { reportAdminAttentionDetailsSchema } from '~/server/schema/report.schema';
-import { Radio } from '@mantine/core';
+import { Radio, Stack } from '@mantine/core';
 
 const reasons = [
   'Potential security concern',
@@ -16,10 +16,12 @@ export const AdminAttentionForm = createReportForm({
   Element: () => {
     return (
       <>
-        <InputRadioGroup name="reason" label="Reason" withAsterisk orientation="vertical">
-          {reasons.map((value, index) => (
-            <Radio key={index} value={value} label={value} />
-          ))}
+        <InputRadioGroup name="reason" label="Reason" withAsterisk>
+          <Stack>
+            {reasons.map((value, index) => (
+              <Radio key={index} value={value} label={value} />
+            ))}
+          </Stack>
         </InputRadioGroup>
         <InputTextArea name="comment" label="Comment (optional)" />
       </>

@@ -5,16 +5,16 @@ import { capitalize } from '~/utils/string-helpers';
 
 export function TransactionsPopover({ data }: { data: TransactionInfo[] }) {
   return (
-    <Popover>
+    <Popover width={192}>
       <Popover.Target>
-        <Tooltip label="Buzz Transactions" withinPortal>
+        <Tooltip label="Buzz Transactions">
           <ActionIcon variant="subtle" color="yellow" size="sm">
             <IconProgressBolt />
           </ActionIcon>
         </Tooltip>
       </Popover.Target>
       <Popover.Dropdown p={0}>
-        <Card p={0} className="w-48">
+        <Card>
           <Card.Section withBorder>
             <Text className="px-3 py-1">Buzz Transactions</Text>
           </Card.Section>
@@ -23,11 +23,11 @@ export function TransactionsPopover({ data }: { data: TransactionInfo[] }) {
               const color = transaction.accountType === 'user' ? 'yellow' : 'blue';
               return (
                 <div key={i} className="flex items-center justify-between ">
-                  <Text color={color} className="font-semibold">
+                  <Text c={color} className="font-semibold">
                     {capitalize(color)}
                   </Text>
                   <Text
-                    color={transaction.type === 'debit' ? 'red' : 'green'}
+                    c={transaction.type === 'debit' ? 'red' : 'green'}
                     className="flex items-center gap-1"
                   >
                     <IconBolt size={16} fill="currentColor" />

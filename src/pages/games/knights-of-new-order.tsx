@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ActionIcon, Button, Card, Loader, Select, ThemeIcon } from '@mantine/core';
+import { Button, Card, Loader, Select, ThemeIcon } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
@@ -35,6 +35,7 @@ import { RankUp } from '~/components/Games/LevelProgress/RankUp';
 import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderBetaBanner } from '~/components/Games/NewOrder/NewOrderBetaBanner';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 let levelUpTimer: NodeJS.Timeout | null = null;
 let rankUpTimer: NodeJS.Timeout | null = null;
@@ -185,7 +186,7 @@ export default Page(
                   />
                 )}
                 {loadingImagesQueue || isRefetching ? (
-                  <Loader variant="bars" size="xl" />
+                  <Loader type="bars" size="xl" />
                 ) : currentImage ? (
                   <div className="relative flex size-full max-w-sm flex-col items-center justify-center gap-4 overflow-hidden">
                     <ImageGuard2 image={currentImage} explain={false}>
@@ -212,7 +213,7 @@ export default Page(
                             contain
                           />
                           {currentUser?.isModerator && (
-                            <ActionIcon
+                            <LegacyActionIcon
                               component={Link}
                               href={`/images/${currentImage.id}`}
                               target="_blank"
@@ -223,7 +224,7 @@ export default Page(
                               className="absolute bottom-2 right-2 text-white"
                             >
                               <IconExternalLink size={16} color="currentColor" />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           )}
                         </div>
                       )}

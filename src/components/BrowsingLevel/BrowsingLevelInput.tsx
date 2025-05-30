@@ -1,6 +1,6 @@
 import { NSFWLevel } from '@civitai/client';
-import type { InputWrapperProps } from '@mantine/core';
-import { Chip, Group, GroupProps, Input, createStyles } from '@mantine/core';
+import type { GroupProps, InputWrapperProps } from '@mantine/core';
+import { Chip, Group, Input } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import { useCallback, useState } from 'react';
@@ -9,6 +9,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import type { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import classes from './BrowsingLevelInput.module.scss';
 
 type BrowsingLevelInput = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: number;
@@ -39,7 +40,7 @@ export function BrowsingLevelsInput({ value, onChange, ...props }: BrowsingLevel
 
   return (
     <Input.Wrapper {...props} error={props.error}>
-      <Group spacing="xs" mt="md" noWrap>
+      <Group gap="xs" mt="md" wrap="nowrap">
         {browsingLevels.map((level) => (
           <BrowsingLevelLabel
             key={level}
@@ -63,8 +64,6 @@ function BrowsingLevelLabel({
   onToggle: (value: number) => void;
 }) {
   const isSelected = Flags.hasFlag(browsingLevel, level);
-  const { classes } = useStyles();
-
   // const browsingLevel = useStore((x) => x.browsingLevel);
 
   return (
@@ -80,41 +79,3 @@ function BrowsingLevelLabel({
     </Chip>
   );
 }
-
-const useStyles = createStyles((theme, _params, getRef) => ({
-  root: {
-    flex: 1,
-  },
-  label: {
-    width: '100%',
-    display: 'inline-flex',
-    justifyContent: 'center',
-    '&[data-checked]': {
-      '&, &:hover': {
-        backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-        color: theme.white,
-      },
-
-      [`& .${getRef('iconWrapper')}`]: {
-        color: theme.white,
-        display: 'none',
-
-        [`@media (min-width: ${theme.breakpoints.xs}px)`]: {
-          display: 'inline-block',
-        },
-      },
-    },
-    paddingLeft: 10,
-    paddingRight: 10,
-    [`@media (min-width: ${theme.breakpoints.xs}px)`]: {
-      '&': {
-        paddingLeft: 20,
-        paddingRight: 20,
-      },
-    },
-  },
-
-  iconWrapper: {
-    ref: getRef('iconWrapper'),
-  },
-}));

@@ -1,29 +1,16 @@
 import type { BoxProps } from '@mantine/core';
 import { Box } from '@mantine/core';
+import clsx from 'clsx';
 
 export const YoutubeEmbed = ({
   videoId,
   autoPlay,
-  sx,
+  className,
   ...props
 }: { videoId: string; autoPlay?: boolean } & BoxProps) => (
-  <Box
-    {...props}
-    sx={{
-      overflow: 'hidden',
-      position: 'relative',
-      height: 0,
-      paddingBottom: '56.25%',
-      iframe: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-      },
-    }}
-  >
+  <Box {...props} className={clsx('relative h-0 overflow-hidden pb-[56.25%]', className)}>
     <iframe
+      className="absolute left-0 top-0 size-full"
       width="853"
       height="480"
       src={`https://www.youtube.com/embed/${videoId}?autoplay=${autoPlay ? 1 : 0}`}

@@ -10,7 +10,7 @@ export function RunButton({ modelVersionId, ...props }: { modelVersionId: number
         onClick={() => openRunStrategyModal({ props: { modelVersionId } })}
         color="green"
         {...props}
-        sx={{
+        style={{
           paddingLeft: 8,
           paddingRight: 8,
         }}

@@ -12,7 +12,7 @@ export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbs
   const { label, color } = getRatingLabel({ positiveRating, totalCount });
 
   return (
-    <Group position="left" align="flex-start" spacing={4}>
+    <Group justify="left" align="flex-start" gap={4}>
       <Tooltip
         label={`${Math.round(positiveRating * 100)}% of reviews are positive`}
         openDelay={500}
@@ -30,7 +30,7 @@ export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbs
           </Text>
         </div>
       </Tooltip>
-      <Text color="dimmed">({numberWithCommas(totalCount)})</Text>
+      <Text c="dimmed">({numberWithCommas(totalCount)})</Text>
     </Group>
   );
 }

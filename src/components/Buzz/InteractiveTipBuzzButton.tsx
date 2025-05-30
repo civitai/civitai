@@ -1,18 +1,17 @@
 import type { UnstyledButtonProps } from '@mantine/core';
 import {
   ActionIcon,
-  createStyles,
   Group,
-  keyframes,
   Popover,
   Stack,
   Text,
   UnstyledButton,
+  useMantineTheme,
 } from '@mantine/core';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -28,13 +27,17 @@ import { isTouchDevice } from '~/utils/device-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { useBuzzTransaction } from './buzz.utils';
+import classes from './InteractiveTipBuzzButton.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-type Props = UnstyledButtonProps & {
-  toUserId: number;
-  entityId: number;
-  entityType: string;
-  hideLoginPopover?: boolean;
-};
+type Props = UnstyledButtonProps &
+  React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    toUserId: number;
+    entityId: number;
+    entityType: string;
+    hideLoginPopover?: boolean;
+  };
 
 const CONFIRMATION_THRESHOLD = 100;
 const CLICK_AMOUNT = 10;
@@ -105,7 +108,7 @@ export function InteractiveTipBuzzButton({
   hideLoginPopover = false,
   ...buttonProps
 }: Props) {
-  const { theme, classes, cx } = useStyle();
+  const theme = useMantineTheme();
   const mobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const { balance } = useBuzz(undefined, 'user');
@@ -345,12 +348,12 @@ export function InteractiveTipBuzzButton({
         <UnstyledButton
           {...buttonProps}
           {...mouseHandlerProps}
-          onContextMenu={(e) => {
+          onContextMenu={(e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
             return false;
           }}
-          sx={{
+          style={{
             position: 'relative',
             touchAction: 'none',
             userSelect: 'none',
@@ -358,27 +361,28 @@ export function InteractiveTipBuzzButton({
             WebkitTouchCallout: 'none',
             color: 'inherit',
             fontWeight: 'inherit',
-          }}
-          style={{
             cursor: !selfView ? 'pointer' : 'default',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
           onClick={undefined}
         >
           {children}
         </UnstyledButton>
       </Popover.Target>
-      <Popover.Dropdown py={4} className={cx({ [classes.confirming]: showCountDown })}>
+      <Popover.Dropdown py={4} className={clsx({ [classes.confirming]: showCountDown })}>
         <Group className={classes.popoverContent}>
           {status !== 'pending' && (
-            <ActionIcon color="red.5" onClick={cancelTip}>
+            <LegacyActionIcon variant="subtle" color="red.5" onClick={cancelTip}>
               <IconX size={20} />
-            </ActionIcon>
+            </LegacyActionIcon>
           )}
-          <Stack spacing={2} align="center">
-            <Text color="yellow.7" weight={500} size="xs" opacity={0.8}>
+          <Stack gap={2} align="center">
+            <Text c="yellow.7" fw={500} size="xs" opacity={0.8}>
               Tipping
             </Text>
-            <Group spacing={0} ml={-8}>
+            <Group gap={0} ml={-8}>
               <IconBolt style={{ fill: theme.colors.yellow[7] }} color="yellow.7" size={20} />
               <div
                 contentEditable={status === 'confirming'}
@@ -394,18 +398,18 @@ export function InteractiveTipBuzzButton({
                 onFocus={stopCountdown}
                 className={classes.tipAmount}
                 dangerouslySetInnerHTML={{ __html: buzzCounter.toString() }}
-              ></div>
+              />
             </Group>
           </Stack>
           {status !== 'pending' && (
-            <ActionIcon
+            <LegacyActionIcon
               variant="transparent"
               color={status === 'confirmed' ? 'green' : 'yellow.5'}
               onClick={status === 'confirming' ? () => sendTip() : undefined}
               loading={tipUserMutation.isLoading}
             >
               {status === 'confirmed' ? <IconCheck size={20} /> : <IconSend size={20} />}
-            </ActionIcon>
+            </LegacyActionIcon>
           )}
         </Group>
       </Popover.Dropdown>
@@ -419,43 +423,3 @@ export function InteractiveTipBuzzButton({
     </LoginPopover>
   );
 }
-
-const useStyle = createStyles((theme) => ({
-  popoverContent: {
-    position: 'relative',
-    zIndex: 3,
-  },
-  confirming: {
-    [`&:before`]: {
-      content: '""',
-      position: 'absolute',
-      zIndex: 2,
-      top: 0,
-      left: 0,
-      height: '100%',
-      width: 0,
-      // backgroundColor: theme.colors.gray[1],
-      backgroundColor: theme.colors.red[6],
-      opacity: 0,
-      animation: `${fillEffect} ${CONFIRMATION_TIMEOUT}ms linear forwards`,
-    },
-  },
-  tipAmount: {
-    fontVariantNumeric: 'tabular-nums',
-    fontWeight: 500,
-    color: theme.colors.yellow[7],
-    fontSize: 16,
-    padding: 0,
-    lineHeight: 1,
-    outline: 0,
-    display: 'inline-block',
-  },
-}));
-
-const fillEffect = keyframes({
-  to: {
-    width: '100%',
-    opacity: 0.3,
-    // backgroundColor: 'red',
-  },
-});

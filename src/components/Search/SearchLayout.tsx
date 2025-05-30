@@ -1,13 +1,4 @@
-import {
-  createStyles,
-  Divider,
-  Group,
-  Stack,
-  Text,
-  ThemeIcon,
-  Tooltip,
-  UnstyledButton,
-} from '@mantine/core';
+import { Divider, Group, Stack, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core';
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -31,8 +22,8 @@ import { constants } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
 import type { UiState } from 'instantsearch.js';
-
-const SIDEBAR_SIZE = 377;
+import classes from './SearchLayout.module.scss';
+import clsx from 'clsx';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -59,46 +50,6 @@ export const useSearchLayout = () => {
   if (!context) throw new Error('useSearchLayoutIdx can only be used inside SearchLayoutCtx');
   return context;
 };
-
-const useStyles = createStyles((theme) => {
-  return {
-    sidebar: {
-      height: '100%',
-      marginLeft: `-${SIDEBAR_SIZE}px`,
-      width: `${SIDEBAR_SIZE}px`,
-
-      transition: 'margin 200ms ease',
-      borderRight: '1px solid',
-      borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-      display: 'flex',
-      flexDirection: 'column',
-
-      [containerQuery.smallerThan('sm')]: {
-        top: 0,
-        left: 0,
-        zIndex: 200,
-        height: '100%',
-        width: '100%',
-        marginLeft: `-100%`,
-        position: 'absolute',
-        border: 'none',
-      },
-    },
-
-    scrollable: {
-      padding: theme.spacing.md,
-      overflowY: 'auto',
-      flex: 1,
-    },
-
-    root: { height: '100%', width: '100%', display: 'flex' },
-
-    active: {
-      marginLeft: '0 !important',
-    },
-  };
-});
 
 function renderSearchComponent(props: RenderSearchComponentProps) {
   return <CustomSearchBox {...props} />;
@@ -172,28 +123,18 @@ export function SearchLayout({
 }
 
 SearchLayout.Root = function Root({ children }: { children: React.ReactNode }) {
-  const { classes } = useStyles();
-
   return <div className={classes.root}>{children}</div>;
 };
 
 SearchLayout.Filters = function Filters({ children }: { children: React.ReactNode }) {
-  const { classes, cx } = useStyles();
   const { sidebarOpen, setSidebarOpen } = useSearchLayout();
-  const { classes: searchLayoutClasses } = useSearchLayoutStyles();
 
   return (
-    <aside className={cx(classes.sidebar, { [classes.active]: sidebarOpen })}>
+    <aside className={clsx(classes.sidebar, { [classes.active]: sidebarOpen })}>
       <Group px="md" py="xs">
         <Tooltip label="Filters & sorting" position="bottom" withArrow>
           <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
-            <ThemeIcon
-              size={42}
-              color="gray"
-              radius="xl"
-              p={11}
-              className={searchLayoutClasses.filterButton}
-            >
+            <ThemeIcon size={42} color="gray" radius="xl" p={11} className={classes.filterButton}>
               <IconChevronsLeft />
             </ThemeIcon>
           </UnstyledButton>
@@ -221,25 +162,3 @@ SearchLayout.Content = function Content({ children }: { children: React.ReactNod
     </MasonryProvider>
   );
 };
-
-export const useSearchLayoutStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: `repeat(auto-fill, minmax(250px, 1fr))`,
-    gap: theme.spacing.md,
-    gridTemplateRows: `auto 1fr`,
-    overflow: 'hidden',
-    // marginTop: -theme.spacing.md,
-
-    // '& > *': {
-    //   marginTop: theme.spacing.md,
-    // },
-  },
-
-  filterButton: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-    svg: {
-      color: theme.colorScheme === 'dark' ? undefined : theme.colors.dark[6],
-    },
-  },
-}));

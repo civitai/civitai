@@ -79,11 +79,11 @@ export default function EarnPotential() {
       value: (
         <NumberInput
           value={bankPortion}
-          onChange={(v) => setBankPortion(v ?? 50)}
+          onChange={(v) => setBankPortion(Number(v) ?? 50)}
           min={10}
           max={80}
           step={5}
-          icon={<IconPercentage />}
+          leftSection={<IconPercentage />}
         />
       ),
     },
@@ -103,11 +103,11 @@ export default function EarnPotential() {
       value: (
         <NumberInput
           value={creatorBankPortion}
-          onChange={(v) => setCreatorBankPortion(v ?? 50)}
+          onChange={(v) => setCreatorBankPortion(Number(v) ?? 50)}
           min={10}
           max={100}
           step={5}
-          icon={<IconPercentage />}
+          leftSection={<IconPercentage />}
         />
       ),
     },
@@ -123,9 +123,9 @@ export default function EarnPotential() {
       <Meta deIndex />
       <Container size="md">
         <Stack>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Title mb={0}>Estimated Creator Compensation Pool Earnings</Title>
-            <Text color="dimmed">
+            <Text c="dimmed">
               This is an estimate of your potential earnings from the Creator Compensation Pool
               based on your earnings last month as well as the total earnings of all creators on the
               platform.
@@ -133,7 +133,7 @@ export default function EarnPotential() {
           </Stack>
           <Card p={0} withBorder shadow="xs">
             <Card.Section withBorder p="xs">
-              <Text weight={500} size="lg">
+              <Text fw={500} size="lg">
                 Pool Earning Factors
               </Text>
             </Card.Section>
@@ -141,7 +141,7 @@ export default function EarnPotential() {
               items={poolDetails}
               labelWidth="30%"
               paperProps={{
-                sx: {
+                style: {
                   borderLeft: 0,
                   borderRight: 0,
                   borderBottom: 0,
@@ -151,14 +151,14 @@ export default function EarnPotential() {
             />
           </Card>
           <Group>
-            <Text size="xl" weight={900}>
+            <Text size="xl" fw={900}>
               Estimated Earnings:
             </Text>
             <CurrencyBadge
               unitAmount={forecastedEarning}
               {...dollarCurrencyProps}
               size="xl"
-              sx={{ fontWeight: 900, fontSize: 24 }}
+              style={{ fontWeight: 900, fontSize: 24 }}
             />
           </Group>
           <Text size="xs" c="dimmed">
