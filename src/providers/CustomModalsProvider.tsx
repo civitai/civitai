@@ -7,7 +7,6 @@ import { openChatShareModal } from '~/components/Chat/ChatShareModal';
 import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard';
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
-import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
@@ -15,7 +14,7 @@ import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 
 const QuestionsInfoModal = dynamic(() => import('~/components/Questions/QuestionInfoModal'));
-const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
+
 const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'));
 const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'));
 const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
@@ -33,10 +32,6 @@ const ManageClubPostModal = dynamic(() => import('~/components/Modals/ManageClub
 const ChatShareModal = dynamic(() => import('~/components/Chat/ChatShareModal'));
 
 const registry = {
-  blockModelTags: {
-    Component: BlockModelTagsModal,
-    fn: openBlockModelTagsModal,
-  },
   unpublishModel: {
     Component: UnpublishModal,
     fn: openUnpublishModal,

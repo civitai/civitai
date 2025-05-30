@@ -67,6 +67,7 @@ import { Collection } from '~/components/Collection/Collection';
 import {
   openAddToCollectionModal,
   openMigrateModelToCollectionModal,
+  openBlockModelTagsModal,
   openReportModal,
 } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
@@ -940,7 +941,9 @@ export default function ModelDetailsV2({
                             <HideModelButton as="menu-item" modelId={model.id} />
                             <Menu.Item
                               icon={<IconTagOff size={14} stroke={1.5} />}
-                              onClick={() => openContext('blockModelTags', { modelId: model.id })}
+                              onClick={() =>
+                                openBlockModelTagsModal({ props: { modelId: model.id } })
+                              }
                             >
                               Hide content with these tags
                             </Menu.Item>

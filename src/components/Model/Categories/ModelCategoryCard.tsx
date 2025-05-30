@@ -38,7 +38,6 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { constants } from '~/server/common/constants';
@@ -54,7 +53,11 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
-import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
+import {
+  openAddToCollectionModal,
+  openBlockModelTagsModal,
+  openReportModal,
+} from '~/components/Dialog/dialog-registry';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
@@ -196,7 +199,7 @@ export function ModelCategoryCard({
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('blockModelTags', { modelId: id });
+          openBlockModelTagsModal({ props: { modelId: id } });
         }}
       >
         {`Hide content with these tags`}

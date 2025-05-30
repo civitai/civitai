@@ -2,7 +2,11 @@ import { ActionIcon, Menu } from '@mantine/core';
 import { IconDotsVertical, IconInfoCircle, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
-import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
+import {
+  openAddToCollectionModal,
+  openBlockModelTagsModal,
+  openReportModal,
+} from '~/components/Dialog/dialog-registry';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
@@ -13,7 +17,6 @@ import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
@@ -63,7 +66,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('blockModelTags', { modelId: data.id });
+          openBlockModelTagsModal({ props: { modelId: data.id } });
         }}
       >
         {`Hide content with these tags`}

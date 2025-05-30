@@ -28,6 +28,9 @@ const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageS
 const ReadOnlyModal = dynamic(() => import('~/components/Modals/ReadOnlyModal'));
 const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddToCollectionModal'));
 
+const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
+export const openBlockModelTagsModal = createDialogTrigger(BlockModelTagsModal);
+
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
 // TODO.Justin - allow image owners to request image rating change
 export const openSetBrowsingLevelModal = (props: { imageId: number; nsfwLevel: number }) =>
