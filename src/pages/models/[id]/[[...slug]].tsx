@@ -65,6 +65,7 @@ import {
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
 import {
+  openAddToCollectionModal,
   openMigrateModelToCollectionModal,
   openReportModal,
 } from '~/components/Dialog/dialog-registry';
@@ -409,9 +410,11 @@ export default function ModelDetailsV2({
   });
 
   const handleCollect = () => {
-    openContext('addToCollection', {
-      modelId: id,
-      type: CollectionType.Model,
+    openAddToCollectionModal({
+      props: {
+        modelId: id,
+        type: CollectionType.Model,
+      },
     });
   };
 
@@ -885,9 +888,11 @@ export default function ModelDetailsV2({
                         {features.collections && (
                           <AddToCollectionMenuItem
                             onClick={() =>
-                              openContext('addToCollection', {
-                                modelId: model.id,
-                                type: CollectionType.Model,
+                              openAddToCollectionModal({
+                                props: {
+                                  modelId: model.id,
+                                  type: CollectionType.Model,
+                                },
                               })
                             }
                           />

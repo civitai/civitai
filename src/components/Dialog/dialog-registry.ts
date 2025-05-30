@@ -1,6 +1,6 @@
 import dynamic from 'next/dynamic';
 import type { CollectionSelectModalProps } from '~/components/CollectionSelectModal/CollectionSelectModal';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { dialogStore, createDialogTrigger } from '~/components/Dialog/dialogStore';
 import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal2';
 import type { ReportModalProps } from '~/components/Modals/ReportModal';
 import type { EditResourceReviewModalProps } from '~/components/ResourceReview/EditResourceReviewModal';
@@ -26,13 +26,14 @@ const EditResourceReviewModal = dynamic(
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'));
 const ReadOnlyModal = dynamic(() => import('~/components/Modals/ReadOnlyModal'));
+const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddToCollectionModal'));
 
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
 // TODO.Justin - allow image owners to request image rating change
 export const openSetBrowsingLevelModal = (props: { imageId: number; nsfwLevel: number }) =>
   dialogStore.trigger({ component: SetBrowsingLevelModal, props });
-export const openHiddenTagsModal = () =>
-  dialogStore.trigger({ component: HiddenTagsModal, target: '#browsing-mode' });
+// export const openHiddenTagsModal = () =>
+//   dialogStore.trigger({ component: HiddenTagsModal, target: '#browsing-mode' });
 
 export function openResourceSelectModal(props: ResourceSelectModalProps) {
   dialogStore.trigger({
@@ -64,3 +65,8 @@ export function openImageSelectModal(props: ImageSelectModalProps) {
 export function openReadOnlyModal() {
   dialogStore.trigger({ component: ReadOnlyModal });
 }
+
+export const openAddToCollectionModal = createDialogTrigger(AddToCollectionModal);
+export const openHiddenTagsModal = createDialogTrigger(HiddenTagsModal, {
+  target: '#browsing-mode',
+});

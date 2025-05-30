@@ -9,6 +9,7 @@ import {
   Stack,
   Text,
   createStyles,
+  Modal,
 } from '@mantine/core';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {
@@ -21,7 +22,6 @@ import {
 import { IconArrowLeft, IconCalendar, IconPlus } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
 import type { z } from 'zod';
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import {
   Form,
   InputCheckbox,
@@ -43,34 +43,31 @@ import { isDefined } from '~/utils/type-guards';
 import { closeAllModals, openModal } from '@mantine/modals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
-const { openModal: openAddToCollectionModal, Modal } = createContextModal<Props>({
-  name: 'addToCollection',
-  title: 'Add to Collection',
-  size: 'sm',
-  Element: ({ context, props }) => {
-    const [creating, setCreating] = useState(props.createNew ?? false);
-
-    return creating ? (
-      <NewCollectionForm
-        {...props}
-        onBack={() => setCreating(false)}
-        onSubmit={() => context.close()}
-      />
-    ) : (
-      <CollectionListForm
-        {...props}
-        onNewClick={() => setCreating(true)}
-        onSubmit={() => context.close()}
-      />
-    );
-  },
-});
-
-export { openAddToCollectionModal };
-export default Modal;
+export default function AddToCollectionModal(props: Props) {
+  const dialog = useDialogContext();
+  const [creating, setCreating] = useState(props.createNew ?? false);
+  return (
+    <Modal {...dialog} title="Add to Collection" size="sm">
+      {creating ? (
+        <NewCollectionForm
+          {...props}
+          onBack={() => setCreating(false)}
+          onSubmit={() => dialog.onClose()}
+        />
+      ) : (
+        <CollectionListForm
+          {...props}
+          onNewClick={() => setCreating(true)}
+          onSubmit={() => dialog.onClose()}
+        />
+      )}
+    </Modal>
+  );
+}
 
 const useCollectionListStyles = createStyles((theme) => ({
   body: { alignItems: 'center' },

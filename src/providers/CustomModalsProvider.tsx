@@ -5,13 +5,11 @@ import dynamic from 'next/dynamic';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { openChatShareModal } from '~/components/Chat/ChatShareModal';
 import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard';
-import { openAddToCollectionModal } from '~/components/Collections/AddToCollectionModal';
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
-// import { openSendTipModal } from '~/components/Modals/SendTipModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
@@ -25,11 +23,9 @@ const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
 const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'));
-const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddToCollectionModal'));
 const ManageHomeBlocksModal = dynamic(
   () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
 );
-// const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
 const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'));
 const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
 const UserProfileEditModal = dynamic(() => import('~/components/Modals/UserProfileEditModal'));
@@ -57,18 +53,12 @@ const registry = {
     Component: AssociateModelsModal,
     fn: openAssociateModelsModal,
   },
-  addToCollection: {
-    Component: AddToCollectionModal,
-    fn: openAddToCollectionModal,
-  },
+
   manageHomeBlocks: {
     Component: ManageHomeBlocksModal,
     fn: openManageHomeBlocksModal,
   },
-  // sendTip: {
-  //   Component: SendTipModal,
-  //   fn: openSendTipModal,
-  // },
+
   bountyEntryFiles: {
     Component: BountyEntryFilesModal,
     fn: openBountyEntryFilesModal,
@@ -85,10 +75,6 @@ const registry = {
     Component: ManageClubPostModal,
     fn: openManageClubPostModal,
   },
-  // imageGenQualityFeedbackModal: {
-  //   Component: GenQualityFeedbackModal,
-  //   fn: openGenQualityFeedbackModal,
-  // },
   chatShareModal: {
     Component: ChatShareModal,
     fn: openChatShareModal,

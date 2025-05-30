@@ -13,6 +13,7 @@ import type { CollectItemInput } from '~/server/schema/collection.schema';
 import { QS } from '~/utils/qs';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { requireLogin } from '~/components/Login/requireLogin';
+import { openAddToCollectionModal } from '~/components/Dialog/dialog-registry';
 
 export function ShareButton({
   children,
@@ -100,7 +101,7 @@ export function ShareButton({
         requireLogin({
           uiEvent: e,
           reason: 'add-to-collection',
-          cb: () => openContext('addToCollection', collect),
+          cb: () => openAddToCollectionModal({ props: collect }),
         }),
       render: <SocialIconCollect />,
     });

@@ -7,7 +7,6 @@ import { useRouter } from 'next/router';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import type { ArticleGetAllRecord } from '~/server/services/article.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -21,7 +20,7 @@ import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import type { ArticleGetById } from '~/types/router';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();
@@ -115,9 +114,11 @@ export function ArticleContextMenu({ article, ...props }: Props) {
           <AddToCollectionMenuItem
             key="add-to-collection"
             onClick={() =>
-              openContext('addToCollection', {
-                articleId: article.id,
-                type: CollectionType.Article,
+              openAddToCollectionModal({
+                props: {
+                  articleId: article.id,
+                  type: CollectionType.Article,
+                },
               })
             }
           />
