@@ -4,7 +4,6 @@ import { ModalsProvider } from '@mantine/modals';
 import dynamic from 'next/dynamic';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { openChatShareModal } from '~/components/Chat/ChatShareModal';
-import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
@@ -15,9 +14,6 @@ const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
 
-const ManageHomeBlocksModal = dynamic(
-  () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
-);
 const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'));
 const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
 const UserProfileEditModal = dynamic(() => import('~/components/Modals/UserProfileEditModal'));
@@ -30,10 +26,10 @@ const registry = {
   //   fn: openAssociateModelsModal,
   // },
 
-  manageHomeBlocks: {
-    Component: ManageHomeBlocksModal,
-    fn: openManageHomeBlocksModal,
-  },
+  // manageHomeBlocks: {
+  //   Component: ManageHomeBlocksModal,
+  //   fn: openManageHomeBlocksModal,
+  // },
 
   bountyEntryFiles: {
     Component: BountyEntryFilesModal,
