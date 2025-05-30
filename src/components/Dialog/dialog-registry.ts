@@ -40,6 +40,9 @@ export const openRunStrategyModal = createDialogTrigger(RunStrategyModal);
 const CivitaiLinkWizardModal = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
 export const openCivitaiLinkWizardModal = createDialogTrigger(CivitaiLinkWizardModal);
 
+const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'));
+export const openAssociateModelsModal = createDialogTrigger(AssociateModelsModal);
+
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
 // TODO.Justin - allow image owners to request image rating change
 export const openSetBrowsingLevelModal = (props: { imageId: number; nsfwLevel: number }) =>

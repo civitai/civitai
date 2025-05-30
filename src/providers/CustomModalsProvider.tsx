@@ -5,14 +5,11 @@ import dynamic from 'next/dynamic';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { openChatShareModal } from '~/components/Chat/ChatShareModal';
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
-import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 
 const QuestionsInfoModal = dynamic(() => import('~/components/Questions/QuestionInfoModal'));
-
-const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'));
 
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
@@ -28,10 +25,10 @@ const ManageClubPostModal = dynamic(() => import('~/components/Modals/ManageClub
 const ChatShareModal = dynamic(() => import('~/components/Chat/ChatShareModal'));
 
 const registry = {
-  associateModels: {
-    Component: AssociateModelsModal,
-    fn: openAssociateModelsModal,
-  },
+  // associateModels: {
+  //   Component: AssociateModelsModal,
+  //   fn: openAssociateModelsModal,
+  // },
 
   manageHomeBlocks: {
     Component: ManageHomeBlocksModal,
