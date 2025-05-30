@@ -1,13 +1,7 @@
 import { useDisclosure } from '@mantine/hooks';
 import { useRouter } from 'next/router';
-import {
-  createContext,
-  type Dispatch,
-  ReactNode,
-  type SetStateAction,
-  useContext,
-  useState,
-} from 'react';
+import type { ReactNode } from 'react';
+import { createContext, type Dispatch, type SetStateAction, useContext, useState } from 'react';
 import type { GetAllAuctionsReturn } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 

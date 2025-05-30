@@ -1,6 +1,6 @@
 import { Stack, Text } from '@mantine/core';
 import Router from 'next/router';
-import { StepWithData } from '~/types/tour';
+import type { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
 
 export const auctionTour: StepWithData[] = [

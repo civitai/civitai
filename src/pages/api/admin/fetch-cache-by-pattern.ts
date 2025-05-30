@@ -1,5 +1,5 @@
 import { chunk } from 'lodash-es';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { redis } from '~/server/redis/client';
 import { fetchCacheByPattern } from '~/server/utils/cache-helpers';

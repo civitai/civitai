@@ -1,4 +1,5 @@
-import { Key, RefObject, createContext, useContext, useEffect, useRef, useState } from 'react';
+import type { Key, RefObject } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { generateToken } from '~/utils/string-helpers';

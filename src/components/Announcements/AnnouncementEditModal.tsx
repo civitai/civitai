@@ -1,4 +1,5 @@
-import { Button, ColorSwatch, MantineColor, Modal, useMantineTheme } from '@mantine/core';
+import type { MantineColor } from '@mantine/core';
+import { Button, ColorSwatch, Modal, useMantineTheme } from '@mantine/core';
 import dayjs from 'dayjs';
 import { forwardRef, useRef } from 'react';
 import { z } from 'zod';
@@ -12,7 +13,7 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
-import { UpsertAnnouncementSchema } from '~/server/schema/announcement.schema';
+import type { UpsertAnnouncementSchema } from '~/server/schema/announcement.schema';
 import { dateWithoutTimezone, endOfDay, startOfDay } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 

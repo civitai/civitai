@@ -1,10 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
 import { collectedContentReward } from '~/server/rewards';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import type {
   AddCollectionItemInput,
   AddSimpleImagePostInput,
   BulkSaveCollectionItemsInput,
@@ -23,7 +23,7 @@ import {
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {

@@ -9,8 +9,9 @@ import {
 } from '~/components/CommentsV2/CommentsProvider';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { Form, InputRTE, useForm } from '~/libs/form';
-import { UpsertCommentV2Input, upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
-import { SimpleUser } from '~/server/selectors/user.selector';
+import type { UpsertCommentV2Input } from '~/server/schema/commentv2.schema';
+import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
+import type { SimpleUser } from '~/server/selectors/user.selector';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

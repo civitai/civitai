@@ -1,16 +1,15 @@
+import type { SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
 import {
   Anchor,
   Group,
   SegmentedControl,
-  SegmentedControlItem,
-  SegmentedControlProps,
   Text,
   ThemeIcon,
   createStyles,
   Badge,
   Loader,
 } from '@mantine/core';
-import { IconProps } from '@tabler/icons-react';
+import type { IconProps } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import plugin from 'dayjs/plugin/duration';
+import type plugin from 'dayjs/plugin/duration';
 import { useEffect, useRef, useState } from 'react';
 import useIsClient from '~/hooks/useIsClient';
 import { toStringList } from '~/utils/array-helpers';

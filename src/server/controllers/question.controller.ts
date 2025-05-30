@@ -1,6 +1,6 @@
-import { SetQuestionAnswerInput } from './../schema/question.schema';
+import type { SetQuestionAnswerInput } from './../schema/question.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 import {
   getQuestions,
   getQuestionDetail,
@@ -9,8 +9,8 @@ import {
   setQuestionAnswer,
 } from './../services/question.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { GetQuestionsInput, UpsertQuestionInput } from '~/server/schema/question.schema';
-import { Context } from '~/server/createContext';
+import type { GetQuestionsInput, UpsertQuestionInput } from '~/server/schema/question.schema';
+import type { Context } from '~/server/createContext';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 
 export type GetQuestionsProps = AsyncReturnType<typeof getQuestionsHandler>;

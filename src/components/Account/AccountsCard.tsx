@@ -9,7 +9,7 @@ import {
   Button,
   Alert,
 } from '@mantine/core';
-import { BuiltInProviderType } from 'next-auth/providers';
+import type { BuiltInProviderType } from 'next-auth/providers';
 import { getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';

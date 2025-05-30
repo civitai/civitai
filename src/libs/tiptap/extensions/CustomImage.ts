@@ -1,4 +1,5 @@
-import ImageExtension, { ImageOptions } from '@tiptap/extension-image';
+import type { ImageOptions } from '@tiptap/extension-image';
+import ImageExtension from '@tiptap/extension-image';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { constants } from '~/server/common/constants';

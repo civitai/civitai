@@ -1,10 +1,10 @@
-import { ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { cloneElement, useCallback, useMemo } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { trpc } from '~/utils/trpc';
 
 /**NOTES**

@@ -35,6 +35,7 @@ export const haiperGenerationConfig = VideoGenerationConfig2({
   defaultValues: { aspectRatio: '1:1' },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
+    delete data.priority;
     if (!data.sourceImage) {
       data.process = 'txt2vid';
     }

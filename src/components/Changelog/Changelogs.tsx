@@ -1,3 +1,4 @@
+import type { MantineColor } from '@mantine/core';
 import {
   ActionIcon,
   Badge,
@@ -9,7 +10,6 @@ import {
   Group,
   Loader,
   LoadingOverlay,
-  MantineColor,
   Paper,
   Stack,
   Text,
@@ -33,7 +33,7 @@ import dayjs from 'dayjs';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ChangelogFiltersDropdown } from '~/components/Changelog/ChangelogFiltersDropdown';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -197,8 +197,10 @@ const ChangelogItem = ({
                 size="sm"
                 color="gray"
                 variant="transparent"
-                onClick={() => copy(`${window.location.href.split('#')[0]}?id=${slug}`)}
-                title="Copy link to this changelog"
+                onClick={() =>
+                  copy(`${window.location.href.split('?')[0].split('#')[0]}?id=${slug}`)
+                }
+                title="Copy link to this update"
               >
                 <IconLink size={16} />
               </ActionIcon>

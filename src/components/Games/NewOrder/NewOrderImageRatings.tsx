@@ -10,7 +10,7 @@ import {
 } from '@mantine/core';
 import { IconChevronLeft, IconHammer } from '@tabler/icons-react';
 import { useState } from 'react';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { useInquisitorTools, useQueryImageRaters } from '~/components/Games/KnightsNewOrder.utils';
 import { PlayerStats } from '~/components/Games/PlayerCard';
@@ -56,7 +56,7 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
               </div>
             ) : (
               <div className="flex flex-col gap-2">
-                {[NewOrderRankType.Knight, NewOrderRankType.Templar].map((rankType) => {
+                {[NewOrderRankType.Templar, NewOrderRankType.Knight].map((rankType) => {
                   const ratersForRank = raters[rankType] ?? [];
 
                   return ratersForRank.length > 0 ? (

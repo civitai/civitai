@@ -1,5 +1,9 @@
 import { samplerMap } from '~/server/common/constants';
-import { ComfyMetaSchema, ImageMetaProps, CivitaiResource } from '~/server/schema/image.schema';
+import type {
+  ComfyMetaSchema,
+  ImageMetaProps,
+  CivitaiResource,
+} from '~/server/schema/image.schema';
 import { findKeyForValue } from '~/utils/map-helpers';
 import { createMetadataProcessor, setGlobalValue } from '~/utils/metadata/base.metadata';
 import { fromJson } from '../json-helpers';

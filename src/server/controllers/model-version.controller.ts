@@ -1,11 +1,12 @@
 import { TRPCError } from '@trpc/server';
-import { BaseModel, baseModelLicenses, BaseModelType, constants } from '~/server/common/constants';
-import { Context } from '~/server/createContext';
+import type { BaseModel, BaseModelType } from '~/server/common/constants';
+import { baseModelLicenses, constants } from '~/server/common/constants';
+import type { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
-import {
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import type {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
   ModelVersionEarlyAccessConfig,
@@ -18,8 +19,8 @@ import {
   RecommendedSettingsSchema,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model.schema';
-import { ModelFileModel } from '~/server/selectors/modelFile.selector';
+import type { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model.schema';
+import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getStaticContent } from '~/server/services/content.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';

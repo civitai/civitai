@@ -1,4 +1,5 @@
-import { forwardRef, CSSProperties, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { forwardRef, useState } from 'react';
 import {
   Alert,
   Center,
@@ -15,7 +16,7 @@ import {
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { UniqueIdentifier } from '@dnd-kit/core';
+import type { UniqueIdentifier } from '@dnd-kit/core';
 import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons-react';
 import { MediaType } from '~/shared/utils/prisma/enums';
 

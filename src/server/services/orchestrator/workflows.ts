@@ -1,18 +1,17 @@
+import type { GetWorkflowData, SubmitWorkflowData } from '@civitai/client';
 import {
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
   getWorkflow as clientGetWorkflow,
-  GetWorkflowData,
   patchWorkflow,
   queryWorkflows as clientQueryWorkflows,
   removeWorkflowTag,
   submitWorkflow as clientSubmitWorkflow,
-  SubmitWorkflowData,
   updateWorkflow as clientUpdateWorkflow,
 } from '@civitai/client';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { isProd } from '~/env/other';
-import {
+import type {
   PatchWorkflowParams,
   TagsPatchSchema,
   workflowIdSchema,

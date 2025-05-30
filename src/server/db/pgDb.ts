@@ -1,7 +1,8 @@
 import { types } from 'pg';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
-import { AugmentedPool, getClient } from '~/server/db/db-helpers';
+import type { AugmentedPool } from '~/server/db/db-helpers';
+import { getClient } from '~/server/db/db-helpers';
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top

@@ -1,8 +1,8 @@
 import { useMantineTheme, Center, Loader, Button, LoadingOverlay } from '@mantine/core';
+import type { UseMasonryOptions } from 'masonic';
 import {
   useContainerPosition,
   useMasonry,
-  UseMasonryOptions,
   usePositioner,
   useResizeObserver,
   useScroller,

@@ -4,19 +4,23 @@ import type { SessionUser } from 'next-auth';
 import { getGenerationConfig } from '~/server/common/constants';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { baseModelEngineMap } from '~/server/orchestrator/generation/generation.config';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
 import {
+  baseModelEngineMap,
+  isVideoGenerationEngine,
+} from '~/server/orchestrator/generation/generation.config';
+import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
   CheckResourcesCoverageSchema,
   GenerationStatus,
-  generationStatusSchema,
   GetGenerationDataSchema,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
+import { generationStatusSchema } from '~/server/schema/generation.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
+import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { hasEntityAccess } from '~/server/services/common.service';
@@ -24,10 +28,8 @@ import {
   ModelFileCached,
   getFilesForModelVersionCache,
 } from '~/server/services/model-file.service';
-import {
-  GenerationResourceDataModel,
-  resourceDataCache,
-} from '~/server/services/model-version.service';
+import type { GenerationResourceDataModel } from '~/server/services/model-version.service';
+import { resourceDataCache } from '~/server/services/model-version.service';
 import { getFeaturedModels } from '~/server/services/model.service';
 import {
   handleLogError,
@@ -36,6 +38,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getPagedData } from '~/server/utils/pagination-helpers';
+import type { SupportedBaseModel } from '~/shared/constants/generation.constants';
 import {
   baseModelResourceTypes,
   fluxUltraAir,
@@ -44,9 +47,8 @@ import {
   getBaseModelSet,
   getBaseModelSetType,
   getResourceGenerationType,
-  SupportedBaseModel,
 } from '~/shared/constants/generation.constants';
-import { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { isFutureDate } from '~/utils/date-helpers';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
@@ -384,6 +386,12 @@ async function getMediaGenerationData({
       const meta = media.meta as Record<string, any>;
       meta.engine = meta.engine ?? (baseModel ? baseModelEngineMap[baseModel] : undefined);
       if (meta.type === 'txt2vid' || meta.type === 'img2vid') meta.process = meta.type;
+
+      if (!meta.process && baseModel) {
+        const wanProcess = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
+        if (wanProcess) meta.process = wanProcess;
+      }
+
       if (baseModel === 'WanVideo') {
         if (meta.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
         else baseModel = 'WanVideo14B_I2V_720p';
@@ -430,6 +438,17 @@ const getModelVersionGenerationData = async ({
 
   const engine = baseModelEngineMap[baseModel];
 
+  let process: string | undefined;
+  if (isVideoGenerationEngine(engine)) {
+    switch (engine) {
+      case 'wan':
+        process = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
+        break;
+      case 'hunyuan':
+        process = 'txt2vid';
+    }
+  }
+
   // TODO - refactor this elsewhere
 
   return {
@@ -439,6 +458,7 @@ const getModelVersionGenerationData = async ({
       baseModel,
       clipSkip: checkpoint?.clipSkip ?? undefined,
       engine,
+      process,
     },
   };
 };

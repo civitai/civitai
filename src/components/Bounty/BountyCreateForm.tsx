@@ -1,3 +1,4 @@
+import type { TooltipProps } from '@mantine/core';
 import {
   ActionIcon,
   Button,
@@ -12,7 +13,6 @@ import {
   Stack,
   Text,
   Title,
-  TooltipProps,
 } from '@mantine/core';
 import {
   IconCalendar,
@@ -25,7 +25,7 @@ import {
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React from 'react';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 

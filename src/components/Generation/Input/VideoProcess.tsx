@@ -1,4 +1,5 @@
-import { SegmentedControl, SegmentedControlProps } from '@mantine/core';
+import type { SegmentedControlProps } from '@mantine/core';
+import { SegmentedControl } from '@mantine/core';
 import { withController } from '~/libs/form/hoc/withController';
 
 function VideoProcess(props: Omit<SegmentedControlProps, 'data'>) {

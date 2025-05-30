@@ -54,11 +54,6 @@ export function PostControls({
             </Menu.Item>
           </>
         )}
-        {/* {features.collections && (
-          <AddToCollectionMenuItem
-            onClick={() => openContext('addToCollection', { postId, type: CollectionType.Post })}
-          />
-        )} */}
         {(!isOwner || !currentUser) && (
           <LoginRedirect reason="report-content">
             <Menu.Item

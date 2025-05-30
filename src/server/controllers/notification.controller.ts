@@ -1,5 +1,5 @@
-import { Context } from '~/server/createContext';
-import {
+import type { Context } from '~/server/createContext';
+import type {
   GetUserNotificationsSchema,
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';

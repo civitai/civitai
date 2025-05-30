@@ -1,4 +1,5 @@
-import { Icon, IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
+import type { Icon } from '@tabler/icons-react';
+import { IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
@@ -7,21 +8,21 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { CollectionSort } from '~/server/common/enums';
-import {
+import type {
   EnableCollectionYoutubeSupportInput,
   GetAllCollectionsInfiniteSchema,
   RemoveCollectionItemInput,
   SetCollectionItemNsfwLevelInput,
   SetItemScoreInput,
 } from '~/server/schema/collection.schema';
-import { CollectionItemExpanded } from '~/server/services/collection.service';
+import type { CollectionItemExpanded } from '~/server/services/collection.service';
 import {
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
-import { CollectionByIdModel } from '~/types/router';
+import type { CollectionByIdModel } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';

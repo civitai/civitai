@@ -6,7 +6,7 @@ import { useEffect } from 'react';
 import { useToolFilters, useQueryTools } from '~/components/Tool/tools.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { GetAllToolsSchema } from '~/server/schema/tool.schema';
+import type { GetAllToolsSchema } from '~/server/schema/tool.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';

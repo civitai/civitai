@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
-import { Context } from '~/server/createContext';
-import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
+import type { Context } from '~/server/createContext';
+import type { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
 import { getUserDownloads, updateUserActivityById } from '~/server/services/download.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';

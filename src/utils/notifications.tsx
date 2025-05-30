@@ -1,5 +1,6 @@
 import { Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
-import { NotificationProps, showNotification } from '@mantine/notifications';
+import type { NotificationProps } from '@mantine/notifications';
+import { showNotification } from '@mantine/notifications';
 import {
   IconAlertTriangle,
   IconBolt,

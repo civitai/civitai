@@ -3,15 +3,15 @@ import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
-import { GetGenerationDataInput } from '~/server/schema/generation.schema';
-import {
+import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
+import type {
   GenerationData,
   GenerationResource,
   RemixOfProps,
 } from '~/server/services/generation/generation.service';
 import { getSourceImageFromUrl } from '~/shared/constants/generation.constants';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';

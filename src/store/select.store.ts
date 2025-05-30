@@ -1,4 +1,5 @@
-import { Key, useCallback } from 'react';
+import type { Key } from 'react';
+import { useCallback } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';

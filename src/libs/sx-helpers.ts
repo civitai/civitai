@@ -1,6 +1,6 @@
-import { Sx, MantineTheme } from '@mantine/core';
+import type { Sx, MantineTheme } from '@mantine/core';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
 
 export const hideMobile: Sx = (theme) => ({
   [containerQuery.smallerThan('xs')]: {

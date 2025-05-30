@@ -1,3 +1,4 @@
+import type { GetObjectCommandInput } from '@aws-sdk/client-s3';
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -5,7 +6,6 @@ import {
   DeleteObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
-  GetObjectCommandInput,
   HeadObjectCommand,
   // PutBucketCorsCommand,
   PutObjectCommand,

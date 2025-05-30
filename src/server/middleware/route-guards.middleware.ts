@@ -1,5 +1,5 @@
-import { SessionUser } from 'next-auth';
-import { NextRequest } from 'next/server';
+import type { SessionUser } from 'next-auth';
+import type { NextRequest } from 'next/server';
 import { createMiddleware } from '~/server/middleware/middleware-utils';
 import { pathToRegexp } from 'path-to-regexp';
 import { isProd } from '~/env/other';

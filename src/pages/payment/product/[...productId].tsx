@@ -1,4 +1,4 @@
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

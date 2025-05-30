@@ -1,14 +1,15 @@
 import { env } from 'process';
 import { logToAxiom } from '../logging/client';
-import { TransactionType } from '../schema/buzz.schema';
-import { createBuzzTransaction } from './buzz.service';
+import { grantBuzzPurchase } from './buzz.service';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import Decimal from 'decimal.js';
-import { CreatePaymentInvoiceInput } from '~/server/schema/nowpayments.schema';
+import type { CreatePaymentInvoiceInput } from '~/server/schema/nowpayments.schema';
+import { createNotification } from '~/server/services/notification.service';
+import { NotificationCategory } from '~/server/common/enums';
 import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
 
-const log = (data: MixedObject) => {
-  logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
+const log = async (data: MixedObject) => {
+  await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
 };
 
 export const createBuzzOrder = async (input: CreatePaymentInvoiceInput & { userId: number }) => {
@@ -42,51 +43,120 @@ export const createBuzzOrder = async (input: CreatePaymentInvoiceInput & { userI
   return invoice;
 };
 
-export const processBuzzOrder = async (paymentId: string | number) => {
+export const processBuzzOrder = async (paymentId: string | number, webhookStatus?: string) => {
   const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
 
   if (!payment) {
-    log({
+    await log({
       message: 'Failed to retrieve payment status',
       paymentId,
     });
+
     throw new Error('Could not retrieve invoice data');
   }
 
-  const isPaid = payment.payment_status === 'finished';
-  const alertStatus = true; // ['partially_paid', 'confirmed'].includes(payment.payment_status);
-  if (isPaid) {
-    const [userId, buzzAmount] = payment.order_id.split('-').map((x) => parseInt(x));
+  const isPaid = payment.payment_status === 'finished' || webhookStatus === 'finished';
+  const isPartiallyPaid =
+    payment.payment_status === 'partially_paid' || webhookStatus === 'partially_paid';
+  const [userId, buzzAmount] = payment.order_id.split('-').map((x) => parseInt(x));
 
-    if (!buzzAmount || !userId) {
-      await log({
-        message: 'Buzz amount or user ID not found in order ID',
-        payment,
-      });
+  let toPay: number | undefined = undefined;
+  let isPartial = false;
 
-      throw new Error('Invalid order ID format. Please contact support.');
-    }
-
-    // Give user the buzz assuming it hasn't been given
-    const { transactionId } = await createBuzzTransaction({
-      fromAccountId: 0,
-      toAccountId: userId,
-      amount: buzzAmount,
-      type: TransactionType.Purchase,
-      externalTransactionId: payment.order_id,
-      description: 'Buzz purchase',
-      details: { invoiceId: payment.invoice_id, paymentId: payment.payment_id },
-    });
-
-    if (!transactionId) {
-      throw new Error('Failed to create Buzz transaction');
-    }
-  } else if (alertStatus) {
-    log({
-      message: 'Payment status alert',
+  if (!buzzAmount || !userId) {
+    await log({
+      message: 'Buzz amount or user ID not found in order ID',
       payment,
     });
-  } else {
-    console.log('Payment not finished', payment);
+
+    throw new Error('Invalid order ID format. Please contact support.');
+  }
+
+  if (isPaid) {
+    toPay = buzzAmount;
+  } else if (isPartiallyPaid) {
+    try {
+      const estimate = await nowpaymentsCaller.getPriceEstimate({
+        amount: payment?.price_amount as number,
+        currency_from: 'usd', // We only do USD
+        currency_to: payment?.pay_currency as string,
+      });
+
+      if (!estimate) {
+        throw new Error('Failed to get estimate');
+      }
+
+      const ratio = new Decimal(estimate?.estimated_amount).dividedBy(
+        new Decimal(estimate?.amount_from)
+      );
+
+      const buzzValueUsd = new Decimal(payment.actually_paid as string | number).dividedBy(ratio);
+
+      const buzzAmount = Number(payment?.order_id.split('-')[1] as string);
+      const estimateToBuzz = Math.floor(buzzValueUsd.mul(1000).toNumber());
+      toPay = Math.min(estimateToBuzz, buzzAmount);
+      isPartial = toPay < buzzAmount;
+    } catch (error) {
+      await log({
+        message: 'Failed to process partial payment',
+        payment,
+        error,
+        isPartiallyPaid,
+      });
+    }
+  }
+
+  try {
+    let transactionId: string | null = null;
+    if (toPay && toPay > 0) {
+      transactionId = await grantBuzzPurchase({
+        userId,
+        amount: toPay,
+        description: isPartial
+          ? 'Buzz purchase (partial). You’ve been credited Buzz based on the amount received.'
+          : undefined,
+        externalTransactionId: `${payment.order_id}-${payment.payment_id}`,
+        // Extras:
+        provider: 'nowpayments',
+        invoiceId: payment.invoice_id,
+        paymentId: payment.payment_id,
+      });
+
+      if (isPartial) {
+        await createNotification({
+          type: 'partially-paid',
+          userId,
+          category: NotificationCategory.Buzz,
+          key: payment.order_id,
+          details: {},
+        });
+      }
+
+      if (!transactionId) {
+        throw new Error('Failed to create Buzz transaction');
+      }
+    }
+
+    if (payment.payment_status !== 'waiting') {
+      await log({
+        message: 'Event with payment handled...',
+        webhookStatus,
+        ...payment,
+      });
+    }
+
+    return {
+      userId,
+      buzzAmount: toPay,
+      transactionId,
+      message: `Buzz purchase successful.`,
+    };
+  } catch (error) {
+    await log({
+      message: 'Failed at payment',
+      payment,
+      error,
+      toPay,
+    });
   }
 };

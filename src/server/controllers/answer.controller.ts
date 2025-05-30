@@ -4,12 +4,16 @@ import {
   setAnswerVote,
   upsertAnswer,
 } from './../services/answer.service';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { Context } from '~/server/createContext';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { Context } from '~/server/createContext';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getAnswers } from '~/server/services/answer.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { AnswerVoteInput, GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
+import type {
+  AnswerVoteInput,
+  GetAnswersInput,
+  UpsertAnswerInput,
+} from './../schema/answer.schema';
 
 export type GetAnswersProps = AsyncReturnType<typeof getAnswersHandler>;
 export const getAnswersHandler = async ({

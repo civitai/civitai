@@ -1,9 +1,10 @@
 import type { Area } from 'react-easy-crop';
 import { NsfwLevel } from '~/server/common/enums';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { TagType } from '~/shared/utils/prisma/enums';
-
-import { fetchBlob } from '~/utils/file-utils';
+import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
+import { ExifParser, encodeMetadata } from '~/utils/metadata';
+import { createExifSegmentFromTags } from '~/utils/encoding-helpers';
 
 // deprecated?
 export async function imageToBlurhash(url: string) {
@@ -23,14 +24,38 @@ export async function imageToBlurhash(url: string) {
 export async function createImageElement(src: string | Blob | File) {
   const objectUrl = typeof src === 'string' ? src : URL.createObjectURL(src);
   return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.addEventListener('load', () => {
-      resolve(image);
-      // URL.revokeObjectURL(objectUrl)
-    });
-    image.addEventListener('error', (error) => reject(error));
-    image.src = objectUrl;
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.addEventListener('load', () => resolve(img));
+    img.addEventListener('error', (error) => reject(error));
+    img.src = objectUrl;
   });
+}
+
+export async function getImageDimensions(src: string | Blob | File) {
+  const img = await createImageElement(src);
+  return {
+    width: img.width,
+    height: img.height,
+  };
+}
+
+export async function imageToJpegBlob(src: string | Blob | File) {
+  const blob = await fetchBlob(src);
+  if (!blob) throw new Error('failed to load image blob');
+
+  if (blob.type === 'image/jpeg') return blob;
+
+  const img = await createImageElement(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Error resizing image');
+  ctx.drawImage(img, 0, 0);
+
+  return canvasToBlobWithImageExif(canvas, blob);
 }
 
 export async function resizeImage(
@@ -38,16 +63,15 @@ export async function resizeImage(
   options: {
     maxHeight?: number;
     maxWidth?: number;
-    onResize?: (args: { width: number; height: number }) => void;
   } = {}
 ) {
-  const blob = await fetchBlob(src);
-  if (!blob) throw new Error('failed to load image blob');
+  const file = await fetchBlobAsFile(src);
+  if (!file) throw new Error('failed to load image blob');
 
   // const url = URL.createObjectURL(blob);
-  const img = await createImageElement(blob);
+  const img = await createImageElement(file);
 
-  const { maxWidth = img.width, maxHeight = img.height, onResize } = options;
+  const { maxWidth = img.width, maxHeight = img.height } = options;
 
   const { width, height, mutated } = calculateAspectRatioFit(
     img.width,
@@ -55,7 +79,7 @@ export async function resizeImage(
     maxWidth,
     maxHeight
   );
-  if (!mutated) return blob;
+  if (!mutated) return file;
 
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -65,15 +89,7 @@ export async function resizeImage(
   if (!ctx) throw new Error('Error resizing image');
   ctx.drawImage(img, 0, 0, width, height);
 
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((file) => {
-      if (!file) reject();
-      else {
-        onResize?.({ width, height });
-        resolve(file);
-      }
-    }, blob.type);
-  });
+  return canvasToBlobWithImageExif(canvas, file);
 }
 
 /**
@@ -122,9 +138,14 @@ type ImageForAiVerification = {
  * @returns
  */
 
+export function isValidAiMeta(meta?: Record<string, any> | null) {
+  if (meta?.prompt) return true;
+  if (meta?.civitaiResources) return true;
+  return false;
+}
+
 export function isValidAIGeneration(image: ImageForAiVerification) {
-  if (image.meta?.prompt) return true;
-  if (image.meta?.civitaiResources) return true;
+  if (isValidAiMeta(image.meta)) return true;
   // Updated to only allow prompt.
   // if (image.meta?.comfy) return true;
   // if (image.meta?.extra) return true;
@@ -147,15 +168,6 @@ export function isValidAIGeneration(image: ImageForAiVerification) {
   return !hasNsfwTag;
 }
 
-export const createImage = (url: string): Promise<HTMLImageElement> =>
-  new Promise((resolve, reject) => {
-    const image = new Image();
-    image.addEventListener('load', () => resolve(image));
-    image.addEventListener('error', (error) => reject(error));
-    image.setAttribute('crossOrigin', 'anonymous'); // needed to avoid cross-origin issues on CodeSandbox
-    image.src = url;
-  });
-
 export function getRadianAngle(degreeValue: number) {
   return (degreeValue * Math.PI) / 180;
 }
@@ -175,19 +187,17 @@ export function rotateSize(width: number, height: number, rotation: number) {
 /**
  * This function was adapted from the one in the ReadMe of https://github.com/DominicTobias/react-image-crop
  */
-export default async function getCroppedImg(
+export async function getCroppedImg(
   imageSrc: string,
   pixelCrop: Area,
   rotation = 0,
   flip = { horizontal: false, vertical: false }
 ) {
-  const image = await createImage(imageSrc);
+  const image = await createImageElement(imageSrc);
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
 
-  if (!ctx) {
-    return null;
-  }
+  if (!ctx) return;
 
   const rotRad = getRadianAngle(rotation);
 
@@ -211,9 +221,7 @@ export default async function getCroppedImg(
 
   const croppedCtx = croppedCanvas.getContext('2d');
 
-  if (!croppedCtx) {
-    return null;
-  }
+  if (!croppedCtx) return;
 
   // Set the size of the cropped canvas
   croppedCanvas.width = pixelCrop.width;
@@ -232,34 +240,57 @@ export default async function getCroppedImg(
     pixelCrop.height
   );
 
-  function toBase64() {
-    return croppedCanvas.toDataURL('image/jpeg');
-  }
+  const file = await fetchBlobAsFile(imageSrc);
+  if (!file) return;
 
-  async function toBlob() {
-    return new Promise<Blob>((resolve, reject) => {
-      croppedCanvas.toBlob((file) => {
-        if (file) resolve(file);
-        else reject('failed to crop image');
-      }, 'image/jpeg');
-    });
-  }
-
-  async function toObjectUrl() {
-    return await toBlob().then((blob) => URL.createObjectURL(blob));
-  }
-
-  // As a blob
-  // return new Promise((resolve, reject) => {
-  //   croppedCanvas.toBlob((file) => {
-  //     if (file) resolve(URL.createObjectURL(file));
-  //     else reject('failed to crop image');
-  //   }, 'image/jpeg');
-  // });
-
-  return {
-    toBase64,
-    toBlob,
-    toObjectUrl,
-  };
+  const blob = await canvasToBlobWithImageExif(croppedCanvas, file);
+  return blob;
 }
+
+// function copyExifUserComment
+
+async function canvasToBlobWithImageExif(canvas: HTMLCanvasElement, src: File | Blob | string) {
+  const image = src instanceof File || typeof src === 'string' ? src : blobToFile(src);
+  const parser = await ExifParser(image);
+  const metadata = await parser.getMetadata();
+  const dataUrl = canvas.toDataURL('image/jpeg');
+
+  const exifSegment = createExifSegmentFromTags({
+    artist: parser.exif.Artist,
+    userComment: encodeMetadata(metadata),
+    software: parser.exif.Software,
+  });
+  const jpegBytes = Buffer.from(dataUrl.split(',')[1], 'base64');
+  const soi = Uint8Array.prototype.slice.call(jpegBytes, 0, 2); // FFD8
+  const rest = Uint8Array.prototype.slice.call(jpegBytes, 2);
+  const newJpegBytes = new Uint8Array(soi.length + exifSegment.length + rest.length);
+
+  newJpegBytes.set(soi, 0);
+  newJpegBytes.set(exifSegment, soi.length);
+  newJpegBytes.set(rest, soi.length + exifSegment.length);
+
+  return new Blob([newJpegBytes], { type: 'image/jpeg' });
+}
+
+// function CanvasHandler(canvas: HTMLCanvasElement, file?: File | string) {
+//   async function toBlob() {
+//     return new Promise<Blob>((resolve, reject) => {
+//       canvas.toBlob((blob) => {
+//         if (blob) resolve(blob);
+//         else reject('failed to convert canvas to image');
+//       }, 'image/jpeg');
+//     });
+//   }
+//   async function toObjectUrl() {
+//     return await toBlob().then((blob) => URL.createObjectURL(blob));
+//   }
+//   function toBase64() {
+//     return canvas.toDataURL('image/jpeg');
+//   }
+
+//   return {
+//     toBlob,
+//     toObjectUrl,
+//     toBase64,
+//   };
+// }

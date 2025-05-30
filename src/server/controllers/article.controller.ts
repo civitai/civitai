@@ -1,8 +1,8 @@
 import { TRPCError } from '@trpc/server';
 
-import { Context } from '~/server/createContext';
-import { UpsertArticleInput } from '~/server/schema/article.schema';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import type { Context } from '~/server/createContext';
+import type { UpsertArticleInput } from '~/server/schema/article.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 import { unpublishArticleById, upsertArticle } from '~/server/services/article.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';

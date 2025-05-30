@@ -1,9 +1,10 @@
-import { createJob } from './job';
-import { dbWrite } from '~/server/db/client';
-import { discord, DiscordRole } from '~/server/integrations/discord';
-import { env } from '~/env/server';
 import dayjs from 'dayjs';
+import { env } from '~/env/server';
+import { dbWrite } from '~/server/db/client';
+import type { DiscordRole } from '~/server/integrations/discord';
+import { discord } from '~/server/integrations/discord';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { createJob } from './job';
 
 const ENTHUSIAST_ROLE_CUTOFF = 7; // days
 const CREATOR_ROLE_CUTOFF = 14; // days
@@ -225,14 +226,17 @@ export const applyDiscordRoles = [applyDiscordActivityRoles, applyDiscordPaidRol
 
 // #region [utilities]
 const getAccountsInRole = async (role: DiscordRole) => {
-  const accounts =
+  return (
     (
       await dbWrite.$queryRawUnsafe<{ providerAccountId: string }[]>(`
-        SELECT "providerAccountId"
-        FROM "Account"
-        WHERE provider = 'discord' AND jsonb_path_exists(metadata, '$.roles[*] ? (@ == "${role.name}")')`)
-    )?.map((x) => x.providerAccountId) ?? [];
-  return accounts;
+      SELECT
+        "providerAccountId"
+      FROM "Account"
+      WHERE
+          provider = 'discord'
+      AND metadata -> 'roles' @> '["${role.name}"]';`)
+    )?.map((x) => x.providerAccountId) ?? []
+  );
 };
 
 const addRoleToAccounts = async (role: DiscordRole, providerAccountIds: string[]) => {

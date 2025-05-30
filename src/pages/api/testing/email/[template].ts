@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Email } from '~/server/email/templates';
 import * as templates from '~/server/email/templates';
 

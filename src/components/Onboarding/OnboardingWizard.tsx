@@ -1,4 +1,5 @@
-import { Box, Stack, StepProps, Stepper, Text, Title, createStyles } from '@mantine/core';
+import type { StepProps } from '@mantine/core';
+import { Box, Stack, Stepper, Text, Title, createStyles } from '@mantine/core';
 import { useRef, useState } from 'react';
 import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
 import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
@@ -15,7 +16,7 @@ import { useDomainColor } from '~/hooks/useDomainColor';
 
 type StepPropsCustom = Omit<StepProps, 'step'> & {
   step: number;
-  Component: React.FC; 
+  Component: React.FC;
 };
 
 const steps: StepPropsCustom[] = [

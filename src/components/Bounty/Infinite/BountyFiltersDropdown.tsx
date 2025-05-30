@@ -1,3 +1,4 @@
+import type { ButtonProps } from '@mantine/core';
 import {
   Popover,
   Group,
@@ -9,7 +10,6 @@ import {
   Button,
   createStyles,
   Drawer,
-  ButtonProps,
   useMantineTheme,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
@@ -18,7 +18,8 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { useCallback, useState } from 'react';
 import { BountyStatus } from '~/server/common/enums';
-import { activeBaseModels, BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { activeBaseModels } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { PeriodFilter } from '~/components/Filters';
 import { containerQuery } from '~/utils/mantine-css-helpers';

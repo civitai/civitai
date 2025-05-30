@@ -1,5 +1,5 @@
 import { Box, Center, createStyles, Group, Stack, Text, Title } from '@mantine/core';
-import { InferGetServerSidePropsType } from 'next/types';
+import type { InferGetServerSidePropsType } from 'next/types';
 import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';

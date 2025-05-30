@@ -1,7 +1,7 @@
 import { Stack } from '@mantine/core';
-import { Dispatch, SetStateAction } from 'react';
-import { UseFormReturn } from 'react-hook-form';
-import { z } from 'zod';
+import type { Dispatch, SetStateAction } from 'react';
+import type { UseFormReturn } from 'react-hook-form';
+import type { z } from 'zod';
 import { Form, useForm } from '~/libs/form';
 
 type ReportFormContext<TSchema extends z.AnyZodObject> = {

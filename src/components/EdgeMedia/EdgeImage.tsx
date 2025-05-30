@@ -1,7 +1,9 @@
-import { SyntheticEvent, forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
+import type { SyntheticEvent } from 'react';
+import { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
 import styles from './EdgeImage.module.scss';
 import clsx from 'clsx';
-import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
+import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
+import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 
 export type EdgeImageProps = React.HTMLAttributes<HTMLImageElement> & {
   src: string;

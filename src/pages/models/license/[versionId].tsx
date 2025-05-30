@@ -1,5 +1,5 @@
 import { Center, Container, Group, Loader, Stack, Title } from '@mantine/core';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import { z } from 'zod';

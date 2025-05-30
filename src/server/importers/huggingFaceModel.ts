@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 
 import { ImportStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { createImporter } from '~/server/importers/importer';

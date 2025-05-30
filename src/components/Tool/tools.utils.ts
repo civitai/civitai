@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { GetAllToolsSchema } from '~/server/schema/tool.schema';
+import type { GetAllToolsSchema } from '~/server/schema/tool.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 

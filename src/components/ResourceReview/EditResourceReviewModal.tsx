@@ -1,7 +1,7 @@
 import { Modal } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EditResourceReview } from '~/components/ResourceReview/EditResourceReview';
-import { ResourceReviewPagedModel } from '~/types/router';
+import type { ResourceReviewPagedModel } from '~/types/router';
 
 export type EditResourceReviewModalProps = Pick<
   ResourceReviewPagedModel,

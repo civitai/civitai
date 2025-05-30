@@ -1,5 +1,5 @@
-import { Socket } from 'socket.io-client';
-import { Difference } from '~/utils/object-helpers';
+import type { Socket } from 'socket.io-client';
+import type { Difference } from '~/utils/object-helpers';
 
 export interface ServerToClientEvents {
   kicked: () => void;

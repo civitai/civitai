@@ -3,7 +3,8 @@ import { NotificationCategory } from '~/server/common/enums';
 import { cosmeticCache, cosmeticEntityCaches } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { createNotification } from '~/server/services/notification.service';
-import { createEvent, DonationCosmeticData } from './base.event';
+import type { DonationCosmeticData } from './base.event';
+import { createEvent } from './base.event';
 
 type CosmeticData = {
   lights: number;

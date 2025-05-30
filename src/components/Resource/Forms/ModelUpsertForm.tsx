@@ -1,10 +1,10 @@
+import type { ChipProps } from '@mantine/core';
 import {
   Alert,
   Anchor,
   Button,
   Checkbox,
   Chip,
-  ChipProps,
   Divider,
   Group,
   Input,
@@ -18,8 +18,9 @@ import {
 import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { z } from 'zod';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -40,8 +41,10 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TagSort } from '~/server/common/enums';
-import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
+import type { ModelUpsertInput } from '~/server/schema/model.schema';
+import { modelUpsertSchema } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   Availability,
@@ -52,14 +55,13 @@ import {
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = modelUpsertSchema
   .extend({
@@ -486,7 +488,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 </Text>
                 <InputRadioGroup
                   name="poi"
-                  label="Depicts an actual person (Resource cannot be used on Civitai on-site Generator or have Early Access)"
+                  label="Depicts an actual person"
                   description={isLockedDescription(
                     'category',
                     'This model was trained on real imagery of a living, or deceased, person, or depicts a character portrayed by a real-life actor or actress. E.g. Tom Cruise or Tom Cruise as Maverick.'
@@ -499,6 +501,15 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   <Radio value="true" label="Yes" disabled={isLocked('poi')} />
                   <Radio value="false" label="No" disabled={isLocked('poi')} />
                 </InputRadioGroup>
+                {/* TODO more clarification here. disable? */}
+                {poi === 'true' && (
+                  <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
+                    <Text>
+                      The upload of models and images intended to depict a real person is
+                      prohibited.
+                    </Text>
+                  </AlertWithIcon>
+                )}
                 <InputCheckbox
                   name="nsfw"
                   label="Is intended to produce mature themes"
@@ -510,6 +521,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                       form.setValue('sfwOnly', false);
                     }
                   }}
+                  className="mt-2"
                 />
                 <InputCheckbox
                   name="minor"

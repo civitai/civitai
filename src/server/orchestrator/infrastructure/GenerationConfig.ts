@@ -1,5 +1,5 @@
-import { VideoGenInput } from '@civitai/client';
-import { RefinementCtx, z } from 'zod';
+import type { VideoGenInput } from '@civitai/client';
+import type { RefinementCtx, z } from 'zod';
 import { maxRandomSeed } from '~/server/common/constants';
 
 type VideoGenProcesses = 'txt2vid' | 'img2vid';

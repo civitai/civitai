@@ -1,6 +1,7 @@
 // src/utils/trpc.ts
 import { QueryClient } from '@tanstack/react-query';
-import { httpLink, loggerLink, splitLink, TRPCLink } from '@trpc/client';
+import type { TRPCLink } from '@trpc/client';
+import { httpLink, loggerLink, splitLink } from '@trpc/client';
 import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';

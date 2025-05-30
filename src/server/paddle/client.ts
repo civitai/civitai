@@ -8,7 +8,7 @@ import type {
 import { Environment, Paddle } from '@paddle/paddle-node-sdk';
 import { isDev } from '~/env/other';
 import { env } from '~/env/server';
-import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
+import type { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 const paddle = env.PADDLE_SECRET_KEY

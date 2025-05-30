@@ -1,4 +1,4 @@
-import { IncomingHttpHeaders } from 'http';
+import type { IncomingHttpHeaders } from 'http';
 import { camelCase } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client';
@@ -104,7 +104,7 @@ const featureFlags = createFeatureFlags({
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
-  canBuyBuzz: ['public', 'green'],
+  canBuyBuzz: isDev ? ['mod'] : ['public', 'green'],
   adsEnabled: ['public', 'blue'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
@@ -119,8 +119,10 @@ const featureFlags = createFeatureFlags({
   newOrderGame: ['mod', 'member', 'granted'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
-  cryptoPayments: ['mod'],
   annualMemberships: ['public'],
+  disablePayments: ['public'],
+  coinbasePayments: ['public'],
+  nowpaymentPayments: [],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

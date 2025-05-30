@@ -1,9 +1,9 @@
 import { showNotification } from '@mantine/notifications';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { useCallback, useEffect } from 'react';
 import { useCivitaiLink, useCivitaiLinkStore } from '~/components/CivitaiLink/CivitaiLinkProvider';
-import { CommandResourcesAdd } from '~/components/CivitaiLink/shared-types';
-import { ModelHashModel } from '~/server/selectors/modelHash.selector';
+import type { CommandResourcesAdd } from '~/components/CivitaiLink/shared-types';
+import type { ModelHashModel } from '~/server/selectors/modelHash.selector';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 

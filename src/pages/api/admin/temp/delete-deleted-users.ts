@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { batchProcessor } from '~/server/db/db-helpers';

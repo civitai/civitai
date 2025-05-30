@@ -1,11 +1,14 @@
 import { Prisma } from '@prisma/client';
-import { CosmeticEntity } from '~/shared/utils/prisma/enums';
+import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { cosmeticEntityCaches } from '~/server/redis/caches';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
+  EquipCosmeticInput,
+  GetPaginatedCosmeticsInput,
+} from '~/server/schema/cosmetic.schema';
 import {
   articlesSearchIndex,
   imagesMetricsSearchIndex,

@@ -4,13 +4,9 @@ import {
   getModelVersionsForSearchIndex,
 } from '~/server/selectors/modelVersion.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import {
-  Availability,
-  MetricTimeframe,
-  ModelHashType,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
-import { ModelFileType } from '../common/constants';
+import type { ModelHashType } from '~/shared/utils/prisma/enums';
+import { Availability, MetricTimeframe, ModelStatus } from '~/shared/utils/prisma/enums';
+import type { ModelFileType } from '../common/constants';
 import { profileImageSelect } from './image.selector';
 import { modelFileSelect } from './modelFile.selector';
 import { modelHashSelect } from './modelHash.selector';

@@ -1,13 +1,13 @@
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import type React from 'react';
+import { useState } from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
+import type { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
@@ -76,19 +76,11 @@ export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?
   };
 };
 
-const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
-function openBuyBuzzModal(props: BuyBuzzModalProps) {
-  dialogStore.trigger({
-    id: 'buy-buzz-modal',
-    component: BuyBuzzModal,
-    props,
-  });
-}
-
 export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
   const features = useFeatureFlags();
-  if (!features.canBuyBuzz) {
-    return (props: BuyBuzzModalProps) => {
+
+  return async function (props: BuyBuzzModalProps) {
+    if (!features.canBuyBuzz) {
       const query = {
         minBuzzAmount: props.minBuzzAmount,
         'sync-account': 'blue',
@@ -99,10 +91,15 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
         '_blank',
         'noreferrer'
       );
-    };
-  } else {
-    return openBuyBuzzModal;
-  }
+    } else {
+      const BuyBuzzModal = (await import('~/components/Modals/BuyBuzzModal')).default;
+      dialogStore.trigger({
+        id: 'buy-buzz-modal',
+        component: BuyBuzzModal,
+        props,
+      });
+    }
+  };
 };
 
 export type BuzzTypeDistribution = {

@@ -1,10 +1,9 @@
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import {
+import type {
   GetInfiniteClubPostsSchema,
   GetInfiniteClubSchema,
   GetPaginatedClubResourcesSchema,
-  getPaginatedClubResourcesSchema,
   RemoveClubResourceInput,
   SupportedClubEntities,
   UpdateClubResourceInput,
@@ -13,6 +12,7 @@ import {
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
+import { getPaginatedClubResourcesSchema } from '~/server/schema/club.schema';
 import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
@@ -21,8 +21,9 @@ import {
   applyUserPreferencesClub,
   applyUserPreferencesClubPost,
 } from '~/components/Search/search.utils';
-import { ClubGetAll, ClubPostGetAll, ClubTier, UserClub } from '~/types/router';
-import {
+import type { ClubPostGetAll } from '~/types/router';
+import { ClubGetAll, ClubTier, UserClub } from '~/types/router';
+import type {
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
   OwnerRemoveClubMembershipInput,
@@ -31,9 +32,9 @@ import {
 } from '~/server/schema/clubMembership.schema';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { ClubTransactionSchema } from '~/server/schema/buzz.schema';
-import {
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { ClubTransactionSchema } from '~/server/schema/buzz.schema';
+import type {
   AcceptClubAdminInviteInput,
   DeleteClubAdminInput,
   DeleteClubAdminInviteInput,

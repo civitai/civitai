@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
-import { Context } from '../createContext';
-import { GetByIdInput } from '../schema/base.schema';
+import type { Context } from '../createContext';
+import type { GetByIdInput } from '../schema/base.schema';
 import {
   addBenefactorUnitAmount,
   createBounty,
@@ -21,7 +21,7 @@ import {
   throwNotFoundError,
 } from '../utils/errorHandling';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
-import {
+import type {
   AddBenefactorUnitAmountInputSchema,
   BountyDetailsSchema,
   CreateBountyInput,
@@ -32,12 +32,12 @@ import {
 } from '../schema/bounty.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getAllEntriesByBountyId, getBountyEntryEarnedBuzz } from '../services/bountyEntry.service';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.service';
 import { getImagesByEntity } from '../services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
-import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
+import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';

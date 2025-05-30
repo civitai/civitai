@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { ModelFile } from '~/shared/utils/prisma/models';
+import type { ModelFile } from '~/shared/utils/prisma/models';
 import { ModelHashType, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { env } from '~/env/server';
@@ -7,7 +7,7 @@ import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/com
 import { dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { dataForModelsCache } from '~/server/redis/caches';
-import { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { isModelHashBlocked, unpublishModelById } from '~/server/services/model.service';

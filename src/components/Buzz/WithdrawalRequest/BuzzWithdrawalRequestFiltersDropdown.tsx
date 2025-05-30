@@ -1,3 +1,4 @@
+import type { ChipProps, ButtonProps } from '@mantine/core';
 import {
   Popover,
   Group,
@@ -5,11 +6,9 @@ import {
   Stack,
   Divider,
   Chip,
-  ChipProps,
   Button,
   createStyles,
   Drawer,
-  ButtonProps,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
@@ -18,7 +17,7 @@ import { useCallback, useState } from 'react';
 import { constants, BaseModel } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
+import type { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
 
 type Filters = Omit<GetPaginatedBuzzWithdrawalRequestSchema, 'limit'>;
 

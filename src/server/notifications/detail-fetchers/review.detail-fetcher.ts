@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { createDetailFetcher } from '~/server/notifications/detail-fetchers/base.detail-fetcher';
-import { SimpleUser } from '~/server/selectors/user.selector';
+import type { SimpleUser } from '~/server/selectors/user.selector';
 import { getProfilePicturesForUsers } from '~/server/services/user.service';
 import { isDefined } from '~/utils/type-guards';
 

@@ -6,10 +6,10 @@ import {
   useGetEntityCollaborators,
 } from '~/components/EntityCollaborator/entityCollaborator.util';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
-import { PostDetailEditable } from '~/server/services/post.service';
+import type { PostDetailEditable } from '~/server/services/post.service';
 
 export const PostCollaboratorSelection = ({ post }: { post: PostDetailEditable }) => {
   const currentUser = useCurrentUser();

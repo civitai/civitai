@@ -1,8 +1,8 @@
 import dayjs from 'dayjs';
-import { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
+import type {
   ToggleClubMembershipStatusInput,
   ClubMembershipOnClubInput,
   CreateClubMembershipInput,

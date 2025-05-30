@@ -1,4 +1,5 @@
-import { Alert, AlertProps } from '@mantine/core';
+import type { AlertProps } from '@mantine/core';
+import { Alert } from '@mantine/core';
 
 const errors: Record<string, string> = {
   Signin: 'Try signing with a different account.',

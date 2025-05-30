@@ -6,7 +6,7 @@ import { useEffect } from 'react';
 import { useArticleFilters, useQueryArticles } from '~/components/Article/article.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
+import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ArticleCard } from '~/components/Cards/ArticleCard';

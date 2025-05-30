@@ -19,7 +19,7 @@ import { getHotkeyHandler } from '@mantine/hooks';
 import { ArticleEngagementType, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, { useMemo } from 'react';
 import { z } from 'zod';

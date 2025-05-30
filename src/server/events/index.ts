@@ -1,13 +1,13 @@
 import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/events/base.event';
+import type { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/events/base.event';
 import { holiday2024 } from '~/server/events/holiday2024.event';
 import { discord } from '~/server/integrations/discord';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { TeamScoreHistoryInput } from '~/server/schema/event.schema';
+import type { TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import {
   createBuzzTransaction,
   getAccountSummary,

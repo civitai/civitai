@@ -1,14 +1,12 @@
 import { Modal, Stack, Group, Button } from '@mantine/core';
-import { ModelVersionExploration } from '~/shared/utils/prisma/models';
+import type { ModelVersionExploration } from '~/shared/utils/prisma/models';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { useEffect } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Form, InputText, InputTextArea, useForm } from '~/libs/form';
-import {
-  UpsertExplorationPromptInput,
-  upsertExplorationPromptSchema,
-} from '~/server/schema/model-version.schema';
+import type { UpsertExplorationPromptInput } from '~/server/schema/model-version.schema';
+import { upsertExplorationPromptSchema } from '~/server/schema/model-version.schema';
 import { trpc } from '~/utils/trpc';
 
 export function GenerationPromptModal({

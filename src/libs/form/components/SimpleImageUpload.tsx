@@ -1,16 +1,17 @@
+import type { InputWrapperProps } from '@mantine/core';
 import {
   ActionIcon,
   Box,
   Group,
   Input,
-  InputWrapperProps,
   LoadingOverlay,
   Paper,
   Text,
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { Dropzone, DropzoneProps, FileWithPath } from '@mantine/dropzone';
+import type { DropzoneProps, FileWithPath } from '@mantine/dropzone';
+import { Dropzone } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
@@ -19,10 +20,10 @@ import { useEffect, useState } from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
+import type { DataFromFile } from '~/hooks/useCFImageUpload';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { DataFromFile } from '~/utils/metadata';
 import { formatBytes } from '~/utils/number-helpers';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {

@@ -35,11 +35,11 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
-import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
@@ -232,7 +232,10 @@ export default function UserMembership() {
                       Uh oh! It looks like there was an issue with your membership. You can update
                       your payment method or renew your membership now by clicking{' '}
                       {isStripe ? (
-                        <SubscribeButton priceId={subscription.price.id}>
+                        <SubscribeButton
+                          priceId={subscription.price.id}
+                          disabled={features.disablePayments}
+                        >
                           <Anchor component="button" type="button">
                             here
                           </Anchor>
@@ -286,7 +289,10 @@ export default function UserMembership() {
                         {subscription.canceledAt && (
                           <>
                             {price.active && (
-                              <SubscribeButton priceId={price.id}>
+                              <SubscribeButton
+                                priceId={price.id}
+                                disabled={features.disablePayments}
+                              >
                                 <Button radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
                                   Resume
                                 </Button>

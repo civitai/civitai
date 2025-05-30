@@ -1,5 +1,6 @@
-import React, { CSSProperties, useEffect, useState } from 'react';
-import { IntersectionOptions } from 'react-intersection-observer';
+import type { CSSProperties } from 'react';
+import React, { useEffect, useState } from 'react';
+import type { IntersectionOptions } from 'react-intersection-observer';
 import { useInView } from '~/hooks/useInView';
 
 export function InViewLoader({

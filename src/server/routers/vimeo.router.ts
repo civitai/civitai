@@ -1,5 +1,6 @@
 import { env } from 'process';
-import { GetByIdStringInput, getByIdStringSchema } from '~/server/schema/base.schema';
+import type { GetByIdStringInput } from '~/server/schema/base.schema';
+import { getByIdStringSchema } from '~/server/schema/base.schema';
 import { publicProcedure, router } from '~/server/trpc';
 import { checkVideoAvailable } from '~/server/vimeo/client';
 

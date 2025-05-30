@@ -60,7 +60,7 @@ import {
 import { activeBaseModels, constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
-import { BaseFileSchema } from '~/server/schema/file.schema';
+import type { BaseFileSchema } from '~/server/schema/file.schema';
 import {
   BountyEntryMode,
   BountyMode,
@@ -68,7 +68,7 @@ import {
   Currency,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
-import { BountyGetById } from '~/types/router';
+import type { BountyGetById } from '~/types/router';
 import { dateWithoutTimezone, stripTime } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -81,7 +81,7 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
-import { ReadOnlyAlert }  from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const bountyModeDescription: Record<BountyMode, string> = {
@@ -373,7 +373,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this bounty."} />
+      <ReadOnlyAlert
+        message={
+          "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this bounty."
+        }
+      />
       <Stack spacing={32}>
         <Group spacing="md" noWrap>
           <BackButton url="/bounties" />
@@ -936,7 +940,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               color="yellow.7"
             />
           ) : (
-            <Button loading={upserting} type="submit" disabled={poi || hasPoiInNsfw || !features.canWrite}>
+            <Button
+              loading={upserting}
+              type="submit"
+              disabled={poi || hasPoiInNsfw || !features.canWrite}
+            >
               Save
             </Button>
           )}

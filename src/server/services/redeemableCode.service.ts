@@ -1,6 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import {
+import type {
   ConsumeRedeemableCodeInput,
   CreateRedeemableCodeInput,
   DeleteRedeemableCodeInput,

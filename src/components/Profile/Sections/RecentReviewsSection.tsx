@@ -6,10 +6,10 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import {
   ProfileSection,
   ProfileSectionPreview,
-  ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';

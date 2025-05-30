@@ -1,5 +1,6 @@
 import { CloseButton, Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
-import { Button, ButtonProps, Card, Divider } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Card, Divider } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { CopyButton } from '~/components/CopyButton/CopyButton';

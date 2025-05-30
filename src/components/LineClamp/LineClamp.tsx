@@ -1,4 +1,5 @@
-import { Text, TextProps } from '@mantine/core';
+import type { TextProps } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 
 export function LineClamp({ children, lineClamp = 3, ...props }: TextProps) {

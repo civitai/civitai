@@ -1,4 +1,8 @@
-import { ComfyStepTemplate, ImageGenStepTemplate, TextToImageStepTemplate } from '@civitai/client';
+import type {
+  ComfyStepTemplate,
+  ImageGenStepTemplate,
+  TextToImageStepTemplate,
+} from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { z } from 'zod';

@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { queryWorkflows, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';

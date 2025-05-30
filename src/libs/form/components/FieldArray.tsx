@@ -1,11 +1,5 @@
-import {
-  Control,
-  FieldArrayPath,
-  FieldValues,
-  useFieldArray,
-  UseFieldArrayReturn,
-  useFormContext,
-} from 'react-hook-form';
+import type { Control, FieldArrayPath, FieldValues, UseFieldArrayReturn } from 'react-hook-form';
+import { useFieldArray, useFormContext } from 'react-hook-form';
 
 type FieldArrayProps<
   TFieldValues extends FieldValues,

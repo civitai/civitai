@@ -1,7 +1,7 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import {
+import type {
   GetUserSubscriptionInput,
   SubscriptionMetadata,
   SubscriptionProductMetadata,

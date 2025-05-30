@@ -1,4 +1,5 @@
-import { Button, ButtonProps, Stack, Text } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Stack, Text } from '@mantine/core';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 
 export function OnboardingAbortButton({

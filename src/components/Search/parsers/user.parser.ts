@@ -1,8 +1,9 @@
-import { InstantSearchRoutingParser, searchParamsSchema } from '~/components/Search/parsers/base';
+import type { InstantSearchRoutingParser } from '~/components/Search/parsers/base';
+import { searchParamsSchema } from '~/components/Search/parsers/base';
 import { z } from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
-import { UiState } from 'instantsearch.js';
+import type { UiState } from 'instantsearch.js';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 
 export const UsersSearchIndexSortBy = [

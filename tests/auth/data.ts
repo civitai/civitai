@@ -1,29 +1,29 @@
-const basePath = 'tests/auth';
+const baseAuthPath = 'tests/auth';
 
 export const testAuthData = {
   mod: {
     userId: 1,
-    path: `${basePath}/mod.json`,
+    path: `${baseAuthPath}/mod.json`,
   },
   newbie: {
     userId: 2,
-    path: `${basePath}/newbie.json`,
+    path: `${baseAuthPath}/newbie.json`,
   },
   degen: {
     userId: 3,
-    path: `${basePath}/degen.json`,
+    path: `${baseAuthPath}/degen.json`,
   },
   banned: {
     userId: 4,
-    path: `${basePath}/banned.json`,
+    path: `${baseAuthPath}/banned.json`,
   },
   deleted: {
     userId: 5,
-    path: `${basePath}/deleted.json`,
+    path: `${baseAuthPath}/deleted.json`,
   },
   muted: {
     userId: 6,
-    path: `${basePath}/muted.json`,
+    path: `${baseAuthPath}/muted.json`,
   },
 };
 

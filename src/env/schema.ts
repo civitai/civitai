@@ -227,6 +227,11 @@ export const serverSchema = z.object({
   NOW_PAYMENTS_API_URL: z.string().optional(),
   NOW_PAYMENTS_API_KEY: z.string().optional(),
   NOW_PAYMENTS_IPN_KEY: z.string().optional(),
+
+  // Coinbase Related:
+  COINBASE_API_URL: z.string().optional(),
+  COINBASE_API_KEY: z.string().optional(),
+  COINBASE_WEBHOOK_SECRET: z.string().optional(),
 });
 
 /**

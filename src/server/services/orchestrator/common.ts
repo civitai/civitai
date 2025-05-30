@@ -1,11 +1,7 @@
-import {
+import type {
   ComfyStep,
-  createCivitaiClient,
   HaiperVideoGenOutput,
   ImageGenStep,
-  ImageJobNetworkParams,
-  Priority,
-  TextToImageInput,
   TextToImageStep,
   VideoBlob,
   VideoGenStep,
@@ -13,31 +9,41 @@ import {
   WorkflowStatus,
   WorkflowStep,
 } from '@civitai/client';
+import {
+  createCivitaiClient,
+  ImageJobNetworkParams,
+  Priority,
+  TextToImageInput,
+} from '@civitai/client';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { env } from '~/env/server';
 import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
+import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
+import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
-import {
+import type { GenerationStatus } from '~/server/schema/generation.schema';
+import { generationStatusSchema } from '~/server/schema/generation.schema';
+import type {
   GeneratedImageStepMetadata,
   generateImageSchema,
   TextToImageParams,
 } from '~/server/schema/orchestrator/textToImage.schema';
-import { UserTier } from '~/server/schema/user.schema';
-import {
-  GenerationResource,
-  getResourceData,
-} from '~/server/services/generation/generation.service';
-import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
-import { GeneratedImageWorkflow, WorkflowDefinition } from '~/server/services/orchestrator/types';
+import type { UserTier } from '~/server/schema/user.schema';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { getResourceData } from '~/server/services/generation/generation.service';
+import type { NormalizedGeneratedImage } from '~/server/services/orchestrator';
+import type {
+  GeneratedImageWorkflow,
+  WorkflowDefinition,
+} from '~/server/services/orchestrator/types';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import type { InjectableResource } from '~/shared/constants/generation.constants';
 import {
   allInjectableResourceIds,
   fluxModeOptions,
@@ -50,7 +56,6 @@ import {
   getIsFlux,
   getIsSD3,
   getRoundedWidthHeight,
-  InjectableResource,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
@@ -618,6 +623,12 @@ function formatVideoGenStep({
   // TODO - come up with a better way to handle jsonb data type mismatches
   if ('type' in params && (params.type === 'txt2vid' || params.type === 'img2vid'))
     params.process = params.type;
+
+  if (!params.process && baseModel) {
+    const wanProcess = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
+    if (wanProcess) params.process = wanProcess as any;
+  }
+
   if (baseModel === 'WanVideo') {
     if (params.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
     else baseModel = 'WanVideo14B_I2V_720p';

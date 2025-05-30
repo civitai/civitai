@@ -1,7 +1,8 @@
 import { Anchor, Avatar, Button, CloseButton, Modal, Paper, Text } from '@mantine/core';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { ChallengeDetails, useGetActiveChallenges } from '~/components/Challenges/challenge.utils';
+import type { ChallengeDetails } from '~/components/Challenges/challenge.utils';
+import { useGetActiveChallenges } from '~/components/Challenges/challenge.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

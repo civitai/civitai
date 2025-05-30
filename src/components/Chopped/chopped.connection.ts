@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
-import { JoinGame, NewGame, SocketClient } from './chopped.shared-types';
+import type { JoinGame, NewGame, SocketClient } from './chopped.shared-types';
 import { env } from '~/env/client';
-import { Difference } from '~/utils/object-helpers';
+import type { Difference } from '~/utils/object-helpers';
 import { useChoppedStore } from '~/components/Chopped/chopped.utils';
 import { showNotification } from '@mantine/notifications';
 import { useEffect } from 'react';

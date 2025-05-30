@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
+import type {
   CreateChangelogInput,
   DeleteChangelogInput,
   GetChangelogsInput,

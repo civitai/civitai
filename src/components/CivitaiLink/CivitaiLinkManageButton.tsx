@@ -1,11 +1,11 @@
-import { Box, DefaultMantineColor, Loader, RingProgress } from '@mantine/core';
+import type { DefaultMantineColor } from '@mantine/core';
+import { Box, Loader, RingProgress } from '@mantine/core';
 import { useHover } from '@mantine/hooks';
 import { IconCheck, IconScreenShare, IconTrash, IconX } from '@tabler/icons-react';
-import {
-  CivitaiLinkResourceManager,
-  CivitaiLinkResourceManagerProps,
-} from '~/components/CivitaiLink/CivitaiLinkResourceManager';
-import { CivitaiTooltip, CivitaiTooltipProps } from '~/components/CivitaiWrapped/CivitaiTooltip';
+import type { CivitaiLinkResourceManagerProps } from '~/components/CivitaiLink/CivitaiLinkResourceManager';
+import { CivitaiLinkResourceManager } from '~/components/CivitaiLink/CivitaiLinkResourceManager';
+import type { CivitaiTooltipProps } from '~/components/CivitaiWrapped/CivitaiTooltip';
+import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 const buttonStates: Record<string, ButtonStateFn> = {

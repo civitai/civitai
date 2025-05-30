@@ -4,10 +4,8 @@ import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImag
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
-import {
-  SourceImageProps,
-  sourceImageSchema,
-} from '~/server/orchestrator/infrastructure/base.schema';
+import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import {
   useGenerate,
   useGenerateWithCost,

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { getMimeTypeFromExt } from '~/server/common/mime-types';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';

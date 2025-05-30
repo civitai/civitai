@@ -1,4 +1,5 @@
-import { Skeleton, Switch, SwitchProps } from '@mantine/core';
+import type { SwitchProps } from '@mantine/core';
+import { Skeleton, Switch } from '@mantine/core';
 
 export const SkeletonSwitch = ({ loading, ...props }: { loading: boolean } & SwitchProps) => {
   return (

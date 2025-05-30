@@ -1,7 +1,7 @@
 import { createBuzzOrder, processBuzzOrder } from './../services/paypal.service';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 
-import { PaypalPurchaseBuzzSchema, PaypalOrderSchema } from '../schema/paypal.schema';
+import type { PaypalPurchaseBuzzSchema, PaypalOrderSchema } from '../schema/paypal.schema';
 
 export const createBuzzOrderHandler = async ({
   input,

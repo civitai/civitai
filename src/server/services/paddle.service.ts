@@ -28,18 +28,18 @@ import {
   createAnnualSubscriptionDiscount,
 } from '~/server/paddle/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import {
+import type {
   GetPaddleAdjustmentsSchema,
   TransactionCreateInput,
   TransactionMetadataSchema,
   TransactionWithSubscriptionCreateInput,
   UpdateSubscriptionInputSchema,
 } from '~/server/schema/paddle.schema';
-import {
+import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
-  subscriptionProductMetadataSchema,
 } from '~/server/schema/subscriptions.schema';
+import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getPlans } from '~/server/services/subscriptions.service';

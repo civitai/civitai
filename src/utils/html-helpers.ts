@@ -1,4 +1,5 @@
-import sanitize, { Transformer } from 'sanitize-html';
+import type { Transformer } from 'sanitize-html';
+import sanitize from 'sanitize-html';
 import { isNumber, isValidURL } from '~/utils/type-guards';
 
 export const DEFAULT_ALLOWED_TAGS = [

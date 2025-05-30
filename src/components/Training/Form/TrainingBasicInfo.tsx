@@ -16,8 +16,12 @@ import { z } from 'zod';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
 import { Form, InputRadioGroup, InputSegmentedControl, InputText, useForm } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BaseModel, constants } from '~/server/common/constants';
-import { ModelVersionUpsertInput, TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import type { BaseModel } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
+import type {
+  ModelVersionUpsertInput,
+  TrainingDetailsObj,
+} from '~/server/schema/model-version.schema';
 import {
   Availability,
   ModelStatus,
@@ -26,7 +30,7 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { trainingStore } from '~/store/training.store';
-import { TrainingModelData } from '~/types/router';
+import type { TrainingModelData } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';

@@ -1,4 +1,5 @@
-import { Button, ButtonProps } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button } from '@mantine/core';
 import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

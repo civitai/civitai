@@ -1,7 +1,9 @@
-import React, { CSSProperties, cloneElement } from 'react';
+import type { CSSProperties } from 'react';
+import type React from 'react';
+import { cloneElement } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { UniqueIdentifier } from '@dnd-kit/core';
+import type { UniqueIdentifier } from '@dnd-kit/core';
 
 export function SortableItem({
   disabled,

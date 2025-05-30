@@ -1,14 +1,9 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useRef } from 'react';
-import {
-  DeepPartial,
-  FieldValues,
-  Path,
-  useForm,
-  UseFormProps,
-  UseFormReturn,
-} from 'react-hook-form';
-import { AnyZodObject, input, TypeOf, z, ZodEffects } from 'zod';
+import type { DeepPartial, FieldValues, Path, UseFormProps, UseFormReturn } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
+import type { AnyZodObject, input, TypeOf, ZodEffects } from 'zod';
+import { z } from 'zod';
 
 export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues> =
   UseFormReturn<TFieldValues> & {

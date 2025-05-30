@@ -2,22 +2,24 @@ import { Prisma } from '@prisma/client';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import {
+import type {
   CollectionMode,
-  CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
   CosmeticSource,
   CosmeticType,
   MediaType,
 } from '~/shared/utils/prisma/enums';
+import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 import { dbRead } from '~/server/db/client';
-import { imageGenerationSchema, ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
+import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { ProfileImage, profileImageSelect } from '~/server/selectors/image.selector';
+import type { ProfileImage } from '~/server/selectors/image.selector';
+import { profileImageSelect } from '~/server/selectors/image.selector';
 
 const READ_BATCH_SIZE = 1000; // 10 items per collection are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;

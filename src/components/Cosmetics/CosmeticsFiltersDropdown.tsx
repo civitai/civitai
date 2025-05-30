@@ -1,3 +1,4 @@
+import type { ChipProps, ButtonProps } from '@mantine/core';
 import {
   Popover,
   Group,
@@ -5,11 +6,9 @@ import {
   Stack,
   Divider,
   Chip,
-  ChipProps,
   Button,
   createStyles,
   Drawer,
-  ButtonProps,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -17,7 +16,7 @@ import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
-import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
+import type { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 
 type Filters = Omit<GetPaginatedCosmeticsInput, 'limit'>;

@@ -1,5 +1,5 @@
 import { ModelStatus } from '~/shared/utils/prisma/enums';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';

@@ -8,8 +8,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isEqual } from 'lodash-es';
 import { devtools } from 'zustand/middleware';
-import { NsfwLevel } from '~/server/common/enums';
-import { ColorDomain } from '~/server/common/constants';
+import type { NsfwLevel } from '~/server/common/enums';
+import type { ColorDomain } from '~/server/common/constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
 
 const Context = createContext<ContentSettingsStore | null>(null);

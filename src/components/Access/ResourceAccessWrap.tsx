@@ -1,6 +1,6 @@
-import React from 'react';
+import type React from 'react';
 import { useEntityAccessRequirement } from '../Club/club.utils';
-import { SupportedClubEntities } from '../../server/schema/club.schema';
+import type { SupportedClubEntities } from '../../server/schema/club.schema';
 
 export const ResourceAccessWrap = ({
   entityType,

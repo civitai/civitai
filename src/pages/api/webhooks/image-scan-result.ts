@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
 import { env } from '~/env/server';
@@ -17,7 +17,7 @@ import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import {
   getImagesModRules,
@@ -627,7 +627,14 @@ async function logScanResultError({
   error?: any;
   message?: any;
 }) {
-  await logToAxiom({ name: 'image-scan-result', type: 'error', imageId: id, message, error });
+  await logToAxiom({
+    name: 'image-scan-result',
+    type: 'error',
+    imageId: id,
+    message,
+    stack: error.stack,
+    cause: error.cause,
+  });
 }
 
 // Tag Preprocessing

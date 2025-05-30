@@ -1,7 +1,8 @@
 import { createContext, useContext, useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { BrowsingSettingsAddon, DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/server/common/constants';
+import type { BrowsingSettingsAddon } from '~/server/common/constants';
+import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/server/common/constants';
 import { Flags } from '~/shared/utils';
 import { trpc } from '~/utils/trpc';
 

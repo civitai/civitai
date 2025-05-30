@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, constants } from '~/server/common/constants';
@@ -37,7 +37,7 @@ import type {
   RecommendedSettingsSchema,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
-import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
+import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import {
   imagesMetricsSearchIndex,
   imagesSearchIndex,
@@ -59,13 +59,8 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
-import {
-  Availability,
-  CommercialUse,
-  ModelStatus,
-  ModelType,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
+import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
+import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 
@@ -1433,7 +1428,7 @@ export const resourceDataCache = createCachedArray({
   cacheNotFound: false,
   lookupFn: async (ids) => {
     if (!ids.length) return {};
-    const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`
+    const dbResults = await dbWrite.$queryRaw<GenerationResourceDataModel[]>`
       SELECT
         mv."id",
         mv."name",

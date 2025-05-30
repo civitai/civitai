@@ -1,4 +1,5 @@
-import { Card, CardProps, Group, Image, Stack, Text, createStyles } from '@mantine/core';
+import type { CardProps } from '@mantine/core';
+import { Card, Group, Image, Stack, Text, createStyles } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
