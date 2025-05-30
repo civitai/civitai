@@ -53,7 +53,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import classes from './ModelCategoryCard.module.scss';
 import clsx from 'clsx';
@@ -213,7 +213,7 @@ export function ModelCategoryCard({
         <AddToCollectionMenuItem
           key="add-to-collection"
           onClick={() =>
-            openContext('addToCollection', { modelId: data.id, type: CollectionType.Model })
+            openAddToCollectionModal({ props: { modelId: data.id, type: CollectionType.Model } })
           }
         />
       ),

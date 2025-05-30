@@ -378,11 +378,6 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     }
 
     // Clear related caches
-    await bustFeaturedModelsCache();
-    await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
-    await modelVersionResourceCache.bust(winnerIds);
-    await bustOrchestratorModelCache(winnerIds);
-
     await modelsSearchIndex.updateSync(
       winners
         .map((w) => {
@@ -393,6 +388,10 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
         })
         .filter(isDefined)
     );
+    await bustFeaturedModelsCache();
+    await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
+    await modelVersionResourceCache.bust(winnerIds);
+    await bustOrchestratorModelCache(winnerIds);
 
     log('busted cache', winnerIds.length);
   }

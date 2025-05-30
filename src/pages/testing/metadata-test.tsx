@@ -31,9 +31,9 @@ export default function MetadataTester() {
   const onDrop = async (files: File[]) => {
     console.log({ files });
     // const [file] = files;
-    // const jpegBlob = await imageToJpegBlob(files[0]);
-    // const file = await blobToFile(jpegBlob);
-    const [file] = files;
+    const jpegBlob = await imageToJpegBlob(files[0]);
+    const file = await blobToFile(jpegBlob);
+    // const [file] = files;
 
     const parser = await ExifParser(file);
     const parsed = parser.parse();

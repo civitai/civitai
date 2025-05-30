@@ -59,7 +59,6 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { toStringList } from '~/utils/array-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -75,6 +74,7 @@ import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSearchParams } from 'next/navigation';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { openAddToCollectionModal } from '~/components/Dialog/dialog-registry';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = { postId: number };
@@ -230,9 +230,8 @@ export function PostDetailContent({ postId }: Props) {
                       variant={colorScheme === 'dark' ? 'filled' : 'light'}
                       leftSection={<IconBookmark size={14} />}
                       onClick={() =>
-                        openContext('addToCollection', {
-                          postId: post.id,
-                          type: CollectionType.Post,
+                        openAddToCollectionModal({
+                          props: { postId: post.id, type: CollectionType.Post },
                         })
                       }
                       size="compact-md"

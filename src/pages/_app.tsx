@@ -42,7 +42,7 @@ import { IntersectionObserverProvider } from '~/components/IntersectionObserver/
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import { SignalProvider } from '~/components/Signals/SignalsProvider';
+import { SignalsProviderStack } from '~/components/Signals/SignalsProviderStack';
 import { ToursProvider } from '~/components/Tours/ToursProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
@@ -163,7 +163,7 @@ function MyApp(props: CustomAppProps) {
                       <BrowserSettingsProvider>
                         <BrowsingLevelProvider>
                           <BrowsingSettingsAddonsProvider>
-                            <SignalProvider>
+                            <SignalsProviderStack>
                               <ActivityReportingProvider>
                                 <ReferralsProvider {...cookies.referrals}>
                                   <FiltersProvider>
@@ -197,7 +197,7 @@ function MyApp(props: CustomAppProps) {
                                   </FiltersProvider>
                                 </ReferralsProvider>
                               </ActivityReportingProvider>
-                            </SignalProvider>
+                            </SignalsProviderStack>
                           </BrowsingSettingsAddonsProvider>
                         </BrowsingLevelProvider>
                       </BrowserSettingsProvider>

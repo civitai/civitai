@@ -46,7 +46,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
@@ -74,7 +74,6 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -144,7 +143,7 @@ export function ImageDetail2() {
   const hideAds = (image.poi || image.minor || actualCollection?.metadata?.hideAds) ?? false;
 
   const handleSaveClick = () =>
-    openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });
+    openAddToCollectionModal({ props: { imageId: image.id, type: CollectionType.Image } });
 
   const handleReportClick = () => {
     openReportModal({

@@ -1,3 +1,5 @@
+import { isDefined } from '~/utils/type-guards';
+
 /**
  * Swap the byte order of a Uint8Array from big-endian to little-endian.
  * @param buffer - The input Uint8Array with big-endian byte order.
@@ -45,70 +47,6 @@ export function decodeBigEndianUTF16(buffer: Uint8Array): string {
   return result;
 }
 
-export function createExifSegmentWithUserComment(userCommentBytes: number[]) {
-  const exifHeader = [
-    0x45,
-    0x78,
-    0x69,
-    0x66,
-    0x00,
-    0x00, // "Exif\0\0"
-  ];
-
-  const tiffHeader = [
-    0x49,
-    0x49, // Little endian "II"
-    0x2a,
-    0x00, // TIFF marker
-    0x08,
-    0x00,
-    0x00,
-    0x00, // Offset to 1st IFD (always 8)
-  ];
-
-  const numEntries = 1;
-  const tag = 0x9286; // UserComment
-  const type = 7; // UNDEFINED
-  const count = userCommentBytes.length;
-
-  const tagEntry = [
-    tag & 0xff,
-    tag >> 8, // tag ID (little endian)
-    type,
-    0x00, // type = 7 (UNDEFINED)
-    count & 0xff,
-    (count >> 8) & 0xff,
-    (count >> 16) & 0xff,
-    (count >> 24) & 0xff,
-    0x1a,
-    0x00,
-    0x00,
-    0x00, // Offset to value (past IFD)
-  ];
-
-  const ifd = [
-    numEntries,
-    0x00,
-    ...tagEntry,
-    0x00,
-    0x00,
-    0x00,
-    0x00, // Next IFD offset = 0
-  ];
-
-  const exifBytes = [...exifHeader, ...tiffHeader, ...ifd, ...userCommentBytes];
-
-  // Wrap in APP1 EXIF marker
-  const length = exifBytes.length + 2;
-  return [
-    0xff,
-    0xe1, // APP1 marker
-    (length >> 8) & 0xff,
-    length & 0xff,
-    ...exifBytes,
-  ];
-}
-
 const prefix = [0x55, 0x4e, 0x49, 0x43, 0x4f, 0x44, 0x45, 0x00]; // UNICODE\0
 export function encodeUserCommentUTF16LE(str: string) {
   const encoded = [];
@@ -117,7 +55,7 @@ export function encodeUserCommentUTF16LE(str: string) {
     encoded.push(code & 0xff); // low byte
     encoded.push((code >> 8) & 0xff); // high byte
   }
-  return prefix.concat(encoded);
+  return new Uint8Array(prefix.concat(encoded));
 }
 
 export function encodeUserCommentUTF16BE(str: string) {
@@ -128,5 +66,130 @@ export function encodeUserCommentUTF16BE(str: string) {
     encoded.push(code & 0xff); // low byte
   }
 
-  return prefix.concat(encoded);
+  return new Uint8Array(prefix.concat(encoded));
+}
+
+const u16le = (v: number) => [v & 0xff, (v >> 8) & 0xff];
+const u32le = (v: number) => [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff];
+
+function makeIFDEntryLE(
+  tag: number,
+  type: number,
+  count: number,
+  valueOrOffset: Uint8Array | number
+) {
+  // prettier-ignore
+  const entry = [
+    ...u16le(tag),      // Tag
+    ...u16le(type),     // Type
+    ...u32le(count),    // Count
+  ];
+
+  if (valueOrOffset instanceof Uint8Array) {
+    const valueBytes = new Uint8Array(4).fill(0);
+    valueBytes.set(valueOrOffset.slice(0, 4)); // inline data (padded/truncated to 4 bytes)
+    entry.push(...valueBytes);
+  } else {
+    entry.push(...u32le(valueOrOffset)); // offset into data section
+  }
+
+  return entry;
+}
+
+function asciiEncoder(value: string | string[]) {
+  const str = Array.isArray(value) ? value.join(', ') : value;
+  return new TextEncoder().encode(str + '\0');
+}
+
+const tagMap = {
+  artist: {
+    tag: 0x013b,
+    type: 2,
+    encoder: asciiEncoder,
+  }, // ASCII
+  userComment: {
+    tag: 0x9286,
+    type: 7,
+    encoder: (value: string | string[]) => encodeUserCommentUTF16BE(value as string),
+  },
+  software: {
+    tag: 0x0131,
+    type: 2,
+    encoder: asciiEncoder,
+  },
+};
+
+// some good info can be found here: https://getaround.tech/exif-data-manipulation-javascript/
+export function createExifSegmentFromTags(args: {
+  artist?: string | string[];
+  userComment?: string;
+  software?: string | string[];
+}) {
+  const tagsArray = Object.entries(args)
+    .map(([key, value]) => {
+      const tagMapMatch = tagMap[key as keyof typeof tagMap];
+      if (!tagMapMatch || !value) return null;
+      return { key, value, ...tagMapMatch };
+    })
+    .filter(isDefined)
+    .sort((a, b) => a.tag - b.tag);
+
+  const valueBlocks: { tag: number; type: number; count: number; data: Uint8Array }[] = [];
+
+  for (const { value, tag, type, encoder } of tagsArray) {
+    const data = encoder(value);
+    valueBlocks.push({ tag, type, count: data.length, data });
+  }
+
+  // prettier-ignore
+  const tiffHeader = [
+    0x49, 0x49,       // Byte order: "II" = little endian
+    0x2A, 0x00,       // TIFF magic number (42)
+    0x08, 0x00, 0x00, 0x00  // Offset to first IFD
+  ];
+
+  const entryCount = valueBlocks.length;
+  const idfBlockSize = u16le(entryCount); // [entryCount, 00]
+  const nextIFDBlockOffset = u32le(0); // [00, 00, 00, 00]
+
+  const tiffHeaderSize = tiffHeader.length; // 8
+  const entryCountSize = idfBlockSize.length; // 2
+  const nextIFDOffsetSize = nextIFDBlockOffset.length; // 4
+
+  const dataStart = tiffHeaderSize + entryCountSize + entryCount * 12 + nextIFDOffsetSize;
+
+  let offset = dataStart;
+  const entryBytes: number[][] = [];
+  const dataBytes: Uint8Array[] = [];
+
+  for (const block of valueBlocks) {
+    const isInline = block.type === 2 && block.count <= 4;
+    if (isInline) {
+      entryBytes.push(makeIFDEntryLE(block.tag, block.type, block.count, block.data));
+    } else {
+      entryBytes.push(makeIFDEntryLE(block.tag, block.type, block.count, offset));
+      dataBytes.push(block.data);
+      offset += block.data.length;
+    }
+  }
+
+  const ifdBlock = [...idfBlockSize, ...entryBytes.flat(), ...nextIFDBlockOffset];
+
+  // prettier-ignore
+  const exifHeader  = new Uint8Array([
+    0x45, 0x78, 0x69, 0x66, 0x00, 0x00, // "Exif\0\0"
+    ...tiffHeader,
+    ...ifdBlock,
+    ...dataBytes.flatMap((x) => [...x]),
+  ]);
+
+  const segmentLength = exifHeader.length + 2;
+  // prettier-ignore
+  const exifSegment = new Uint8Array([
+    0xFF, 0xE1,                            // APP1 marker
+    (segmentLength >> 8) & 0xFF, segmentLength & 0xFF,
+    ...exifHeader
+  ]);
+
+  return exifSegment;
 }

@@ -3,13 +3,14 @@ import { useRef } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
+// Record<string, never> should mean an empty object
 type DialogProps<TProps> = TProps extends Record<string, never>
-  ? { props?: TProps }
+  ? { props?: never }
   : TProps extends unknown
   ? { props?: TProps }
   : { props: TProps };
 
-type DialogSettings<TProps = any> = {
+type DialogSettingsBase<TProps = any> = {
   id?: string | number | symbol;
   component: React.ComponentType<TProps>;
   type?: 'dialog' | 'routed-dialog';
@@ -18,7 +19,9 @@ type DialogSettings<TProps = any> = {
     transitionDuration?: number;
     onClose?: () => void;
   };
-} & DialogProps<TProps>;
+};
+
+type DialogSettings<TProps = any> = DialogSettingsBase<TProps> & DialogProps<TProps>;
 
 export type Dialog<TProps = any> = DialogSettings<TProps> & {
   id: string | number | symbol;
@@ -72,6 +75,14 @@ export const useDialogStore = create<DialogStore>()(
       }),
   }))
 );
+
+export function createDialogTrigger<T = any>(
+  component: DialogSettings<T>['component'],
+  defaultOptions?: Omit<DialogSettings<T>, 'component'>
+) {
+  return (options?: Omit<DialogSettings<T>, 'component'>) =>
+    dialogStore.trigger({ component, ...defaultOptions, ...options } as DialogSettings<T>);
+}
 
 export function useIsLevelFocused() {
   const levelRef = useRef<number>();

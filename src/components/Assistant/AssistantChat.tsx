@@ -1,12 +1,23 @@
 import type { CardProps } from '@mantine/core';
 import { Card, Center, Loader, Text } from '@mantine/core';
 import type { CSSProperties } from 'react';
-import { getAssistantUUID } from '~/components/Assistant/AssistantButton';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { isProd } from '~/env/other';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
+import type { UserAssistantPersonality } from '~/server/schema/user.schema';
+import { isApril1 } from '~/utils/date-helpers';
+
+const assistantMap: { [p in UserAssistantPersonality]: string | undefined } = {
+  civbot: env.NEXT_PUBLIC_GPTT_UUID,
+  civchan: env.NEXT_PUBLIC_GPTT_UUID_ALT ?? env.NEXT_PUBLIC_GPTT_UUID,
+};
+
+export const getAssistantUUID = (personality: UserAssistantPersonality) => {
+  return isApril1() ? assistantMap['civchan'] : assistantMap[personality];
+};
 
 export function AssistantChat({
   width,

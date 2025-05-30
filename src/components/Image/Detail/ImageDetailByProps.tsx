@@ -34,7 +34,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { trpc } from '~/utils/trpc';
 import { useDidUpdate, useHotkeys } from '@mantine/hooks';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
@@ -52,6 +51,7 @@ import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { openAddToCollectionModal } from '~/components/Dialog/dialog-registry';
 import { Notifications } from '@mantine/notifications';
 import classes from './ImageDetailByProps.module.scss';
 import clsx from 'clsx';
@@ -197,9 +197,11 @@ export function ImageDetailByProps({
                         color="gray"
                         variant={colorScheme === 'dark' ? 'filled' : 'light'}
                         onClick={() =>
-                          openContext('addToCollection', {
-                            imageId: image.id,
-                            type: CollectionType.Image,
+                          openAddToCollectionModal({
+                            props: {
+                              imageId: image.id,
+                              type: CollectionType.Image,
+                            },
                           })
                         }
                         size="compact-md"

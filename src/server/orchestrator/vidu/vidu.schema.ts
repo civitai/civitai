@@ -55,6 +55,7 @@ export const viduGenerationConfig = VideoGenerationConfig2({
     return data;
   },
   transformFn: (data) => {
+    delete data.priority;
     if (data.model === 'q1') {
       data.duration = 5;
     }

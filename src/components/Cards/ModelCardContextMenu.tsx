@@ -2,7 +2,7 @@ import { Menu } from '@mantine/core';
 import { IconInfoCircle, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
@@ -79,7 +79,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
         <AddToCollectionMenuItem
           key="add-to-collection"
           onClick={() =>
-            openContext('addToCollection', { modelId: data.id, type: CollectionType.Model })
+            openAddToCollectionModal({ props: { modelId: data.id, type: CollectionType.Model } })
           }
         />
       ),

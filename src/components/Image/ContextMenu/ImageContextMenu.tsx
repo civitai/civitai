@@ -21,7 +21,7 @@ import React, { createContext, useContext } from 'react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';
@@ -33,7 +33,6 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImageModerationSchema } from '~/server/schema/image.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -131,8 +130,8 @@ function ImageMenuItems(
 
   const handleSaveClick = () => {
     if (context === 'post' && postId)
-      openContext('addToCollection', { postId, type: CollectionType.Post });
-    if (isImage) openContext('addToCollection', { imageId, type: CollectionType.Image });
+      openAddToCollectionModal({ props: { postId, type: CollectionType.Post } });
+    if (isImage) openAddToCollectionModal({ props: { imageId, type: CollectionType.Image } });
   };
 
   const handleReportClick = () =>
