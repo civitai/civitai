@@ -1,14 +1,12 @@
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
-
-import { Text } from '@mantine/core';
+import { Text, Modal } from '@mantine/core';
 import { RunPartners } from '~/components/RunStrategy/RunPartners';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
-const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVersionId: number }>({
-  name: 'runStrategy',
-  title: <Text weight={700}>Generate using this model now</Text>,
-  size: 600,
-  Element: ({ props: { modelVersionId } }) => <RunPartners modelVersionId={modelVersionId} />,
-});
-
-export { openRunStrategyModal };
-export default Modal;
+export default function RunStrategyModal({ modelVersionId }: { modelVersionId: number }) {
+  const dialog = useDialogContext();
+  return (
+    <Modal {...dialog} size={600} title={<Text weight={700}>Generate using this model now</Text>}>
+      <RunPartners modelVersionId={modelVersionId} />
+    </Modal>
+  );
+}

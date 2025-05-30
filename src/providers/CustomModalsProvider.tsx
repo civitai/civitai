@@ -8,13 +8,11 @@ import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
-import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 
 const QuestionsInfoModal = dynamic(() => import('~/components/Questions/QuestionInfoModal'));
 
-const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'));
 const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'));
 const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
 const CivitaiLinkSuccessModal = dynamic(
@@ -31,10 +29,6 @@ const ManageClubPostModal = dynamic(() => import('~/components/Modals/ManageClub
 const ChatShareModal = dynamic(() => import('~/components/Chat/ChatShareModal'));
 
 const registry = {
-  runStrategy: {
-    Component: RunStrategyModal,
-    fn: openRunStrategyModal,
-  },
   'civitai-link-wizard': {
     Component: CivitaiLinkWizard,
     fn: openCivitaiLinkModal,
