@@ -31,7 +31,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { uniq } from 'lodash-es';
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { InstantSearchProps } from 'react-instantsearch';
 import {
   Configure,
@@ -80,7 +80,6 @@ import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -89,7 +88,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type { GetFeaturedModels } from '~/server/services/model.service';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation.store';
@@ -98,25 +96,16 @@ import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import type {
-  ResourceFilter,
-  ResourceSelectOptions,
-  ResourceSelectSource,
-} from './resource-select.types';
+import type { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
+import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
+import {
+  ResourceSelectProvider,
+  useResourceSelectContext,
+} from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
 //   | { kind: 'training' | 'addResource' | 'modelVersion' };
-export type GenerationResourceWithImage = GenerationResource & {
-  image: SearchIndexDataMap['models'][number]['images'][number];
-};
-export type ResourceSelectModalProps = {
-  title?: React.ReactNode;
-  onSelect: (value: GenerationResourceWithImage) => void;
-  onClose?: () => void;
-  options?: ResourceSelectOptions;
-  selectSource?: ResourceSelectSource;
-};
 
 const tabs = ['all', 'featured', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
@@ -126,86 +115,6 @@ const take = 20;
 const hitsPerPage = 20;
 
 // TODO - ResourceSelectProvider with filter so that we only show relevant model versions to select
-
-type ResourceSelectState = Omit<ResourceSelectModalProps, 'options'> & {
-  canGenerate?: boolean;
-  excludedIds: number[];
-  resources: DeepRequired<ResourceSelectOptions>['resources'];
-  filters: ResourceFilter;
-  setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
-};
-
-const ResourceSelectContext = createContext<ResourceSelectState | null>(null);
-export const useResourceSelectContext = () => {
-  const context = useContext(ResourceSelectContext);
-  if (!context) throw new Error('missing ResourceSelectContext');
-  return context;
-};
-
-function ResourceSelectProvider({
-  children,
-  ...props
-}: ResourceSelectModalProps & { children: React.ReactNode }) {
-  const dialog = useDialogContext();
-  const { generation } = useCurrentUserSettings();
-  const [filters, setFilters] = useState<ResourceFilter>({
-    types: [],
-    baseModels: [],
-  });
-  const resources = (props.options?.resources ?? []).map(
-    ({ type, baseModels = [], partialSupport = [] }) => ({
-      type,
-      // if generation, check toggle
-      // if modelVersion or addResource, always include all
-      // otherwise (training, auction, etc.), only include baseModels
-      baseModels:
-        props.selectSource === 'generation'
-          ? generation?.advancedMode
-            ? [...baseModels, ...partialSupport]
-            : baseModels
-          : props.selectSource === 'modelVersion' || props.selectSource === 'addResource'
-          ? [...baseModels, ...partialSupport]
-          : baseModels,
-      partialSupport,
-    })
-  );
-  const resourceTypes = resources.map((x) => x.type);
-  const types =
-    resources.length > 0
-      ? filters.types.filter((type) => resourceTypes.includes(type))
-      : filters.types;
-
-  const resourceBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
-  const baseModels =
-    resourceBaseModels.length > 0
-      ? filters.baseModels.filter((baseModel) => resourceBaseModels.includes(baseModel))
-      : filters.baseModels;
-
-  function handleSelect(value: GenerationResourceWithImage) {
-    props.onSelect(value);
-    dialog.onClose();
-  }
-
-  return (
-    <ResourceSelectContext.Provider
-      value={{
-        ...props,
-        selectSource: props.selectSource ?? 'generation',
-        canGenerate: props.options?.canGenerate,
-        excludedIds: props.options?.excludeIds ?? [],
-        resources,
-        filters: {
-          types,
-          baseModels,
-        },
-        setFilters,
-        onSelect: handleSelect,
-      }}
-    >
-      {children}
-    </ResourceSelectContext.Provider>
-  );
-}
 
 export default function ResourceSelectModal(props: ResourceSelectModalProps) {
   return (

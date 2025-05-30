@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import type { CollectionSelectModalProps } from '~/components/CollectionSelectModal/CollectionSelectModal';
 import { dialogStore, createDialogTrigger } from '~/components/Dialog/dialogStore';
-import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal2';
+import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import type { ReportModalProps } from '~/components/Modals/ReportModal';
 import type { EditResourceReviewModalProps } from '~/components/ResourceReview/EditResourceReviewModal';
 import type { ImageSelectModalProps } from '~/components/Training/Form/ImageSelectModal';
