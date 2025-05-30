@@ -1,5 +1,6 @@
 module.exports = {
   plugins: {
+    tailwindcss: {},
     'postcss-preset-mantine': {},
     'postcss-simple-vars': {
       variables: {
@@ -10,7 +11,6 @@ module.exports = {
         'mantine-breakpoint-xl': '90em',
       },
     },
-    tailwindcss: {},
     autoprefixer: {},
     ...(process.env.NODE_ENV === 'production' ? { cssnano: {} } : {})
   }

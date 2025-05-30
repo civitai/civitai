@@ -106,7 +106,7 @@ function CreatorsClubV1() {
               >
                 <Stack>
                   <Group justify="space-between" wrap="nowrap">
-                    <Title order={3} className={classes.highlightColor}>
+                    <Title order={3} c="yellow.8">
                       Turn your Buzz into earnings!{' '}
                       {!availability.isAvailable && (
                         <>
@@ -115,9 +115,21 @@ function CreatorsClubV1() {
                       )}
                     </Title>
                     <Group gap={0} wrap="nowrap">
-                      <IconBolt className={classes.highlightColor} size={40} />
-                      <IconBolt className={classes.highlightColor} size={64} />
-                      <IconBolt className={classes.highlightColor} size={40} />
+                      <IconBolt
+                        style={{ fill: 'var(--mantine-color-yellow-7)' }}
+                        color="yellow.7"
+                        size={40}
+                      />
+                      <IconBolt
+                        style={{ fill: 'var(--mantine-color-yellow-7)' }}
+                        color="yellow.7"
+                        size={64}
+                      />
+                      <IconBolt
+                        style={{ fill: 'var(--mantine-color-yellow-7)' }}
+                        color="yellow.7"
+                        size={40}
+                      />
                     </Group>
                   </Group>
                 </Stack>
@@ -238,10 +250,10 @@ const FunStatsSection = () => {
         <table className="-mt-2 w-full table-auto">
           <tbody>
             <tr className="font-bold">
-              <td colSpan={2} className="border-b">
+              <td colSpan={2} className="border-0 border-b border-solid">
                 Compensation Pool{' '}
               </td>
-              <td className="border-b border-l py-2 pl-2">
+              <td className="border-0 border-b border-l border-solid  py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>
                     ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarValue))}
@@ -250,20 +262,20 @@ const FunStatsSection = () => {
               </td>
             </tr>
             <tr>
-              <td colSpan={2} className="border-b">
+              <td colSpan={2} className="border-0 border-b border-solid">
                 # of Creators who Banked Buzz
               </td>
-              <td className="border-b border-l py-2 pl-2">
+              <td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>{numberWithCommas(prevMonthStats.creatorCount)}</span>
                 </div>
               </td>
             </tr>
             <tr>
-              <td colSpan={2} className="border-b">
+              <td colSpan={2} className="border-0 border-b border-solid">
                 Total Banked Buzz
               </td>
-              <td className="border-b border-l py-2 pl-2">
+              <td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>
@@ -275,20 +287,20 @@ const FunStatsSection = () => {
               </td>
             </tr>
             <tr>
-              <td colSpan={2} className="border-b">
+              <td colSpan={2} className="border-0 border-b border-solid">
                 # of Creators who Extracted Buzz
               </td>
-              <td className="border-b border-l py-2 pl-2">
+              <td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>{numberWithCommas(prevMonthStats.extractedCreatorCount)}</span>
                 </div>
               </td>
             </tr>
             <tr>
-              <td colSpan={2} className="border-b">
+              <td colSpan={2} className="border-0 border-b border-solid">
                 Total Buzz Extracted
               </td>
-              <td className="border-b border-l py-2 pl-2">
+              <td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(prevMonthStats.totalExtractedBuzz)}</span>
@@ -297,12 +309,12 @@ const FunStatsSection = () => {
             </tr>
 
             <tr>
-              <td colSpan={2} className="border-b">
+              <td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>Total Payout Buzz</span>
                 </div>
               </td>
-              <td className="border-b border-l py-2 pl-2">
+              <td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(prevMonthStats.totalBankedBuzz)}</span>
@@ -311,22 +323,22 @@ const FunStatsSection = () => {
             </tr>
 
             <tr>
-              <td colSpan={2} className="border-b">
+              <td colSpan={2} className="border-0 border-b border-solid">
                 # of Creators who cashed out
               </td>
-              <td className="border-b border-l py-2 pl-2">
+              <td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>{numberWithCommas(prevMonthStats.cashedOutCreatorCount)}</span>
                 </div>
               </td>
             </tr>
             <tr>
-              <td colSpan={2} className="border-b">
+              <td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>$ per 1,000 Buzz Banked</span>
                 </div>
               </td>
-              <td className="border-b border-l py-2 pl-2">
+              <td className="border-0 border-b border-l border-solid py-2 pl-2">
                 $
                 {numberWithCommas(
                   formatToLeastDecimals(prevMonthStats.dollarAmountPerThousand ?? 0)
@@ -334,22 +346,22 @@ const FunStatsSection = () => {
               </td>
             </tr>
             <tr>
-              <td colSpan={2} className="border-b">
+              <td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>Highest payout</span>
                 </div>
               </td>
-              <td className="border-b border-l py-2 pl-2">
+              <td className="border-0 border-b border-l border-solid py-2 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarHighestEarned ?? 0))}
               </td>
             </tr>
             <tr>
-              <td colSpan={2} className="border-b">
+              <td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>Average payout</span>
                 </div>
               </td>
-              <td className="border-b border-l py-2 pl-2">
+              <td className="border-0 border-b border-l border-solid py-2 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarAverageEarned ?? 0))}
               </td>
             </tr>
@@ -359,7 +371,7 @@ const FunStatsSection = () => {
                   <span>Median payout</span>
                 </div>
               </td>
-              <td className="border-l py-2 pl-2">
+              <td className="border-0 border-l border-solid py-2 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarMedianEarned ?? 0))}
               </td>
             </tr>
@@ -409,7 +421,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                       requirements?.score.min ?? 10000
                     )}`}
                     content={
-                      <p>
+                      <p className="my-0">
                         Your current{' '}
                         <Anchor
                           onClick={() => {
@@ -427,12 +439,12 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                     title="Be a Civitai Member"
                     content={
                       hasValidMembership ? (
-                        <p>
+                        <p className="my-0">
                           You are a {capitalize(getDisplayName(membership as string))} Member! Thank
                           you for supporting Civitai.
                         </p>
                       ) : membership ? (
-                        <p>
+                        <p className="my-0">
                           You are a {capitalize(getDisplayName(membership as string))} Member. Your
                           current membership does not apply to join the Creator Program. Consider
                           upgrading to one our supported memberships.

@@ -220,7 +220,7 @@ const JoinCreatorProgramCard = () => {
         </div>
       </div>
 
-      <div className="  flex flex-col gap-2">
+      <div className="flex flex-col gap-2">
         <p className="font-bold">Program requirements</p>
         <Divider />
 
@@ -231,17 +231,19 @@ const JoinCreatorProgramCard = () => {
               requirements?.score.min ?? 10000
             )}`}
             content={
-              <p>
-                Your current{' '}
-                <Anchor
-                  onClick={() => {
-                    openCreatorScoreModal();
-                  }}
-                >
-                  Creator Score
-                </Anchor>{' '}
-                is {abbreviateNumber(requirements?.score.current ?? 0)}.
-              </p>
+              <>
+                <p className="my-0">
+                  Your current{' '}
+                  <Anchor
+                    onClick={() => {
+                      openCreatorScoreModal();
+                    }}
+                  >
+                    Creator Score
+                  </Anchor>{' '}
+                  is {abbreviateNumber(requirements?.score.current ?? 0)}.
+                </p>
+              </>
             }
           />
           <CreatorProgramRequirement
@@ -249,20 +251,24 @@ const JoinCreatorProgramCard = () => {
             title="Be a Civitai Member"
             content={
               hasValidMembership ? (
-                <p>
-                  You are a {capitalize(getDisplayName(membership as string))} Member! Thank you for
-                  supporting Civitai.
-                </p>
+                <>
+                  <p className="my-0">
+                    You are a {capitalize(getDisplayName(membership as string))} Member! Thank you
+                    for supporting Civitai.
+                  </p>
+                </>
               ) : membership ? (
-                <p>
-                  You are a {capitalize(getDisplayName(membership as string))} Member. Your current
-                  membership does not apply to join the Creator Program. Consider upgrading to one
-                  our supported memberships.
-                  <br />
-                  <NextLink href="/pricing">
-                    <Anchor>Upgrade Membership</Anchor>
-                  </NextLink>
-                </p>
+                <>
+                  <p className="my-0">
+                    You are a {capitalize(getDisplayName(membership as string))} Member. Your
+                    current membership does not apply to join the Creator Program. Consider
+                    upgrading to one our supported memberships.
+                    <br />
+                    <NextLink href="/pricing">
+                      <Anchor>Upgrade Membership</Anchor>
+                    </NextLink>
+                  </p>
+                </>
               ) : (
                 <NextLink href="/pricing">
                   <Anchor>Become a Civitai Member Now!</Anchor>
@@ -297,13 +303,13 @@ export const CreatorProgramRequirement = ({
   return (
     <div className="flex gap-2">
       {isMet ? (
-        <IconCircleCheck className="text-green-500" size={25} />
+        <IconCircleCheck className="shrink-0 text-green-500" size={25} />
       ) : (
-        <IconCircleX className="text-red-500" size={25} />
+        <IconCircleX className="shrink-0 text-red-500" size={25} />
       )}
       <div className="flex flex-col gap-0">
-        <p className="font-bold">{title}</p>
-        {typeof content === 'string' ? <p>{content}</p> : content}
+        <p className="my-0 font-bold">{title}</p>
+        {typeof content === 'string' ? <p className="my-0">{content}</p> : content}
       </div>
     </div>
   );
@@ -326,17 +332,17 @@ export const CompensationPoolCard = () => {
     <div className={clsx(cardProps.className, 'h-full basis-1/4 gap-6')}>
       <div className="flex h-full flex-col justify-between gap-12">
         <div className="flex flex-col">
-          <h3 className="text-center text-xl font-bold">Compensation Pool</h3>
-          <p className="text-center">{date}</p>
+          <h3 className="my-0 text-center text-xl font-bold">Compensation Pool</h3>
+          <p className="my-0 text-center">{date}</p>
         </div>
 
         <div className="flex flex-col">
-          <p className="text-center text-2xl font-bold">
+          <p className="my-0 text-center text-2xl font-bold">
             ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
           </p>
         </div>
         <div className="flex flex-col">
-          <h3 className="text-center text-xl font-bold">Current Banked Buzz</h3>
+          <h3 className="my-0 text-center text-xl font-bold">Current Banked Buzz</h3>
           <div className="flex justify-center gap-1">
             <CurrencyIcon className="my-auto" currency={Currency.BUZZ} size={20} />
             <span className="text-2xl font-bold">

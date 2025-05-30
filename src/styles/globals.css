@@ -199,6 +199,10 @@ iframe {
   border: none;
 }
 
+p {
+  margin: 0;
+}
+
 .demo-25 {
   opacity: 0.65;
   stroke-width: 2px;
