@@ -104,7 +104,7 @@ const featureFlags = createFeatureFlags({
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
-  canBuyBuzz: isDev ? ['mod'] : ['public', 'green'],
+  canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel

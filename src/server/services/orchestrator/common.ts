@@ -34,7 +34,7 @@ import type {
 } from '~/server/schema/orchestrator/textToImage.schema';
 import type { UserTier } from '~/server/schema/user.schema';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
-import { getGenerationResourceData } from '~/server/services/generation/generation.service';
+import { getResourceData } from '~/server/services/generation/generation.service';
 import type { NormalizedGeneratedImage } from '~/server/services/orchestrator';
 import type {
   GeneratedImageWorkflow,
@@ -89,19 +89,17 @@ export async function getGenerationStatus() {
 }
 
 // TODO - pass user data
-export async function getResourceDataWithInjects<T extends GenerationResource>(args: {
-  ids: number[];
-  user?: SessionUser;
-  epochNumbers?: string[];
-  cb?: (resource: GenerationResource) => T;
-}) {
-  const ids = [...args.ids, ...allInjectableResourceIds];
-  const results = await getGenerationResourceData({
-    ids,
-    user: args.user,
-    epochNumbers: args.epochNumbers,
-  });
-  const allResources = (args.cb ? results.map(args.cb) : results) as T[];
+export async function getResourceDataWithInjects<T extends GenerationResource>(
+  versions: { id: number; epoch?: number }[],
+  user?: SessionUser,
+  cb?: (resource: GenerationResource) => T
+) {
+  const results = await getResourceData(
+    [...versions, ...allInjectableResourceIds.map((id) => ({ id }))],
+    user,
+    true
+  );
+  const allResources = (cb ? results.map(cb) : results) as T[];
 
   return {
     resources: allResources.filter((x) => !allInjectableResourceIds.includes(x.id)),
@@ -175,18 +173,15 @@ export async function parseGenerateImageInput({
   if (!status.available && !user.isModerator)
     throw throwBadRequestError('Generation is currently disabled');
 
-  const resourceData = await getResourceDataWithInjects({
-    ids: originalResources.map((x) => x.id),
+  const resourceData = await getResourceDataWithInjects(
+    originalResources.map(({ id, epochNumber }) => ({ id, epoch: epochNumber })),
     user,
-    epochNumbers: originalResources
-      .filter((x) => !!x.epochNumber)
-      .map((x) => `${x.id}@${x.epochNumber}`),
-    cb: (resource) => ({
+    (resource) => ({
       ...resource,
       ...originalResources.find((x) => x.id === resource.id),
       triggerWord: resource.trainedWords?.[0],
-    }),
-  });
+    })
+  );
 
   if (
     resourceData.resources.some(
@@ -287,13 +282,6 @@ export async function parseGenerateImageInput({
     if (params.draft && injectableResources.draft) {
       injectable.push(injectableResources.draft);
     }
-    // if (isPromptNsfw && status.minorFallback) {
-    //   injectable.push(injectableResources.safe_pos);
-    //   injectable.push(injectableResources.safe_neg);
-    // }
-    // if (!params.nsfw && status.sfwEmbed) {
-    //   injectable.push(injectableResources.civit_nsfw);
-    // }
   }
 
   const positivePrompts = [params.prompt];
@@ -393,17 +381,8 @@ export type WorkflowFormatted = AsyncReturnType<typeof formatGenerationResponse>
 export async function formatGenerationResponse(workflows: Workflow[], user?: SessionUser) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
-  // console.dir(allResources, { depth: null });
-  const versionIds = allResources.map((x) => x.id);
-  const epochNumbers = uniq(
-    allResources.filter((x) => !!x.epochNumber).map((x) => `${x.id}@${x.epochNumber}`)
-  );
-
-  const { resources, injectable } = await getResourceDataWithInjects({
-    ids: versionIds,
-    user,
-    epochNumbers,
-  });
+  const versions = allResources.map(({ id, epochNumber }) => ({ id, epoch: epochNumber }));
+  const { resources, injectable } = await getResourceDataWithInjects(versions, user);
 
   return workflows.map((workflow) => {
     const transactions =
@@ -432,19 +411,7 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
           workflowId: workflow.id as string,
           // ensure that job status is set to 'succeeded' if workflow status is set to 'succeedeed'
           step: workflow.status === 'succeeded' ? { ...step, status: workflow.status } : step,
-          resources: [...resources, ...injectable].filter((resource) => {
-            const metadataResources =
-              (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
-            const mr = metadataResources.find((x) => x.id === resource.id);
-
-            if (mr && mr.epochNumber) {
-              // Avoids attaching wrong epoch details to resources. The only source of truth we have for that
-              // is the metadata since it's pretty much impossible to tie air <-> modelVersion.
-              return resource.epochDetails?.epochNumber === mr.epochNumber;
-            }
-
-            return true; // Default behavior.
-          }),
+          resources: [...resources, ...injectable],
         })
       ),
     };
@@ -717,9 +684,6 @@ function formatTextToImageStep({
     metadata?.params?.draft ??
     (injectable.draft ? versionIds.includes(injectable.draft.id) : false);
 
-  // infer nsfw from resources if not included in meta params
-  const isNsfw = metadata?.params?.nsfw ?? !versionIds.includes(injectable.civit_nsfw.id);
-
   let quantity = input.quantity ?? 1;
   if (isDraft) {
     quantity *= 4;
@@ -783,7 +747,6 @@ function formatTextToImageStep({
     height: input.height,
     seed: input.seed,
     draft: isDraft,
-    nsfw: isNsfw,
     workflow: 'txt2img',
     //support using metadata params first (one of the quirks of draft mode makes this necessary)
     clipSkip: params?.clipSkip ?? input.clipSkip,

@@ -22,7 +22,9 @@ import { imageGenerationSchema } from '~/server/schema/image.schema';
 import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
+import { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { hasEntityAccess } from '~/server/services/common.service';
+import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/services/model-version.service';
 import { resourceDataCache } from '~/server/services/model-version.service';
@@ -247,10 +249,9 @@ export const getGenerationData = async ({
       return await getMediaGenerationData({ id: query.id, user, generation: query.generation });
     case 'modelVersion':
       return await getModelVersionGenerationData({
-        versionIds: [query.id],
+        versionIds: [{ id: query.id, epoch: query.epoch }],
         user,
         generation: query.generation,
-        epochNumbers: query.epochNumbers,
       });
     case 'modelVersions':
       return await getModelVersionGenerationData({
@@ -307,8 +308,7 @@ async function getMediaGenerationData({
     select: { imageId: true, modelVersionId: true, strength: true },
   });
   const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
-  const fn = generation ? getGenerationResourceData : getResourceData;
-  const resources = await fn({ ids: versionIds, user }).then((data) =>
+  const resources = await getResourceData(versionIds, user, generation).then((data) =>
     data.map((item) => {
       const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
       return {
@@ -416,19 +416,16 @@ const getModelVersionGenerationData = async ({
   versionIds,
   user,
   generation,
-  epochNumbers,
 }: {
-  versionIds: number[];
+  versionIds: { id: number; epoch?: number }[] | number[];
   user?: SessionUser;
   generation: boolean;
-  epochNumbers?: string[];
 }) => {
   if (!versionIds.length) throw new Error('missing version ids');
-  const fn = generation ? getGenerationResourceData : getResourceData;
-  const resources = await fn({ ids: versionIds, user, epochNumbers });
+  const resources = await getResourceData(versionIds, user, generation);
   const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
   if (checkpoint?.vaeId) {
-    const [vae] = await fn({ ids: [checkpoint.vaeId], user });
+    const [vae] = await getResourceData([checkpoint.vaeId], user, generation);
     if (vae) resources.push({ ...vae, vaeId: undefined });
   }
 
@@ -547,9 +544,11 @@ type GenerationResourceBase = {
   earlyAccessConfig?: ModelVersionEarlyAccessConfig;
   canGenerate: boolean;
   hasAccess: boolean;
-  covered: boolean;
+  // air: string;
+  // covered: boolean;
   additionalResourceCost?: boolean;
   availability?: Availability;
+  epochNumber?: number;
   // settings
   clipSkip?: number;
   minStrength: number;
@@ -579,49 +578,44 @@ export type GenerationResource = GenerationResourceBase & {
 
 const explicitCoveredModelAirs = [fluxUltraAir];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
-export async function getResourceData({
-  ids,
-  user,
-  epochNumbers,
-}: {
-  ids: number[];
-  epochNumbers?: string[];
-  user?: {
-    id?: number;
-    isModerator?: boolean;
-  };
-}): Promise<GenerationResource[]> {
-  if (!ids.length) return [];
-  const { id: userId, isModerator } = user ?? {};
+
+export async function getResourceData(
+  versionIds: { id: number; epoch?: number }[] | number[],
+  user: { id?: number; isModerator?: boolean } = {},
+  generation = false
+): Promise<GenerationResource[]> {
+  if (!versionIds.length) return [];
+  const args = (
+    typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
+  ) as { id: number; epoch?: number }[];
+
   const unavailableResources = await getUnavailableResources();
   const featuredModels = await getFeaturedModels();
 
   function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
     const isUnavailable = unavailableResources.includes(item.model.id);
 
+    const hasAccess = !!(item.hasAccess || user.id === item.model.userId || user.isModerator);
+    const covered =
+      (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable;
+    const canGenerate = hasAccess && covered;
+    const epochNumber = args.find((x) => x.id === item.id)?.epoch;
+
     return {
       ...item,
-      air: stringifyAIR({
-        baseModel: item.baseModel,
-        type: item.model.type,
-        modelId: item.model.id,
-        id: item.id,
-      }),
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
       strength: settings?.strength ?? 1,
-      covered: (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable,
-      hasAccess: !!(
-        ['Public', 'Unsearchable'].includes(item.availability) ||
-        userId === item.model.userId ||
-        isModerator
-      ),
+      hasAccess,
+      canGenerate,
+      epochNumber,
     };
   }
 
-  return await resourceDataCache.fetch(ids).then(async (initialResult) => {
-    const initialTransformed = initialResult.map(transformGenerationData);
-    const modelIds = initialTransformed
+  async function getResourceDataSubstitutes(
+    resources: ReturnType<typeof transformGenerationData>[]
+  ) {
+    const modelIdsThatRequireSubstitutes = resources
       .filter((x) => !x.covered || !x.hasAccess)
       .map((x) => x.model.id);
 
@@ -630,7 +624,7 @@ export async function getResourceData({
         where: {
           status: 'Published',
           generationCoverage: { covered: true },
-          modelId: { in: modelIds },
+          modelId: { in: modelIdsThatRequireSubstitutes },
         },
         orderBy: { index: { sort: 'asc', nulls: 'last' } },
         select: { id: true, baseModel: true, modelId: true },
@@ -638,18 +632,19 @@ export async function getResourceData({
       .then((data) =>
         data
           .filter((x) => {
-            const match = initialTransformed.find((initial) => initial.model.id === x.modelId);
-            if (!match) return false;
-            return match.baseModel === x.baseModel;
+            const match = resources.find((resource) => resource.model.id === x.modelId);
+            return match?.baseModel === x.baseModel;
           })
           .map((x) => x.id)
       );
 
-    const substitutesTransformed = await resourceDataCache
+    return await resourceDataCache
       .fetch(substituteIds)
       .then((data) => data.map(transformGenerationData));
+  }
 
-    const earlyAccessIds = [...initialTransformed, ...substitutesTransformed]
+  async function getEntityAccess(resources: ReturnType<typeof transformGenerationData>[]) {
+    const earlyAccessIds = resources
       .filter(
         (x) =>
           x.covered &&
@@ -660,127 +655,117 @@ export async function getResourceData({
       )
       .map((x) => x.id);
 
-    const entityAccessArray = userId
+    return user.id
       ? await hasEntityAccess({
           entityType: 'ModelVersion',
           entityIds: earlyAccessIds,
-          userId,
-          isModerator,
+          userId: user.id,
+          isModerator: user.isModerator,
           permissions: EntityAccessPermission.EarlyAccessGeneration,
         })
       : [];
+  }
 
-    const [initialWithAccess, substitutesWithAccess] = [
-      initialTransformed,
-      substitutesTransformed,
-    ].map((tupleItem) =>
-      tupleItem.map((item) => {
-        return {
-          ...item,
-          earlyAccessConfig: item.earlyAccessConfig
-            ? Object.keys(item.earlyAccessConfig).length
-              ? item.earlyAccessConfig
-              : undefined
-            : undefined,
-          hasAccess: !!(
-            (
-              item.hasAccess ||
-              entityAccessArray.find((e) => e.entityId === item.id)?.hasAccess ||
-              !!item.earlyAccessConfig?.generationTrialLimit
-            ) // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
-          ),
-        };
-      })
-    );
+  async function getModelFiles(resources: ReturnType<typeof transformGenerationData>[]) {
+    const versionIds = resources.filter((x) => x.hasAccess).map((x) => x.id);
+    return await getFilesForModelVersionCache(versionIds);
+  }
 
-    const modelFilesCached = await getFilesForModelVersionCache(
-      [...initialWithAccess, ...substitutesWithAccess].filter((x) => x.hasAccess).map((x) => x.id)
-    );
+  function getPrimaryFileProps(
+    resource: ReturnType<typeof transformGenerationData>,
+    modelFiles: ModelFileCached[]
+  ) {
+    const primaryFile = getPrimaryFile(modelFiles);
+    const fileSizeKB = primaryFile?.sizeKB;
+    const featured = !!featuredModels.find((x) => x.modelId === resource.model.id);
+    let additionalResourceCost = true;
+    if (
+      featured ||
+      FREE_RESOURCE_TYPES.includes(resource.model.type) ||
+      (fileSizeKB && fileSizeKB <= 10 * 1024)
+    ) {
+      additionalResourceCost = false;
+    }
+    return { fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined, additionalResourceCost };
+  }
 
-    return initialWithAccess.flatMap(({ ...item }) => {
-      const primaryFile = getPrimaryFile(modelFilesCached[item.id]?.files ?? []);
-      const trainingFile = modelFilesCached[item.id]?.files.find((f) => f.type === 'Training Data');
-
-      const substitute = substitutesWithAccess.find(
-        (sub) => sub.model.id === item.model.id && sub.hasAccess
-      );
-      const fileSizeKB = primaryFile?.sizeKB;
-      let additionalResourceCost = false;
-      if (fileSizeKB) {
-        additionalResourceCost =
-          !FREE_RESOURCE_TYPES.includes(item.model.type) &&
-          !featuredModels.map((fm) => fm.modelId).includes(item.model.id) &&
-          fileSizeKB > 10 * 1024;
+  function getEpochDetails(
+    resource: ReturnType<typeof transformGenerationData>,
+    modelFiles: ModelFileCached[]
+  ) {
+    if (resource.status === 'Published') return null;
+    const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
+    if (trainingFile) {
+      const epoch = args.find((x) => x.id === resource.id)?.epoch;
+      const details = getTrainingFileEpochNumberDetails(trainingFile, epoch);
+      if (details?.isExpired) {
+        delete resource.epochNumber;
+        return null;
       }
+      return details;
+    }
+  }
 
-      const epochs = epochNumbers
-        ?.filter((v) => {
-          const [modelVersionId] = v.split('@');
-          if (!modelVersionId) return false;
-          return Number(modelVersionId) === item.id;
-        })
-        ?.map((s) => Number(s.split('@')[1]));
-
-      const epochsDetails =
-        epochs
-          ?.map((epochNumber) => {
-            const epochDetails =
-              epochNumber && trainingFile
-                ? getTrainingFileEpochNumberDetails(trainingFile, Number(epochNumber))
-                : null;
-
-            return epochDetails;
-          })
-          .filter(isDefined) ?? [];
-
-      let substituteData;
-
-      // TODO - review hasAccess - if private, use a substitute, if early access, don't use substitute
-      if (substitute) {
-        const { model, availability, ...sub } = substitute;
-        substituteData = removeNulls({ ...sub, canGenerate: sub.covered && sub.hasAccess });
-      }
-
-      const payload = removeNulls({
-        ...item,
-        canGenerate: item.covered && item.hasAccess,
-        fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
-        additionalResourceCost,
-        substitute: substituteData,
-      });
-
-      /*
-        epochs are used to generate images from a trained model before the model is finished training. It allows the user to determine the best trained model from the available epochs.
-      */
-      return (epochsDetails?.length ?? 0) > 0
-        ? epochsDetails.map((epochDetails) => ({
-            ...payload,
-            epochDetails,
-            air: stringifyAIR({
-              baseModel: item.baseModel,
-              type: item.model.type,
-              modelId: epochDetails.jobId,
-              id: epochDetails.fileName,
-              source: 'orchestrator',
-            }),
-          }))
-        : payload;
+  function bringItAllTogether(
+    resource: ReturnType<typeof transformGenerationData>,
+    modelFiles: ModelFileCached[]
+  ) {
+    const epochDetails = getEpochDetails(resource, modelFiles);
+    const { fileSizeKB, additionalResourceCost } = getPrimaryFileProps(resource, modelFiles);
+    const air = stringifyAIR({
+      baseModel: resource.baseModel,
+      type: resource.model.type,
+      modelId: epochDetails ? epochDetails.jobId : resource.model.id,
+      id: epochDetails ? epochDetails.fileName : resource.id,
+      source: epochDetails ? 'orchestrator' : 'civitai',
     });
-  });
-}
 
-export async function getGenerationResourceData(args: {
-  ids: number[];
-  user?: {
-    id?: number;
-    isModerator?: boolean;
-  };
-  epochNumbers?: string[];
-}) {
-  return await getResourceData(args).then((data) =>
-    data.filter((resource) => {
-      const baseModel = getBaseModelSetType(resource.baseModel) as SupportedBaseModel;
-      return !!baseModelResourceTypes[baseModel];
-    })
-  );
+    return { ...resource, fileSizeKB, additionalResourceCost, epochDetails, air };
+  }
+
+  function getSubstituteData(
+    resource: ReturnType<typeof transformGenerationData>,
+    substitutes: ReturnType<typeof transformGenerationData>[],
+    modelFiles: ModelFileCached[]
+  ) {
+    const substitute = substitutes.find((x) => x.hasAccess && x.model.id === resource.model.id);
+    if (substitute) {
+      const { model, ...rest } = bringItAllTogether(substitute, modelFiles);
+      return removeNulls({ ...rest, ...getPrimaryFileProps(substitute, modelFiles) });
+    }
+  }
+
+  const resources = await resourceDataCache
+    .fetch(args.map((x) => x.id))
+    .then((resources) => resources.map(transformGenerationData))
+    .then(async (resources) => {
+      const substitutes = await getResourceDataSubstitutes(resources);
+      const entityAccess = await getEntityAccess([...resources, ...substitutes]);
+
+      for (const resource of [...resources, ...substitutes]) {
+        if (!resource.hasAccess) {
+          // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
+          resource.hasAccess = !!(
+            entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
+            !!resource.earlyAccessConfig?.generationTrialLimit
+          );
+          resource.canGenerate = resource.hasAccess && resource.canGenerate;
+        }
+      }
+
+      const modelFilesCached = await getModelFiles([...resources, ...substitutes]);
+
+      return resources.map((resource) => {
+        const modelFiles = modelFilesCached[resource.id]?.files ?? [];
+        const substitute = getSubstituteData(resource, substitutes, modelFiles);
+        return removeNulls({ ...bringItAllTogether(resource, modelFiles), substitute });
+      });
+    });
+
+  return generation
+    ? resources.filter((resource) => {
+        const baseModel = getBaseModelSetType(resource.baseModel) as SupportedBaseModel;
+        return !!baseModelResourceTypes[baseModel];
+      })
+    : resources;
 }

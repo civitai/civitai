@@ -28,7 +28,7 @@ export default function AssociateModelsModal({
   };
 
   return (
-    <Modal {...dialog}>
+    <Modal {...dialog} withCloseButton={false}>
       <Stack>
         <Group noWrap position="apart">
           <Text>{`Manage ${type} Resources`}</Text>

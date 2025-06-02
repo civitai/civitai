@@ -31,7 +31,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
-import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
+import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';

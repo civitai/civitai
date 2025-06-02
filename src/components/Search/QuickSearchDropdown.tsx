@@ -28,7 +28,7 @@ import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
-import { BrowsingLevelFilter } from './CustomSearchComponents';
+import { ApplyCustomFilter, BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 
 const meilisearch = instantMeiliSearch(
@@ -160,8 +160,15 @@ export const QuickSearchDropdown = ({
       indexName={indexName}
       future={{ preserveSharedStateOnUnmount: true }}
     >
-      <Configure index={indexName} hitsPerPage={dropdownItemLimit} filters={filters} />
-      {indexSupportsNsfwLevel && <BrowsingLevelFilter attributeName="nsfwLevel" />}
+      {indexSupportsNsfwLevel ? (
+        <BrowsingLevelFilter
+          attributeName="nsfwLevel"
+          filters={filters}
+          hitsPerPage={dropdownItemLimit}
+        />
+      ) : (
+        <ApplyCustomFilter hitsPerPage={dropdownItemLimit} filters={filters} />
+      )}
 
       <QuickSearchDropdownContent
         {...props}

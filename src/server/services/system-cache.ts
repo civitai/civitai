@@ -8,8 +8,8 @@ import { TagType } from '~/shared/utils/prisma/enums';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
-import type { BrowsingSettingsAddon } from '../common/constants';
-import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '../common/constants';
+import type { BrowsingSettingsAddon, LiveFeatureFlags } from '../common/constants';
+import { DEFAULT_BROWSING_SETTINGS_ADDONS, DEFAULT_LIVE_FEATURE_FLAGS } from '../common/constants';
 
 const log = createLogger('system-cache', 'green');
 
@@ -246,4 +246,14 @@ export async function getBrowsingSettingAddons() {
   }
 
   return DEFAULT_BROWSING_SETTINGS_ADDONS;
+}
+
+export async function getLiveFeatureFlags() {
+  const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
+  if (cached) {
+    const data = JSON.parse(cached) as LiveFeatureFlags;
+    return data;
+  }
+
+  return DEFAULT_LIVE_FEATURE_FLAGS;
 }

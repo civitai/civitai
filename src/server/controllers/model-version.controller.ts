@@ -156,15 +156,13 @@ export const getModelVersionHandler = async ({
     });
 
     const recommendedResourceIds = version?.recommendedResources.map((x) => x.id) ?? [];
-    const generationResources = await getResourceData({
-      ids: recommendedResourceIds,
-      user: ctx?.user,
-    }).then((data) =>
-      data.map((item) => {
-        const settings = (version?.recommendedResources.find((x) => x.resource.id === item.id)
-          ?.settings ?? {}) as RecommendedSettingsSchema;
-        return { ...item, ...removeNulls(settings) };
-      })
+    const generationResources = await getResourceData(recommendedResourceIds, ctx?.user).then(
+      (data) =>
+        data.map((item) => {
+          const settings = (version?.recommendedResources.find((x) => x.resource.id === item.id)
+            ?.settings ?? {}) as RecommendedSettingsSchema;
+          return { ...item, ...removeNulls(settings) };
+        })
     );
 
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);

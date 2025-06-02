@@ -369,6 +369,7 @@ export const REDIS_SYS_KEYS = {
     DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
     FEATURE_STATUS: 'system:feature-status',
     BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
+    LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -435,7 +436,7 @@ export const REDIS_KEYS = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data',
+    RESOURCE_DATA: 'packed:generation:resource-data-2',
     TOKENS: 'generation:tokens',
     COUNT: 'generation:count',
   },
@@ -451,7 +452,7 @@ export const REDIS_KEYS = {
     CATEGORIES: 'system:categories',
   },
   CACHES: {
-    FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',
+    FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
