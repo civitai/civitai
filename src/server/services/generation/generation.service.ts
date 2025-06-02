@@ -583,7 +583,7 @@ export async function getResourceData(
   versionIds: { id: number; epoch?: number }[] | number[],
   user: { id?: number; isModerator?: boolean } = {},
   generation = false
-): Promise<GenerationResource[]> {
+): Promise<(GenerationResource & { air: string })[]> {
   if (!versionIds.length) return [];
   const args = (
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
@@ -693,17 +693,18 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    if (resource.status === 'Published') return null;
-    const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
-    if (trainingFile) {
-      const epoch = args.find((x) => x.id === resource.id)?.epoch;
-      const details = getTrainingFileEpochNumberDetails(trainingFile, epoch);
-      if (details?.isExpired) {
-        delete resource.epochNumber;
-        return null;
+    if (resource.trainingStatus !== 'Approved') {
+      const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
+      if (trainingFile) {
+        const epoch = args.find((x) => x.id === resource.id)?.epoch;
+        const details = getTrainingFileEpochNumberDetails(trainingFile, epoch);
+        if (!details?.isExpired) {
+          return details;
+        }
       }
-      return details;
     }
+    delete resource.epochNumber;
+    return null;
   }
 
   function bringItAllTogether(

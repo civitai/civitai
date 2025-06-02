@@ -59,7 +59,11 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
-import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
+import type {
+  ModelType,
+  ModelVersionEngagementType,
+  TrainingStatus,
+} from '~/shared/utils/prisma/enums';
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
@@ -1439,6 +1443,7 @@ export const resourceDataCache = createCachedArray({
         mv."clipSkip",
         mv."vaeId",
         mv."status",
+        mv."trainingStatus",
         (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
         gc."covered",
         FALSE AS "hasAccess",
@@ -1491,6 +1496,7 @@ export type GenerationResourceDataModel = {
   covered: boolean | null;
   status: ModelStatus;
   hasAccess: boolean;
+  trainingStatus: TrainingStatus | null;
   model: {
     id: number;
     name: string;
