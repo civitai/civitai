@@ -1,7 +1,7 @@
 import type { ButtonProps, InputWrapperProps } from '@mantine/core';
 import { Button, Divider, Input, Stack, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
-import React, { forwardRef, useEffect, useMemo } from 'react';
+import React, { forwardRef, useEffect, useMemo, useRef } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
@@ -42,11 +42,14 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
     },
     ref
   ) => {
-    const { types, select, getValues } = ResourceSelectHandler(options);
+    const { types, baseModels, select, getValues } = ResourceSelectHandler(options);
+    const stringDependency = JSON.stringify(types) + JSON.stringify(baseModels);
 
     // _types used to set up groups
     const _types = [...new Set(!!types.length ? types : value?.map((x) => x.model.type))];
-    const _values = useMemo(() => getValues(value), [value]) ?? [];
+    const _values = useMemo(() => getValues(value) ?? [], [value, stringDependency]);
+    const valuesRef = useRef(_values);
+    valuesRef.current = _values;
     const groups = _types
       .map((type) => ({
         type,
@@ -55,21 +58,6 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
       }))
       .filter((x) => !!x.resources.length);
     const canAdd = !limit || _values.length < limit;
-
-    // const handleAdd = (resource: GenerationResource) => {
-    //   if (!canAdd) return;
-    //   if (
-    //     selectSource === 'generation' &&
-    //     resource &&
-    //     !resource.canGenerate &&
-    //     resource.substitute?.canGenerate
-    //   ) {
-    //     onChange?.([..._values, { ...resource, ...resource.substitute }]);
-    //   } else {
-    //     onChange?.([..._values, resource]);
-    //   }
-    //   onCloseModal?.();
-    // };
 
     const handleRemove = (id: number) => {
       const filtered = [..._values.filter((x) => x.id !== id)];
@@ -88,8 +76,15 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     // removes resources that have unsupported types
     useEffect(() => {
-      if (_values.length !== value?.length) onChange?.(_values.length ? _values : null);
-    }, [value]); //eslint-disable-line
+      if (_values.length > 0 && _values.length !== value?.length)
+        onChange?.(_values.length ? _values : null);
+      else {
+        setTimeout(() => {
+          const updated = valuesRef.current;
+          if (updated.length !== value?.length) onChange?.(updated.length ? updated : null);
+        }, 0);
+      }
+    }, [_values, stringDependency]); //eslint-disable-line
 
     const handleOpenModal = () => {
       select({

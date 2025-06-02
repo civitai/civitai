@@ -693,6 +693,7 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
+    if (resource.status === 'Published') return null;
     const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
     if (trainingFile) {
       const epoch = args.find((x) => x.id === resource.id)?.epoch;

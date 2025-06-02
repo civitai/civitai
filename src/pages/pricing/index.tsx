@@ -25,7 +25,6 @@ import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { usePaddleSubscriptionRefresh } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import {
   appliesForFounderDiscount,
@@ -35,8 +34,6 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { PlanCard } from '~/components/Subscriptions/PlanCard';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
-import { env } from '~/env/client';
-import { isDev } from '~/env/other';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
@@ -44,6 +41,7 @@ import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
 import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { joinRedirectReasons } from '~/utils/join-helpers';
 import { trpc } from '~/utils/trpc';
+import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import classes from './index.module.scss';
 
 export default function Pricing() {
@@ -53,6 +51,7 @@ export default function Pricing() {
     reason: JoinRedirectReason;
   };
   const features = useFeatureFlags();
+  const liveFeatures = useLiveFeatureFlags();
   const redirectReason = joinRedirectReasons[reason];
   const paymentProvider = usePaymentProvider();
 
@@ -65,9 +64,7 @@ export default function Pricing() {
     interval,
   });
 
-  const refreshingSubscription = usePaddleSubscriptionRefresh();
-
-  const isLoading = productsLoading || subscriptionLoading || refreshingSubscription;
+  const isLoading = productsLoading;
 
   const currentMembershipUnavailable =
     (subscription && !subscription?.product?.active) ||
@@ -169,7 +166,9 @@ export default function Pricing() {
               </AlertWithIcon>
             </Center>
           )}
-          {(features.nowpaymentPayments || features.coinbasePayments) &&
+          {(features.nowpaymentPayments ||
+            features.coinbasePayments ||
+            liveFeatures.buzzGiftCards) &&
             features.disablePayments && (
               <Center>
                 <AlertWithIcon
@@ -181,12 +180,24 @@ export default function Pricing() {
                   maw="calc(50% - 8px)"
                 >
                   <Stack gap={0}>
-                    <Text lh={1.2}>
-                      You can still purchase Buzz using crypto!{' '}
-                      <Anchor href="/purchase/buzz" color="yellow.7">
-                        Buy now
-                      </Anchor>
-                    </Text>
+                    <Text lh={1.2}>You can still purchase Buzz: </Text>
+                    <Group>
+                      {(features.nowpaymentPayments || features.coinbasePayments) && (
+                        <Anchor href="/purchase/buzz" c="yellow.7">
+                          Buy with Crypto
+                        </Anchor>
+                      )}
+                      {liveFeatures.buzzGiftCards && (
+                        <Anchor
+                          href="https://buybuzz.io/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          c="yellow.7"
+                        >
+                          Buy a Gift Card
+                        </Anchor>
+                      )}
+                    </Group>
                   </Stack>
                 </AlertWithIcon>
               </Center>

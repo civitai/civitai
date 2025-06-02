@@ -1,5 +1,6 @@
 import {
   Accordion,
+  Alert,
   Anchor,
   Button,
   Center,
@@ -44,6 +45,7 @@ import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
+import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -225,6 +227,7 @@ export const BuzzPurchase = ({
 
   const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
   const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
+  const liveFeatures = useLiveFeatureFlags();
 
   const onValidate = () => {
     if (!selectedPrice && !customAmount) {
@@ -314,6 +317,35 @@ export const BuzzPurchase = ({
           ) : (
             <Input.Wrapper error={error}>
               <Stack gap="md" mb={error ? 5 : undefined}>
+                {liveFeatures.buzzGiftCards && (
+                  <Alert>
+                    <Stack gap={0}>
+                      <Text size="sm" fw={500}>
+                        Now selling Buzz Gift Cards
+                      </Text>
+                      <Group>
+                        <Anchor
+                          href="https://education.civitai.com/civitais-guide-to-buybuzz-io/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          size="xs"
+                          c="blue.3"
+                        >
+                          Learn More
+                        </Anchor>
+                        <Anchor
+                          href="https://buybuzz.io/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          size="xs"
+                          c="blue.3"
+                        >
+                          Buy Now
+                        </Anchor>
+                      </Group>
+                    </Stack>
+                  </Alert>
+                )}
                 <Chip.Group
                   value={selectedPrice?.id ?? ''}
                   onChange={(priceId: string | string[]) => {
