@@ -2090,8 +2090,9 @@ const getImageMetrics = async (ids: number[]) => {
   if (missing.length > 0) {
     if (clickhouse) {
       // - find the missing IDs' data in clickhouse
-      // TODO put retries
-      clickData = await clickhouse.$query<DeepNonNullable<PgDataType>>(`
+      clickData = await withRetries(
+        () =>
+          clickhouse!.$query<DeepNonNullable<PgDataType>>(`
           SELECT entityId                                              as "imageId",
                  SUM(if(metricType = 'ReactionLike', metricValue, 0))  as "reactionLike",
                  SUM(if(metricType = 'ReactionHeart', metricValue, 0)) as "reactionHeart",
@@ -2107,7 +2108,10 @@ const getImageMetrics = async (ids: number[]) => {
           WHERE entityType = 'Image'
             AND entityId IN (${missing.join(',')})
           GROUP BY imageId
-        `);
+        `),
+        3,
+        300
+      );
 
       // - if there is nothing at all in clickhouse, fill this with zeroes
       const missingClickIds = missingIds.filter(
