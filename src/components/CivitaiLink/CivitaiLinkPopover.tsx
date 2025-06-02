@@ -1,4 +1,5 @@
 /* eslint-disable react/jsx-no-undef */
+import type { GroupProps, StackProps } from '@mantine/core';
 import {
   ActionIcon,
   Group,
@@ -7,7 +8,6 @@ import {
   Text,
   Progress,
   Title,
-  GroupProps,
   Paper,
   Indicator,
   createStyles,
@@ -16,7 +16,6 @@ import {
   Center,
   Button,
   Tooltip,
-  StackProps,
   CopyButton,
   ColorSwatch,
   useMantineTheme,
@@ -51,11 +50,11 @@ import {
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
+import { openCivitaiLinkWizardModal } from '~/components/Dialog/dialog-registry';
 
 export function CivitaiLinkPopover() {
   return (
@@ -276,7 +275,7 @@ function InstancesManager() {
 
   const handleAddClick = () => {
     deselectInstance();
-    openContext('civitai-link-wizard', {});
+    openCivitaiLinkWizardModal();
   };
 
   const showControls = status !== 'no-socket-connection';
@@ -361,7 +360,7 @@ function GetStarted() {
         <Button
           leftIcon={<IconPlus size={18} />}
           radius={0}
-          onClick={() => openContext('civitai-link-wizard', {})}
+          onClick={() => openCivitaiLinkWizardModal()}
         >
           Get Started
         </Button>

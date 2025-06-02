@@ -1,4 +1,4 @@
-import { LightricksVideoGenInput } from '@civitai/client';
+import type { LightricksVideoGenInput } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {

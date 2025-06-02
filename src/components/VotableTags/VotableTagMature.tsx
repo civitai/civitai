@@ -1,9 +1,9 @@
 import { Badge, createStyles, Divider, Chip, Group, Text, Popover, Stack } from '@mantine/core';
-import { TagType } from '~/shared/utils/prisma/enums';
+import type { TagType } from '~/shared/utils/prisma/enums';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { moderationCategories } from '~/libs/moderation';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getDisplayName } from '~/utils/string-helpers';
 

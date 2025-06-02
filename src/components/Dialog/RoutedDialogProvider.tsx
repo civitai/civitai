@@ -1,4 +1,5 @@
-import React, { ComponentProps, ComponentType, cloneElement, useEffect, useRef } from 'react';
+import type { ComponentProps, ComponentType } from 'react';
+import React, { cloneElement, useEffect, useRef } from 'react';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import Router, { useRouter } from 'next/router';
 import { dialogs } from './routed-dialog-registry';
@@ -7,12 +8,13 @@ import {
   getBrowserRouter,
   useBrowserRouter,
 } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { NextRouter } from 'next/dist/shared/lib/router/router';
+import type { NextRouter } from 'next/dist/shared/lib/router/router';
 import { resolveHref } from 'next/dist/client/resolve-href';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
-import { Anchor, AnchorProps } from '@mantine/core';
+import type { AnchorProps } from '@mantine/core';
+import { Anchor } from '@mantine/core';
 
 type DialogKey = keyof typeof dialogs;
 

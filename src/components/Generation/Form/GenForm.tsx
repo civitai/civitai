@@ -1,4 +1,9 @@
-import { FieldValues, SubmitErrorHandler, UseFormReturn, SubmitHandler } from 'react-hook-form';
+import type {
+  FieldValues,
+  SubmitErrorHandler,
+  UseFormReturn,
+  SubmitHandler,
+} from 'react-hook-form';
 import { useGenerationContextStore } from '~/components/ImageGeneration/GenerationProvider';
 import { Form } from '~/libs/form';
 import { showWarningNotification } from '~/utils/notifications';

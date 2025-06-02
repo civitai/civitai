@@ -3,7 +3,7 @@ import { hfModelImporter } from '~/server/importers/huggingFaceModel';
 import { dbWrite } from '~/server/db/client';
 import { ImportStatus } from '~/shared/utils/prisma/enums';
 import { hfAuthorImporter } from '~/server/importers/huggingFaceAuthor';
-import { ImportDependency, ImportRunInput } from '~/server/importers/importer';
+import type { ImportDependency, ImportRunInput } from '~/server/importers/importer';
 import { chunk } from 'lodash-es';
 
 const importers = [hfModelImporter, hfAuthorImporter];

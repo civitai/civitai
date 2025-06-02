@@ -1,11 +1,7 @@
-import {
+import type {
   ComfyStep,
-  createCivitaiClient,
   HaiperVideoGenOutput,
   ImageGenStep,
-  ImageJobNetworkParams,
-  Priority,
-  TextToImageInput,
   TextToImageStep,
   VideoBlob,
   VideoGenStep,
@@ -13,31 +9,41 @@ import {
   WorkflowStatus,
   WorkflowStep,
 } from '@civitai/client';
+import {
+  createCivitaiClient,
+  ImageJobNetworkParams,
+  Priority,
+  TextToImageInput,
+} from '@civitai/client';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { env } from '~/env/server';
 import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
+import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
+import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
-import {
+import type { GenerationStatus } from '~/server/schema/generation.schema';
+import { generationStatusSchema } from '~/server/schema/generation.schema';
+import type {
   GeneratedImageStepMetadata,
   generateImageSchema,
   TextToImageParams,
 } from '~/server/schema/orchestrator/textToImage.schema';
-import { UserTier } from '~/server/schema/user.schema';
-import {
-  GenerationResource,
-  getGenerationResourceData,
-} from '~/server/services/generation/generation.service';
-import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
-import { GeneratedImageWorkflow, WorkflowDefinition } from '~/server/services/orchestrator/types';
+import type { UserTier } from '~/server/schema/user.schema';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { getResourceData } from '~/server/services/generation/generation.service';
+import type { NormalizedGeneratedImage } from '~/server/services/orchestrator';
+import type {
+  GeneratedImageWorkflow,
+  WorkflowDefinition,
+} from '~/server/services/orchestrator/types';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import type { InjectableResource } from '~/shared/constants/generation.constants';
 import {
   allInjectableResourceIds,
   fluxDraftAir,
@@ -52,7 +58,6 @@ import {
   getIsFluxStandard,
   getIsSD3,
   getRoundedWidthHeight,
-  InjectableResource,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
@@ -86,19 +91,17 @@ export async function getGenerationStatus() {
 }
 
 // TODO - pass user data
-export async function getResourceDataWithInjects<T extends GenerationResource>(args: {
-  ids: number[];
-  user?: SessionUser;
-  epochNumbers?: string[];
-  cb?: (resource: GenerationResource) => T;
-}) {
-  const ids = [...args.ids, ...allInjectableResourceIds];
-  const results = await getGenerationResourceData({
-    ids,
-    user: args.user,
-    epochNumbers: args.epochNumbers,
-  });
-  const allResources = (args.cb ? results.map(args.cb) : results) as T[];
+export async function getResourceDataWithInjects<T extends GenerationResource>(
+  versions: { id: number; epoch?: number }[],
+  user?: SessionUser,
+  cb?: (resource: GenerationResource) => T
+) {
+  const results = await getResourceData(
+    [...versions, ...allInjectableResourceIds.map((id) => ({ id }))],
+    user,
+    true
+  );
+  const allResources = (cb ? results.map(cb) : results) as T[];
 
   return {
     resources: allResources.filter((x) => !allInjectableResourceIds.includes(x.id)),
@@ -169,18 +172,15 @@ export async function parseGenerateImageInput({
   if (!status.available && !user.isModerator)
     throw throwBadRequestError('Generation is currently disabled');
 
-  const resourceData = await getResourceDataWithInjects({
-    ids: originalResources.map((x) => x.id),
+  const resourceData = await getResourceDataWithInjects(
+    originalResources.map(({ id, epochNumber }) => ({ id, epoch: epochNumber })),
     user,
-    epochNumbers: originalResources
-      .filter((x) => !!x.epochNumber)
-      .map((x) => `${x.id}@${x.epochNumber}`),
-    cb: (resource) => ({
+    (resource) => ({
       ...resource,
       ...originalResources.find((x) => x.id === resource.id),
       triggerWord: resource.trainedWords?.[0],
-    }),
-  });
+    })
+  );
 
   if (
     resourceData.resources.some(
@@ -290,13 +290,6 @@ export async function parseGenerateImageInput({
     if (params.draft && injectableResources.draft) {
       injectable.push(injectableResources.draft);
     }
-    // if (isPromptNsfw && status.minorFallback) {
-    //   injectable.push(injectableResources.safe_pos);
-    //   injectable.push(injectableResources.safe_neg);
-    // }
-    // if (!params.nsfw && status.sfwEmbed) {
-    //   injectable.push(injectableResources.civit_nsfw);
-    // }
   }
 
   const positivePrompts = [params.prompt];
@@ -396,28 +389,22 @@ export type WorkflowFormatted = AsyncReturnType<typeof formatGenerationResponse>
 export async function formatGenerationResponse(workflows: Workflow[], user?: SessionUser) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
-  // console.dir(allResources, { depth: null });
-  const versionIds = allResources.map((x) => x.id);
-  const epochNumbers = uniq(
-    allResources.filter((x) => !!x.epochNumber).map((x) => `${x.id}@${x.epochNumber}`)
-  );
-
-  const { resources, injectable } = await getResourceDataWithInjects({
-    ids: versionIds,
-    user,
-    epochNumbers,
-  });
+  const versions = allResources.map(({ id, epochNumber }) => ({ id, epoch: epochNumber }));
+  const { resources, injectable } = await getResourceDataWithInjects(versions, user);
 
   return workflows.map((workflow) => {
+    const transactions =
+      workflow.transactions?.list?.map(({ type, amount, accountType }) => ({
+        type,
+        amount,
+        accountType,
+      })) ?? [];
+
     return {
       id: workflow.id as string,
       status: workflow.status ?? ('unassignend' as WorkflowStatus),
       createdAt: workflow.createdAt ? new Date(workflow.createdAt) : new Date(),
-      totalCost:
-        workflow.transactions?.list?.reduce((acc, value) => {
-          if (value.type === 'debit') return acc + value.amount;
-          else return acc - value.amount;
-        }, 0) ?? 0,
+      transactions,
       cost: workflow.cost,
       tags: workflow.tags ?? [],
       duration:
@@ -432,19 +419,7 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
           workflowId: workflow.id as string,
           // ensure that job status is set to 'succeeded' if workflow status is set to 'succeedeed'
           step: workflow.status === 'succeeded' ? { ...step, status: workflow.status } : step,
-          resources: [...resources, ...injectable].filter((resource) => {
-            const metadataResources =
-              (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
-            const mr = metadataResources.find((x) => x.id === resource.id);
-
-            if (mr && mr.epochNumber) {
-              // Avoids attaching wrong epoch details to resources. The only source of truth we have for that
-              // is the metadata since it's pretty much impossible to tie air <-> modelVersion.
-              return resource.epochDetails?.epochNumber === mr.epochNumber;
-            }
-
-            return true; // Default behavior.
-          }),
+          resources: [...resources, ...injectable],
         })
       ),
     };
@@ -644,6 +619,12 @@ function formatVideoGenStep({
   // TODO - come up with a better way to handle jsonb data type mismatches
   if ('type' in params && (params.type === 'txt2vid' || params.type === 'img2vid'))
     params.process = params.type;
+
+  if (!params.process && baseModel) {
+    const wanProcess = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
+    if (wanProcess) params.process = wanProcess as any;
+  }
+
   if (baseModel === 'WanVideo') {
     if (params.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
     else baseModel = 'WanVideo14B_I2V_720p';
@@ -711,9 +692,6 @@ function formatTextToImageStep({
     metadata?.params?.draft ??
     (injectable.draft ? versionIds.includes(injectable.draft.id) : false);
 
-  // infer nsfw from resources if not included in meta params
-  const isNsfw = metadata?.params?.nsfw ?? !versionIds.includes(injectable.civit_nsfw.id);
-
   let quantity = input.quantity ?? 1;
   if (isDraft) {
     quantity *= 4;
@@ -777,7 +755,6 @@ function formatTextToImageStep({
     height: input.height,
     seed: input.seed,
     draft: isDraft,
-    nsfw: isNsfw,
     workflow: 'txt2img',
     //support using metadata params first (one of the quirks of draft mode makes this necessary)
     clipSkip: params?.clipSkip ?? input.clipSkip,

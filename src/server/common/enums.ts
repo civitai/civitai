@@ -365,7 +365,7 @@ export enum NewOrderImageRatingStatus {
 export enum NewOrderDamnedReason {
   InappropriateMinors = 'InappropriateMinors',
   RealisticMinors = 'RealisticMinors',
-  InappropriateRealPerson = 'InappropriateRealPerson',
+  DepictsRealPerson = 'DepictsRealPerson',
   Bestiality = 'Bestiality',
   GraphicViolence = 'GraphicViolence',
 }

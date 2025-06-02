@@ -1,9 +1,8 @@
 import type { IntersectionOptions } from 'react-intersection-observer';
-import {
-  CustomIntersectionObserverCallback,
-  useInView as useElementInView,
-} from '~/components/IntersectionObserver/IntersectionObserverProvider';
-import { Key, useDeferredValue } from 'react';
+import type { CustomIntersectionObserverCallback } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { useInView as useElementInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import type { Key } from 'react';
+import { useDeferredValue } from 'react';
 
 export function useInView<T extends HTMLElement = HTMLDivElement>(options?: {
   key?: Key;

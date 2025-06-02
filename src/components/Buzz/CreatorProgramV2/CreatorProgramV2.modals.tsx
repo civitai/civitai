@@ -11,7 +11,8 @@ import {
   MIN_CAP,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
-import { CashWithdrawalMethod, Currency } from '~/shared/utils/prisma/enums';
+import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import {
   abbreviateNumber,

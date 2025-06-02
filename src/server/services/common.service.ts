@@ -3,9 +3,9 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { modelVersionAccessCache } from '~/server/redis/caches';
-import { SupportedClubEntities } from '~/server/schema/club.schema';
+import type { SupportedClubEntities } from '~/server/schema/club.schema';
 import { isDefined } from '~/utils/type-guards';
-import { SupportedAvailabilityResources } from '../schema/base.schema';
+import type { SupportedAvailabilityResources } from '../schema/base.schema';
 
 const entityAccessOwnerTypes = ['User', 'Club', 'ClubTier'] as const;
 type EntityAccessOwnerType = (typeof entityAccessOwnerTypes)[number];

@@ -4,7 +4,7 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';

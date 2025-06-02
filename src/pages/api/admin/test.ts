@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { queryWorkflows, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
@@ -25,6 +25,7 @@ import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { setExperimentalConfig } from '~/server/services/orchestrator/experimental';
+import { resourceDataCache } from '~/server/services/model-version.service';
 
 type Row = {
   userId: number;

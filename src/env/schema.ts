@@ -2,7 +2,6 @@
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
 import {
-  booleanString,
   commaDelimitedStringArray,
   commaDelimitedStringObject,
   stringToArray,
@@ -134,6 +133,8 @@ export const serverSchema = z.object({
   CLAVATA_TOKEN: z.string().optional(),
   CLAVATA_POLICY: z.string().optional(),
 
+  TOKEN_LOGINS: commaDelimitedStringObject().optional(),
+
   EXTERNAL_IMAGE_SCANNER: z.string().optional(),
   CLAVATA_SCAN: z.enum(['off', 'shadow', 'active']).default('shadow'),
   MINOR_SCANNER: z.enum(['custom', 'hive']).optional().catch(undefined),
@@ -219,6 +220,18 @@ export const serverSchema = z.object({
   CREATOR_POOL_TAXES: z.coerce.number().optional(),
   CREATOR_POOL_PORTION: z.coerce.number().optional(),
   CREATOR_POOL_FORECAST_PORTION: z.coerce.number().optional().default(50),
+
+  // NOWPayments Related:
+
+  // API Related:
+  NOW_PAYMENTS_API_URL: z.string().optional(),
+  NOW_PAYMENTS_API_KEY: z.string().optional(),
+  NOW_PAYMENTS_IPN_KEY: z.string().optional(),
+
+  // Coinbase Related:
+  COINBASE_API_URL: z.string().optional(),
+  COINBASE_API_KEY: z.string().optional(),
+  COINBASE_WEBHOOK_SECRET: z.string().optional(),
 });
 
 /**

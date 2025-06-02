@@ -1,7 +1,7 @@
 import { Text } from '@mantine/core';
 import React from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { PostsInfiniteModel } from '~/server/services/post.service';
+import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { IconPhoto } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';

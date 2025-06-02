@@ -2,18 +2,18 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
   CosmeticShopItemMeta,
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
   GetShopInput,
   PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
-  UpsertCosmeticInput,
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
+import { UpsertCosmeticInput } from '~/server/schema/cosmetic-shop.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { stringArray } from '~/utils/zod-helpers';

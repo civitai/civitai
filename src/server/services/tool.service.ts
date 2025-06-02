@@ -1,7 +1,7 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { ToolSort } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { GetAllToolsSchema, ToolMetadata } from '~/server/schema/tool.schema';
+import type { GetAllToolsSchema, ToolMetadata } from '~/server/schema/tool.schema';
 import { getGenerationEngines } from '~/server/services/generation/engines';
 
 export type ToolModel = AsyncReturnType<typeof getAllTools>['items'][number];

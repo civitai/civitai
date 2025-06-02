@@ -4,12 +4,12 @@ import { v4 as uuid } from 'uuid';
 import { isDev } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, specialCosmeticRewards } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userMultipliersCache } from '~/server/redis/caches';
 import { REDIS_KEYS } from '~/server/redis/client';
-import {
+import type {
   BuzzAccountType,
   ClaimWatchedAdRewardInput,
   CompleteStripeBuzzPurchaseTransactionInput,
@@ -23,12 +23,11 @@ import {
   GetTransactionsReportSchema,
   GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
-  getUserBuzzTransactionsResponse,
   GetUserBuzzTransactionsResponse,
   GetUserBuzzTransactionsSchema,
-  TransactionType,
 } from '~/server/schema/buzz.schema';
-import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { getUserBuzzTransactionsResponse, TransactionType } from '~/server/schema/buzz.schema';
+import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
@@ -40,6 +39,9 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { formatDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { grantCosmetics } from '~/server/services/cosmetic.service';
+import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 // import { adWatchedReward } from '~/server/rewards';
 
 type AccountType = 'User';
@@ -1112,3 +1114,72 @@ export async function getCounterPartyBuzzTransactions({
     1500
   );
 }
+
+export const grantBuzzPurchase = async ({
+  amount,
+  userId,
+  externalTransactionId,
+  description,
+  ...data
+}: {
+  amount: number;
+  userId: number;
+  externalTransactionId: string;
+  description?: string;
+} & MixedObject) => {
+  const { purchasesMultiplier } = await getMultipliersForUser(userId);
+  const { blueBuzzAdded, totalYellowBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
+    buzzAmount: amount,
+    purchasesMultiplier,
+  });
+
+  // Give user the buzz assuming it hasn't been given
+  const { transactionId } = await createBuzzTransaction({
+    fromAccountId: 0,
+    toAccountId: userId,
+    amount: totalYellowBuzz,
+    type: TransactionType.Purchase,
+    externalTransactionId,
+    description:
+      description ??
+      `Purchase of ${amount} Buzz. ${
+        purchasesMultiplier && purchasesMultiplier > 1
+          ? 'Multiplier applied due to membership. '
+          : ''
+      }A total of ${numberWithCommas(totalYellowBuzz)} Buzz was added to your account.`,
+    details: {
+      ...data,
+    },
+  });
+
+  if (!transactionId) {
+    throw new Error('Failed to create Buzz transaction');
+  }
+
+  if (blueBuzzAdded > 0) {
+    await createBuzzTransaction({
+      amount: blueBuzzAdded,
+      fromAccountId: 0,
+      toAccountId: userId,
+      toAccountType: 'generation',
+      externalTransactionId: `${transactionId}-bulk-reward`,
+      type: TransactionType.Purchase,
+      description: `A total of ${numberWithCommas(
+        blueBuzzAdded
+      )} Blue Buzz was added to your account for Bulk purchase.`,
+      details: {
+        ...data,
+      },
+    });
+  }
+
+  if (bulkBuzzMultiplier > 1) {
+    const cosmeticIds = specialCosmeticRewards.bulkBuzzRewards;
+    await grantCosmetics({
+      userId,
+      cosmeticIds,
+    });
+  }
+
+  return transactionId;
+};

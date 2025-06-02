@@ -15,9 +15,9 @@ export const unpublishReasons = {
       'Your model does not include any valid files. Please ensure you have uploaded a valid resource.',
   },
   'mature-real-person': {
-    optionLabel: 'Real person(s) displayed in a mature context',
+    optionLabel: 'Depiction of real-person likeness',
     notificationMessage:
-      'Resources designed to depict real people in sexualized or suggestive clothing, poses, or situations are prohibited under our content guidelines.',
+      'Resources designed to depict real people are prohibited under our content guidelines.',
   },
   'mature-underage': {
     optionLabel: 'Minors displayed in a mature context',

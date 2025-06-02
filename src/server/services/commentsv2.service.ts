@@ -1,9 +1,10 @@
-import { GetByIdInput } from './../schema/base.schema';
-import { CommentV2Model, commentV2Select } from '~/server/selectors/commentv2.selector';
+import type { GetByIdInput } from './../schema/base.schema';
+import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
+import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { UpsertCommentV2Input, CommentConnectorInput } from './../schema/commentv2.schema';
+import type { UpsertCommentV2Input, CommentConnectorInput } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { constants } from '~/server/common/constants';
 

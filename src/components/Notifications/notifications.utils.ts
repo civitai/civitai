@@ -1,4 +1,5 @@
-import { InfiniteData, useQueryClient } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useCallback, useMemo } from 'react';
@@ -7,8 +8,8 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, SignalMessages } from '~/server/common/enums';
 import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
-import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
-import { NotificationGetAll, NotificationGetAllItem } from '~/types/router';
+import type { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
+import type { NotificationGetAll, NotificationGetAllItem } from '~/types/router';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 

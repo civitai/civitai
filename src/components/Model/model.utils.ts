@@ -4,13 +4,17 @@ import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { GetAllModelsInput, ToggleCheckpointCoverageInput } from '~/server/schema/model.schema';
+import type {
+  GetAllModelsInput,
+  ToggleCheckpointCoverageInput,
+} from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
 import {
   Availability,
@@ -123,11 +127,15 @@ export const useQueryModels = (
   filters?: Partial<Omit<GetAllModelsInput, 'page'>>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
+  const currentUser = useCurrentUser();
   const _filters = filters ?? {};
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(_filters.excludedTagIds ?? []),
-    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+    ...(_filters.username &&
+    _filters.username?.toLowerCase() === currentUser?.username?.toLowerCase()
+      ? []
+      : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ];
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();

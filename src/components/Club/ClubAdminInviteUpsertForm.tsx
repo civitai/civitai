@@ -16,8 +16,8 @@ import { IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import React, { useState } from 'react';
 
 import { Form, InputCheckboxGroup, InputDatePicker, useForm } from '~/libs/form';
-import { z } from 'zod';
-import { ClubAdminInvite } from '../../types/router';
+import type { z } from 'zod';
+import type { ClubAdminInvite } from '../../types/router';
 import { upsertClubAdminInviteInput } from '../../server/schema/clubAdmin.schema';
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { showSuccessNotification } from '../../utils/notifications';

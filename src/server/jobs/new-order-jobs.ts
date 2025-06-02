@@ -16,6 +16,7 @@ import { createJob } from '~/server/jobs/job';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { calculateFervor, cleanseSmite } from '~/server/services/games/new-order.service';
+import { claimCosmetic } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
@@ -272,10 +273,20 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
 
   const playerIds = candidates.map(Number);
   // Update the new templars:
-  await dbWrite.newOrderPlayer.updateMany({
+  const selectedTemplars = await dbWrite.newOrderPlayer.updateManyAndReturn({
+    select: { userId: true },
     where: { userId: { in: playerIds }, rankType: NewOrderRankType.Knight },
     data: { rankType: NewOrderRankType.Templar },
   });
+
+  // Grant cosmetic to new templars
+  for (const templar of selectedTemplars) {
+    await claimCosmetic({
+      id: newOrderConfig.cosmetics.badgeIds.templar,
+      userId: templar.userId,
+    }).catch(() => null); // Ignore if it fails
+  }
+  log(`PickTemplars :: Granted templar badge to ${selectedTemplars.length} players`);
 
   // Update the new knights:
   await dbWrite.newOrderPlayer.updateMany({

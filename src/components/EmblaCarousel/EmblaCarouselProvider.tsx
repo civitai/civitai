@@ -1,8 +1,11 @@
-import { EmblaCarouselType, EmblaOptionsType, EmblaPluginType } from 'embla-carousel';
-import useEmblaCarousel, { EmblaViewportRefType } from 'embla-carousel-react';
-import { CSSProperties, createContext, useCallback, useContext, useEffect, useRef } from 'react';
+import type { EmblaCarouselType, EmblaOptionsType, EmblaPluginType } from 'embla-carousel';
+import type { EmblaViewportRefType } from 'embla-carousel-react';
+import useEmblaCarousel from 'embla-carousel-react';
+import type { CSSProperties } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { removeEmpty } from '~/utils/object-helpers';
-import { StoreApi, createStore, useStore } from 'zustand';
+import type { StoreApi } from 'zustand';
+import { createStore, useStore } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 // Example: https://www.embla-carousel.com/examples/predefined/#lazy-load

@@ -16,7 +16,9 @@ export function KlingFormInput() {
   return (
     <>
       <InputVideoProcess name="process" />
-      {process === 'img2vid' && <InputSourceImageUpload name="sourceImage" />}
+      {process === 'img2vid' && (
+        <InputSourceImageUpload name="sourceImage" warnOnMissingAiMetadata />
+      )}
       <InputTextArea
         required={isTxt2Vid}
         name="prompt"

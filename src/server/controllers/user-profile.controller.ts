@@ -8,12 +8,12 @@ import {
   getUserWithProfile,
   updateUserProfile,
 } from '~/server/services/user-profile.service';
-import {
+import type {
   GetUserProfileSchema,
   ShowcaseItemSchema,
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';

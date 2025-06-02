@@ -1,4 +1,5 @@
-import { ActionIcon, Loader, MantineNumberSize, Menu, MenuProps, Text } from '@mantine/core';
+import type { MantineNumberSize, MenuProps } from '@mantine/core';
+import { ActionIcon, Loader, Menu, Text } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconCalculator,
@@ -10,14 +11,14 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 
-import { ToggleLockComments } from '~/components/CommentsV2';
+import { ToggleLockComments } from '~/components/CommentsV2/ToggleLockComments';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { ResourceReviewPagedModel } from '~/types/router';
+import type { ResourceReviewPagedModel } from '~/types/router';
 import { openReportModal, openResourceReviewEditModal } from '~/components/Dialog/dialog-registry';
 
 export function ResourceReviewMenu({

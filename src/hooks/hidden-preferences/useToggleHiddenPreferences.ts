@@ -1,5 +1,5 @@
 import produce from 'immer';
-import { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
+import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import { trpc } from '~/utils/trpc';
 
 const kindMap = {

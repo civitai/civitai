@@ -22,7 +22,9 @@ export function LightricksFormInput() {
   return (
     <>
       <InputVideoProcess name="process" />
-      {process === 'img2vid' && <InputSourceImageUpload name="sourceImage" className="flex-1" />}
+      {process === 'img2vid' && (
+        <InputSourceImageUpload name="sourceImage" className="flex-1" warnOnMissingAiMetadata />
+      )}
       <InputResourceSelectMultipleStandalone
         name="resources"
         options={{ resources: baseModelResourceTypes.WanVideo }}

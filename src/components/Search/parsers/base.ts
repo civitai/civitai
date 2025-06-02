@@ -1,4 +1,4 @@
-import { UiState } from 'instantsearch.js';
+import type { UiState } from 'instantsearch.js';
 import { z } from 'zod';
 import {
   ARTICLES_SEARCH_INDEX,

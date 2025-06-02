@@ -1,4 +1,5 @@
-import { createStyles, Group, MantineTheme, Rating, Stack, Text, ThemeIcon } from '@mantine/core';
+import type { MantineTheme } from '@mantine/core';
+import { createStyles, Group, Rating, Stack, Text, ThemeIcon } from '@mantine/core';
 import {
   IconArrowsHorizontal,
   IconBadges,

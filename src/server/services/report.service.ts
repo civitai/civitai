@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import {
   AppealStatus,
   BuzzAccountType,
@@ -8,7 +8,7 @@ import {
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
-import { Report } from '~/shared/utils/prisma/models';
+import type { Report } from '~/shared/utils/prisma/models';
 import {
   BlockedReason,
   NotificationCategory,
@@ -18,15 +18,15 @@ import {
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
   CreateEntityAppealInput,
   CreateReportInput,
   GetRecentAppealsInput,
   GetReportsInput,
-  ReportEntity,
   ResolveAppealInput,
 } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/server/schema/report.schema';
 import {
   articlesSearchIndex,
   collectionsSearchIndex,

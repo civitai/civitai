@@ -21,7 +21,8 @@ import {
   upsertCollectionHandler,
 } from '~/server/controllers/collection.controller';
 import { dbRead } from '~/server/db/client';
-import { GetByIdInput, getByIdSchema } from '~/server/schema/base.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addSimpleImagePostInput,
   bulkSaveCollectionItemsInput,

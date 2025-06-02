@@ -1,8 +1,5 @@
-import {
-  createStyles,
-  TypographyStylesProvider,
-  TypographyStylesProviderProps,
-} from '@mantine/core';
+import type { TypographyStylesProviderProps } from '@mantine/core';
+import { createStyles, TypographyStylesProvider } from '@mantine/core';
 import { useMemo } from 'react';
 
 import { DEFAULT_ALLOWED_ATTRIBUTES, needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';

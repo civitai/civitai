@@ -13,7 +13,7 @@ import {
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons-react';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
-import { BuiltInProviderType } from 'next-auth/providers';
+import type { BuiltInProviderType } from 'next-auth/providers';
 import { getProviders, signIn } from 'next-auth/react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { SocialButton } from '~/components/Social/SocialButton';

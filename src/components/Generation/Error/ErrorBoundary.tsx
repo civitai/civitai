@@ -1,5 +1,6 @@
 import { Title, Text } from '@mantine/core';
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
+import React, { Component } from 'react';
 import { TwCard } from '~/components/TwCard/TwCard';
 
 interface Props {

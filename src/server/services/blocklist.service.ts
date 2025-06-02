@@ -1,8 +1,12 @@
 import { CacheTTL } from '~/server/common/constants';
 import { BlocklistType } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
-import { RemoveBlocklistItemSchema, UpsertBlocklistSchema } from '~/server/schema/blocklist.schema';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
+import type {
+  RemoveBlocklistItemSchema,
+  UpsertBlocklistSchema,
+} from '~/server/schema/blocklist.schema';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 
 export type BlocklistDTO = {

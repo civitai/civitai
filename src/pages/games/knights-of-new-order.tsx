@@ -19,8 +19,9 @@ import { NewOrderJoin } from '~/components/Games/NewOrder/NewOrderJoin';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useGameSounds } from '~/hooks/useGameSounds';
 import { useStorage } from '~/hooks/useStorage';
-import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
-import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
+import type { NewOrderDamnedReason } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
+import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { NewOrderSidebar } from '~/components/Games/NewOrder/NewOrderSidebar';
 import { Meta } from '~/components/Meta/Meta';
@@ -65,6 +66,7 @@ export default Page(
     const [selectedQueue, setSelectedQueue] = useState<NewOrderRankType | 'Inquisitor' | null>(
       null
     );
+    const [imageStatus, setImageStatus] = useState<'loading' | 'error' | 'idle'>('idle');
     const filters = selectedQueue ? { queueType: selectedQueue } : undefined;
 
     const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
@@ -94,11 +96,10 @@ export default Page(
       if (!currentImage || !playerData) return;
 
       const isCorrectRating = currentImage.nsfwLevel === rating;
-      const isBlocked = rating === NsfwLevel.Blocked;
       const isAcolyte = playerData.rankType === NewOrderRankType.Acolyte;
 
       setPrevHistory((prev) => [...prev, currentImage.id]);
-      if (isBlocked || (!isCorrectRating && isAcolyte)) {
+      if (!isCorrectRating && isAcolyte) {
         playSound('buzz');
       } else {
         playSound('point', ratingPlayBackRates[rating]);
@@ -121,6 +122,7 @@ export default Page(
       const shouldLevelUp =
         progression && progression.xpIntoLevel + gainedExp >= progression.xpForNextLevel;
       if (shouldLevelUp) levelUp();
+      setImageStatus('loading');
 
       await addRating({ imageId: currentImage.id, rating, damnedReason }).catch(() => null); // errors are handled in the hook
 
@@ -133,7 +135,6 @@ export default Page(
 
     const handleFetchNextBatch = () => {
       if (filteredData.length <= 1 && !isRefetching) {
-        playSound('challenge');
         refetch();
       }
     };
@@ -205,9 +206,12 @@ export default Page(
                             className={clsx('h-full max-w-full rounded-lg object-contain')}
                             type="image"
                             width={700}
+                            onLoadStart={() => setImageStatus('loading')}
+                            onLoad={() => setImageStatus('idle')}
+                            onError={() => setImageStatus('error')}
                             contain
                           />
-                          {playerData.rankType !== NewOrderRankType.Acolyte && (
+                          {currentUser?.isModerator && (
                             <ActionIcon
                               component={Link}
                               href={`/images/${currentImage.id}`}
@@ -229,7 +233,7 @@ export default Page(
                       id="rating"
                       shadow="sm"
                       radius="sm"
-                      className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 p-4 text-5xl font-medium text-white"
+                      className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 p-4 text-5xl font-medium text-black dark:text-white"
                       style={{ display: 'none' }}
                       withBorder
                     >
@@ -237,6 +241,7 @@ export default Page(
                     </Card>
                     <NewOrderImageRater
                       muted={muted}
+                      disabled={imageStatus === 'loading' || imageStatus === 'error'}
                       onVolumeClick={() => setMuted((prev) => !prev)}
                       onSkipClick={handleSkipRating}
                       onRatingClick={({ rating, damnedReason }) =>
@@ -249,7 +254,6 @@ export default Page(
                       <NewOrderImageRatings
                         imageId={currentImage.id}
                         imageNsfwLevel={currentImage.nsfwLevel}
-                        ratings={currentImage.ratings}
                       />
                     )}
                   </div>

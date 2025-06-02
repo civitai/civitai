@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { Dialog, dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import type { Dialog } from '~/components/Dialog/dialogStore';
+import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import trieMemoize from 'trie-memoize';
 import { Freeze } from '~/components/Freeze/Freeze';
 

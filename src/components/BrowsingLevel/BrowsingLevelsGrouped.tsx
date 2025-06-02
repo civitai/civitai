@@ -1,4 +1,5 @@
-import { Chip, Group, GroupProps, MantineSize, createStyles } from '@mantine/core';
+import type { GroupProps, MantineSize } from '@mantine/core';
+import { Chip, Group, createStyles } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
 import { NsfwLevel } from '~/server/common/enums';

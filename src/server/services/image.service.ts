@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
-import dayjs, { ManipulateType } from 'dayjs';
+import type { ManipulateType } from 'dayjs';
+import dayjs from 'dayjs';
 import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
@@ -27,6 +28,7 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
   getUserFollows,
@@ -42,7 +44,7 @@ import {
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import {
+import type {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
   GetEntitiesCoverImage,
@@ -50,7 +52,6 @@ import {
   GetInfiniteImagesOutput,
   GetMyImagesInput,
   ImageEntityType,
-  imageMetaOutput,
   ImageMetaProps,
   ImageModerationSchema,
   ImageRatingReviewOutput,
@@ -58,7 +59,6 @@ import {
   ImageSchema,
   ImageUploadProps,
   IngestImageInput,
-  ingestImageSchema,
   RemoveImageResourceSchema,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
@@ -68,6 +68,7 @@ import {
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
+import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import {
   articlesSearchIndex,
@@ -81,7 +82,8 @@ import type {
 } from '~/server/search-index/metrics-images.search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
+import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
@@ -118,11 +120,8 @@ import {
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import {
-  getVideoGenerationConfig,
-  videoGenerationConfig2,
-} from '~/server/orchestrator/generation/generation.config';
 import { Flags } from '~/shared/utils';
+import type { ModelType, ReportReason, ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
@@ -132,10 +131,7 @@ import {
   EntityType,
   ImageIngestionStatus,
   MediaType,
-  ModelType,
-  ReportReason,
   ReportStatus,
-  ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';
@@ -268,6 +264,23 @@ type AffectedImage = {
   postId: number | undefined;
 };
 
+const reviewTypeToBlockedReason = {
+  csam: BlockImageReason.CSAM,
+  minor: BlockImageReason.TOS,
+  poi: BlockImageReason.TOS,
+  reported: BlockImageReason.TOS,
+  blocked: BlockImageReason.TOS,
+  tag: BlockImageReason.TOS,
+  newUser: BlockImageReason.Ownership,
+  appeal: BlockImageReason.TOS,
+  modRule: BlockImageReason.TOS,
+} as const;
+
+export const reviewTypeToBlockedReasonKeys = Object.keys(reviewTypeToBlockedReason) as [
+  string,
+  ...string[]
+];
+
 export const moderateImages = async ({
   ids,
   needsReview,
@@ -308,6 +321,15 @@ export const moderateImages = async ({
         },
       }).catch();
     }
+
+    await bulkAddBlockedImages({
+      data: affected
+        .filter((x) => !!x.pHash)
+        .map((x) => ({
+          hash: x.pHash,
+          reason: reviewTypeToBlockedReason[reviewType],
+        })),
+    });
 
     return affected;
   } else if (reviewAction === 'removeName') {
@@ -844,7 +866,7 @@ export const getAllImages = async (
   }
 
   if (disablePoi) {
-    AND.push(Prisma.sql`(i."poi" != TRUE)`);
+    AND.push(Prisma.sql`(i."poi" != TRUE OR p."userId" = ${userId})`);
   }
   if (disableMinor) {
     AND.push(Prisma.sql`(i."minor" != TRUE)`);
@@ -1693,7 +1715,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
 
   if (disablePoi) {
-    filters.push(`(NOT poi = true)`);
+    filters.push(`(NOT poi = true OR "userId" = ${currentUserId})`);
   }
   if (disableMinor) {
     filters.push(`(NOT minor = true)`);
@@ -2068,8 +2090,9 @@ const getImageMetrics = async (ids: number[]) => {
   if (missing.length > 0) {
     if (clickhouse) {
       // - find the missing IDs' data in clickhouse
-      // TODO put retries
-      clickData = await clickhouse.$query<DeepNonNullable<PgDataType>>(`
+      clickData = await withRetries(
+        () =>
+          clickhouse!.$query<DeepNonNullable<PgDataType>>(`
           SELECT entityId                                              as "imageId",
                  SUM(if(metricType = 'ReactionLike', metricValue, 0))  as "reactionLike",
                  SUM(if(metricType = 'ReactionHeart', metricValue, 0)) as "reactionHeart",
@@ -2085,7 +2108,10 @@ const getImageMetrics = async (ids: number[]) => {
           WHERE entityType = 'Image'
             AND entityId IN (${missing.join(',')})
           GROUP BY imageId
-        `);
+        `),
+        3,
+        300
+      );
 
       // - if there is nothing at all in clickhouse, fill this with zeroes
       const missingClickIds = missingIds.filter(
@@ -2495,26 +2521,25 @@ export const getImagesForModelVersion = async ({
 
   const engines = Object.keys(videoGenerationConfig2);
   const query = Prisma.sql`
-    -- getImagesForModelVersion
-    WITH targets AS (
+     WITH targets AS (
       SELECT
-        id,
-        "modelVersionId"
-      FROM (
+        i.id,
+        full_mv.id::int AS "modelVersionId"
+      FROM unnest(ARRAY[${Prisma.join(modelVersionIds)}]) AS full_mv(id)
+      CROSS JOIN LATERAL
+      (
         SELECT
-          i.id,
-          p."modelVersionId",
-          row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY i."postId", i.index) row_num
+          i.id
         FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE (p."userId" = m."userId" OR m."userId" = -1)
-          AND p."modelVersionId" IN (${Prisma.join(modelVersionIds)})
+          AND p."modelVersionId" = full_mv.id
           AND ${Prisma.join(imageWhere, ' AND ')}
-
-      ) ranked
-      WHERE ranked.row_num <= ${imagesPerVersion}
+        ORDER BY i."postId", i.index
+        LIMIT ${imagesPerVersion}
+      ) i
     )
     SELECT
       i.id,
@@ -2694,7 +2719,7 @@ export const getImagesForPosts = async ({
   }
 
   if (disablePoi) {
-    imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL)`);
+    imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL OR i."userId" = ${userId})`);
   }
 
   if (disableMinor) {
@@ -4080,6 +4105,8 @@ export async function updateImageNsfwLevel({
       update: { nsfwLevel },
     });
   }
+
+  return nsfwLevel;
 }
 
 type ImageRatingRequestResponse = {

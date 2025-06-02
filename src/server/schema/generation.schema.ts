@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { BaseModel, constants, generation } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
@@ -49,8 +50,10 @@ const generationResourceSchemaBase = z.object({
   canGenerate: z.boolean(),
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),
-  image: imageSchema.pick({ url: true, type: true }).optional(), // TODO there are more here
-  covered: z.boolean(),
+  image: imageSchema
+    .pick({ url: true, type: true })
+    .extend({ url: z.string().url().or(z.string().uuid()) })
+    .optional(), // TODO there are more here
   hasAccess: z.boolean(),
   additionalResourceCost: z.boolean().optional(),
   availability: z.nativeEnum(Availability).optional(),
@@ -291,14 +294,14 @@ export const getGenerationDataSchema = z.discriminatedUnion('type', [
   baseSchema.extend({
     type: z.literal('modelVersion'),
     id: z.coerce.number(),
-    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
+    epoch: z.coerce.number().optional(), // Formatted as modelVersion@epoch
   }),
   baseSchema.extend({
     type: z.literal('modelVersions'),
     ids: z
       .union([z.array(z.coerce.number()), z.coerce.number()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
-    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
+    // epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
   }),
 ]);
 

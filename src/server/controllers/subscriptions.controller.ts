@@ -1,7 +1,7 @@
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
-import { Context } from '~/server/createContext';
-import { GetPlansSchema } from '~/server/schema/subscriptions.schema';
+import type { Context } from '~/server/createContext';
+import type { GetPlansSchema } from '~/server/schema/subscriptions.schema';
 import { getPlans, getUserSubscription } from '~/server/services/subscriptions.service';
 
 export const getPlansHandler = async ({ input, ctx }: { input: GetPlansSchema; ctx: Context }) => {

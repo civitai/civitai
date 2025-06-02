@@ -2,7 +2,7 @@ import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import * as rewardImports from '~/server/rewards';
-import { BuzzEventLog } from '~/server/rewards/base.reward';
+import type { BuzzEventLog } from '~/server/rewards/base.reward';
 import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
 

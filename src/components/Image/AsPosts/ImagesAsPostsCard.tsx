@@ -1,3 +1,4 @@
+import type { ThemeIconProps } from '@mantine/core';
 import {
   ActionIcon,
   Badge,
@@ -9,9 +10,9 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  ThemeIconProps,
   Tooltip,
 } from '@mantine/core';
+import type { IconProps } from '@tabler/icons-react';
 import {
   IconAutomaticGearbox,
   IconBrush,
@@ -21,7 +22,6 @@ import {
   IconPinFilled,
   IconPinned,
   IconPinnedOff,
-  IconProps,
   IconUserPlus,
 } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
@@ -31,7 +31,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
-import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
+import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
@@ -46,7 +46,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { ImagesAsPostModel } from '~/server/controllers/image.controller';
+import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { generationPanel } from '~/store/generation.store';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

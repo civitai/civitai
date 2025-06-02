@@ -58,7 +58,6 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { toStringList } from '~/utils/array-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -69,11 +68,12 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { AdUnitSide_1, AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Flags } from '~/shared/utils';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSearchParams } from 'next/navigation';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { openAddToCollectionModal } from '~/components/Dialog/dialog-registry';
 
 type Props = { postId: number };
 
@@ -229,9 +229,8 @@ export function PostDetailContent({ postId }: Props) {
                       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                       leftIcon={<IconBookmark size={14} />}
                       onClick={() =>
-                        openContext('addToCollection', {
-                          postId: post.id,
-                          type: CollectionType.Post,
+                        openAddToCollectionModal({
+                          props: { postId: post.id, type: CollectionType.Post },
                         })
                       }
                       compact
@@ -368,6 +367,15 @@ export function PostDetailContent({ postId }: Props) {
                 <Alert>Unable to load images</Alert>
               ) : (
                 <>
+                  {currentUser?.id === post.user.id &&
+                    hiddenExplained.hiddenByBrowsingSettings.length > 0 && (
+                      <>
+                        <Alert color="yellow" mb="md">
+                          Some of your images have been removed due to infringing on our Policies.
+                          If you believe this was a mistake, you may contact support.
+                        </Alert>
+                      </>
+                    )}
                   <PostImages
                     postId={post.id}
                     images={images}

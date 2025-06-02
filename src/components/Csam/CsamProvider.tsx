@@ -1,6 +1,6 @@
-import { CsamReportType } from '~/shared/utils/prisma/enums';
+import type { CsamReportType } from '~/shared/utils/prisma/enums';
 import { createContext, useContext } from 'react';
-import { SimpleUser } from '~/server/selectors/user.selector';
+import type { SimpleUser } from '~/server/selectors/user.selector';
 
 type CsamState = {
   isInternal: boolean;

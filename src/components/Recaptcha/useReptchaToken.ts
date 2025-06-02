@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useState } from 'react';
 import { env } from '../../env/client';
 import { RecaptchaContext } from './RecaptchaWidget';
-import { RecaptchaAction } from '../../server/common/constants';
+import type { RecaptchaAction } from '../../server/common/constants';
 import { useDebouncer } from '../../utils/debouncer';
 import { isDev } from '~/env/other';
 

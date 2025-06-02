@@ -4,13 +4,15 @@ import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
+import type { FilterKeys } from '~/providers/FiltersProvider';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -94,12 +96,17 @@ export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
   options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
 ) => {
+  const currentUser = useCurrentUser();
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+    ...((filters.username &&
+      filters.username.toLowerCase() === currentUser?.username?.toLowerCase()) ||
+    filters.userId === currentUser?.id
+      ? []
+      : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ].filter(isDefined);
 
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(

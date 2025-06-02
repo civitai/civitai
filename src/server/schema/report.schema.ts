@@ -1,4 +1,4 @@
-import { MantineColor } from '@mantine/core';
+import type { MantineColor } from '@mantine/core';
 import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { getAllQuerySchema } from '~/server/schema/base.schema';

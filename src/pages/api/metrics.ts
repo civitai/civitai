@@ -1,4 +1,4 @@
-import { NextApiResponse } from 'next';
+import type { NextApiResponse } from 'next';
 import { EOL } from 'os';
 import client from 'prom-client';
 import { dbRead, dbWrite } from '~/server/db/client';

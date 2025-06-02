@@ -1,5 +1,5 @@
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ColorDomain } from '~/server/common/constants';
+import type { ColorDomain } from '~/server/common/constants';
 
 export function useDomainColor() {
   const { isGreen, isBlue, isRed } = useFeatureFlags();

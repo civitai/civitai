@@ -38,7 +38,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useGameSounds } from '~/hooks/useGameSounds';
-import { RaterImage } from '~/server/routers/research.router';
+import type { RaterImage } from '~/server/routers/research.router';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getRandom } from '~/utils/array-helpers';

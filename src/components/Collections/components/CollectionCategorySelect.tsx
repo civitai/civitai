@@ -1,4 +1,5 @@
-import { Select, SelectProps } from '@mantine/core';
+import type { SelectProps } from '@mantine/core';
+import { Select } from '@mantine/core';
 import { useState } from 'react';
 import { useCollection } from '~/components/Collections/collection.utils';
 

@@ -9,13 +9,13 @@ import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
+import type { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getChatHash } from '~/server/utils/chat';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 // We should not be using /types/router here, but it's a bit too much to refactor right now.
-import { ChatAllMessages, ChatCreateChat } from '~/types/router';
+import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 
 export const maxChats = 1000;
 export const maxChatsPerDay = 10;

@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 
 const algorithm = 'aes-256-ctr';
 const secretKey = process.env.COOKIE_SECRET_KEY || 'default_secret_key';

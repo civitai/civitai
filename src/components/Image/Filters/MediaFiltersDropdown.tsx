@@ -1,7 +1,7 @@
+import type { ButtonProps } from '@mantine/core';
 import {
   ActionIcon,
   Button,
-  ButtonProps,
   Chip,
   Divider,
   Drawer,
@@ -24,8 +24,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { activeBaseModels, BaseModel } from '~/server/common/constants'; // Add this import
-import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import type { BaseModel } from '~/server/common/constants';
+import { activeBaseModels } from '~/server/common/constants'; // Add this import
+import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 

@@ -1,9 +1,10 @@
-import { CSSProperties, useCallback, useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
+import type { EmblaCarouselProviderProps } from '~/components/EmblaCarousel/EmblaCarouselProvider';
 import {
   EmblaCarouselProvider,
-  EmblaCarouselProviderProps,
   useEmblaStore,
 } from '~/components/EmblaCarousel/EmblaCarouselProvider';
 

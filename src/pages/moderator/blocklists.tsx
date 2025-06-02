@@ -5,7 +5,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { TwLoader } from '~/components/TwLoader/TwLoader';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import { BlocklistType } from '~/server/common/enums';
-import { BlocklistDTO } from '~/server/services/blocklist.service';
+import type { BlocklistDTO } from '~/server/services/blocklist.service';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import clsx from 'clsx';

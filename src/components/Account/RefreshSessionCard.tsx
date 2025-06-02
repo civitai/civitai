@@ -15,7 +15,9 @@ export function RefreshSessionCard() {
       <Stack>
         <Title order={2}>Refresh my Session</Title>
         <Text size="sm">
-        Support may ask you to refresh your Civitai session. Click the button below to clear internal caches, which can help resolve minor issues without affecting your account data or settings.
+          Support may ask you to refresh your Civitai session. Click the button below to clear
+          internal caches, which can help resolve minor issues without affecting your account data
+          or settings.
         </Text>
         <Button variant="outline" color="blue" onClick={refreshSession}>
           Refresh my Session

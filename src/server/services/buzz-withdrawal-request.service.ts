@@ -1,8 +1,8 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { v4 as uuid } from 'uuid';
 import { BuzzWithdrawalRequestSort, NotificationCategory } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
-import { GetByIdStringInput } from '~/server/schema/base.schema';
+import type { GetByIdStringInput } from '~/server/schema/base.schema';
 import { createNotification } from '~/server/services/notification.service';
 import {
   payToStripeConnectAccount,
@@ -16,7 +16,7 @@ import {
 import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
 import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
-import {
+import type {
   BuzzWithdrawalRequestHistoryMetadataSchema,
   CreateBuzzWithdrawalRequestSchema,
   GetPaginatedBuzzWithdrawalRequestSchema,

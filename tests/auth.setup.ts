@@ -11,9 +11,14 @@ setup.beforeAll('check db', async () => {
   ).toBeTruthy();
 });
 
+const SESSION_VALID_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
+
 // save various user info for testing
 const authSetup = async (page: Page, d: (typeof testAuthData)[keyof typeof testAuthData]) => {
-  if (fs.existsSync(d.path)) {
+  if (
+    fs.existsSync(d.path) &&
+    Date.now() - fs.statSync(d.path).mtime.getTime() < SESSION_VALID_MS
+  ) {
     // console.log(`Skipping auth setup for ${d.userId}, file exists: ${d.path}`);
     return;
   }

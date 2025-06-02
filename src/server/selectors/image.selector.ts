@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 import { simpleTagSelect } from './tag.selector';
 

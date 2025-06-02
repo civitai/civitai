@@ -1,11 +1,6 @@
-import { ColSpan } from '@mantine/core';
-import {
-  createStyles,
-  MantineNumberSize,
-  MANTINE_SIZES,
-  MantineSize,
-  MantineTheme,
-} from '@mantine/styles';
+import type { ColSpan } from '@mantine/core';
+import type { MantineNumberSize, MantineSize, MantineTheme } from '@mantine/styles';
+import { createStyles, MANTINE_SIZES } from '@mantine/styles';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 interface ColStyles {

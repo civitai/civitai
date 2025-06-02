@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import clsx from 'clsx';
 import styles from './CosmeticLights.module.scss';
 

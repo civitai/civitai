@@ -2,13 +2,11 @@ import { Input, Alert } from '@mantine/core';
 import { useMemo } from 'react';
 import { maxUpscaleSize } from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
-import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { Radio, RadioGroup } from '@headlessui/react';
 import clsx from 'clsx';
-import {
-  SourceImageUpload,
-  SourceImageUploadProps,
-} from '~/components/Generation/Input/SourceImageUpload';
+import type { SourceImageUploadProps } from '~/components/Generation/Input/SourceImageUpload';
+import { SourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 
 function SourceImageUpscale({
   value,

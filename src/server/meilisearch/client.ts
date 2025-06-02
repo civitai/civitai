@@ -1,8 +1,9 @@
-import { EnqueuedTask, MeiliSearch } from 'meilisearch';
+import type { EnqueuedTask } from 'meilisearch';
+import { MeiliSearch } from 'meilisearch';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { sleep } from '~/server/utils/errorHandling';
-import { JobContext } from '~/server/jobs/job';
+import type { JobContext } from '~/server/jobs/job';
 
 const log = createLogger('search', 'green');
 

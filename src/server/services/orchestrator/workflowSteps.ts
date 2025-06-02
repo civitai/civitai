@@ -1,14 +1,14 @@
 import { deepOmit } from '~/utils/object-helpers';
+import type { $OpenApiTs } from '@civitai/client';
 import {
-  $OpenApiTs,
   getWorkflowStep as clientGetWorkflowStep,
   patchWorkflowStep,
   updateWorkflowStep,
 } from '@civitai/client';
 
 import { createOrchestratorClient } from '~/server/services/orchestrator/common';
-import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
-import { PatchWorkflowStepParams } from '~/server/schema/orchestrator/workflows.schema';
+import type { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
+import type { PatchWorkflowStepParams } from '~/server/schema/orchestrator/workflows.schema';
 
 export async function getWorkflowStep({
   token,

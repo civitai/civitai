@@ -1,7 +1,7 @@
 import React from 'react';
 import { Page } from '~/components/AppLayout/Page';
 import { UserMediaInfinite } from '~/components/Image/Infinite/UserMediaInfinite';
-import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 

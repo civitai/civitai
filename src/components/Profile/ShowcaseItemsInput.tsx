@@ -1,11 +1,10 @@
+import type { InputWrapperProps } from '@mantine/core';
 import {
   Box,
   Button,
   Center,
   createStyles,
-  Group,
   Input,
-  InputWrapperProps,
   Loader,
   Paper,
   Stack,
@@ -13,22 +12,15 @@ import {
 } from '@mantine/core';
 import React, { useMemo, useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
-import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
+import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';
-import {
-  DndContext,
-  DragEndEvent,
-  PointerSensor,
-  rectIntersection,
-  UniqueIdentifier,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
+import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
+import { DndContext, PointerSensor, rectIntersection, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { containerQuery } from '~/utils/mantine-css-helpers';

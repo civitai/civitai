@@ -1,3 +1,4 @@
+import type { MantineColor } from '@mantine/core';
 import {
   Badge,
   Button,
@@ -9,7 +10,6 @@ import {
   Group,
   Image,
   Loader,
-  MantineColor,
   Paper,
   Progress,
   Stack,

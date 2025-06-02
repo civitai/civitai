@@ -10,8 +10,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
-  BrowsingLevel,
   browsingLevelLabels,
   flagifyBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
@@ -107,6 +107,7 @@ export function useExplainHiddenImages<
     const browsingLevelBelowDict: Record<number, number> = {};
     const browsingLevelAboveDict: Record<number, number> = {};
     const tagDict: Record<number, number> = {};
+    const excludedTagsDict: Record<number, number> = {};
 
     for (const image of images ?? []) {
       if (!image.nsfwLevel) continue;
@@ -114,6 +115,11 @@ export function useExplainHiddenImages<
         if (hiddenPreferences.hiddenTags.get(tag)) {
           if (!tagDict[tag]) tagDict[tag] = 1;
           else tagDict[tag]++;
+        }
+
+        if (browsingSettingsAddons.settings.excludedTagIds?.includes(tag)) {
+          if (!excludedTagsDict[tag]) excludedTagsDict[tag] = 1;
+          else excludedTagsDict[tag]++;
         }
       }
       if (!Flags.intersects(browsingLevel, image.nsfwLevel) && image.nsfwLevel !== browsingLevel) {
@@ -136,11 +142,17 @@ export function useExplainHiddenImages<
       tagId: Number(key),
       count,
     }));
+    const hiddenByBrowsingSettings = Object.entries(excludedTagsDict).map(([key, count]) => ({
+      tagId: Number(key),
+      count,
+    }));
+
     const hiddenByPoi = images?.filter((x) => x.poi && browsingSettingsAddons.settings.disablePoi);
 
     return {
       hiddenBelowBrowsingLevel: hiddenBelowBrowsingLevel,
       hiddenAboveBrowsingLevel,
+      hiddenByBrowsingSettings,
       hiddenByTags,
       hiddenByPoi,
       hasHidden: canViewNsfw

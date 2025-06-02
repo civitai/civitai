@@ -1,17 +1,18 @@
 export async function fetchBlob(src: string | Blob | File) {
-  let blob: Blob | File | null;
-  if (typeof src === 'string')
-    blob = await fetch(src)
-      .then((response) => response.blob())
-      .catch(() => null);
-  else blob = src;
-  return blob;
+  if (src instanceof Blob) return src;
+  else return await fetch(src).then((response) => response.blob().catch(() => null));
 }
 
-export async function fetchBlobAsFile(
-  src: string | Blob | File,
-  fileName = new Date().getTime().toString()
+export function blobToFile(
+  blob: Blob,
+  filename = new Date().getTime().toString(),
+  type = blob.type
 ) {
+  return new File([blob], filename, { type });
+}
+
+export async function fetchBlobAsFile(src: string | Blob | File, filename?: string) {
+  if (src instanceof File) return src;
   const blob = await fetchBlob(src);
   if (!blob) return null;
   let type = blob.type;
@@ -21,8 +22,7 @@ export async function fetchBlobAsFile(
     if (src.endsWith('.mp4')) type = 'video/mp4';
     else if (src.endsWith('.jpg') || src.endsWith('.jpeg')) type = 'image/jpeg';
   }
-  const file = new File([blob], fileName, { type });
-  return file;
+  return blobToFile(blob, filename, type);
 }
 
 export async function fetchBlobAsBase64(src: string | Blob | File) {

@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { setLiveNow } from '~/server/services/system-cache';
 

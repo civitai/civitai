@@ -2,8 +2,8 @@ import { Prisma } from '@prisma/client';
 import { ModelFlagStatus } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { GetByIdsInput } from '~/server/schema/base.schema';
-import { GetFlaggedModelsInput, ModelScanResult } from '~/server/schema/model-flag.schema';
+import type { GetByIdsInput } from '~/server/schema/base.schema';
+import type { GetFlaggedModelsInput, ModelScanResult } from '~/server/schema/model-flag.schema';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 

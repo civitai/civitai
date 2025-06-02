@@ -1,3 +1,4 @@
+import type { NumberInputProps, SliderProps } from '@mantine/core';
 import {
   Accordion,
   Alert,
@@ -11,12 +12,10 @@ import {
   Group,
   Input,
   List,
-  NumberInputProps,
+  Notification,
   Paper,
-  SliderProps,
   Stack,
   Text,
-  Notification,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -41,13 +40,14 @@ import { InputRequestPriority } from '~/components/Generation/Input/RequestPrior
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageById } from '~/components/Image/ById/ImageById';
 import {
+  ResourceSelectHandler,
   useGenerationStatus,
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import type { GenerationFormOutput } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import {
   blockedRequest,
-  GenerationFormOutput,
   useGenerationForm,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
@@ -75,13 +75,7 @@ import {
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  Form,
-  InputNumberSlider,
-  InputSegmentedControl,
-  InputSelect,
-  InputSwitch,
-} from '~/libs/form';
+import { InputNumberSlider, InputSegmentedControl, InputSelect, InputSwitch } from '~/libs/form';
 import { Watch } from '~/libs/form/components/Watch';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -107,12 +101,13 @@ import {
   getIsSdxl,
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
+  getImageGenerationBaseModels,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { fetchBlobAsFile } from '~/utils/file-utils';
-import { getParsedExifData, parsePromptMetadata } from '~/utils/metadata';
+import { ExifParser, parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
@@ -148,7 +143,6 @@ export function GenerationFormContent() {
   const invalidateWhatIf = useInvalidateWhatIf();
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
-  const [opened, setOpened] = useState(false);
   const [runsOnFalAI, setRunsOnFalAI] = useState(false);
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
@@ -244,9 +238,12 @@ export function GenerationFormContent() {
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
-    if (fluxUltraRaw) params.engine = 'flux-pro-raw';
-    else if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
-    else params.engine = undefined;
+    delete params.engine;
+    if (model.id === fluxModelId && fluxUltraRaw && params.fluxMode === fluxUltraAir)
+      params.engine = 'flux-pro-raw';
+    if (model.id === generationConfig.OpenAI.checkpoint.id) {
+      params.engine = 'openai';
+    }
 
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
@@ -255,15 +252,12 @@ export function GenerationFormContent() {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
       }
-      if (params.fluxMode !== fluxUltraAir) {
-        if (params.engine) delete params.engine;
-      }
     } else {
-      const keys = ['fluxMode', 'fluxUltraAspectRatio'];
-      for (const key in params) {
-        if (keys.includes(key)) delete params[key as keyof typeof params];
-      }
+      delete params.fluxMode;
+      delete params.fluxUltraAspectRatio;
     }
+
+    if (workflowDefinition?.type === 'txt2img') params.sourceImage = null;
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
@@ -396,14 +390,15 @@ export function GenerationFormContent() {
   const [minDenoise, setMinDenoise] = useState(0);
   useEffect(() => {
     if (sourceImage)
-      fetchBlobAsFile(sourceImage.url).then((file) => {
-        if (file)
-          getParsedExifData(file).then((data) => {
-            const min = data ? 0 : 0.5;
-            const denoise = form.getValues('denoise') ?? 0.4;
-            if (min > denoise) form.setValue('denoise', 0.65);
-            setMinDenoise(min);
-          });
+      fetchBlobAsFile(sourceImage.url).then(async (file) => {
+        if (file) {
+          const parser = await ExifParser(file);
+          const data = parser.parse();
+          const min = data ? 0 : 0.5;
+          const denoise = form.getValues('denoise') ?? 0.4;
+          if (min > denoise) form.setValue('denoise', 0.65);
+          setMinDenoise(min);
+        }
       });
     else setMinDenoise(0);
   }, [sourceImage, form]);
@@ -523,7 +518,7 @@ export function GenerationFormContent() {
                 </div>
 
                 <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
-                  {({ model, resources: formResources, vae, fluxMode }) => {
+                  {({ model, resources: formResources, vae }) => {
                     const resources = formResources ?? [];
                     const selectedResources = [...resources, vae, model].filter(isDefined);
                     const minorFlaggedResources = selectedResources.filter((x) => x.model.minor);
@@ -532,6 +527,19 @@ export function GenerationFormContent() {
                       allUnstableResources.includes(x.id)
                     );
                     const atLimit = resources.length >= status.limits.resources;
+
+                    const resourceSelectHandlerOptions = {
+                      canGenerate: true,
+                      resources: resourceTypes.filter(
+                        (x) => x.type !== 'VAE' && x.type !== 'Checkpoint'
+                      ),
+                      excludeIds: selectedResources.map((r) => r.id),
+                    };
+
+                    const additionResourceTitle = 'Add additional resource';
+                    const resourceSelectHandler = ResourceSelectHandler(
+                      resourceSelectHandlerOptions
+                    );
 
                     return (
                       <Card
@@ -553,7 +561,10 @@ export function GenerationFormContent() {
                               .filter((x) => x.type === 'Checkpoint')
                               .map(({ type, baseModels }) => ({
                                 type,
-                                baseModels: !!resources?.length || !!vae ? baseModels : undefined,
+                                baseModels:
+                                  !!resources?.length || !!vae
+                                    ? baseModels
+                                    : getImageGenerationBaseModels(),
                               })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                           }}
                           hideVersion={isFluxStandard}
@@ -606,7 +617,19 @@ export function GenerationFormContent() {
                                         onClick={(e) => {
                                           e.preventDefault();
                                           e.stopPropagation();
-                                          setOpened(true);
+                                          const formResources = form.getValues('resources') ?? [];
+                                          resourceSelectHandler
+                                            .select({
+                                              title: additionResourceTitle,
+                                              excludedIds: formResources.map((x) => x.id),
+                                            })
+                                            .then((resource) => {
+                                              if (!resource) return;
+                                              const resources = [...formResources, resource];
+                                              const newValue =
+                                                resourceSelectHandler.getValues(resources) ?? [];
+                                              form.setValue('resources', newValue);
+                                            });
                                         }}
                                         radius="xl"
                                         ml="auto"
@@ -642,16 +665,8 @@ export function GenerationFormContent() {
                                   <InputResourceSelectMultiple
                                     name="resources"
                                     limit={status.limits.resources}
-                                    buttonLabel="Add additional resource"
-                                    modalOpened={opened}
-                                    onCloseModal={() => setOpened(false)}
-                                    options={{
-                                      canGenerate: true,
-                                      resources: resourceTypes.filter(
-                                        (x) => x.type !== 'VAE' && x.type !== 'Checkpoint'
-                                      ),
-                                      excludeIds: selectedResources.map((r) => r.id),
-                                    }}
+                                    buttonLabel={additionResourceTitle}
+                                    options={resourceSelectHandlerOptions}
                                     hideButton
                                   />
                                 </Accordion.Panel>
@@ -860,7 +875,7 @@ export function GenerationFormContent() {
                   <Input.Wrapper
                     label={
                       <div className="mb-1 flex items-center gap-1">
-                        <Input.Label required>Prompt</Input.Label>
+                        <Input.Label required={!isImg2Img}>Prompt</Input.Label>
                         <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
                           Type out what you&apos;d like to generate in the prompt, add aspects
                           you&apos;d like to avoid in the negative prompt
@@ -1119,6 +1134,7 @@ export function GenerationFormContent() {
                                   }
                                   reverse
                                   disabled={cfgDisabled}
+                                  data-testid="gen-cfg-scale"
                                 />
                               )}
                               {!isFlux && !isSD3 && (
@@ -1189,19 +1205,26 @@ export function GenerationFormContent() {
                                             : [
                                                 {
                                                   label: 'Fast',
-                                                  value: Number(10 + samplerCfgOffset).toString(),
+                                                  value: Math.round(
+                                                    Number(10 + samplerCfgOffset)
+                                                  ).toString(),
                                                 },
                                                 {
                                                   label: 'Balanced',
-                                                  value: Number(20 + samplerCfgOffset).toString(),
+                                                  value: Math.round(
+                                                    Number(20 + samplerCfgOffset)
+                                                  ).toString(),
                                                 },
                                                 {
                                                   label: 'High',
-                                                  value: Number(30 + samplerCfgOffset).toString(),
+                                                  value: Math.round(
+                                                    Number(30 + samplerCfgOffset)
+                                                  ).toString(),
                                                 },
                                               ]
                                         }
                                         reverse
+                                        data-testid="gen-steps"
                                       />
                                     );
                                   }}

@@ -1,5 +1,5 @@
 import { Anchor } from '@mantine/core';
-import { useRootThreadContext } from '~/components/CommentsV2';
+import { useRootThreadContext } from '~/components/CommentsV2/CommentsProvider';
 
 export function ReturnToRootThread() {
   const { isInitialThread, setInitialThread, activeComment } = useRootThreadContext();

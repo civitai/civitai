@@ -2,9 +2,9 @@ import { ActionIcon, Button, Card, Modal, Radio, SegmentedControl, Slider } from
 import { useEffect, useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
-import { Point, Area, MediaSize } from 'react-easy-crop/types';
+import type { Point, Area, MediaSize } from 'react-easy-crop/types';
 import { IconZoomIn, IconZoomOut } from '@tabler/icons-react';
-import getCroppedImg from '~/utils/image-utils';
+import { getCroppedImg } from '~/utils/image-utils';
 import clsx from 'clsx';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 
@@ -99,8 +99,8 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
             (image.width !== image.croppedAreaPixels.width ||
               image.height !== image.croppedAreaPixels.height)
           ) {
-            return await getCroppedImg(image.url, image.croppedAreaPixels).then(async (res) =>
-              res ? await res.toBlob() : image.url
+            return await getCroppedImg(image.url, image.croppedAreaPixels).then(
+              (res) => res ?? image.url
             );
           }
           return image.url;
@@ -169,8 +169,8 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
               onChange={(value) => setAspect(Number(value))}
               spacing="sm"
             >
-              {availableAspects.map(({ label, value }) => (
-                <Radio key={value} value={value} label={label} />
+              {availableAspects.map(({ label, value }, index) => (
+                <Radio key={index} value={value} label={label} />
               ))}
             </Radio.Group>
           </Card>

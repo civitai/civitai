@@ -1,24 +1,15 @@
-import { Button, ButtonProps } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button } from '@mantine/core';
 import { IconCat, IconMessageChatbot, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
-import { AssistantChat } from '~/components/Assistant/AssistantChat';
+import { AssistantChat, getAssistantUUID } from '~/components/Assistant/AssistantChat';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { UserAssistantPersonality } from '~/server/schema/user.schema';
 import { isApril1 } from '~/utils/date-helpers';
 
 const WIDTH = 320;
 const HEIGHT = 500;
-
-const assistantMap: { [p in UserAssistantPersonality]: string | undefined } = {
-  civbot: env.NEXT_PUBLIC_GPTT_UUID,
-  civchan: env.NEXT_PUBLIC_GPTT_UUID_ALT ?? env.NEXT_PUBLIC_GPTT_UUID,
-};
-export const getAssistantUUID = (personality: UserAssistantPersonality) => {
-  return isApril1() ? assistantMap['civchan'] : assistantMap[personality];
-};
 
 export function AssistantButton({ ...props }: ButtonProps) {
   const [open, setOpen] = useState(false);

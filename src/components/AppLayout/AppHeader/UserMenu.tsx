@@ -22,15 +22,15 @@ import {
   IconSun,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { LinkProps } from 'next/link';
+import type { LinkProps } from 'next/link';
 import { useRouter } from 'next/router';
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useGetEdgeUrl } from '~/client-utils/cf-images-utils';
+import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import {
   useGetActionMenuItems,
   useGetCreator,
   useGetMenuItems,
-  UserMenuItem,
 } from '~/components/AppLayout/AppHeader/hooks';
 import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { Burger } from '~/components/Burger/Burger';

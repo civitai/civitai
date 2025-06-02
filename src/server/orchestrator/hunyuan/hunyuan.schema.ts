@@ -1,4 +1,4 @@
-import { HunyuanVdeoGenInput } from '@civitai/client';
+import type { HunyuanVdeoGenInput } from '@civitai/client';
 import z from 'zod';
 import { AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
@@ -17,6 +17,7 @@ export const hunyuanDuration = [3, 5] as const;
 const hunyuanAspectRatioMap = AspectRatioMap([...hunyuanAspectRatios], { multiplier: 16 });
 
 const schema = baseVideoGenerationSchema.extend({
+  baseModel: z.string().default('HyV1').catch('HyV1'),
   engine: z.literal('hunyuan').catch('hunyuan'),
   prompt: promptSchema,
   // sourceImage: sourceImageSchema.nullish(),

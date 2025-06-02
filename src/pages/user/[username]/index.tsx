@@ -5,14 +5,14 @@ import { useRouter } from 'next/router';
 import React, { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
-import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import {
   getAllAvailableProfileSections,
   ProfileSectionComponent,
   shouldDisplayUserNullState,
 } from '~/components/Profile/profile.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
+import type { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';

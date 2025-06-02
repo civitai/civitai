@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';

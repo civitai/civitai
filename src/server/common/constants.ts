@@ -1,6 +1,7 @@
 import type { MantineTheme } from '@mantine/core';
-import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
-import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import type { Icon, IconProps } from '@tabler/icons-react';
+import { IconBolt, IconCurrencyDollar } from '@tabler/icons-react';
+import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
@@ -572,6 +573,29 @@ export const baseModelSets = {
     baseModels: ['Wan Video 14B i2v 720p'],
   }),
 };
+
+export function getEcosystemFromBaseModel(baseModel: string) {
+  const ecosystem =
+    Object.entries(baseModelSets)
+      .find(([, baseModelSet]) => (baseModelSet.baseModels as string[]).includes(baseModel))?.[0]
+      ?.toLowerCase() ?? 'multi';
+
+  // for (const item of [
+  //   'wanvideo1_3b_t2v',
+  //   'wanvideo14b_t2v',
+  //   'wanvideo14b_i2v_480p',
+  //   'wanvideo14b_i2v_720p',
+  // ]) {
+  //   if (ecosystem === item) return 'wanvideo';
+  // }
+
+  return ecosystem
+    .replace('pony', 'sdxl')
+    .replace('illustrious', 'sdxl')
+    .replace('noobai', 'sdxl')
+    .replace('sd3_5m', 'sd3');
+}
+
 /*
 'Wan Video 1.3B T2V',
 'Wan Video 14B T2V',
@@ -810,7 +834,6 @@ export const generationConfig = {
       maxStrength: 2,
       canGenerate: true,
       hasAccess: true,
-      covered: true,
       model: {
         id: 4384,
         name: 'DreamShaper',
@@ -834,7 +857,6 @@ export const generationConfig = {
       maxStrength: 2,
       canGenerate: true,
       hasAccess: true,
-      covered: true,
       model: {
         id: 101055,
         name: 'SD XL',
@@ -858,7 +880,6 @@ export const generationConfig = {
       maxStrength: 2,
       canGenerate: true,
       hasAccess: true,
-      covered: true,
       model: {
         id: 257749,
         name: 'Pony Diffusion V6 XL',
@@ -888,7 +909,6 @@ export const generationConfig = {
       maxStrength: 2,
       canGenerate: true,
       hasAccess: true,
-      covered: true,
       model: {
         id: 795765,
         name: 'Illustrious-XL',
@@ -912,7 +932,6 @@ export const generationConfig = {
       maxStrength: 2,
       canGenerate: true,
       hasAccess: true,
-      covered: true,
       model: {
         id: 833294,
         name: 'NoobAI-XL (NAI-XL)',
@@ -936,7 +955,6 @@ export const generationConfig = {
       maxStrength: 2,
       canGenerate: true,
       hasAccess: true,
-      covered: true,
       model: {
         id: 618692,
         name: 'FLUX',
@@ -960,7 +978,6 @@ export const generationConfig = {
       maxStrength: 2,
       canGenerate: true,
       hasAccess: true,
-      covered: true,
       model: {
         id: 878387,
         name: 'Stable Diffusion 3.5 Large',
@@ -984,7 +1001,6 @@ export const generationConfig = {
       maxStrength: 2,
       canGenerate: true,
       hasAccess: true,
-      covered: true,
       model: {
         id: 896953,
         name: 'Stable Diffusion 3.5 Medium',
@@ -1008,7 +1024,6 @@ export const generationConfig = {
       maxStrength: 2,
       canGenerate: true,
       hasAccess: true,
-      covered: true,
       model: {
         id: 1532032,
         name: `OpenAI's GPT-image-1`,
@@ -1029,7 +1044,6 @@ export const generationConfig = {
       maxStrength: 2,
       canGenerate: true,
       hasAccess: true,
-      covered: true,
       model: {
         id: 147759,
         name: 'Remacri',
@@ -1210,81 +1224,31 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
   {
     type: 'none',
     nsfwLevels: [NsfwLevel.X, NsfwLevel.XXX],
-    excludedFooterLinks: ['2257', 'content-removal'],
+    excludedFooterLinks: ['2257'],
   },
   {
     type: 'some',
-    nsfwLevels: [NsfwLevel.X, NsfwLevel.XXX],
-    excludedFooterLinks: ['wiki', 'api', 'newsroom'],
-    disablePoi: true,
+    nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    excludedFooterLinks: [],
     disableMinor: true,
+    disablePoi: true,
     excludedTagIds: [
-      792, //marijuana
-      793, //weed
-      970, //gun
-      3163, //weapons
-      4036, //mind control
-      4037, //hypnosis
+      415792, // Clavata Celebrity
+      426772, // Clavata Celebrity
+      5351, //child
       5161, //actor
       5162, //actress
       5188, //celebrity
       5249, //real person
+      306619, //child present
       5351, //child
-      6941, //hypno
-      110376, //guns
-      111782, //weapon
-      112175, //firearm
-      112383, //drug products
-      112384, //drugs
-      112675, //weapon violence
-      113966, //drug use
-      113968, //drug paraphernalia
-      117875, //gunslinger
-      117934, //vomiting
-      121273, //children
-      122432, //hypnotic
-      124724, //molestation
-      124890, //sleep molestation
+      154326, //toddler
+      161829, //male child
+      163032, //female child
       130818, //porn actress
       130820, //adult actress
       133182, //porn star
-      133935, //hypnotized
-      146968, //celebrity,
-      151615, //molester
-      153296, //vomit
-      154326, //toddler
-      161829, //male child
-      161864, //holding weapon
-      163032, //female child
-      164020, //incest
-      164047, //mother and daughter
-      164776, //father and daughter
-      164978, //antique firearm
-      165960, //mother and son
-      171899, //mindcontrol
-      174202, //cocaine
-      174809, //twincest
-      195393, //drug addict
-      201446, //firearms
-      210913, //drugged
-      215141, //gunshot
-      219093, //hypnotizing
-      223439, //molesting
-      224818, //drugs & tobacco
-      229694, //hypnotism
-      242816, //drug
-      249303, //hypnotist
-      259592, //molested
-      306619, //child present
-      368038, //wincest
-      370273, //recreational drugs
     ],
-    generationDefaultValues: {
-      denoise: 0.65,
-    },
-    generationMinValues: {
-      denoise: 0.5,
-    },
   },
 ] as const;
 
@@ -1370,6 +1334,10 @@ export const newOrderConfig = {
   cosmetics: {
     badgeIds: { acolyte: 858, knight: 859, templar: 860 },
   },
+  limits: {
+    knightVoteLimit: 5,
+    templarVoteLimit: 2,
+  },
 };
 
 export const buzzBulkBonusMultipliers = [
@@ -1378,6 +1346,9 @@ export const buzzBulkBonusMultipliers = [
   [300000, 1.15],
   [400000, 1.2],
 ];
+
+export const NOW_PAYMENTS_FIXED_FEE = 100; // 1.00 USD
+export const COINBASE_FIXED_FEE = 0; // 0.00 USD
 
 export const specialCosmeticRewards = {
   annualRewards: {
@@ -1400,4 +1371,12 @@ export const specialCosmeticRewards = {
     866, // bulk buzz buy - badge
     872, // bulk buzz buy - background
   ],
+};
+
+export type LiveFeatureFlags = {
+  buzzGiftCards: boolean;
+};
+
+export const DEFAULT_LIVE_FEATURE_FLAGS = {
+  buzzGiftCards: true,
 };

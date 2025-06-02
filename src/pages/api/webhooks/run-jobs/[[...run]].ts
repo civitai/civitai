@@ -36,7 +36,7 @@ import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
-import { Job } from '~/server/jobs/job';
+import type { Job } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';

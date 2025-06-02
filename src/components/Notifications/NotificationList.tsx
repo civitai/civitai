@@ -1,8 +1,8 @@
+import type { MantineSize } from '@mantine/core';
 import {
   Center,
   createStyles,
   Group,
-  MantineSize,
   Paper,
   SimpleGrid,
   Stack,
@@ -11,12 +11,13 @@ import {
 } from '@mantine/core';
 import { IconAlertOctagon, IconAward, IconBell } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { MouseEvent, useMemo } from 'react';
+import type { MouseEvent } from 'react';
+import React, { useMemo } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
-import { NotificationGetAll } from '~/types/router';
+import type { NotificationGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { isDefined } from '~/utils/type-guards';
 

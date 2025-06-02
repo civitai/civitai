@@ -1,4 +1,4 @@
-import { ClubResourceGetPaginatedItem, ClubTier } from '~/types/router';
+import type { ClubResourceGetPaginatedItem, ClubTier } from '~/types/router';
 import { updateClubResourceInput } from '~/server/schema/club.schema';
 import { ActionIcon, Anchor, Button, Checkbox, Group, Tooltip } from '@mantine/core';
 import React from 'react';

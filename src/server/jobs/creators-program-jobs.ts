@@ -180,14 +180,17 @@ export const creatorsProgramSettleCash = createJob(
         toAccountId as "userId",
         SUM(if(toAccountType = 'cash-settled', -amount, amount)) as amount
       FROM buzzTransactions
-      WHERE (
-        -- To Settlements
-        fromAccountId = 0
-        AND toAccountType = 'cash-settled'
-      ) OR (
-        -- Deposits
-        fromAccountId = 0
-        AND toAccountType = 'cash-pending'
+      -- Ensure we only check compensation as we don't care for refunds.
+      WHERE type = 'compensation' AND (
+        (
+          -- To Settlements
+          fromAccountId = 0
+          AND toAccountType = 'cash-settled'
+        ) OR (
+          -- Deposits
+          fromAccountId = 0
+          AND toAccountType = 'cash-pending'
+        )
       )
       GROUP BY "userId"
       HAVING amount > 0

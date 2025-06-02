@@ -1,10 +1,11 @@
-import { Button, ButtonProps, Group, useMantineTheme } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Group, useMantineTheme } from '@mantine/core';
 import { IconMessage2 } from '@tabler/icons-react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 export function ChatUserButton({
   user,

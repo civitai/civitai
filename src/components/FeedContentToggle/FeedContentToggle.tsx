@@ -1,5 +1,6 @@
 import React from 'react';
-import { SegmentedControl, SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
+import type { SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
+import { SegmentedControl } from '@mantine/core';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const statuses: SegmentedControlItem[] = [

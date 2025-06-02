@@ -1,11 +1,9 @@
+import type { ActionIconProps, BadgeProps, ButtonProps } from '@mantine/core';
 import {
   ActionIcon,
-  ActionIconProps,
   Anchor,
   Badge,
-  BadgeProps,
   Button,
-  ButtonProps,
   Card,
   CloseButton,
   Group,
@@ -15,6 +13,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
+import type { IconProps } from '@tabler/icons-react';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -31,7 +30,6 @@ import {
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPhoto,
-  IconProps,
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
@@ -47,9 +45,9 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
@@ -75,7 +73,6 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -144,7 +141,7 @@ export function ImageDetail2() {
   const hideAds = (image.poi || image.minor || actualCollection?.metadata?.hideAds) ?? false;
 
   const handleSaveClick = () =>
-    openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });
+    openAddToCollectionModal({ props: { imageId: image.id, type: CollectionType.Image } });
 
   const handleReportClick = () => {
     openReportModal({

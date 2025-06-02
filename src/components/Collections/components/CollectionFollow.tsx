@@ -1,7 +1,8 @@
-import { Button, ButtonProps, Group } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Group } from '@mantine/core';
 import { IconMinus, IconPlus, IconProgress } from '@tabler/icons-react';
 import React from 'react';
-import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
+import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -9,7 +10,7 @@ import { useCollection } from '~/components/Collections/collection.utils';
 
 export const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Props) => {
   const utils = trpc.useUtils();
-  
+
   const { permissions: serverPermissions } = useCollection(collectionId);
   const mergedPermissions = { ...serverPermissions, ...permissions };
 
@@ -41,7 +42,10 @@ export const CollectionFollowAction = ({ collectionId, permissions, ...btnProps 
       },
     });
 
-  if ((!mergedPermissions.follow && !mergedPermissions.isContributor) || mergedPermissions.isOwner) {
+  if (
+    (!mergedPermissions.follow && !mergedPermissions.isContributor) ||
+    mergedPermissions.isOwner
+  ) {
     // For contributors, we will still make it possible to un-follow
     return null;
   }

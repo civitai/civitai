@@ -9,10 +9,11 @@ import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
-import { ModelQueryParams, useModelFilters, useQueryModels } from '~/components/Model/model.utils';
+import type { ModelQueryParams } from '~/components/Model/model.utils';
+import { useModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ModelFilterSchema } from '~/providers/FiltersProvider';
+import type { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type InfiniteModelsProps = {

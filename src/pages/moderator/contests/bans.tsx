@@ -23,7 +23,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -114,11 +114,9 @@ export default function ContestsBans() {
     data: users = [],
     isLoading,
     isFetching,
-  } = trpc.user.getAll.useQuery(
-    {
-      contestBanned: true,
-    },
-  );
+  } = trpc.user.getAll.useQuery({
+    contestBanned: true,
+  });
 
   const queryUtils = trpc.useContext();
 

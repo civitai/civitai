@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { produce } from 'immer';
 import plimit from 'p-limit';
-import { useFileUploadContext, TrackedFile } from '~/components/FileUpload/FileUploadProvider';
+import type { TrackedFile } from '~/components/FileUpload/FileUploadProvider';
+import { useFileUploadContext } from '~/components/FileUpload/FileUploadProvider';
 
 const pendingProcessing: TrackedFile['status'][] = ['pending', 'uploading'];
 const maxConcurrency = 5;

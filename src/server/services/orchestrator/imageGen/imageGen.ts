@@ -1,22 +1,22 @@
+import type { ImageGenStepTemplate } from '@civitai/client';
 import {
-  ImageGenStepTemplate,
   Scheduler,
   TextToImageStepTemplate,
   TimeSpan,
   type ImageJobNetworkParams,
 } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { env } from '~/env/server';
 import { maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
-import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { getWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
 import {
   formatGenerationResponse,
   parseGenerateImageInput,
 } from '~/server/services/orchestrator/common';
-import { TextToImageResponse } from '~/server/services/orchestrator/types';
+import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -68,10 +68,23 @@ export async function createImageGen(
 ) {
   const { tips, user, experimental } = args;
   const step = await createImageGenStep(args);
+  const engine = 'engine' in args.params ? (args.params.engine as string) : undefined;
+  const baseModel = 'baseModel' in args.params ? (args.params.baseModel as string) : undefined;
+  const process =
+    'sourceImage' in args.params && typeof args.params.sourceImage === 'object'
+      ? 'img2img'
+      : 'txt2img';
   const workflow = (await submitWorkflow({
     token: args.token,
     body: {
-      tags: [WORKFLOW_TAGS.GENERATION, WORKFLOW_TAGS.IMAGE, ...args.tags].filter(isDefined),
+      tags: [
+        WORKFLOW_TAGS.GENERATION,
+        WORKFLOW_TAGS.IMAGE,
+        engine,
+        baseModel,
+        process,
+        ...args.tags,
+      ].filter(isDefined),
       steps: [step],
       tips,
       experimental,
@@ -119,6 +132,7 @@ function getImageGenMetadataParams(params: InputParams) {
     case 'openai':
       return removeEmpty({
         engine: 'openai',
+        baseModel: params.baseModel,
         prompt: params.prompt,
         // quality: params.openAIQuality,
         background: params.openAITransparentBackground ? 'transparent' : 'opaque',

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
-import {
+import type { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
+import type {
   Command,
   ResponseResourcesList,
   Response,
@@ -15,12 +15,12 @@ import { v4 as uuid } from 'uuid';
 import { immer } from 'zustand/middleware/immer';
 import { create } from 'zustand';
 import { isEqual } from 'lodash-es';
-import {
+import type {
   WorkerOutgoingMessage,
   WorkerIncomingMessage,
   Instance,
 } from '~/workers/civitai-link-worker-types';
-import { MantineColor } from '@mantine/styles';
+import type { MantineColor } from '@mantine/styles';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type CivitaiLinkStatus = (typeof statuses)[number];

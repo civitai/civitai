@@ -1,4 +1,5 @@
-import { createStyles, Chip, ChipProps, ChipGroupProps } from '@mantine/core';
+import type { ChipProps, ChipGroupProps } from '@mantine/core';
+import { createStyles, Chip } from '@mantine/core';
 
 const useStyles = createStyles((theme) => ({
   label: {

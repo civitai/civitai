@@ -1,13 +1,13 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import {
   PurchasableRewardModeratorViewMode,
   PurchasableRewardViewMode,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import {
+import type { ImageMetaProps } from '~/server/schema/image.schema';
+import type {
   GetPaginatedPurchasableRewardsModeratorSchema,
   GetPaginatedPurchasableRewardsSchema,
   PurchasableRewardPurchase,

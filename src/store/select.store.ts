@@ -1,4 +1,5 @@
-import { Key, useCallback } from 'react';
+import type { Key } from 'react';
+import { useCallback } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -46,6 +47,10 @@ export const createSelectStore = <T extends Key = Key>(name?: string) => {
     return mapSelected(selected);
   };
 
+  const useIsSelecting = () => {
+    return useStore((state) => Object.keys(state.selected).length > 0);
+  };
+
   const useIsSelected = (key: T) => {
     const selected = useStore(useCallback((state) => state.selected[key] ?? false, [key]));
     return !!selected;
@@ -62,5 +67,6 @@ export const createSelectStore = <T extends Key = Key>(name?: string) => {
     setSelected: useStore.getState().setSelected,
     toggle: useStore.getState().toggle,
     getSelected,
+    useIsSelecting,
   };
 };

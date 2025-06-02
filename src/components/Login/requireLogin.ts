@@ -1,5 +1,4 @@
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import LoginModal from '~/components/Login/LoginModal';
+import { openLoginModal } from '~/components/Dialog/dialog-registry';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 
 export function requireLogin({
@@ -19,8 +18,7 @@ export function requireLogin({
     uiEvent.preventDefault();
     uiEvent.stopPropagation();
     uiEvent.nativeEvent.stopImmediatePropagation();
-    dialogStore.trigger({
-      component: LoginModal,
+    openLoginModal({
       props: {
         message,
         reason,

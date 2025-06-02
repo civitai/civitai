@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbRead } from '../db/client';
 
 export const getAllBenefactorsByBountyId = ({

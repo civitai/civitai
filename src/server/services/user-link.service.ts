@@ -1,6 +1,6 @@
-import { GetByIdInput } from './../schema/base.schema';
+import type { GetByIdInput } from './../schema/base.schema';
 import { isDefined } from '~/utils/type-guards';
-import { UpsertManyUserLinkParams, UpsertUserLinkParams } from './../schema/user-link.schema';
+import type { UpsertManyUserLinkParams, UpsertUserLinkParams } from './../schema/user-link.schema';
 
 import { dbWrite, dbRead } from '~/server/db/client';
 

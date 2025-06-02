@@ -1,7 +1,8 @@
 import { ActionIcon, Button, Divider, Grid, Header } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { ReactElement, RefObject, useRef, useState } from 'react';
+import type { ReactElement, RefObject } from 'react';
+import { useRef, useState } from 'react';
 import { BrowsingModeIcon } from '~/components/BrowsingMode/BrowsingMode';
 import { ReadOnlyNotice } from '~/components/ReadOnlyNotice/ReadOnlyNotice';
 import { ChatButton } from '~/components/Chat/ChatButton';
