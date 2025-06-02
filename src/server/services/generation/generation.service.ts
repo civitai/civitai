@@ -598,7 +598,7 @@ export async function getResourceData(
     const hasAccess = !!(item.hasAccess || user.id === item.model.userId || user.isModerator);
     const covered =
       (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable;
-    const canGenerate = hasAccess && covered;
+    const canGenerate = covered;
     const epochNumber = args.find((x) => x.id === item.id)?.epoch;
 
     return {
