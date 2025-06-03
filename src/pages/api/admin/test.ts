@@ -97,7 +97,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     // }
 
     // const data = await getResourceData({ ids: [1820704], epochNumbers: ['1820704@10'] });
-    const data = await getResourceData([{ id: 1820704, epoch: 10 }], session?.user);
+    const data = await getResourceData([{ id: 1820704 }], session?.user);
 
     // await setExperimentalConfig({ userIds: [5] });
 
