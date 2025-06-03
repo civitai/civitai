@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { imageSchema } from '~/server/schema/image.schema';
-import { middleware, protectedProcedure, router } from '~/server/trpc';
+import { middleware, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   addPostTagHandler,
@@ -37,6 +37,8 @@ import {
 } from './../schema/post.schema';
 import { addPostImage, getPostEditDetail } from './../services/post.service';
 import { guardedProcedure, publicProcedure, verifiedProcedure } from './../trpc';
+import { enqueueJobs } from '~/server/services/job-queue.service';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -143,4 +145,13 @@ export const postRouter = router({
     .input(updatePostCollectionTagIdInput)
     .use(isOwnerOrModerator)
     .mutation(updatePostCollectionTagIdHandler),
+  enqueueNsfwLevelUpdate: moderatorProcedure.input(getByIdSchema).mutation(({ input }) =>
+    enqueueJobs([
+      {
+        entityId: input.id,
+        entityType: EntityType.Post,
+        type: JobQueueType.UpdateNsfwLevel,
+      },
+    ])
+  ),
 });

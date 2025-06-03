@@ -138,7 +138,21 @@ export function ModelVersionMenu({
           <IconDotsVertical size={14} />
         </Button>
       </Menu.Target>
+
       <Menu.Dropdown>
+        {currentUser?.isModerator && (
+          <Menu.Item
+            icon={<IconShieldHalf size={14} stroke={1.5} />}
+            color="yellow"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              handleEnqueueNsfwLevelUpdate();
+            }}
+          >
+            Enqueue NsfwLevel Update
+          </Menu.Item>
+        )}
         {canDelete && (
           <Menu.Item
             color="red"
@@ -166,19 +180,6 @@ export function ModelVersionMenu({
             }
           >
             Unpublish as Violation
-          </Menu.Item>
-        )}
-        {currentUser?.isModerator && (
-          <Menu.Item
-            icon={<IconShieldHalf size={14} stroke={1.5} />}
-            color="yellow"
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              handleEnqueueNsfwLevelUpdate();
-            }}
-          >
-            Enqueue NsfwLevel Update
           </Menu.Item>
         )}
         {currentUser?.isModerator && (

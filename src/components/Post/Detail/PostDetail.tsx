@@ -363,6 +363,14 @@ export function PostDetailContent({ postId }: Props) {
                     );
                   })}
               </div>
+              {currentUser?.isModerator && post.nsfwLevel === 0 && (
+                <>
+                  <Alert color="red" mb="md">
+                    This post is missing a NSFW level. Please queue for update on the context menu.
+                    This post will not be visible to other users until it has a NSFW level.
+                  </Alert>
+                </>
+              )}
               {!imagesLoading && !unfilteredImages?.length ? (
                 <Alert>Unable to load images</Alert>
               ) : (
