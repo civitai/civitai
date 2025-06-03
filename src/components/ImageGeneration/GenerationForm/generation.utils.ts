@@ -264,7 +264,7 @@ export const isMadeOnSite = (meta: ImageMetaProps | null) => {
   return false;
 };
 
-export function getStepMeta(step?: WorkflowStepFormatted) {
+export function getStepMeta(step: WorkflowStepFormatted): any {
   if (!step) return;
   const civitaiResources = step?.resources?.map((args): CivitaiResource => {
     if ('air' in args && typeof args.air === 'string') {
