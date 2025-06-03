@@ -137,6 +137,7 @@
     "embla-carousel-autoplay": "^8.5.2",
     "embla-carousel-react": "^8.5.2",
     "exifreader": "^4.13.0",
+    "fastest-levenshtein": "^1.0.16",
     "file-saver": "^2.0.5",
     "google-auth-library": "^9.15.0",
     "googleapis": "^144.0.0",

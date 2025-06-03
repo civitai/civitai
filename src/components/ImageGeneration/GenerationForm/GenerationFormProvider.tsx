@@ -29,6 +29,7 @@ import {
   getBaseModelSetType,
   getBaseModelSetTypes,
   getIsFluxUltra,
+  getIsHiDream,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
@@ -45,6 +46,7 @@ import type { WorkflowDefinitionType } from '~/server/services/orchestrator/type
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
+import { distance } from 'fastest-levenshtein';
 
 // #region [schemas]
 
@@ -64,7 +66,7 @@ const baseSchema = textToImageParamsSchema
     remixNegativePrompt: z.string().optional(),
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string().optional(),
-    fluxUltraRaw: z.boolean().optional(),
+    fluxUltraRaw: z.boolean().default(false).catch(false),
   });
 const partialSchema = baseSchema.partial();
 const formSchema = baseSchema
@@ -278,7 +280,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       form.setValue(
         'remixSimilarity',
         !!data.params.prompt && !!prompt
-          ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
+          ? similarityPercentage(data.params.prompt, prompt)
           : undefined
       );
       form.setValue('remixPrompt', data.params.prompt);
@@ -432,7 +434,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         ...defaultValues,
         // ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
         fluxMode: fluxModeOptions[1].value,
-        nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
         // creatorTip: overrides.creatorTip ?? 0.25,
         experimental: overrides.experimental ?? false,
@@ -511,8 +512,10 @@ function calculateAdjustedCosineSimilarities(prompt1: string, prompt2: string): 
   return 2 / (1 / adjustedCosSim + 1 / adjustedSetCosSim);
 }
 
-function objectSimilarity(obj1: Record<string, unknown>, obj2: Record<string, unknown>) {
-  // TODO
+function similarityPercentage(str1: string, str2: string) {
+  const levDist = distance(str1, str2);
+  const maxLength = Math.max(str1.length, str2.length);
+  return 1 - levDist / maxLength;
 }
 
 // Example usage

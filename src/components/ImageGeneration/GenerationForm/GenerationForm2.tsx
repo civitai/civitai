@@ -98,6 +98,7 @@ import {
   getIsFluxUltra,
   getIsSD3,
   getIsSdxl,
+  getIsHiDream,
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
   getImageGenerationBaseModels,
@@ -109,9 +110,10 @@ import { fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser, parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
+import { capitalize, getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { hiDreamPrecisions, hiDreamVariants } from '~/shared/orchestrator/hidream.config';
 
 let total = 0;
 const tips = {
@@ -230,7 +232,6 @@ export function GenerationFormContent() {
       aspectRatio,
       upscaleHeight,
       upscaleWidth,
-      fluxUltraRaw,
       ...params
     } = data;
     const additionalResources = formResources ?? [];
@@ -238,7 +239,7 @@ export function GenerationFormContent() {
     const modelClone = clone(model);
 
     delete params.engine;
-    if (model.id === fluxModelId && fluxUltraRaw && params.fluxMode === fluxUltraAir)
+    if (model.model.id === fluxModelId && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
       params.engine = 'flux-pro-raw';
     if (model.id === generationConfig.OpenAI.checkpoint.id) {
       params.engine = 'openai';
@@ -274,7 +275,7 @@ export function GenerationFormContent() {
           resources,
           params: {
             ...params,
-            nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
+            // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
             disablePoi: browsingSettingsAddons.settings.disablePoi,
           },
           tips,
@@ -405,6 +406,7 @@ export function GenerationFormContent() {
   const isSDXL = getIsSdxl(baseModel);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
+  const isHiDream = getIsHiDream(baseModel);
   const disablePriority = runsOnFalAI || isOpenAI;
 
   return (
@@ -418,7 +420,7 @@ export function GenerationFormContent() {
         {...form}
         fields={['baseModel', 'fluxMode', 'draft', 'model', 'workflow', 'sourceImage']}
       >
-        {({ baseModel, fluxMode, draft, model, workflow, sourceImage }) => {
+        {({ baseModel, fluxMode, draft, model, workflow, sourceImage, variant }) => {
           // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
           const isImg2Img = workflow?.startsWith('img') || (isOpenAI && sourceImage);
           const isDraft = isFlux
@@ -447,12 +449,13 @@ export function GenerationFormContent() {
             cfgScaleMin = isDraft ? 1 : 2;
             cfgScaleMax = isDraft ? 1 : 20;
           }
+
           const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
           const disableAdditionalResources = runsOnFalAI || isOpenAI;
-          const disableAdvanced = isFluxUltra || isOpenAI;
-          const disableNegativePrompt = isFlux || isOpenAI;
-          const disableWorkflowSelect = isFlux || isSD3 || isOpenAI;
-          const disableDraft = !features.draft || isOpenAI || isFlux || isSD3;
+          const disableAdvanced = isFluxUltra || isOpenAI || isHiDream;
+          const disableNegativePrompt = isFlux || isOpenAI || (isHiDream && variant !== 'full');
+          const disableWorkflowSelect = isFlux || isSD3 || isOpenAI || isHiDream;
+          const disableDraft = !features.draft || isOpenAI || isFlux || isSD3 || isHiDream;
           const enableImageInput = (features.image && !isFlux && !isSD3) || isOpenAI;
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
@@ -564,7 +567,7 @@ export function GenerationFormContent() {
                                     : getImageGenerationBaseModels(),
                               })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                           }}
-                          hideVersion={isFlux}
+                          hideVersion={isFlux || isHiDream}
                           pb={
                             unstableResources.length ||
                             minorFlaggedResources.length ||
@@ -724,6 +727,25 @@ export function GenerationFormContent() {
                   <Alert className="overflow-visible">
                     This is an experimental build, as such pricing and results are subject to change
                   </Alert>
+                )}
+
+                {isHiDream && (
+                  <>
+                    <div className="flex flex-col gap-0.5">
+                      <Input.Label>Precision</Input.Label>
+                      <InputSegmentedControl name="precision" data={[...hiDreamPrecisions]} />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <Input.Label>Variant</Input.Label>
+                      <InputSegmentedControl
+                        name="variant"
+                        data={[...hiDreamVariants].map((value) => ({
+                          label: capitalize(value),
+                          value,
+                        }))}
+                      />
+                    </div>
+                  </>
                 )}
 
                 {isFlux && (

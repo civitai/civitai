@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel, Sampler } from '~/server/common/constants';
 import { constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
@@ -8,6 +8,7 @@ import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { booleanString, stringArray } from '~/utils/zod-helpers';
 import { imageSchema } from './image.schema';
+import { generationSamplers } from '~/shared/constants/generation.constants';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.nativeEnum(ModelType),
@@ -155,11 +156,9 @@ const sharedGenerationParamsSchema = z.object({
     .max(1500, 'Prompt cannot be longer than 1500 characters'),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.coerce.number().min(1).max(30),
-  sampler: z
-    .string()
-    .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
-      message: 'invalid sampler',
-    }),
+  sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
+    message: 'invalid sampler',
+  }),
   seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
   clipSkip: z.coerce.number().default(1),
   steps: z.coerce.number().min(1).max(100),
@@ -269,11 +268,9 @@ export const generationRequestTestRunSchema = z.object({
   aspectRatio: z.string(),
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),
-  sampler: z
-    .string()
-    .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
-      message: 'invalid sampler',
-    }),
+  sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
+    message: 'invalid sampler',
+  }),
   resources: z.number().array().nullish(),
   draft: z.boolean().optional(),
   creatorTip: z.number().min(0).max(1).optional(),

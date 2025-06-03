@@ -1,4 +1,5 @@
 import type { WorkflowStatus } from '@civitai/client';
+import { Scheduler } from '@civitai/client';
 import type { MantineColor } from '@mantine/core';
 import type { BaseModelSetType, Sampler } from '~/server/common/constants';
 import {
@@ -133,35 +134,37 @@ export const whatIfQueryOverrides = {
   remixSimilarity: 1,
 };
 
-export const samplersToSchedulers: Record<Sampler | 'undefined', string> = {
-  'Euler a': 'EulerA',
-  Euler: 'Euler',
-  LMS: 'LMS',
-  Heun: 'Heun',
-  DPM2: 'DPM2',
-  'DPM2 a': 'DPM2A',
-  'DPM++ 2S a': 'DPM2SA',
-  'DPM++ 2M': 'DPM2M',
-  'DPM++ 2M SDE': 'DPM2MSDE',
-  'DPM++ SDE': 'DPMSDE',
-  'DPM fast': 'DPMFast',
-  'DPM adaptive': 'DPMAdaptive',
-  'LMS Karras': 'LMSKarras',
-  'DPM2 Karras': 'DPM2Karras',
-  'DPM2 a Karras': 'DPM2AKarras',
-  'DPM++ 2S a Karras': 'DPM2SAKarras',
-  'DPM++ 2M Karras': 'DPM2MKarras',
-  'DPM++ 2M SDE Karras': 'DPM2MSDEKarras',
-  'DPM++ SDE Karras': 'DPMSDEKarras',
-  'DPM++ 3M SDE': 'DPM3MSDE',
-  'DPM++ 3M SDE Karras': 'DPM3MSDEKarras',
-  'DPM++ 3M SDE Exponential': 'DPM3MSDEExponential',
-  DDIM: 'DDIM',
-  PLMS: 'PLMS',
-  UniPC: 'UniPC',
-  LCM: 'LCM',
-  undefined: 'undefined',
-};
+export const samplersToSchedulers = {
+  'Euler a': Scheduler.EULER_A,
+  Euler: Scheduler.EULER,
+  LMS: Scheduler.LMS,
+  Heun: Scheduler.HEUN,
+  DPM2: Scheduler.DP_M2,
+  'DPM2 a': Scheduler.DP_M2A,
+  'DPM++ 2S a': Scheduler.DP_M2SA,
+  'DPM++ 2M': Scheduler.DP_M2M,
+  // 'DPM++ 2M SDE': 'DPM2MSDE',
+  'DPM++ SDE': Scheduler.DPMSDE,
+  'DPM fast': Scheduler.DPM_FAST,
+  'DPM adaptive': Scheduler.DPM_ADAPTIVE,
+  'LMS Karras': Scheduler.LMS_KARRAS,
+  'DPM2 Karras': Scheduler.DP_M2KARRAS,
+  'DPM2 a Karras': Scheduler.DP_M2AKARRAS,
+  'DPM++ 2S a Karras': Scheduler.DP_M2SAKARRAS,
+  'DPM++ 2M Karras': Scheduler.DP_M2MKARRAS,
+  // 'DPM++ 2M SDE Karras': 'DPM2MSDEKarras',
+  'DPM++ SDE Karras': Scheduler.DPMSDE_KARRAS,
+  'DPM++ 3M SDE': Scheduler.DP_M3MSDE,
+  // 'DPM++ 3M SDE Karras': 'DPM3MSDEKarras',
+  // 'DPM++ 3M SDE Exponential': 'DPM3MSDEExponential',
+  DDIM: Scheduler.DDIM,
+  PLMS: Scheduler.PLMS,
+  UniPC: Scheduler.UNI_PC,
+  LCM: Scheduler.LCM,
+  undefined: Scheduler.UNDEFINED,
+} as const as Record<Sampler | 'undefined', Scheduler>;
+
+export const generationSamplers = Object.keys(samplersToSchedulers) as Sampler[];
 
 // !important - undefined maps to the same values as 'DPM++ 2M Karras'
 export const samplersToComfySamplers: Record<
@@ -225,6 +228,11 @@ export function getIsSdxl(baseModel?: string) {
   );
 }
 
+export function getIsHiDream(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'HiDream';
+}
+
 export function getIsFlux(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
   return baseModelSetType === 'Flux1';
@@ -282,11 +290,11 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   params: T,
   limits?: GenerationLimits
 ) {
-  if (params.sampler) {
-    params.sampler = (generation.samplers as string[]).includes(params.sampler)
-      ? params.sampler
-      : generation.defaultValues.sampler;
-  }
+  // if (params.sampler) {
+  //   params.sampler = (generation.samplers as string[]).includes(params.sampler)
+  //     ? params.sampler
+  //     : generation.defaultValues.sampler;
+  // }
 
   const maxValueKeys = Object.keys(generation.maxValues);
   for (const item of maxValueKeys) {
@@ -296,7 +304,8 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
 
   if (!params.aspectRatio && params.width && params.height) {
     params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
-    params.fluxUltraAspectRatio = getClosestFluxUltraAspectRatio(params.width, params.height);
+    if (getIsFlux(params.baseModel))
+      params.fluxUltraAspectRatio = getClosestFluxUltraAspectRatio(params.width, params.height);
   }
 
   // handle SDXL ClipSkip
@@ -500,6 +509,10 @@ export const baseModelResourceTypes = {
   SD3_5M: [
     { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3_5M.baseModels },
     { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
+  ],
+  HiDream: [
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.HiDream.baseModels },
+    { type: ModelType.LORA, baseModels: baseModelSets.HiDream.baseModels },
   ],
   HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
   OpenAI: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.OpenAI.baseModels }],

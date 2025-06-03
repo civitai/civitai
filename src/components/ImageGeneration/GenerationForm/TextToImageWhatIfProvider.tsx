@@ -69,7 +69,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     // else params.engine = undefined;
 
     delete params.engine;
-    if (model.id === fluxModelId && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
+    if (model?.model?.id === fluxModelId && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
       params.engine = 'flux-pro-raw';
     if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
 

@@ -14,10 +14,10 @@ import {
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
+import { getHiDreamInput } from '~/shared/orchestrator/hidream.config';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export async function createTextToImageStep(
@@ -26,31 +26,34 @@ export async function createTextToImageStep(
     whatIf?: boolean;
   }
 ) {
-  const { priority, ...inputParams } = input.params;
+  const { priority, ...rest } = input.params;
+  let inputParams = { ...rest };
   inputParams.seed =
     inputParams.seed ?? getRandomInt(inputParams.quantity, maxRandomSeed) - inputParams.quantity;
+
+  if (inputParams.baseModel === 'HiDream') {
+    const hiDreamResult = getHiDreamInput({ resources: input.resources, ...inputParams });
+    input.resources = hiDreamResult.resources;
+    inputParams = hiDreamResult.params as any;
+  } else {
+    inputParams.precision = null;
+    inputParams.variant = null;
+  }
+
   const workflowDefinition = await getWorkflowDefinition(inputParams.workflow);
-  if (workflowDefinition.type === 'txt2img') input.params.sourceImage = null;
+
+  if (workflowDefinition.type === 'txt2img') inputParams.sourceImage = null;
   const { resources, params } = await parseGenerateImageInput({
     ...input,
+    params: inputParams as any,
     workflowDefinition,
   });
-  const withAir = resources.map((resource) => ({
-    ...resource,
-    air: stringifyAIR({
-      baseModel: resource.baseModel,
-      type: resource.model.type,
-      modelId: resource.epochDetails ? resource.epochDetails.jobId : resource.model.id,
-      id: resource.epochDetails ? resource.epochDetails.fileName : resource.id,
-      source: resource.epochDetails ? 'orchestrator' : 'civitai',
-    }),
-  }));
 
   const scheduler = samplersToSchedulers[
     params.sampler as keyof typeof samplersToSchedulers
   ] as Scheduler;
-  const checkpoint = withAir.filter((x) => x.model.type === 'Checkpoint')[0];
-  const additionalNetworks = withAir
+  const checkpoint = resources.filter((x) => x.model.type === 'Checkpoint')[0];
+  const additionalNetworks = resources
     .filter((x) => x.model.type !== 'Checkpoint')
     .reduce<Record<string, ImageJobNetworkParams>>(
       (acc, resource) => ({
