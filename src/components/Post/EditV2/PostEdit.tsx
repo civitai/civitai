@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { CollectionUploadSettingsWrapper } from '~/components/Collections/components/CollectionUploadSettingsWrapper';
-import { PostCollaboratorSelection } from '~/components/Post/EditV2/Collaborators/PostCollaborators';
 import { EditPostReviews } from '~/components/Post/EditV2/EditPostReviews';
 import { PostEditForm } from '~/components/Post/EditV2/PostEditForm';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
@@ -50,7 +49,7 @@ export function PostEdit() {
           <div className="flex flex-col gap-3 @sm:w-72">
             <PostEditSidebar post={post} />
             <EditPostReviews post={post} />
-            <PostCollaboratorSelection post={post} />
+            {/*<PostCollaboratorSelection post={post} />*/}
           </div>
         </div>
       </div>
