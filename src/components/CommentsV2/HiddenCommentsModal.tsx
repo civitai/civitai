@@ -14,7 +14,6 @@ export default function HiddenCommentsModal({ modelId }: { modelId: number }) {
       title="Hidden Comments"
       closeButtonProps={{
         'aria-label': 'Close hidden comments modal',
-        children: 'Close hidden comments modal',
       }}
       size="xl"
       withCloseButton

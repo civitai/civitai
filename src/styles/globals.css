@@ -71,6 +71,10 @@ button, input, optgroup, select, textarea {
   [id] {
     scroll-margin-top: var(--header-height);
   }
+
+  p {
+    margin: 0;
+  }
 }
 
 /* Don't zoom text input on iOS */
@@ -202,10 +206,6 @@ img.load-error {
 
 iframe {
   border: none;
-}
-
-p {
-  margin: 0;
 }
 
 .demo-25 {

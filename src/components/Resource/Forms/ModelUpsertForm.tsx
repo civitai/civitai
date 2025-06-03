@@ -418,6 +418,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                         href="https://education.civitai.com/guide-to-licensing-options-on-civitai/ "
                         target="_blank"
                         rel="nofollow noreferrer"
+                        inherit
                       >
                         Licensing Guide
                       </Anchor>
@@ -509,7 +510,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                     form.setValue('sfwOnly', minor ? true : value === 'true');
                   }}
                 >
-                  <Group mt="sm">
+                  <Group mt="xs">
                     <Radio value="true" label="Yes" disabled={isLocked('poi')} />
                     <Radio value="false" label="No" disabled={isLocked('poi')} />
                   </Group>

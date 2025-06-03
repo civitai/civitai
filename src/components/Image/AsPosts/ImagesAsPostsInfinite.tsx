@@ -248,7 +248,9 @@ export default function ImagesAsPostsInfinite({
               <Text size="xs" c="dimmed" mt="-md">
                 Some images have been hidden based on moderation preferences set by the creator,{' '}
                 <Link legacyBehavior href={`/images?modelVersionId=${selectedVersionId}`} passHref>
-                  <Anchor span>view all images using this resource</Anchor>
+                  <Anchor inherit span>
+                    view all images using this resource
+                  </Anchor>
                 </Link>
                 .
               </Text>

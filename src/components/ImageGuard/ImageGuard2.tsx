@@ -165,7 +165,10 @@ function ImageGuardContentInner({
       {(inView === undefined || inView) && !show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 flex flex-col items-center gap-2 text-white" style={{ transform: 'translate(-50%, -60%)' }}>
+            <div
+              className="pointer-events-none absolute left-1/2 top-1/2 z-20 flex flex-col items-center gap-2 text-white"
+              style={{ transform: 'translate(-50%, -60%)' }}
+            >
               <Text size="sm" className="shadow-black/50 text-shadow-sm">
                 This image is rated
               </Text>

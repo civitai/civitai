@@ -335,7 +335,12 @@ export function ImagesAsPostsCard({
                           variant="light"
                           radius="md"
                           size="lg"
-                          style={{ userSelect: 'none', padding: 4, height: 'auto' }}
+                          style={{
+                            userSelect: 'none',
+                            padding: 4,
+                            height: 'auto',
+                            cursor: 'pointer',
+                          }}
                           color={isThumbsUp ? 'success.5' : 'red'}
                         >
                           <Group gap={4} wrap="nowrap">
@@ -428,7 +433,7 @@ export function ImagesAsPostsCard({
                       {image.hasMeta && (
                         <div className="absolute bottom-0.5 right-0.5 z-10">
                           <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                            <LegacyActionIcon variant="transparent" size="lg">
+                            <LegacyActionIcon component="div" variant="transparent" size="lg">
                               <IconInfoCircle
                                 color="white"
                                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"

@@ -169,7 +169,11 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
           </Center>
         </Alert>
       )}
-      <List listStyleType="none" spacing="lg" styles={{ itemWrapper: { width: '100%' } }}>
+      <List
+        listStyleType="none"
+        spacing="lg"
+        styles={{ itemWrapper: { width: '100%' }, itemLabel: { width: '100%' } }}
+      >
         {comments.map((comment) => {
           const isHighlighted = highlights?.includes(comment.id);
 

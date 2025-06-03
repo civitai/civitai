@@ -20,7 +20,7 @@
 }
 
 .bubbleTooltip {
-  background-color: light-dark(var(--mantine-color-dark-6), var(--mantine-color-white));
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
 }
 
 .richTextEditor {
@@ -28,12 +28,12 @@
   // border-color should be set inline via style prop if it depends on error
 
   // Fixes gapcursor color for dark mode
-  .ProseMirror-gapcursor:after {
-    border-top: 1px solid light-dark(white, black);
+  :global .ProseMirror-gapcursor:after {
+    border-top: 1px solid light-dark(black, white);
   }
 
-  .ProseMirror {
-    // min-height and font-size should be set inline via style prop based on editorSize
+  :global .ProseMirror {
+    min-height: 90px;
 
     p.is-editor-empty:first-of-type::before {
       // color should be set inline via style prop if it depends on error

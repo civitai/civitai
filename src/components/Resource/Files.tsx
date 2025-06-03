@@ -305,7 +305,7 @@ function TrackedFileStatus({
       return (
         <Group justify="space-between" wrap="nowrap" gap="xs" style={{ width: '100%' }}>
           <IconCloudUpload color={theme.colors.blue[getPrimaryShade(theme, colorScheme)]} />
-          <Stack gap={4} style={{ flex: '1 !important' }}>
+          <Stack gap={4} w="100%" style={{ flex: '1 !important' }}>
             <Group gap={4}>
               <Progress.Root size="xl" radius="xs" style={{ flex: 1 }}>
                 <Progress.Section

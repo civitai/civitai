@@ -39,6 +39,7 @@ export function Username({
         size={size}
         fw={500}
         lineClamp={1}
+        td="none"
         className="align-middle drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)] dark:drop-shadow-[1px_1px_1px_rgba(0,0,0,0.2)]"
         inherit={inherit}
         {...additionalTextProps}

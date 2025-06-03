@@ -17,7 +17,14 @@ export function DescriptionTable({
     const item = items[i];
     if (item.visible === false) continue;
 
-    let labelEl = typeof item.label === 'string' ? <Text fw="500">{item.label}</Text> : item.label;
+    let labelEl =
+      typeof item.label === 'string' ? (
+        <Text size="sm" fw="500">
+          {item.label}
+        </Text>
+      ) : (
+        item.label
+      );
     if (item.info) {
       labelEl = (
         <Group gap={4}>

@@ -82,6 +82,11 @@ const theme = createTheme({
         variant: 'subtle',
       },
     },
+    Text: {
+      defaultProps: {
+        size: 'sm',
+      },
+    },
     // InputWrapper: {
     //   classNames: { label: 'w-full' },
     // },

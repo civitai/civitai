@@ -275,6 +275,7 @@ export function RichTextEditor({
     content: value,
     onUpdate: onChange ? ({ editor }) => onChange(editor.getHTML()) : undefined,
     editable: !disabled,
+    immediatelyRender: false,
   });
 
   const editorRef = useRef<Editor>();
@@ -323,7 +324,7 @@ export function RichTextEditor({
       error={error}
       className={inputClasses}
     >
-      <RTE {...props} editor={editor} id={id} className={classes.richTextEditor}>
+      <RTE {...props} editor={editor} id={id} classNames={{ content: classes.richTextEditor }}>
         {!hideToolbar && (
           <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
             {addHeading && (

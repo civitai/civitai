@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Box,
   Button,
   Group,
@@ -172,7 +171,7 @@ export function ModelVersionList({
                   </ThemeIcon>
                 ) : undefined
               }
-              size="compact-md"
+              size="compact-sm"
               style={
                 isEarlyAccess
                   ? {

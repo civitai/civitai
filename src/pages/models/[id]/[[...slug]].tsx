@@ -681,11 +681,11 @@ export default function ModelDetailsV2({
                         </LoginRedirect>
                       </div>
                     </Tooltip>
-                    <AlertWithIcon radius="sm" size="lg" icon={<IconDownload size={18} />}>
+                    <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                       <Text className={classes.modelBadgeText}>
                         {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
                       </Text>
-                    </AlertWithIcon>
+                    </IconBadge>
                     {/* TODO this isn't quite right, we need to check the other couldGenerate options */}
                     {latestGenerationVersion && (
                       <GenerateButton
@@ -696,11 +696,11 @@ export default function ModelDetailsV2({
                         canGenerate={model.canGenerate}
                         data-activity="create:model-stat"
                       >
-                        <AlertWithIcon radius="sm" size="lg" icon={<IconBrush size={18} />}>
+                        <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
                           <Text className={classes.modelBadgeText}>
                             {abbreviateNumber(model.rank?.generationCountAllTime ?? 0)}
                           </Text>
-                        </AlertWithIcon>
+                        </IconBadge>
                       </GenerateButton>
                     )}
                     {features.collections && (
@@ -725,9 +725,12 @@ export default function ModelDetailsV2({
                         entityType="Model"
                       >
                         <IconBadge
+                          className="cursor-pointer"
                           radius="sm"
                           size="lg"
-                          icon={<IconBolt size={18} color="yellow.7" fill="currentColor" />}
+                          icon={
+                            <IconBolt size={18} className="text-yellow-7" fill="currentColor" />
+                          }
                         >
                           <Text
                             className={classes.modelBadgeText}
@@ -779,6 +782,7 @@ export default function ModelDetailsV2({
                         actionIconProps={{
                           className: classes.headerButton,
                         }}
+                        buttonProps={{ className: classes.headerButton }}
                         entityData={getEntityDataForBidModelButton({
                           version: selectedVersion,
                           model,
@@ -798,7 +802,7 @@ export default function ModelDetailsV2({
                     >
                       <Menu.Target>
                         <LegacyActionIcon className={classes.headerButton} variant="light">
-                          <IconDotsVertical />
+                          <IconDotsVertical size={20} />
                         </LegacyActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>

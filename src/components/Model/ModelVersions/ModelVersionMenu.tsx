@@ -1,4 +1,4 @@
-import { Button, Loader, Menu, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import { Button, Loader, Menu, useComputedColorScheme } from '@mantine/core';
 import {
   IconBan,
   IconDotsVertical,
@@ -44,7 +44,6 @@ export function ModelVersionMenu({
 }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
@@ -134,7 +133,7 @@ export function ModelVersionMenu({
             e.stopPropagation();
             e.preventDefault();
           }}
-          size="compact-md"
+          size="compact-sm"
         >
           <IconDotsVertical size={14} />
         </Button>

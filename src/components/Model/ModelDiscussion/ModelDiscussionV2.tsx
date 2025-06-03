@@ -55,23 +55,26 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
                 state={{ modelId }}
                 style={{ display: 'flex', justifyContent: 'center', alignSelf: 'center' }}
               >
-                <Text size="xs" c="dimmed">
-                  <Group gap={4} justify="center">
-                    <IconMessageCancel size={16} />
-                    <Text inherit inline>
-                      {`See ${hiddenCommentsCount} more hidden ${
-                        hiddenCommentsCount > 1 ? 'comments' : 'comment'
-                      }`}
-                    </Text>
-                  </Group>
-                </Text>
+                <Group gap={4} justify="center">
+                  <IconMessageCancel size={16} />
+                  <Text size="xs" c="dimmed" inline>
+                    {`See ${hiddenCommentsCount} more hidden ${
+                      hiddenCommentsCount > 1 ? 'comments' : 'comment'
+                    }`}
+                  </Text>
+                </Group>
               </RoutedDialogLink>
             )}
           </Stack>
         ) : (
           <Paper
             p="xl"
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: 200,
+            }}
           >
             <Stack>
               <Text size="xl">There are no comments for this model yet.</Text>

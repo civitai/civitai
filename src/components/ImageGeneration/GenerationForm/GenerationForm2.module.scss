@@ -48,6 +48,10 @@
   align-items: center;
 }
 
+.accordionLabel {
+  padding: 0;
+}
+
 .accordionItem {
   background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
 
