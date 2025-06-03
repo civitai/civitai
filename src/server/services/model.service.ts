@@ -3,17 +3,24 @@ import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import dayjs from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
+import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { BaseModel, BaseModelType } from '~/server/common/constants';
-import { CacheTTL, constants, FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
+import {
+  CacheTTL,
+  constants,
+  FEATURED_MODEL_COLLECTION_ID,
+  MODELS_SEARCH_INDEX,
+} from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
+import { searchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, modelTagCache, userContentOverviewCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -46,6 +53,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
@@ -274,46 +282,6 @@ export const getModelsRaw = async ({
   // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
   // At that point, we should be relying more on unlisted status which is set by the owner.
   const hidePrivateModels = !ids && !clubId && !username && !user && !followed && !collectionId;
-
-  if (query) {
-    logToAxiom({
-      type: 'error',
-      name: 'unsupported-query',
-      message: 'query not supported for models raw',
-      error: new Error('query not supported').stack,
-      data: JSON.stringify({ query }),
-    }).catch();
-  }
-
-  // commenting out the query support here, as it's very heavy
-  // if (query) {
-  //   const lowerQuery = query?.toLowerCase();
-  //
-  //   AND.push(
-  //     Prisma.sql`(${Prisma.join(
-  //       [
-  //             Prisma.sql`
-  //           m."name" ILIKE ${`%${query}%`}
-  //         `,
-  //         Prisma.sql`
-  //       EXISTS (
-  //         SELECT 1 FROM "ModelVersion" mvq
-  //         JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
-  //         JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
-  //         WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
-  //       )
-  //     `,
-  //         Prisma.sql`
-  //       EXISTS (
-  //         SELECT 1 FROM "ModelVersion" mvq
-  //         WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
-  //       )
-  //     `,
-  //       ],
-  //       ' OR '
-  //     )})`
-  //   );
-  // }
 
   if (!archived) {
     AND.push(
@@ -684,9 +652,22 @@ export const getModelsRaw = async ({
   // model version query
   // additional subqueries?
 
-  const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
+  let models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
     modelQuery
   );
+
+  if (query && models.length > 0 && searchClient) {
+    const request: SearchParams = {
+      filter: `id IN [${models.map((m) => m.id).join(',')}]`,
+      limit: models.length,
+    };
+
+    const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
+      .index(MODELS_SEARCH_INDEX)
+      .search(query, request);
+
+    models = models.filter((m) => results.hits.some((h) => h.id === m.id));
+  }
 
   const userIds = models.map((m) => m.user.id);
   const profilePictures = await getProfilePicturesForUsers(userIds);
