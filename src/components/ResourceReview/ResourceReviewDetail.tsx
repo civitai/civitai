@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Button,
   Center,
@@ -109,16 +110,15 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
           <Group justify="space-between" wrap="nowrap" align="center">
             <Title order={3} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ whiteSpace: 'nowrap' }}>Review:</span>{' '}
-              <Text
+              <Anchor
                 component={Link}
                 href={getModelWithVersionUrl(data)}
-                variant="link"
                 lineClamp={1}
-                style={{ cursor: 'pointer' }}
                 shallow={isModelPage}
+                inherit
               >
                 {data.model.name} - {data.modelVersion.name}
-              </Text>
+              </Anchor>
             </Title>
 
             <Group gap={4} wrap="nowrap">
