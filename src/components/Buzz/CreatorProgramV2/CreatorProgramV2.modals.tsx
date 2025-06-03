@@ -299,7 +299,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
               <Table.Tr key={cap.tier} className="*:p-1">
                 <Table.Td className="font-bold">{capitalize(cap.tier)} Member</Table.Td>
                 <Table.Td>
-                  <p>
+                  <p className="flex">
                     {cap.percentOfPeakEarning
                       ? `${cap.percentOfPeakEarning * 100}% of your Peak Earning Month with `
                       : ''}

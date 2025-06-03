@@ -519,7 +519,7 @@ const EstimatedEarningsCard = () => {
       <div className="flex flex-col gap-2">
         <h3 className="text-xl font-bold">Estimated Earnings</h3>
 
-        <table className="-mt-2 table-auto">
+        <Table className="-mt-2 table-auto">
           <Table.Tbody>
             <Table.Tr className="font-bold">
               <Table.Td colSpan={2} className="border-b">
@@ -576,7 +576,7 @@ const EstimatedEarningsCard = () => {
               </Table.Td>
             </Table.Tr>
           </Table.Tbody>
-        </table>
+        </Table>
 
         <div className="mb-4 flex flex-col gap-0">
           <div className="flex items-center gap-1">
@@ -731,7 +731,7 @@ const WithdrawCashCard = () => {
           )}
         </div>
         <p className="text-sm">Once you&rsquo;ve earned cash, you can withdraw it to your bank</p>
-        <table className="mb-4 table-auto">
+        <Table className="mb-4 table-auto">
           <Table.Tbody>
             <Table.Tr className="border-b">
               <Table.Td>
@@ -784,7 +784,7 @@ const WithdrawCashCard = () => {
               </Table.Tr>
             )}
           </Table.Tbody>
-        </table>
+        </Table>
 
         {!canWithdraw && (
           <Alert color="red" className="mt-auto p-2">
