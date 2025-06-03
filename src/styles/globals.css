@@ -3,16 +3,12 @@
   --footer-height: 45px;
 }
 
-@layer base, theme, mantine, tailwind, utilities;
-
-@layer base {
+@layer {
   @tailwind base;
 }
 
-@layer tailwind {
-  @tailwind components;
-  @tailwind utilities;
-}
+@tailwind components;
+@tailwind utilities;
 
 .mantine-Badge-label {
   overflow: visible;
