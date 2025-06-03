@@ -89,15 +89,14 @@ const RadioImg = ({
 
   const media =
     type === 'img' ? (
-      <Image
-        src={src}
-        width={180}
-        height={255}
-        alt={value}
-        radius="sm"
-        caption={caption}
-        withPlaceholder
-      />
+      <figure>
+        <Image src={src} w={180} h={255} alt={value} radius="sm" withPlaceholder />
+        <figcaption>
+          <Text c="dimmed" align="center" mt={10}>
+            {caption}
+          </Text>
+        </figcaption>
+      </figure>
     ) : (
       <figure>
         <video
@@ -122,7 +121,7 @@ const RadioImg = ({
       </figure>
     );
 
-  return <Radio value={value} label={media} />;
+  return <Radio.Card value={value}>{media}</Radio.Card>;
 };
 
 export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
@@ -370,20 +369,22 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           label="Choose your LoRA type"
           withAsterisk
         >
-          {Object.entries(trainingModelTypesMap)
-            .filter(([, v]) =>
-              !!trainingMediaType ? v.allowedTypes.includes(trainingMediaType) : true
-            )
-            .map(([k, v]) => (
-              <RadioImg
-                value={k}
-                description={v.description}
-                src={v.src}
-                type={v.type}
-                isNew={k === 'Effect' && new Date() < new Date('2025-04-30')}
-                key={k}
-              />
-            ))}
+          <Group justify="between" gap="md">
+            {Object.entries(trainingModelTypesMap)
+              .filter(([, v]) =>
+                !!trainingMediaType ? v.allowedTypes.includes(trainingMediaType) : true
+              )
+              .map(([k, v]) => (
+                <RadioImg
+                  value={k}
+                  description={v.description}
+                  src={v.src}
+                  type={v.type}
+                  isNew={k === 'Effect' && new Date() < new Date('2025-04-30')}
+                  key={k}
+                />
+              ))}
+          </Group>
         </InputRadioGroup>
         <InputText name="name" label="Name" placeholder="Name" withAsterisk />
       </Stack>
