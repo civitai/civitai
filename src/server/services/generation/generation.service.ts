@@ -583,7 +583,7 @@ export async function getResourceData(
   versionIds: { id: number; epoch?: number }[] | number[],
   user: { id?: number; isModerator?: boolean } = {},
   generation = false
-): Promise<GenerationResource[]> {
+): Promise<(GenerationResource & { air: string })[]> {
   if (!versionIds.length) return [];
   const args = (
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
@@ -598,7 +598,7 @@ export async function getResourceData(
     const hasAccess = !!(item.hasAccess || user.id === item.model.userId || user.isModerator);
     const covered =
       (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable;
-    const canGenerate = hasAccess && covered;
+    const canGenerate = covered;
     const epochNumber = args.find((x) => x.id === item.id)?.epoch;
 
     return {
@@ -671,7 +671,26 @@ export async function getResourceData(
     return await getFilesForModelVersionCache(versionIds);
   }
 
-  function getPrimaryFileProps(
+  function getEpochDetails(
+    resource: ReturnType<typeof transformGenerationData>,
+    modelFiles: ModelFileCached[],
+    hasSelectedEpoch: boolean
+  ) {
+    if (resource.status !== 'Published' && !hasSelectedEpoch) {
+      const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
+      if (trainingFile) {
+        const epoch = args.find((x) => x.id === resource.id)?.epoch;
+        const details = getTrainingFileEpochNumberDetails(trainingFile, epoch);
+        if (!details?.isExpired) {
+          return details;
+        }
+      }
+    }
+    delete resource.epochNumber;
+    return null;
+  }
+
+  function getModelFileProps(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
@@ -686,32 +705,25 @@ export async function getResourceData(
     ) {
       additionalResourceCost = false;
     }
-    return { fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined, additionalResourceCost };
-  }
 
-  function getEpochDetails(
-    resource: ReturnType<typeof transformGenerationData>,
-    modelFiles: ModelFileCached[]
-  ) {
-    if (resource.status === 'Published') return null;
-    const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
-    if (trainingFile) {
-      const epoch = args.find((x) => x.id === resource.id)?.epoch;
-      const details = getTrainingFileEpochNumberDetails(trainingFile, epoch);
-      if (details?.isExpired) {
-        delete resource.epochNumber;
-        return null;
-      }
-      return details;
-    }
+    const hasSelectedEpoch = !!primaryFile?.metadata.selectedEpochUrl;
+    const epochDetails = getEpochDetails(resource, modelFiles, hasSelectedEpoch);
+
+    return {
+      fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
+      additionalResourceCost,
+      epochDetails,
+    };
   }
 
   function bringItAllTogether(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const epochDetails = getEpochDetails(resource, modelFiles);
-    const { fileSizeKB, additionalResourceCost } = getPrimaryFileProps(resource, modelFiles);
+    const { fileSizeKB, additionalResourceCost, epochDetails } = getModelFileProps(
+      resource,
+      modelFiles
+    );
     const air = stringifyAIR({
       baseModel: resource.baseModel,
       type: resource.model.type,
@@ -731,7 +743,7 @@ export async function getResourceData(
     const substitute = substitutes.find((x) => x.hasAccess && x.model.id === resource.model.id);
     if (substitute) {
       const { model, ...rest } = bringItAllTogether(substitute, modelFiles);
-      return removeNulls({ ...rest, ...getPrimaryFileProps(substitute, modelFiles) });
+      return removeNulls({ ...rest, ...getModelFileProps(substitute, modelFiles) });
     }
   }
 
