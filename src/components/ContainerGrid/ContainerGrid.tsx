@@ -129,9 +129,12 @@ ContainerGrid.displayName = 'ContainerGrid';
 type ContainerGrid2Props = Omit<GridProps, 'type' | 'breakpoints'>;
 type GridComponent2 = ForwardRefWithStaticComponents<ContainerGrid2Props, { Col: typeof Grid.Col }>;
 
-export const ContainerGrid2: GridComponent2 = forwardRef<HTMLDivElement, Omit<ContainerGrid2Props, 'type' | 'breakpoints'>>(({ gutter = 'md', children, ...props }, ref) => {
+export const ContainerGrid2: GridComponent2 = forwardRef<
+  HTMLDivElement,
+  Omit<ContainerGrid2Props, 'type' | 'breakpoints'>
+>(({ gutter = 'md', children, ...props }, ref) => {
   return (
-    <Grid type='container' gutter={gutter} breakpoints={breakpoints} {...props}>
+    <Grid type="container" gutter={gutter} breakpoints={breakpoints} {...props}>
       {children}
     </Grid>
   );

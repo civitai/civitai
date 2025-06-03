@@ -399,7 +399,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
           <Stack>
             <Paper radius="md" p="xl" withBorder>
               <ContainerGrid2 gutter="xs">
-                <ContainerGrid2.Col span={{ base: 12, sm: 6 }}>
+                <ContainerGrid2.Col span={{ base: 12, xs: 6 }}>
                   <Stack gap="xs">
                     <Text size="md" fw={500} style={{ lineHeight: 1.2 }} mb="xs">
                       {`When using this model, I give permission for users to:`}
@@ -425,7 +425,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                     </Text>
                   </Stack>
                 </ContainerGrid2.Col>
-                <ContainerGrid2.Col span={{ base: 12, sm: 6 }}>
+                <ContainerGrid2.Col span={{ base: 12, xs: 6 }}>
                   <Stack gap="xs">
                     <Stack gap={4}>
                       <Group gap={4} wrap="nowrap">
@@ -509,8 +509,10 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                     form.setValue('sfwOnly', minor ? true : value === 'true');
                   }}
                 >
-                  <Radio value="true" label="Yes" disabled={isLocked('poi')} />
-                  <Radio value="false" label="No" disabled={isLocked('poi')} />
+                  <Group mt="sm">
+                    <Radio value="true" label="Yes" disabled={isLocked('poi')} />
+                    <Radio value="false" label="No" disabled={isLocked('poi')} />
+                  </Group>
                 </InputRadioGroup>
                 {/* TODO more clarification here. disable? */}
                 {poi === 'true' && (
