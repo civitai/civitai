@@ -293,6 +293,7 @@ export enum BanReasonCode {
   SexualPOI = 'SexualPOI',
   Bestiality = 'Bestiality',
   Scat = 'Scat',
+  Nudify = 'Nudify',
   Harassment = 'Harassment',
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
