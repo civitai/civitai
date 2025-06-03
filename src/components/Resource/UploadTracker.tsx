@@ -57,16 +57,14 @@ export function UploadTracker() {
           {uploadingItems.map(({ uuid, name, progress, speed, timeRemaining, status }) => (
             <Stack key={uuid} gap="xs">
               <Group gap="xs" wrap="nowrap">
-                <Group wrap="nowrap">
-                  <IconCloudUpload
-                    color={
-                      status === 'uploading'
-                        ? theme.colors.blue[getPrimaryShade(theme, colorScheme)]
-                        : undefined
-                    }
-                    size={20}
-                  />
-                </Group>
+                <IconCloudUpload
+                  color={
+                    status === 'uploading'
+                      ? theme.colors.blue[getPrimaryShade(theme, colorScheme)]
+                      : undefined
+                  }
+                  size={20}
+                />
                 <Text size="sm" fw={500} lineClamp={1} style={{ flex: 1, display: 'inline-block' }}>
                   {name}
                 </Text>

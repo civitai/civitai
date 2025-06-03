@@ -30,6 +30,7 @@ export function UserAvatarProfilePicture({
               <ImageGuard2.BlurToggle>
                 {(toggle) => (
                   <LegacyActionIcon
+                    component="div"
                     color="red"
                     radius="xl"
                     style={{

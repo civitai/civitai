@@ -1,6 +1,7 @@
 export declare const accordionContent: string;
 export declare const accordionControl: string;
 export declare const accordionItem: string;
+export declare const accordionLabel: string;
 export declare const fillForm: string;
 export declare const formError: string;
 export declare const generateButtonQuantityInput: string;

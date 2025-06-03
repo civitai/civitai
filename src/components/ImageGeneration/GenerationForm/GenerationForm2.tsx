@@ -591,6 +591,7 @@ export function GenerationFormContent() {
                                 item: classes.accordionItem,
                                 control: classes.accordionControl,
                                 content: classes.accordionContent,
+                                label: classes.accordionLabel,
                               }}
                               transitionDuration={0}
                             >
@@ -1059,6 +1060,7 @@ export function GenerationFormContent() {
                       item: classes.accordionItem,
                       control: classes.accordionControl,
                       content: classes.accordionContent,
+                      label: classes.accordionLabel,
                     }}
                     transitionDuration={0}
                   >

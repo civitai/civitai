@@ -22,7 +22,7 @@ import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-// import classes from '~/components/Search/SearchLayout.module.scss';
+import searchClasses from '~/components/Search/SearchLayout.module.scss';
 import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -153,7 +153,7 @@ function ResourceHitList() {
     <div className="flex flex-col gap-3 p-3">
       {hiddenCount > 0 && <HiddenNotice hiddenCount={hiddenCount} />}
 
-      <div className={cardClasses.grid}>
+      <div className={searchClasses.grid}>
         {collections.map((collection) => (
           <CollectionSelectCard key={collection.id} data={collection} />
         ))}

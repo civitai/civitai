@@ -1,5 +1,5 @@
 import type { ActionIconProps, ButtonProps } from '@mantine/core';
-import { ActionIcon, Button, Group, Paper, Stack, Text, Tooltip } from '@mantine/core';
+import { Button, Group, Paper, Stack, Text, Tooltip } from '@mantine/core';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import NumberFlow from '@number-flow/react';
 import { IconCheck, IconGavel, IconUsers, IconX } from '@tabler/icons-react';
@@ -248,11 +248,10 @@ export const BidModelButton = ({
       onClick={handle}
       disabled={!destAuction}
       color="gray"
-      size="xl"
       variant="light"
       {...actionIconProps}
     >
-      <IconGavel size={30} />
+      <IconGavel size={20} />
     </LegacyActionIcon>
   );
 

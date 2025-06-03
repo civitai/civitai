@@ -21,7 +21,7 @@
   z-index: 12;
   display: block;
   background-image: linear-gradient(90deg,
-      light-dark(var(--mantine-color-dark-7), #fff) 0%,
+      light-dark(#fff, var(--mantine-color-dark-7)) 0%,
       transparent 100%);
 }
 
@@ -34,7 +34,7 @@
   z-index: 12;
   display: block;
   background-image: linear-gradient(270deg,
-      light-dark(var(--mantine-color-dark-7), #fff) 0%,
+      light-dark(#fff, var(--mantine-color-dark-7)) 0%,
       transparent 100%);
 }
 

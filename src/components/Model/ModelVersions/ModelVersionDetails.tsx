@@ -360,7 +360,9 @@ export function ModelVersionDetails({
         <Group gap={4}>
           {!downloadsDisabled && (
             <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Downloads">
-              <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
+              <Text fz={11} fw="bold" inline>
+                {(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}
+              </Text>
             </IconBadge>
           )}
           {canGenerate ? (
@@ -382,17 +384,26 @@ export function ModelVersionDetails({
               onPurchase={() => onPurchase('generation')}
             >
               <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
-                <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
+                <Text fz={11} fw="bold" inline>
+                  {abbreviateNumber(version.rank?.generationCountAllTime ?? 0)}
+                </Text>
               </IconBadge>
             </GenerateButton>
           ) : (
             <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
-              <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
+              <Text fz={11} fw="bold" inline>
+                {(version.rank?.generationCountAllTime ?? 0).toLocaleString()}
+              </Text>
             </IconBadge>
           )}
           {version.rank?.earnedAmountAllTime && (
             <IconBadge radius="xs" icon={<IconBolt size={14} />} tooltip="Buzz Earned">
-              <Text title={(version.rank?.earnedAmountAllTime).toLocaleString()}>
+              <Text
+                fz={11}
+                fw="bold"
+                title={(version.rank?.earnedAmountAllTime).toLocaleString()}
+                inline
+              >
                 {abbreviateNumber(version.rank?.earnedAmountAllTime)}
               </Text>
             </IconBadge>
@@ -406,7 +417,7 @@ export function ModelVersionDetails({
         <ModelVersionPopularity
           versionId={version.id}
           isCheckpoint={model.type === ModelType.Checkpoint}
-          listenForUpdates={true}
+          listenForUpdates
         />
       ),
       visible: canGenerate && features.auctions && model.type === ModelType.Checkpoint,
@@ -437,7 +448,7 @@ export function ModelVersionDetails({
           </Group>
         ) : (
           <Group gap={8} justify="space-between" wrap="nowrap">
-            <Text>
+            <Text size="sm">
               {version.baseModel}{' '}
               {version.baseModelType && version.baseModelType === 'Standard'
                 ? ''
@@ -1095,6 +1106,7 @@ export function ModelVersionDetails({
             value={detailAccordions}
             styles={(theme) => ({
               content: { padding: 0 },
+              label: { padding: 0 },
               item: {
                 overflow: 'hidden',
                 borderColor: colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
@@ -1102,6 +1114,7 @@ export function ModelVersionDetails({
               },
               control: {
                 padding: theme.spacing.sm,
+                gap: theme.spacing.md,
               },
             })}
           >

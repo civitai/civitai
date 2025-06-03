@@ -46,6 +46,7 @@
 
 .modelBadgeText {
   font-size: var(--mantine-font-size-md);
+  font-weight: bold;
 
   @container (max-width: theme('screens.md')) {
     font-size: var(--mantine-font-size-sm);
