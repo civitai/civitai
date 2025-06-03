@@ -17,10 +17,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
-import {
-  ProfileSection,
-  ProfileSectionPreview,
-} from '~/components/Profile/ProfileSection';
+import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
 import classes from '~/components/Profile/ProfileSection.module.css';
 
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -59,7 +56,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
           <ProfileSectionPreview />
         ) : (
           <ProfileSection title="Recent Reviews" icon={<IconStar />}>
-            <ContainerGrid2 className={sectionClasses.ContainerGrid}>
+            <ContainerGrid2 className={sectionClasses.containerGrid}>
               <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
                 <Stack>
                   {resourceReviews.map((review) => {

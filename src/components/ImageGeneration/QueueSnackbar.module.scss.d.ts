@@ -1,2 +1,2 @@
 export declare const card: string;
-export declare const inner: string;
+export declare const label: string;

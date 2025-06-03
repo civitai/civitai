@@ -69,7 +69,7 @@ export function ProfileHeader({ username }: { username: string }) {
                     className="w-full max-w-full absolute-center"
                   />
                 )}
-                <div className={classes.coverImageNSFWActions}>
+                <div className={classes.coverImageNsfwActions}>
                   <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                   <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
                 </div>

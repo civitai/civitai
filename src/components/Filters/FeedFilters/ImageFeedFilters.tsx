@@ -15,17 +15,10 @@ export function ImageFeedFilters({
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
-      {currentUser && (
-        <FollowedFilter
-          type="images"
-          variant="button"
-          buttonProps={{ className: classes.subnavDropdown }}
-        />
-      )}
-      <SortFilter type="images" className={classes.subnavDropdown} />
+      {currentUser && <FollowedFilter type="images" variant="button" />}
+      <SortFilter type="images" />
       <MediaFiltersDropdown
         w="100%"
-        className={classes.subnavDropdown}
         filterType="images"
         hideMediaTypes={hideMediaTypes}
         hideTools={hideTools}

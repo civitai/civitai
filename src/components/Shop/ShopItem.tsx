@@ -58,7 +58,7 @@ export const ShopItem = ({
     dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));
 
   return (
-    <Paper className={`${classes.card} ${isNew ? classes.new : ''}`}>
+    <Paper className={`${classes.card} ${isNew ? classes.newItem : ''}`}>
       {isNew && (
         <Badge color="yellow.7" className={classes.newBadge} variant="filled">
           New!

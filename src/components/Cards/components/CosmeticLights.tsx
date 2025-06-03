@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import clsx from 'clsx';
 import styles from './CosmeticLights.module.scss';
@@ -11,11 +10,17 @@ export function CosmeticLights({ cosmetic }: Props) {
   const { lights, color, brightness } = cosmetic ?? {};
   if (!lights) return null;
 
+  const brightnessClass = brightness ? (`brightness${brightness * 100}` as const) : '';
+
   return (
     <div
-      className={`${styles.light} ${
-        !color ? '' : styles[color as 'red' | 'green' | 'blue' | 'yellow']
-      } ${!brightness ? '' : styles['brightness-' + brightness * 100]}`}
+      className={clsx(
+        styles.light,
+        color && styles[color as 'red' | 'green' | 'blue' | 'yellow'],
+        brightnessClass &&
+          brightnessClass in styles &&
+          styles[brightnessClass as keyof typeof styles]
+      )}
     >
       {Array(lights)
         .fill(0)

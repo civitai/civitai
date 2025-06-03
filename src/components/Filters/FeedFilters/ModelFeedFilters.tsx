@@ -35,15 +35,9 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
           </Popover.Dropdown>
         </Popover>
       )}
-      {currentUser && (
-        <FollowedFilter
-          type="models"
-          variant="button"
-          buttonProps={{ className: classes.subnavDropdown }}
-        />
-      )}
-      <SortFilter type="models" className={classes.subnavDropdown} />
-      <ModelFiltersDropdown w="100%" size="compact-sm" className={classes.subnavDropdown} isFeed />
+      {currentUser && <FollowedFilter type="models" variant="button" />}
+      <SortFilter type="models" />
+      <ModelFiltersDropdown w="100%" size="compact-sm" isFeed />
     </Group>
   );
 }

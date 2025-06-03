@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { InstagramEmbed, XEmbed, YouTubeEmbed } from 'react-social-media-embed';
 import classes from './SocialBlock.module.scss';
 import clsx from 'clsx';
+import { camelCase } from 'lodash-es';
 
 export type SocialBlockProps = {
   url: string;
@@ -33,9 +34,10 @@ const socialBlockComponent: Record<
 
 export function SocialBlock({ url, type }: SocialBlockProps) {
   const SocialComponent = socialBlockComponent[type];
+  const socialClass = camelCase(type) as keyof typeof classes;
 
   return (
-    <div className={clsx(classes.card, classes[type])}>
+    <div className={clsx(classes.card, classes[socialClass])}>
       <SocialComponent url={url} />
     </div>
   );

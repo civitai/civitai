@@ -11,15 +11,9 @@ export function PostFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
-      {currentUser && (
-        <FollowedFilter
-          type="posts"
-          variant="button"
-          buttonProps={{ className: classes.subnavDropdown }}
-        />
-      )}
-      <SortFilter type="posts" className={classes.subnavDropdown} />
-      <PostFiltersDropdown w="100%" size="compact-sm" className={classes.subnavDropdown} />
+      {currentUser && <FollowedFilter type="posts" variant="button" />}
+      <SortFilter type="posts" />
+      <PostFiltersDropdown w="100%" size="compact-sm" />
     </Group>
   );
 }

@@ -11,15 +11,9 @@ export function ArticleFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
-      {currentUser && (
-        <FollowedFilter
-          type="articles"
-          variant="button"
-          buttonProps={{ className: classes.subnavDropdown }}
-        />
-      )}
-      <SortFilter type="articles" className={classes.subnavDropdown} />
-      <ArticleFiltersDropdown w="100%" size="compact-sm" className={classes.subnavDropdown} />
+      {currentUser && <FollowedFilter type="articles" variant="button" />}
+      <SortFilter type="articles" />
+      <ArticleFiltersDropdown w="100%" size="compact-sm" />
     </Group>
   );
 }

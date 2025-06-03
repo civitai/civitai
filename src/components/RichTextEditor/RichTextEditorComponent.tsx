@@ -323,7 +323,7 @@ export function RichTextEditor({
       error={error}
       className={inputClasses}
     >
-      <RTE {...props} editor={editor} id={id} className={classes.ritchTextEditor}>
+      <RTE {...props} editor={editor} id={id} className={classes.richTextEditor}>
         {!hideToolbar && (
           <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
             {addHeading && (

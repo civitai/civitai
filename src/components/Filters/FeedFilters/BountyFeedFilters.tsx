@@ -7,8 +7,8 @@ import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 export function BountyFeedFilters({ ...groupProps }: GroupProps) {
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
-      <SortFilter type="bounties" className={classes.subnavDropdown} />
-      <BountyFiltersDropdown size="compact-sm" w="100%" className={classes.subnavDropdown} />
+      <SortFilter type="bounties" />
+      <BountyFiltersDropdown size="compact-sm" w="100%" />
     </Group>
   );
 }

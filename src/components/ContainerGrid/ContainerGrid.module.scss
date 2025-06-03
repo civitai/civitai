@@ -4,6 +4,39 @@ $gridAlign: stretch;
  
 
 .grid {
+  /* Col variables:  */
+  --col-gutter: 0;
+  --col-columns: 12;
+  --col-grow: 0;
+  --col-offset: 0;
+  --col-span: auto;
+  --col-order: 0;
+
+  /* Breakpoint-specific variables */
+  --col-gutter-xs: var(--col-gutter);
+  --col-gutter-sm: var(--col-gutter);
+  --col-gutter-md: var(--col-gutter);
+  --col-gutter-lg: var(--col-gutter);
+  --col-gutter-xl: var(--col-gutter);
+
+  --col-offset-xs: var(--col-offset);
+  --col-offset-sm: var(--col-offset);
+  --col-offset-md: var(--col-offset);
+  --col-offset-lg: var(--col-offset);
+  --col-offset-xl: var(--col-offset);
+
+  --col-span-xs: var(--col-span);
+  --col-span-sm: var(--col-span);
+  --col-span-md: var(--col-span);
+  --col-span-lg: var(--col-span);
+  --col-span-xl: var(--col-span);
+
+  --col-order-xs: var(--col-order);
+  --col-order-sm: var(--col-order);
+  --col-order-md: var(--col-order);
+  --col-order-lg: var(--col-order);
+  --col-order-xl: var(--col-order);
+  
   display: flex;
   flex-wrap: wrap;
   justify-content: var(--grid-justify, $gridJustify);
@@ -29,37 +62,4 @@ $gridAlign: stretch;
   @container (min-width: theme('screens.xl')) {
     margin: calc(var(--grid-gutter-xl, $gridGutter) / -2);
   }
-
-  /* Col variables:  */
-    --col-gutter: 0;
-    --col-columns: 12;
-    --col-grow: 0;
-    --col-offset: 0;
-    --col-span: auto;
-    --col-order: 0;
-  
-    /* Breakpoint-specific variables */
-    --col-gutter-xs: var(--col-gutter);
-    --col-gutter-sm: var(--col-gutter);
-    --col-gutter-md: var(--col-gutter);
-    --col-gutter-lg: var(--col-gutter);
-    --col-gutter-xl: var(--col-gutter);
-  
-    --col-offset-xs: var(--col-offset);
-    --col-offset-sm: var(--col-offset);
-    --col-offset-md: var(--col-offset);
-    --col-offset-lg: var(--col-offset);
-    --col-offset-xl: var(--col-offset);
-  
-    --col-span-xs: var(--col-span);
-    --col-span-sm: var(--col-span);
-    --col-span-md: var(--col-span);
-    --col-span-lg: var(--col-span);
-    --col-span-xl: var(--col-span);
-  
-    --col-order-xs: var(--col-order);
-    --col-order-sm: var(--col-order);
-    --col-order-md: var(--col-order);
-    --col-order-lg: var(--col-order);
-    --col-order-xl: var(--col-order);
 }

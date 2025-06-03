@@ -32,7 +32,6 @@ export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
         <FollowedFilter
           type="images"
           variant="button"
-          buttonProps={{ className: classes.subnavDropdown }}
           value={`${followed}`}
           onChange={(value) => replace({ followed: value === 'true' })}
         />
@@ -40,11 +39,9 @@ export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
       <SortFilter
         type="images"
         value={sort}
-        className={classes.subnavDropdown}
         onChange={(value) => replace({ sort: value as ImageSort })}
       />
       <MediaFiltersDropdown
-        className={classes.subnavDropdown}
         w="100%"
         filterType="images"
         query={{

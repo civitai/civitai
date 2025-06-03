@@ -7,8 +7,8 @@ import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 export function ToolFeedFilters({ ...groupProps }: GroupProps) {
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
-      <SortFilter type="tools" className={classes.subnavDropdown} />
-      <ToolFiltersDropdown w="100%" size="compact-sm" className={classes.subnavDropdown} />
+      <SortFilter type="tools" />
+      <ToolFiltersDropdown w="100%" size="compact-sm" />
     </Group>
   );
 }

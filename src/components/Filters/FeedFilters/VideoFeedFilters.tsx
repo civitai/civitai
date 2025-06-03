@@ -11,22 +11,9 @@ export function VideoFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
-      {currentUser && (
-        <FollowedFilter
-          type="videos"
-          variant="button"
-          buttonProps={{ className: classes.subnavDropdown }}
-        />
-      )}
-      <SortFilter type="videos" className={classes.subnavDropdown} />
-      <MediaFiltersDropdown
-        w="100%"
-        className={classes.subnavDropdown}
-        filterType="videos"
-        hideMediaTypes
-        size="compact-sm"
-        isFeed
-      />
+      {currentUser && <FollowedFilter type="videos" variant="button" />}
+      <SortFilter type="videos" />
+      <MediaFiltersDropdown w="100%" filterType="videos" hideMediaTypes size="compact-sm" isFeed />
     </Group>
   );
 }

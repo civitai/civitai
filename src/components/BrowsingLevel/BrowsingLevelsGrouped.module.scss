@@ -6,6 +6,8 @@
   width: 100%;
   display: inline-flex;
   justify-content: center;
+  padding-left: 10px;
+  padding-right: 10px;
 
   &[data-checked] {
     &,
@@ -23,9 +25,6 @@
       }
     }
   }
-
-  padding-left: 10px;
-  padding-right: 10px;
 
   @media (min-width: theme('screens.xs')) {
     & {
