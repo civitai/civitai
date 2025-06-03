@@ -38,12 +38,12 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 
-import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
-import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import AlertDialog from '../Dialog/Common/AlertDialog';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useQueryBuzzPackages } from '~/components/Buzz/buzz.utils';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
-import { dialogStore } from '../Dialog/dialogStore';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import classes from '~/components/Buzz/buzz.module.scss';
@@ -506,51 +506,51 @@ export const BuzzPurchase = ({
                 <Accordion.Panel>
                   <Stack>
                     <Table>
-                      <thead>
-                        <tr>
-                          <th>Purchase</th>
-                          <th>Get</th>
-                          <th>Bonus %</th>
-                          <th>Buzz / $</th>
-                        </tr>
-                      </thead>
-                      <tbody>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Purchase</Table.Th>
+                          <Table.Th>Get</Table.Th>
+                          <Table.Th>Bonus %</Table.Th>
+                          <Table.Th>Buzz / $</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
                         {buzzBulkBonusMultipliers.map(([min, multiplier]) => {
                           return (
-                            <tr key={min}>
-                              <td>
+                            <Table.Tr key={min}>
+                              <Table.Td>
                                 <Group wrap="nowrap" gap={0}>
                                   <CurrencyIcon size={16} currency={Currency.BUZZ} />
                                   <Text size="sm" c="dimmed">
                                     {numberWithCommas(min)}
                                   </Text>
                                 </Group>
-                              </td>
-                              <td>
+                              </Table.Td>
+                              <Table.Td>
                                 <Group wrap="nowrap" gap={0}>
                                   <CurrencyIcon size={16} currency={Currency.BUZZ} />
                                   <Text size="sm" c="dimmed">
                                     {numberWithCommas(min * multiplier)}
                                   </Text>
                                 </Group>
-                              </td>
-                              <td>
+                              </Table.Td>
+                              <Table.Td>
                                 <Text size="sm" c="dimmed">
                                   {Math.round((multiplier - 1) * 100)}%
                                 </Text>
-                              </td>
-                              <td>
+                              </Table.Td>
+                              <Table.Td>
                                 <Group wrap="nowrap" gap={0}>
                                   <CurrencyIcon size={16} currency={Currency.BUZZ} />
                                   <Text size="sm" c="dimmed">
                                     {numberWithCommas(Math.floor(1000 * multiplier))}
                                   </Text>
                                 </Group>
-                              </td>
-                            </tr>
+                              </Table.Td>
+                            </Table.Tr>
                           );
                         })}
-                      </tbody>
+                      </Table.Tbody>
                     </Table>
                     <Text size="xs" c="dimmed">
                       * Bulk bonus is Blue Buzz. It is not transferable to other users.
@@ -594,14 +594,17 @@ export const BuzzPurchase = ({
               {(features.nowpaymentPayments || features.coinbasePayments) && (
                 <Stack align="center">
                   <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
-                    Never purchased with Crypto before?{' '}
-                    <Anchor
-                      href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Learn how
-                    </Anchor>
+                    <Text size="xs">
+                      Never purchased with Crypto before?{' '}
+                      <Anchor
+                        size="xs"
+                        href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Learn how
+                      </Anchor>
+                    </Text>
                   </AlertWithIcon>
                 </Stack>
               )}
@@ -609,7 +612,9 @@ export const BuzzPurchase = ({
               <Stack gap={0} align="center" my={4}>
                 <p className="mb-0 text-xs opacity-50">
                   By clicking Pay Now, you agree to our{' '}
-                  <Link href="/content/tos">Terms of Service</Link>
+                  <Anchor component={Link} size="xs" href="/content/tos" inherit>
+                    Terms of Service
+                  </Anchor>
                 </p>
                 <p className="text-xs opacity-50">
                   Transactions will appear as CIVIT AI INC on your billing statement

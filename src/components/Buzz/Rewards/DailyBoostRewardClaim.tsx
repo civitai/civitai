@@ -5,7 +5,7 @@ import { trpc } from '~/utils/trpc';
 
 export const DailyBoostRewardClaim = () => {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
     {

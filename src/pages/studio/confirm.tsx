@@ -26,7 +26,7 @@ export default function Confirm() {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.tier !== undefined;
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const [email, setEmail] = useState(currentUser?.email);
   const { data: air, isLoading } = trpc.integration.airStatus.useQuery(undefined, {
     enabled: !!currentUser,
@@ -115,7 +115,7 @@ export default function Confirm() {
       ) : (
         <ContainerGrid2 justify="center">
           {products?.map((product) => (
-            <ContainerGrid2.Col key={product.id} span={{ base: 12, sm: 6, md: 4 }}>
+            <ContainerGrid2.Col key={product.id} span={{ base: 12, xs: 6, sm: 4 }}>
               <PlanCard product={product} subscription={subscription} />
             </ContainerGrid2.Col>
           ))}

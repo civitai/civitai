@@ -17,7 +17,7 @@ export function GenerationPromptModal({
   nextIndex,
   onClose,
 }: Props) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const form = useForm({
     schema: upsertExplorationPromptSchema,
     defaultValues: { ...prompt, id: versionId, modelId, index: prompt?.index ?? nextIndex },

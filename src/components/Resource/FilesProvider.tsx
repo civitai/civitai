@@ -73,7 +73,7 @@ export const useFilesContext = () => {
 };
 
 export function FilesProvider({ model, version, children }: FilesProviderProps) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
 

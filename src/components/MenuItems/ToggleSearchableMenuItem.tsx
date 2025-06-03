@@ -7,7 +7,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 
 export function ToggleSearchableMenuItem({ entityType, entityId }: Props) {
   const currentUser = useCurrentUser();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const { data: entities = [], isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
     {
       entityId: [entityId],

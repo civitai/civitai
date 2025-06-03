@@ -1,5 +1,13 @@
 import type { AlertProps, MantineColor, MantineTheme } from '@mantine/core';
-import { Alert, Group, Stack, Text, useComputedColorScheme, useMantineTheme, darken } from '@mantine/core';
+import {
+  Alert,
+  Group,
+  Stack,
+  Text,
+  useComputedColorScheme,
+  useMantineTheme,
+  darken,
+} from '@mantine/core';
 import type { StorageType } from '~/hooks/useStorage';
 import { useStorage } from '~/hooks/useStorage';
 import { useIsClient } from '~/providers/IsClientProvider';
@@ -53,6 +61,8 @@ function AlertContentInner({
   const colorScheme = useComputedColorScheme('dark');
   const styles = getStyle({ color, theme, colorScheme });
 
+  children ??= content;
+
   return (
     <Alert
       py={8}
@@ -76,9 +86,13 @@ function AlertContentInner({
               {title}
             </Text>
           )}
-          <Text size={contentSize} style={styles.text}>
-            {children ?? content}
-          </Text>
+          {typeof children === 'string' ? (
+            <Text size={contentSize} style={styles.text}>
+              {children ?? content}
+            </Text>
+          ) : (
+            children
+          )}
         </Stack>
       </Group>
     </Alert>

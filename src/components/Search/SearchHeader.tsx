@@ -26,7 +26,6 @@ import {
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { useSearchLayout } from '~/components/Search/SearchLayout';
-import searchLayoutClasses from '~/components/Search/SearchLayout.module.scss';
 import classes from './SearchHeader.module.scss';
 
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -239,7 +238,6 @@ export const SearchHeader = () => {
                 className="bg-gray-1 text-black dark:bg-dark-6 dark:text-white"
                 radius="xl"
                 p={11}
-                // className={searchLayoutClasses.filterButton}
               >
                 <IconFilter />
               </ThemeIcon>

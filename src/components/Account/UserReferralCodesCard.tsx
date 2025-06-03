@@ -31,7 +31,7 @@ export function UserReferralCodesCard() {
   const { data: userReferralCodes = [], isLoading } = trpc.userReferralCode.getAll.useQuery({
     includeCount: true,
   });
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { mutate: upsertUserReferralCode, isLoading: upsertingCode } =
     trpc.userReferralCode.upsert.useMutation({
       onSuccess: async (_, req) => {

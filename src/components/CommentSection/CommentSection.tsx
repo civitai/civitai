@@ -35,7 +35,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
   const currentUser = useCurrentUser();
   const router = useRouter();
   const theme = useMantineTheme();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
   highlights = highlights?.filter((x) => x);
 

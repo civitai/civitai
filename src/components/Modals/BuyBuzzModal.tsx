@@ -1,4 +1,4 @@
-import { CloseButton, Group, Stack, Text, Divider, Modal } from '@mantine/core';
+import { CloseButton, Group, Stack, Text, Divider, Modal, Anchor } from '@mantine/core';
 
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
 import { useTrackEvent } from '../TrackView/track.utils';
@@ -49,17 +49,15 @@ export default function BuyBuzzModal({
         <DismissibleAlert
           id="rewards-program-notice"
           content={
-            <Text align="center">
-              <Text
-                component="a"
-                href="/user/buzz-dashboard#rewards"
-                target="_blank"
-                variant="link"
-                td="underline"
-              >
-                Learn how to earn free Buzz daily
-              </Text>
-            </Text>
+            <Anchor
+              size="sm"
+              href="/user/buzz-dashboard#rewards"
+              target="_blank"
+              td="underline"
+              inherit
+            >
+              Learn how to earn free Buzz daily
+            </Anchor>
           }
           radius="md"
         />

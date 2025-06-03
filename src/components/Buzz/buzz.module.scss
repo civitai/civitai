@@ -54,7 +54,7 @@
 }
 
 .tileCard {
-  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
+  background-color: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-0));
   border-radius: var(--mantine-radius-md);
 }
 
@@ -85,19 +85,19 @@
   width: 100%;
   border-radius: var(--mantine-radius-md);
 
-  &[data-variant='filled'] {
-    background-color: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-0));
+  &[data-variant="filled"] {
+    background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
   }
 
   &[data-checked] {
     border: 2px solid var(--mantine-color-accent-5);
     color: var(--mantine-color-accent-5);
     padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+    background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
 
-    &[data-variant='filled'],
-    &[data-variant='filled']:hover {
-      background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-white));
-    }
+    // &[data-variant="filled"],
+    // &[data-variant="filled"]:hover {
+    // }
   }
 }
 
@@ -111,7 +111,7 @@
 
 // Accordion styling
 .accordionItem {
-  background-color: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-0));
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
 
   &:first-of-type,
   &:first-of-type>[data-accordion-control] {
@@ -125,9 +125,9 @@
     border-bottom-right-radius: var(--mantine-radius-md);
   }
 
-  &[data-active='true'] {
+  &[data-active="true"] {
     border: 1px solid var(--mantine-color-accent-5);
-    background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-white));
+    background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
   }
 }
 

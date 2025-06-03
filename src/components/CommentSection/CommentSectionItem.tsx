@@ -27,7 +27,7 @@ import { trpc } from '~/utils/trpc';
 
 export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   // TODO Briant: This is a hack to support direct linking to a comment...
   // I wanted to just use a hash, but that broke things on refresh...
   const directLink = new URL(window.location.href);

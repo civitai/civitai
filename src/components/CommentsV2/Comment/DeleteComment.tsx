@@ -22,7 +22,7 @@ export function DeleteComment({
   }) => React.ReactElement;
   id: number;
 } & CommentConnectorInput) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { created } = useCommentsContext();
   const { mutate, isLoading } = trpc.commentv2.delete.useMutation({
     async onSuccess(response, request) {

@@ -64,37 +64,39 @@ export default function Contests() {
           ) : flatData?.length ?? 0 ? (
             <Stack>
               <Table highlightOnHover withTableBorder>
-                <thead>
-                  <tr>
-                    <th>Contest Name</th>
-                    <th>Created at</th>
-                    <th>Type</th>
-                    <th>Submissions Start Date</th>
-                    <th>Submissions End Date</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Contest Name</Table.Th>
+                    <Table.Th>Created at</Table.Th>
+                    <Table.Th>Type</Table.Th>
+                    <Table.Th>Submissions Start Date</Table.Th>
+                    <Table.Th>Submissions End Date</Table.Th>
+                    <Table.Th />
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {flatData.map((collection) => (
-                    <tr key={collection.id}>
-                      <td>
+                    <Table.Tr key={collection.id}>
+                      <Table.Td>
                         <Group gap={4}>
                           <Text>{collection.name}</Text>
                         </Group>
-                      </td>
-                      <td>{formatDate(collection.createdAt)}</td>
-                      <td>{collection.type ? getDisplayName(collection.type) : 'N/A'}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{formatDate(collection.createdAt)}</Table.Td>
+                      <Table.Td>
+                        {collection.type ? getDisplayName(collection.type) : 'N/A'}
+                      </Table.Td>
+                      <Table.Td>
                         {collection.metadata?.submissionStartDate
                           ? formatDate(collection.metadata?.submissionStartDate)
                           : 'N/A'}
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         {collection.metadata?.submissionEndDate
                           ? formatDate(collection.metadata?.submissionEndDate)
                           : 'N/A'}
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <LegacyActionIcon
                           component={Link}
                           href={`/collections/${collection.id}`}
@@ -109,10 +111,10 @@ export default function Contests() {
                             size={26}
                           />
                         </LegacyActionIcon>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   ))}
-                </tbody>
+                </Table.Tbody>
               </Table>
               {hasNextPage && (
                 <Center>

@@ -19,7 +19,7 @@ export function NewsletterToggle({
   }) => JSX.Element | null;
 }) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { data: subscription, isLoading } = trpc.newsletter.getSubscription.useQuery();
   const { mutate } = trpc.newsletter.updateSubscription.useMutation({
     async onMutate({ subscribed }) {

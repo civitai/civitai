@@ -30,7 +30,7 @@ export function CommentDiscussionMenu({
   hideLockOption = false,
   ...props
 }: Props) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const dialog = useDialogContext();
   const user = useCurrentUser();
 

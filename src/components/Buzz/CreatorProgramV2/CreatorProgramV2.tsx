@@ -520,34 +520,34 @@ const EstimatedEarningsCard = () => {
         <h3 className="text-xl font-bold">Estimated Earnings</h3>
 
         <table className="-mt-2 table-auto">
-          <tbody>
-            <tr className="font-bold">
-              <td colSpan={2} className="border-b">
+          <Table.Tbody>
+            <Table.Tr className="font-bold">
+              <Table.Td colSpan={2} className="border-b">
                 <div className="flex items-center gap-1">
                   <span>Compensation Pool</span>
                   <LegacyActionIcon onClick={openCompensationPoolModal}>
                     <IconInfoCircle size={18} />
                   </LegacyActionIcon>
                 </div>
-              </td>
-              <td className="border-b border-l py-1 pl-2">
+              </Table.Td>
+              <Table.Td className="border-b border-l py-1 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-b">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-b">
                 Total Banked Buzz
-              </td>
-              <td className="border-b border-l py-1 pl-2">
+              </Table.Td>
+              <Table.Td className="border-b border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td>Your Banked Buzz</td>
-              <td className="text-right">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td>Your Banked Buzz</Table.Td>
+              <Table.Td className="text-right">
                 {cap && (
                   <Text
                     variant="link"
@@ -562,8 +562,8 @@ const EstimatedEarningsCard = () => {
                     {abbreviateNumber(cap)} Cap
                   </Text>
                 )}
-              </td>
-              <td className="border-l py-1 pl-2">
+              </Table.Td>
+              <Table.Td className="border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(banked.total)}</span>
@@ -573,9 +573,9 @@ const EstimatedEarningsCard = () => {
                     </Badge>
                   )}
                 </div>{' '}
-              </td>
-            </tr>
-          </tbody>
+              </Table.Td>
+            </Table.Tr>
+          </Table.Tbody>
         </table>
 
         <div className="mb-4 flex flex-col gap-0">
@@ -732,37 +732,37 @@ const WithdrawCashCard = () => {
         </div>
         <p className="text-sm">Once you&rsquo;ve earned cash, you can withdraw it to your bank</p>
         <table className="mb-4 table-auto">
-          <tbody>
-            <tr className="border-b">
-              <td>
+          <Table.Tbody>
+            <Table.Tr className="border-b">
+              <Table.Td>
                 <div className="flex items-center gap-1">
                   <span>Pending Settlement </span>
                   <LegacyActionIcon onClick={openSettlementModal}>
                     <IconInfoCircle size={14} />
                   </LegacyActionIcon>
                 </div>
-              </td>
-              <td className="border-l py-1 pl-2">
+              </Table.Td>
+              <Table.Td className="border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   $<span>{formatCurrencyForDisplay(userCash?.pending ?? 0, Currency.USD)}</span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td>
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td>
                 <div className="flex items-center gap-2">
                   <span>Ready to Withdraw </span>
                 </div>
-              </td>
-              <td className="border-l py-1 pl-2">
+              </Table.Td>
+              <Table.Td className="border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   $<span>{formatCurrencyForDisplay(userCash?.ready ?? 0, Currency.USD)}</span>
                 </div>
-              </td>
-            </tr>
+              </Table.Td>
+            </Table.Tr>
             {userCash?.withdrawn > 0 && (
-              <tr className="border-t">
-                <td>
+              <Table.Tr className="border-t">
+                <Table.Td>
                   <div className="flex items-center gap-2">
                     <span>Total Withdrawn </span>
                     <LegacyActionIcon
@@ -775,15 +775,15 @@ const WithdrawCashCard = () => {
                       <IconHistory size={14} />
                     </LegacyActionIcon>
                   </div>
-                </td>
-                <td className="border-l py-1 pl-2">
+                </Table.Td>
+                <Table.Td className="border-l py-1 pl-2">
                   <div className="flex items-center gap-2">
                     $<span>{formatCurrencyForDisplay(userCash?.withdrawn ?? 0, Currency.USD)}</span>
                   </div>
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )}
-          </tbody>
+          </Table.Tbody>
         </table>
 
         {!canWithdraw && (
@@ -928,18 +928,18 @@ const WithdrawalHistoryModal = () => {
               <p className="text-center opacity-50">You have no withdrawal history.</p>
             ) : (
               <Table className="table-auto">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Amount</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Date</Table.Th>
+                    <Table.Th>Amount</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {withdrawalHistory?.map((withdrawal) => (
-                    <tr key={withdrawal.id}>
-                      <td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA z')}</td>
-                      <td>
+                    <Table.Tr key={withdrawal.id}>
+                      <Table.Td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA z')}</Table.Td>
+                      <Table.Td>
                         <div className="flex items-center gap-2">
                           <span>${formatCurrencyForDisplay(withdrawal.amount)}</span>
                           {withdrawal.fee && (
@@ -951,8 +951,8 @@ const WithdrawalHistoryModal = () => {
                             </Tooltip>
                           )}
                         </div>
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <div className="flex items-center gap-2">
                           <span>{getDisplayName(withdrawal.status)}</span>
                           {withdrawal.note && (
@@ -961,10 +961,10 @@ const WithdrawalHistoryModal = () => {
                             </Tooltip>
                           )}
                         </div>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   ))}
-                </tbody>
+                </Table.Tbody>
               </Table>
             )}
           </div>

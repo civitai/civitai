@@ -52,7 +52,7 @@ import { isDefined } from '~/utils/type-guards';
 export default function CollectionEditModal({ collectionId }: { collectionId?: number }) {
   const router = useRouter();
   const dialog = useDialogContext();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
 
   const {

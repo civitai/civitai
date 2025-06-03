@@ -23,7 +23,7 @@ export function SocialLinkModal({
   };
   onClose: () => void;
 }) {
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const { data: session } = useSession();
 
   const form = useForm({ schema, defaultValues: selected });

@@ -26,9 +26,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    if (true) {
-      return { notFound: true };
-    }
+    return { notFound: true };
   },
 });
 

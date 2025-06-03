@@ -139,7 +139,7 @@ function ModerationControls<T extends { id: number }>({
 }) {
   const selected = imageSelectStore.useSelection();
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const moderateTagsMutation = trpc.tag.moderateTags.useMutation({
     async onMutate({ entityIds, disable }) {
       await queryUtils.image.getModeratorReviewQueue.cancel();

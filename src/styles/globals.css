@@ -58,6 +58,11 @@ button, input, optgroup, select, textarea {
     text-decoration: none;
   }
 
+  ul {
+    margin: 0;
+    padding: 0;
+  }
+
   button {
     background: transparent;
     border: none;
@@ -65,6 +70,10 @@ button, input, optgroup, select, textarea {
 
   .mantine-Accordion-label {
     padding: 0;
+  }
+
+  [id] {
+    scroll-margin-top: var(--header-height);
   }
 }
 

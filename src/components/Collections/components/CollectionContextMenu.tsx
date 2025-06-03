@@ -26,7 +26,7 @@ export function CollectionContextMenu({
   mode,
   ...menuProps
 }: Props) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const router = useRouter();
   const currentUser = useCurrentUser();
 

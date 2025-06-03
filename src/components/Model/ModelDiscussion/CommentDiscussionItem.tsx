@@ -28,7 +28,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
   );
   const { data: model } = trpc.model.getById.useQuery({ id: comment.modelId });
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
     async onMutate({ id, reaction }) {

@@ -173,7 +173,7 @@ export default function EarnPotential() {
             </Text>
           </Stack>
           <Card p={0} withBorder shadow="xs">
-            <Card.Section withBorder p="xs">
+            <Card.Section p="xs" m={0} withBorder inheritPadding>
               <Text fw={500} size="lg">
                 Generation Earning Potential
               </Text>
@@ -192,7 +192,7 @@ export default function EarnPotential() {
             />
           </Card>
           <Card p={0} withBorder shadow="xs">
-            <Card.Section withBorder p="xs">
+            <Card.Section p="xs" m={0} withBorder inheritPadding>
               <Text fw={500} size="lg">
                 Early Access Earning Potential
               </Text>

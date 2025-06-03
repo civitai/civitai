@@ -2,7 +2,6 @@ import {
   Accordion,
   Box,
   Container,
-  Grid,
   Group,
   Stack,
   Text,
@@ -20,6 +19,7 @@ import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import classes from './index.module.scss';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 const contentRoot = 'src/static-content/rules';
 const files = ['minors', 'real-people'];
@@ -86,8 +86,8 @@ export default function Safety({
         </Container>
       </div>
       <Container size="lg">
-        <Grid gutter="lg">
-          <Grid.Col span={{ base: 12, sm: 4 }} className="hide-mobile">
+        <ContainerGrid2 gutter="lg">
+          <ContainerGrid2.Col span={{ base: 12, sm: 4 }} className="hidden @sm:block">
             <Box pos="sticky" top={0}>
               <Group>
                 <IconList size={20} />
@@ -95,8 +95,8 @@ export default function Safety({
               </Group>
               <TableOfContent headings={headings} />
             </Box>
-          </Grid.Col>
-          <Grid.Col span={{ base: 12, sm: 8 }}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
             <TypographyStylesProvider>
               <article className={classes.content}>
                 <a id="welcome" />
@@ -374,8 +374,8 @@ export default function Safety({
                 </p>
               </article>
             </TypographyStylesProvider>
-          </Grid.Col>
-        </Grid>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
       </Container>
     </>
   );

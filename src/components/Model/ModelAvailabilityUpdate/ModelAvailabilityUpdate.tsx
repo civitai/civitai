@@ -6,7 +6,7 @@ import { trpc } from '~/utils/trpc';
 
 export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
   const dialog = useDialogContext();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const handleClose = dialog.onClose;
   const [publishVersions, setPublishVersions] = useState(true);
 

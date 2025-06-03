@@ -27,11 +27,7 @@
   &[data-checked] {
     border: 2px solid var(--mantine-color-accent-5);
     color: var(--mantine-color-accent-5);
-
-    &[data-variant="filled"],
-    &[data-variant="filled"]:hover {
-      background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
-    }
+    background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
   }
 }
 

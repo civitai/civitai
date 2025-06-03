@@ -4,12 +4,10 @@ import { IconBellFilled } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
 
-import { constants } from '~/server/common/constants';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -45,7 +43,7 @@ export function ProfileHeader({ username }: { username: string }) {
     return null;
   }
 
-  const { profile, stats } = user;
+  const { profile } = user;
 
   const renderCoverImage = () => {
     if (!image) {
@@ -91,12 +89,7 @@ export function ProfileHeader({ username }: { username: string }) {
     return (
       <Alert px="xs" className={classes.message}>
         <Group gap="xs" wrap="nowrap">
-          <ThemeIcon
-            size={32}
-            // @ts-ignore: transparent variant does work
-            variant="transparent"
-            p={0}
-          >
+          <ThemeIcon size={32} variant="transparent" p={0}>
             <IconBellFilled />
           </ThemeIcon>
           <Stack gap={0}>

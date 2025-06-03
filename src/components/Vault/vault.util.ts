@@ -11,7 +11,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const useMutateVault = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const onError = (error: any, message = 'There was an error while performing your request') => {
     try {

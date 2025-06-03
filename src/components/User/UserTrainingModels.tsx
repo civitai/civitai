@@ -241,25 +241,25 @@ export default function UserTrainingModels() {
           striped={hasTraining}
           highlightOnHover={hasTraining}
         >
-          <thead className={clsx(styles.header, { [styles.scrolled]: scrolled })}>
-            <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Model</th>
-              <th>Training Status</th>
-              <th>Created</th>
-              <th>Start</th>
-              <th>Missing Info</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+          <Table.Thead className={clsx(styles.header, { [styles.scrolled]: scrolled })}>
+            <Table.Tr>
+              <Table.Th>Name</Table.Th>
+              <Table.Th>Type</Table.Th>
+              <Table.Th>Model</Table.Th>
+              <Table.Th>Training Status</Table.Th>
+              <Table.Th>Created</Table.Th>
+              <Table.Th>Start</Table.Th>
+              <Table.Th>Missing Info</Table.Th>
+              <Table.Th>Actions</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
             {isLoading && (
-              <tr>
-                <td colSpan={7}>
+              <Table.Tr>
+                <Table.Td colSpan={7}>
                   <LoadingOverlay visible={true} />
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )}
             {hasTraining ? (
               items.map((mv) => {
@@ -296,7 +296,7 @@ export default function UserTrainingModels() {
                   // onAuxClick should work, but for some reason doesn't handle middle clicks
                   // onMouseUp is not perfect, but it's the closest thing we've got
                   // which means all click events inside that need to also be mouseUp, so they can be properly de-propagated
-                  <tr
+                  <Table.Tr
                     key={mv.id}
                     style={{ cursor: 'pointer' }}
                     onMouseUp={(e) => {
@@ -309,16 +309,16 @@ export default function UserTrainingModels() {
                       }
                     }}
                   >
-                    <td>
+                    <Table.Td>
                       <Group gap={4}>
                         <Text>{mv.model.name}</Text>
                         {mv.name !== mv.model.name && <Text>({mv.name})</Text>}
                       </Group>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <Badge>{splitUppercase(thisTrainingDetails?.type ?? '-')}</Badge>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <Text>
                         {isDefined(thisTrainingDetails?.baseModel)
                           ? thisTrainingDetails.baseModel in trainingModelInfo
@@ -328,8 +328,8 @@ export default function UserTrainingModels() {
                             : 'Custom'
                           : '-'}
                       </Text>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       {mv.trainingStatus ? (
                         <Group gap="sm">
                           <HoverCard shadow="md" width={300} zIndex={100} withArrow>
@@ -396,8 +396,8 @@ export default function UserTrainingModels() {
                       ) : (
                         <Badge color="gray">N/A</Badge>
                       )}
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <HoverCard openDelay={400} shadow="md" zIndex={100} withArrow>
                         <HoverCard.Target>
                           <Text>{formatDate(mv.createdAt)}</Text>
@@ -408,11 +408,11 @@ export default function UserTrainingModels() {
                           </HoverCard.Dropdown>
                         )}
                       </HoverCard>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <Text>{startStr}</Text>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <Group gap={8} wrap="nowrap">
                         {!hasFiles || !hasTrainingParams ? (
                           <IconAlertCircle color="orange" />
@@ -430,8 +430,8 @@ export default function UserTrainingModels() {
                           {hasFiles && hasTrainingParams && <Text inherit>All good!</Text>}
                         </Stack>
                       </Group>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <Group justify="flex-end" gap={8} pr="xs" wrap="nowrap">
                         {mv.trainingStatus === TrainingStatus.InReview && (
                           <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
@@ -479,23 +479,23 @@ export default function UserTrainingModels() {
                           <IconTrash size={16} />
                         </LegacyActionIcon>
                       </Group>
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                   // </Link>
                 );
               })
             ) : !isLoading ? (
-              <tr>
-                <td colSpan={7}>
+              <Table.Tr>
+                <Table.Td colSpan={7}>
                   <Center py="md">
                     <NoContent message="You have no training models" />
                   </Center>
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             ) : (
               <></>
             )}
-          </tbody>
+          </Table.Tbody>
         </Table>
       </ScrollArea>
       {pagination.totalPages > 1 && (

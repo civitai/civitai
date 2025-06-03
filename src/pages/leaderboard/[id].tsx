@@ -217,9 +217,7 @@ export default function Leaderboard() {
                     {board === 'season' ? (
                       <Stack gap={4}>
                         <Text fw={500}>Rank is calculated based on:</Text>
-                        <Code block color="blue">
-                          {selectedLeaderboard?.scoringDescription}
-                        </Code>
+                        <Code block>{selectedLeaderboard?.scoringDescription}</Code>
                         <Text c="dimmed" size="xs">
                           Only the last 30 days are considered
                         </Text>
@@ -227,7 +225,7 @@ export default function Leaderboard() {
                     ) : board === 'legend' ? (
                       <Stack gap={4}>
                         <Text fw={500}>Score is calculated based on:</Text>
-                        <Code block color="blue">
+                        <Code block>
                           {`Diamond - 1st place: ${
                             constants.leaderboard.legendScoring.diamond * 100
                           } points per day

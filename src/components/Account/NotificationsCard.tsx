@@ -13,7 +13,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function NotificationsCard() {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { hasNotifications, hasCategory, notificationSettings, isLoading } =
     useNotificationSettings();

@@ -279,7 +279,7 @@ function ReportDrawer({
   const theme = useMantineTheme();
   const mobile = useIsMobile();
   const href = useMemo(() => (report ? getReportLink(report) : null), [report]);
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const form = useForm({
     schema,
@@ -464,7 +464,7 @@ function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?
   const queryClient = useQueryClient();
   // TODO.manuel - not sure why we use useQueryClient here to optimistically update the query
   // but doing this hotfix for now
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { mutate, isLoading } = trpc.report.setStatus.useMutation({
     onSuccess(_, request) {

@@ -38,7 +38,7 @@ export const TosModal = ({
   const { data, isLoading } = trpc.content.get.useQuery({
     slug,
   });
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const updateUserSettings = trpc.user.setSettings.useMutation({
     async onSuccess(res) {

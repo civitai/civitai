@@ -21,7 +21,7 @@ export default function UnpublishModal({
 }) {
   const dialog = useDialogContext();
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const [reason, setReason] = useState<UnpublishReason | undefined>();
   const [customMessage, setCustomMessage] = useState<string>('');
   const [error, setError] = useState<string>('');

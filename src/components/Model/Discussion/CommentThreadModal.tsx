@@ -21,7 +21,7 @@ export default function CommentThreadModal({
   highlight?: number;
 }) {
   const dialog = useDialogContext();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
 
   const { data: comment, isLoading: commentLoading } = trpc.comment.getById.useQuery({

@@ -703,7 +703,7 @@ export const PrivateModelAutomaticSetup = ({
   ...form
 }: ModelUpsertSchema & { modelVersionId?: number }) => {
   const dialog = useDialogContext();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const handleClose = dialog.onClose;
   const router = useRouter();
   const privateModelFromTrainingMutation = trpc.model.privateModelFromTraining.useMutation();

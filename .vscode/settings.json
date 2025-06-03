@@ -34,6 +34,13 @@
       "file": ".vscode/rules/migrate-createStyles.md"
     }
   ],
+  "cssVariables.lookupFiles": [
+    "**/*.css",
+    "**/*.scss",
+    "**/*.sass",
+    "**/*.less",
+    "node_modules/@mantine/core/styles.css"
+  ],
   "sqltools.connections": [
     {
       "previewLimit": 50,

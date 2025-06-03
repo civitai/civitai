@@ -116,7 +116,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
   ) => {
     return (
       <Table striped verticalSpacing={0} horizontalSpacing={0}>
-        <tbody>
+        <Table.Tbody>
           {partners.map(
             (
               {
@@ -134,8 +134,8 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
               },
               index
             ) => (
-              <tr key={index} style={{ opacity: !enabled ? 1 : undefined }}>
-                <td>
+              <Table.Tr key={index} style={{ opacity: !enabled ? 1 : undefined }}>
+                <Table.Td>
                   <Group justify="space-between" p="sm">
                     <Group gap="xs">
                       <Text>{name}</Text>
@@ -229,12 +229,12 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                       )}
                     </Group>
                   </Group>
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )
           )}
           {extra}
-        </tbody>
+        </Table.Tbody>
       </Table>
     );
   };

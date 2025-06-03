@@ -31,7 +31,7 @@ const schema = upsertQuestionSchema.extend({ tags: z.string().array().nullish() 
 
 export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const user = useCurrentUser();
 
   const form = useForm({

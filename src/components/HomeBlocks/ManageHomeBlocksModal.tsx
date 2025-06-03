@@ -57,7 +57,7 @@ function ManageHomeBlocks({ onClose }: Props) {
       permanent: false,
     });
 
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
 
   const isLoading = isLoadingSystemHomeBlocks || isLoadingOwnedHomeBlocks;
   const [items, setItems] = useState<HomeBlockGetAll>(homeBlocks);

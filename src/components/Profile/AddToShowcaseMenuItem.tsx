@@ -4,7 +4,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 export function AddToShowcaseMenuItem({ entityType, entityId }: Props) {
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const addToShowcaseMutation = trpc.userProfile.addEntityToShowcase.useMutation({
     onSuccess: async () => {
       showSuccessNotification({ message: `${entityType} has been added to showcase` });

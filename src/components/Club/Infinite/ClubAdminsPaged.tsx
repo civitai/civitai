@@ -1,17 +1,12 @@
 import {
-  ActionIcon,
   Alert,
-  Box,
   Center,
-  Code,
-  CopyButton,
   Group,
   Loader,
   LoadingOverlay,
   Pagination,
   Table,
   Text,
-  Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
@@ -78,26 +73,26 @@ export function ClubAdminsPaged({ clubId }: Props) {
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <Table>
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Admin since</th>
-                <th>Permissions</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>User</Table.Th>
+                <Table.Th>Admin since</Table.Th>
+                <Table.Th>Permissions</Table.Th>
+                <Table.Th>&nbsp;</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {admins.map((admin) => {
                 return (
-                  <tr key={admin.user.id}>
-                    <td>
+                  <Table.Tr key={admin.user.id}>
+                    <Table.Td>
                       <UserAvatar withUsername user={admin.user} />
-                    </td>
-                    <td>{formatDate(admin.createdAt)}</td>
-                    <td style={{ maxWidth: 300 }}>
+                    </Table.Td>
+                    <Table.Td>{formatDate(admin.createdAt)}</Table.Td>
+                    <Table.Td style={{ maxWidth: 300 }}>
                       <Text>{admin.permissions.map((p) => getDisplayName(p)).join(', ')}</Text>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <Group justify="flex-end">
                         <LegacyActionIcon
                           variant="transparent"
@@ -124,11 +119,11 @@ export function ClubAdminsPaged({ clubId }: Props) {
                           <IconTrash />
                         </LegacyActionIcon>
                       </Group>
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 );
               })}
-            </tbody>
+            </Table.Tbody>
             {pagination && pagination.totalPages > 1 && (
               <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>

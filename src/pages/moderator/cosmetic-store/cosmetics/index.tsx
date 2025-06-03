@@ -200,45 +200,45 @@ export default function CosmeticStoreProducts() {
             <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
             <Table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Sample</th>
-                  <th>Shop Items</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Type</Table.Th>
+                  <Table.Th>Sample</Table.Th>
+                  <Table.Th>Shop Items</Table.Th>
+                  <Table.Th>&nbsp;</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {cosmetics.map((cosmetic) => {
                   return (
-                    <tr key={cosmetic.id}>
-                      <td>
+                    <Table.Tr key={cosmetic.id}>
+                      <Table.Td>
                         <Stack gap={0} maw={350}>
                           <Text>{cosmetic.name}</Text>
                           <Text c="dimmed" size="sm">
                             {cosmetic.description}
                           </Text>
                         </Stack>
-                      </td>
-                      <td>{cosmetic.type}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{cosmetic.type}</Table.Td>
+                      <Table.Td>
                         <CosmeticSample cosmetic={cosmetic} />
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <Badge color={cosmetic._count?.cosmeticShopItems > 0 ? 'blue' : 'gray'}>
                           {cosmetic._count?.cosmeticShopItems} Shop items
                         </Badge>
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <LegacyActionIcon component={Link} href="/moderator/rewards/update/test">
                           <IconEdit />
                         </LegacyActionIcon>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   );
                 })}
-              </tbody>
+              </Table.Tbody>
               {pagination && pagination.totalPages > 1 && (
                 <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>

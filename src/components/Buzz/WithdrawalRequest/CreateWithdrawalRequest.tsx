@@ -37,7 +37,7 @@ const schema = createBuzzWithdrawalRequestSchema;
 
 export const CreateWithdrawalRequest = () => {
   const dialog = useDialogContext();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const handleClose = dialog.onClose;
   const { createBuzzWithdrawalRequest, creatingBuzzWithdrawalRequest } =

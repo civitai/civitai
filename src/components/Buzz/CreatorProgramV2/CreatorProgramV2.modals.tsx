@@ -283,22 +283,22 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
       </p>
 
       <Table className="table-auto">
-        <thead>
-          <tr className="text-left">
-            <th>Tier</th>
-            <th>Cap</th>
-          </tr>
-        </thead>
-        <tbody>
+        <Table.Thead>
+          <Table.Tr className="text-left">
+            <Table.Th>Tier</Table.Th>
+            <Table.Th>Cap</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
           {CAP_DEFINITIONS.map((cap) => {
             if (cap.hidden) {
               return null;
             }
 
             return (
-              <tr key={cap.tier} className="*:p-1">
-                <td className="font-bold">{capitalize(cap.tier)} Member</td>
-                <td>
+              <Table.Tr key={cap.tier} className="*:p-1">
+                <Table.Td className="font-bold">{capitalize(cap.tier)} Member</Table.Td>
+                <Table.Td>
                   <p>
                     {cap.percentOfPeakEarning
                       ? `${cap.percentOfPeakEarning * 100}% of your Peak Earning Month with `
@@ -307,22 +307,22 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
                     {!cap.limit ? (
                       'no cap'
                     ) : cap.percentOfPeakEarning ? (
-                      <span className="flex">
+                      <span className="inline-flex">
                         a <CurrencyIcon currency={Currency.BUZZ} className="inline" />
                         {abbreviateNumber(cap.limit)} cap
                       </span>
                     ) : (
-                      <span className="flex">
+                      <span className="inline-flex">
                         <CurrencyIcon currency={Currency.BUZZ} className="inline" />
                         {abbreviateNumber(cap.limit)}
                       </span>
                     )}
                   </p>
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             );
           })}
-        </tbody>
+        </Table.Tbody>
       </Table>
 
       {banked && banked?.cap && (

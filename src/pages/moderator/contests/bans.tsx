@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Button,
   Center,
   Container,
@@ -36,7 +35,7 @@ function ContestBanUserModal() {
 
   const [selectedUser, setSelectedUser] = useState<QuickSearchUserType | null>(null);
   const [banReason, setBanReason] = useState<string | undefined>();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onSuccess() {
@@ -174,23 +173,23 @@ export default function ContestsBans() {
           ) : users?.length ?? 0 ? (
             <Stack>
               <Table highlightOnHover withTableBorder>
-                <thead>
-                  <tr>
-                    <th>Username</th>
-                    <th>Reason</th>
-                    <th>Banned At</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Username</Table.Th>
+                    <Table.Th>Reason</Table.Th>
+                    <Table.Th>Banned At</Table.Th>
+                    <Table.Th />
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {users.map((user) => (
-                    <tr key={user.id}>
-                      <td>
+                    <Table.Tr key={user.id}>
+                      <Table.Td>
                         <Group gap={4}>
                           <Text>{user.username}</Text>
                         </Group>
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         {user.meta?.contestBanDetails?.detailsInternal ? (
                           <RenderHtml
                             html={user.meta?.contestBanDetails?.detailsInternal}
@@ -199,14 +198,14 @@ export default function ContestsBans() {
                         ) : (
                           'N/A'
                         )}
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         {user.meta?.contestBanDetails?.bannedAt
                           ? formatDate(user.meta?.contestBanDetails?.bannedAt)
                           : 'N/A'}
-                      </td>
+                      </Table.Td>
 
-                      <td>
+                      <Table.Td>
                         <LegacyActionIcon
                           onClick={() => {
                             onToggleBanUser(user.id);
@@ -217,10 +216,10 @@ export default function ContestsBans() {
                             <IconTrashOff size={16} />
                           </Tooltip>
                         </LegacyActionIcon>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   ))}
-                </tbody>
+                </Table.Tbody>
               </Table>
             </Stack>
           ) : (

@@ -18,7 +18,7 @@ import { trpc } from '~/utils/trpc';
 
 export default function Downloads() {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.download.getAllByUser.useInfiniteQuery(

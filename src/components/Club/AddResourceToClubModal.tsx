@@ -37,7 +37,7 @@ type Props = {
 };
 
 export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const { upsertClubResource, upsertingResource } = useMutateClub();
   const [resource, setResource] = React.useState<
     SearchIndexDataMap['models'] | SearchIndexDataMap['articles'] | null

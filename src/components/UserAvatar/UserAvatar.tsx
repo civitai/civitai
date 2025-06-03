@@ -250,7 +250,7 @@ export function UserAvatar({
             </UserProfileLink>
           )}
           {subText && (typeof subText === 'string' || subTextForce) ? (
-            <Text size={subTextSize} c="dimmed" my={-2} lineClamp={1}>
+            <Text component="div" size={subTextSize} c="dimmed" my={-2} lineClamp={1}>
               {subText}
             </Text>
           ) : (

@@ -124,33 +124,33 @@ export default function ModeratorPaddleAdjustments() {
         ) : !!adjustments.length ? (
           <Stack>
             <Table>
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>Created at</th>
-                  <th>Currency</th>
-                  <th>Amount</th>
-                  <th>Status</th>
-                  <th>Customer</th>
-                  <th>Reason</th>
-                </tr>
-              </thead>
-              <tbody>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Type</Table.Th>
+                  <Table.Th>Created at</Table.Th>
+                  <Table.Th>Currency</Table.Th>
+                  <Table.Th>Amount</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th>Customer</Table.Th>
+                  <Table.Th>Reason</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {adjustments.map((adjustment) => {
                   return (
-                    <tr key={adjustment.id}>
-                      <td>{toPascalCase(adjustment.action.replace('_', ' '))}</td>
-                      <td>{formatDate(adjustment.createdAt)}</td>
-                      <td>{adjustment.currencyCode ?? 'N/A'}</td>
-                      <td>
+                    <Table.Tr key={adjustment.id}>
+                      <Table.Td>{toPascalCase(adjustment.action.replace('_', ' '))}</Table.Td>
+                      <Table.Td>{formatDate(adjustment.createdAt)}</Table.Td>
+                      <Table.Td>{adjustment.currencyCode ?? 'N/A'}</Table.Td>
+                      <Table.Td>
                         {adjustment.payoutTotals?.total
                           ? formatPriceForDisplay(parseInt(adjustment.payoutTotals?.total, 10))
                           : 'N/A'}
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <Badge>{getDisplayName(adjustment.status.replace('_', ' '))}</Badge>
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <Stack gap={0}>
                           <Anchor
                             size="xs"
@@ -178,12 +178,12 @@ export default function ModeratorPaddleAdjustments() {
                             Retool
                           </Anchor>
                         </Stack>
-                      </td>
-                      <td>{adjustment.reason}</td>
-                    </tr>
+                      </Table.Td>
+                      <Table.Td>{adjustment.reason}</Table.Td>
+                    </Table.Tr>
                   );
                 })}
-              </tbody>
+              </Table.Tbody>
             </Table>
 
             {isFetching && !isLoading && (

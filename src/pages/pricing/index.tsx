@@ -153,12 +153,12 @@ export default function Pricing() {
                 maw="calc(50% - 8px)"
               >
                 <Stack gap={0}>
-                  <Text lh={1.2}>
+                  <Text size="xs" lh={1.2}>
                     Purchasing or updating memberships is currently disabled. We are working hard to
                     resolve this and will notify you when it is back up. You can still manage your
                     active membership, and your benefits will be active until your
                     membership&rsquo;s expiration date.{' '}
-                    <Anchor href="https://civitai.com/articles/14945" color="red.3">
+                    <Anchor href="https://civitai.com/articles/14945" c="red.3">
                       Learn more
                     </Anchor>
                   </Text>
@@ -180,15 +180,18 @@ export default function Pricing() {
                   maw="calc(50% - 8px)"
                 >
                   <Stack gap={0}>
-                    <Text lh={1.2}>You can still purchase Buzz: </Text>
+                    <Text size="xs" lh={1.2}>
+                      You can still purchase Buzz:
+                    </Text>
                     <Group>
                       {(features.nowpaymentPayments || features.coinbasePayments) && (
-                        <Anchor href="/purchase/buzz" c="yellow.7">
+                        <Anchor size="xs" href="/purchase/buzz" c="yellow.7">
                           Buy with Crypto
                         </Anchor>
                       )}
                       {liveFeatures.buzzGiftCards && (
                         <Anchor
+                          size="xs"
                           href="https://buybuzz.io/"
                           target="_blank"
                           rel="noopener noreferrer"
@@ -304,7 +307,7 @@ export default function Pricing() {
                     label: (
                       <Center>
                         <Box mr={6}>Annual Plans</Box>
-                        <Badge p={5} color="green" variant="filled" radius="xl">
+                        <Badge p={5} color="green" className="flex" variant="filled" radius="xl">
                           1 month for free!
                         </Badge>
                       </Center>
@@ -401,7 +404,9 @@ export default function Pricing() {
             <Stack gap={0}>
               <p className="mb-0 text-xs opacity-50">
                 By purchasing a membership, you agree to our{' '}
-                <Anchor href="/content/tos">Terms of Service</Anchor>
+                <Anchor href="/content/tos" inherit>
+                  Terms of Service
+                </Anchor>
               </p>
               <p className="text-xs opacity-50">
                 Transactions will appear as CIVIT AI INC on your billing statement

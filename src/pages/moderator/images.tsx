@@ -122,7 +122,7 @@ const ImageReviewType = {
 type ImageReviewType = keyof typeof ImageReviewType;
 
 export default function Images() {
-  // const queryUtils = trpc.useContext();
+  // const queryUtils = trpc.useUtils();
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
   const [type, setType] = useState<ImageReviewType>('minor');

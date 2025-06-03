@@ -374,22 +374,22 @@ export default function ModeratorBuzzWithdrawalRequests() {
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
           <Table>
-            <thead>
-              <tr>
-                <th>Requested by</th>
-                <th>Requested at</th>
-                <th>Buzz Amount</th>
-                <th>Platform fee rate</th>
-                <th>Dollar Amount Total</th>
-                <th>Application Fee</th>
-                <th>Transfer amount</th>
-                <th>Provider</th>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Requested by</Table.Th>
+                <Table.Th>Requested at</Table.Th>
+                <Table.Th>Buzz Amount</Table.Th>
+                <Table.Th>Platform fee rate</Table.Th>
+                <Table.Th>Dollar Amount Total</Table.Th>
+                <Table.Th>Application Fee</Table.Th>
+                <Table.Th>Transfer amount</Table.Th>
+                <Table.Th>Provider</Table.Th>
 
-                <th>Status</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>&nbsp;</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {requests.map((request) => {
                 const buttons = (
                   request.status === BuzzWithdrawalRequestStatus.Requested
@@ -432,8 +432,8 @@ export default function ModeratorBuzzWithdrawalRequests() {
                 const isSelected = selection.values.includes(request.id);
 
                 return (
-                  <tr key={request.id}>
-                    <td>
+                  <Table.Tr key={request.id}>
+                    <Table.Td>
                       <Stack gap={0}>
                         <UserAvatar size="sm" user={request.user} withUsername linkToProfile />
                         {request.requestedToProvider ===
@@ -449,13 +449,13 @@ export default function ModeratorBuzzWithdrawalRequests() {
                           </Anchor>
                         )}
                       </Stack>
-                    </td>
-                    <td>{formatDate(request.createdAt)}</td>
-                    <td>{numberWithCommas(request.requestedBuzzAmount)}</td>
-                    <td>{numberWithCommas(request.platformFeeRate / 100)}%</td>
-                    <td>${formatCurrencyForDisplay(dollarAmount, Currency.USD)}</td>
-                    <td>${formatCurrencyForDisplay(platformFee, Currency.USD)}</td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>{formatDate(request.createdAt)}</Table.Td>
+                    <Table.Td>{numberWithCommas(request.requestedBuzzAmount)}</Table.Td>
+                    <Table.Td>{numberWithCommas(request.platformFeeRate / 100)}%</Table.Td>
+                    <Table.Td>${formatCurrencyForDisplay(dollarAmount, Currency.USD)}</Table.Td>
+                    <Table.Td>${formatCurrencyForDisplay(platformFee, Currency.USD)}</Table.Td>
+                    <Table.Td>
                       <Text
                         color={
                           showColorTransferedAmount
@@ -470,8 +470,8 @@ export default function ModeratorBuzzWithdrawalRequests() {
                           Currency.USD
                         )}
                       </Text>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <Group gap="xs" wrap="nowrap">
                         <Text>{request.requestedToProvider}</Text>
                         {request.requestedToProvider ===
@@ -489,13 +489,13 @@ export default function ModeratorBuzzWithdrawalRequests() {
                           </Tooltip>
                         )}
                       </Group>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <Badge variant="light" color={WithdrawalRequestBadgeColor[request.status]}>
                         {getDisplayName(request.status)}
                       </Badge>
-                    </td>
-                    <td align="right">
+                    </Table.Td>
+                    <Table.Td align="right">
                       {selectionEnabled ? (
                         <Checkbox
                           checked={isSelected}
@@ -516,11 +516,11 @@ export default function ModeratorBuzzWithdrawalRequests() {
                           <BuzzWithdrawalRequestHistory history={request.history} />
                         </Group>
                       )}
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 );
               })}
-            </tbody>
+            </Table.Tbody>
             {pagination && pagination.totalPages > 1 && (
               <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>

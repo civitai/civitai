@@ -11,6 +11,7 @@ import {
   Paper,
   Skeleton,
   Stack,
+  Table,
   Text,
   Title,
 } from '@mantine/core';
@@ -243,39 +244,39 @@ const FunStatsSection = () => {
     <Stack className={classes.section}>
       <Stack gap={0} mb="sm">
         <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
-          Highlights from last month&rsquo;s cycle{' '}
+          Highlights from last month&apos;s cycle{' '}
         </Title>
       </Stack>
       <Paper withBorder className={classes.card} h="100%">
-        <table className="-mt-2 w-full table-auto">
-          <tbody>
-            <tr className="font-bold">
-              <td colSpan={2} className="border-0 border-b border-solid">
+        <Table className="-mt-2 w-full table-auto">
+          <Table.Tbody>
+            <Table.Tr className="font-bold">
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 Compensation Pool{' '}
-              </td>
-              <td className="border-0 border-b border-l border-solid  py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid  py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>
                     ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarValue))}
                   </span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-0 border-b border-solid">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 # of Creators who Banked Buzz
-              </td>
-              <td className="border-0 border-b border-l border-solid py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>{numberWithCommas(prevMonthStats.creatorCount)}</span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-0 border-b border-solid">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 Total Banked Buzz
-              </td>
-              <td className="border-0 border-b border-l border-solid py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>
@@ -284,99 +285,99 @@ const FunStatsSection = () => {
                     )}
                   </span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-0 border-b border-solid">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 # of Creators who Extracted Buzz
-              </td>
-              <td className="border-0 border-b border-l border-solid py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>{numberWithCommas(prevMonthStats.extractedCreatorCount)}</span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-0 border-b border-solid">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 Total Buzz Extracted
-              </td>
-              <td className="border-0 border-b border-l border-solid py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(prevMonthStats.totalExtractedBuzz)}</span>
                 </div>
-              </td>
-            </tr>
+              </Table.Td>
+            </Table.Tr>
 
-            <tr>
-              <td colSpan={2} className="border-0 border-b border-solid">
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>Total Payout Buzz</span>
                 </div>
-              </td>
-              <td className="border-0 border-b border-l border-solid py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(prevMonthStats.totalBankedBuzz)}</span>
                 </div>{' '}
-              </td>
-            </tr>
+              </Table.Td>
+            </Table.Tr>
 
-            <tr>
-              <td colSpan={2} className="border-0 border-b border-solid">
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 # of Creators who cashed out
-              </td>
-              <td className="border-0 border-b border-l border-solid py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>{numberWithCommas(prevMonthStats.cashedOutCreatorCount)}</span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-0 border-b border-solid">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>$ per 1,000 Buzz Banked</span>
                 </div>
-              </td>
-              <td className="border-0 border-b border-l border-solid py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 $
                 {numberWithCommas(
                   formatToLeastDecimals(prevMonthStats.dollarAmountPerThousand ?? 0)
                 )}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-0 border-b border-solid">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>Highest payout</span>
                 </div>
-              </td>
-              <td className="border-0 border-b border-l border-solid py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarHighestEarned ?? 0))}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-0 border-b border-solid">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>Average payout</span>
                 </div>
-              </td>
-              <td className="border-0 border-b border-l border-solid py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarAverageEarned ?? 0))}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2}>
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2}>
                 <div className="flex items-center gap-1">
                   <span>Median payout</span>
                 </div>
-              </td>
-              <td className="border-0 border-l border-solid py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-l border-solid py-2 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarMedianEarned ?? 0))}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </Table.Td>
+            </Table.Tr>
+          </Table.Tbody>
+        </Table>
       </Paper>
     </Stack>
   );

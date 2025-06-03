@@ -29,12 +29,8 @@ import {
 } from '@mantine/core';
 import type { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
-import {
-  hideNotification,
-  NotificationData,
-  showNotification,
-  updateNotification,
-} from '@mantine/notifications';
+import type { NotificationData } from '@mantine/notifications';
+import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
 import {
   IconAlertTriangle,
   IconCheck,

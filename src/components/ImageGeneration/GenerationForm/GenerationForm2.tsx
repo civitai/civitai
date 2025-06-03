@@ -545,7 +545,7 @@ export function GenerationFormContent() {
                       <Card
                         className={clsx(
                           { [classes.formError]: form.formState.errors.resources },
-                          'overflow-visible flex gap-3'
+                          'flex gap-3 overflow-visible'
                         )}
                         p={0}
                         radius="sm"
@@ -555,7 +555,7 @@ export function GenerationFormContent() {
                           name="model"
                           buttonLabel="Add Model"
                           allowRemove={false}
-                          className="pt-3 px-3"
+                          className="px-3 pt-3"
                           options={{
                             canGenerate: true,
                             resources: resourceTypes
@@ -579,9 +579,9 @@ export function GenerationFormContent() {
                         />
                         {!disableAdditionalResources && (
                           <Card.Section
-                            className={clsx(
-                              { [classes.formError]: form.formState.errors.resources },
-                            )}
+                            className={clsx({
+                              [classes.formError]: form.formState.errors.resources,
+                            })}
                             m={0}
                             withBorder
                           >

@@ -150,7 +150,7 @@ export function Files() {
 
 function FileCard({ data: versionFile, index }: { data: FileFromContextProps; index: number }) {
   const { removeFile, fileTypes, modelId } = useFilesContext();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const failedUpload = versionFile.status === 'error' || versionFile.status === 'aborted';
 
   // File card benefits from knowing if a tracked file exist.

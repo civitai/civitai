@@ -17,7 +17,7 @@ export function SocialProfileCard() {
     url?: string;
   }>();
 
-  // const utils = trpc.useContext();
+  // const utils = trpc.useUtils();
   const { data, isLoading } = trpc.userLink.getAll.useQuery(
     { userId: user?.id },
     {

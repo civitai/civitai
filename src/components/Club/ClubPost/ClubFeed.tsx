@@ -60,7 +60,7 @@ export function ClubPostContextMenu({
 }) {
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { deleteClubPost, deletingClubPost } = useMutateClub();
 
   const { isOwner, permissions } = useClubContributorStatus({

@@ -20,7 +20,6 @@ import {
   Paper,
   ScrollArea,
   Badge,
-  ActionIcon,
   Anchor,
   Image,
   Alert,
@@ -695,9 +694,9 @@ export default function CivitaiVault() {
               </Group>
 
               <Table>
-                <thead>
-                  <tr>
-                    <th style={{ width: 50 }}>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th style={{ width: 50 }}>
                       <Checkbox
                         checked={allSelectedInPage}
                         onChange={() => {
@@ -712,23 +711,23 @@ export default function CivitaiVault() {
                         aria-label="Select all items in page"
                         size="sm"
                       />
-                    </th>
-                    <th>Models</th>
-                    <th>Creator</th>
-                    <th>Type</th>
-                    <th>Category</th>
-                    <th>Size</th>
-                    <th>Date Created</th>
-                    <th>Date Added</th>
-                    <th>Last Refreshed</th>
-                    <th>Notes</th>
-                    <th>&nbsp;</th>
-                  </tr>
-                </thead>
-                <tbody>
+                    </Table.Th>
+                    <Table.Th>Models</Table.Th>
+                    <Table.Th>Creator</Table.Th>
+                    <Table.Th>Type</Table.Th>
+                    <Table.Th>Category</Table.Th>
+                    <Table.Th>Size</Table.Th>
+                    <Table.Th>Date Created</Table.Th>
+                    <Table.Th>Date Added</Table.Th>
+                    <Table.Th>Last Refreshed</Table.Th>
+                    <Table.Th>Notes</Table.Th>
+                    <Table.Th>&nbsp;</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {items.length === 0 && (
-                    <tr>
-                      <td colSpan={9}>
+                    <Table.Tr>
+                      <Table.Td colSpan={9}>
                         <Stack align="center" my="xl">
                           <ThemeIcon size={62} radius={100}>
                             <IconCloudOff />
@@ -737,21 +736,21 @@ export default function CivitaiVault() {
                             No items in your Vault.
                           </Text>
                         </Stack>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   )}
                   {items.map((item) => {
                     const isSelected = !!selectedItems.find((i) => i.id === item.id);
                     const meta = (item.meta ?? {}) as VaultItemMetadataSchema;
 
                     return (
-                      <tr
+                      <Table.Tr
                         key={item.id}
                         className={clsx({
                           [styles.selected]: isSelected,
                         })}
                       >
-                        <td width={50}>
+                        <Table.Td width={50}>
                           <Checkbox
                             checked={isSelected}
                             onChange={() => {
@@ -764,9 +763,9 @@ export default function CivitaiVault() {
                             aria-label="Select item"
                             size="sm"
                           />
-                        </td>
-                        <td>
-                          <Group>
+                        </Table.Td>
+                        <Table.Td>
+                          <Group wrap="nowrap">
                             {item.coverImageUrl ? (
                               <Image
                                 src={item.coverImageUrl}
@@ -784,7 +783,10 @@ export default function CivitaiVault() {
                             )}
                             <Stack gap={0}>
                               <Anchor
+                                component={Link}
                                 href={`/models/${item.modelId}?modelVersionId=${item.modelVersionId}`}
+                                lineClamp={2}
+                                size="sm"
                               >
                                 <Text>{item.modelName}</Text>
                               </Anchor>
@@ -793,11 +795,13 @@ export default function CivitaiVault() {
                               </Text>
                             </Stack>
                           </Group>
-                        </td>
-                        <td>
-                          <Anchor href={`/user/${item.creatorName}`}>{item.creatorName}</Anchor>
-                        </td>
-                        <td>
+                        </Table.Td>
+                        <Table.Td>
+                          <Anchor component={Link} href={`/user/${item.creatorName}`} size="sm">
+                            {item.creatorName}
+                          </Anchor>
+                        </Table.Td>
+                        <Table.Td>
                           <Group gap={4}>
                             <Badge size="sm" color="blue" variant="light">
                               {getDisplayName(item.type)}
@@ -806,36 +810,36 @@ export default function CivitaiVault() {
                               {getDisplayName(item.baseModel)}
                             </Badge>
                           </Group>
-                        </td>
-                        <td>
+                        </Table.Td>
+                        <Table.Td>
                           <Text tt="capitalize">{getDisplayName(item.category)}</Text>
-                        </td>
-                        <td>
+                        </Table.Td>
+                        <Table.Td>
                           {formatKBytes(
                             (item.modelSizeKb ?? 0) +
                               (item.imagesSizeKb ?? 0) +
                               (item.detailsSizeKb ?? 0)
                           )}
-                        </td>
-                        <td>{formatDate(item.createdAt)}</td>
-                        <td>{formatDate(item.addedAt)}</td>
-                        <td>{item.refreshedAt ? formatDate(item.refreshedAt) : '-'}</td>
-                        <td>
+                        </Table.Td>
+                        <Table.Td>{formatDate(item.createdAt)}</Table.Td>
+                        <Table.Td>{formatDate(item.addedAt)}</Table.Td>
+                        <Table.Td>{item.refreshedAt ? formatDate(item.refreshedAt) : '-'}</Table.Td>
+                        <Table.Td>
                           <Stack maw="25vw">
                             <ContentClamp maxHeight={48}>
                               {item.notes && <Text>{item.notes ?? '-'}</Text>}
                             </ContentClamp>
                           </Stack>
-                        </td>
-                        <td>
+                        </Table.Td>
+                        <Table.Td>
                           {item.status === VaultItemStatus.Stored && (
                             <VaultItemDownload vaultItem={item} />
                           )}
-                        </td>
-                      </tr>
+                        </Table.Td>
+                      </Table.Tr>
                     );
                   })}
-                </tbody>
+                </Table.Tbody>
               </Table>
               {pagination && pagination.totalPages > 1 && (
                 <Group justify="space-between">

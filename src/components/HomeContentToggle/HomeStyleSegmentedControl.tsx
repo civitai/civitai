@@ -22,7 +22,6 @@ export function HomeStyleSegmentedControl({
   onChange,
   size,
   loading,
-  style,
   ...props
 }: Props) {
   const theme = useMantineTheme();
@@ -65,7 +64,6 @@ export function HomeStyleSegmentedControl({
     <div className={classes.container}>
       <SegmentedControl
         {...props}
-        style={style}
         size="md"
         classNames={classes}
         value={activePath}

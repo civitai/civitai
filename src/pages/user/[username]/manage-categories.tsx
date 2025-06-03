@@ -71,7 +71,11 @@ export default function ManageCategories({
     limit: 100,
   });
 
-  const { data: models, isLoading: loadingModels } = trpc.model.getWithCategoriesSimple.useQuery(
+  const {
+    data: models,
+    isLoading: loadingModels,
+    isFetching,
+  } = trpc.model.getWithCategoriesSimple.useQuery(
     {
       userId: currentUser?.id,
       page,
@@ -133,14 +137,14 @@ export default function ManageCategories({
       items.map((model) => {
         const selected = selection.includes(model.id);
         return (
-          <tr key={model.id} className={clsx({ [styles.rowSelected]: selected })}>
-            <td style={{ maxWidth: '2.5rem' }}>
+          <Table.Tr key={model.id} className={clsx({ [styles.rowSelected]: selected })}>
+            <Table.Td style={{ maxWidth: '2.5rem' }}>
               <Checkbox
                 checked={selection.includes(model.id)}
                 onChange={() => toggleRow(model.id)}
               />
-            </td>
-            <td>
+            </Table.Td>
+            <Table.Td>
               <Group gap={8}>
                 {(!model.tags.length || model.tags.length > 1) && (
                   <ThemeIcon size="sm" color="yellow">
@@ -148,13 +152,13 @@ export default function ManageCategories({
                   </ThemeIcon>
                 )}
                 <Link legacyBehavior href={`/models/${model.id}/${slugit(model.name)}`} passHref>
-                  <Anchor target="_blank" lineClamp={2}>
+                  <Anchor size="sm" target="_blank" lineClamp={2}>
                     {model.name} <IconExternalLink size={16} stroke={1.5} />
                   </Anchor>
                 </Link>
               </Group>
-            </td>
-            <td>
+            </Table.Td>
+            <Table.Td>
               <Group gap={4} justify="flex-end">
                 {model.tags.length > 0 ? (
                   <Collection
@@ -176,11 +180,11 @@ export default function ManageCategories({
                   </Badge>
                 )}
               </Group>
-            </td>
-          </tr>
+            </Table.Td>
+          </Table.Tr>
         );
       }),
-    [styles.rowSelected, items, selection, colorScheme]
+    [items, selection, colorScheme]
   );
 
   const isSameUser = !!currentUser && postgresSlugify(currentUser?.username) === username;
@@ -194,16 +198,18 @@ export default function ManageCategories({
       <Container size="sm">
         <Stack>
           <ScrollArea
+            className="relative"
             style={{ height: 500 }}
             onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
           >
+            <LoadingOverlay visible={isFetching} />
             <Table verticalSpacing="sm" fz="sm">
-              <thead className={clsx(styles.header, { [styles.scrolled]: scrolled })}>
-                <tr>
-                  <th style={{ maxWidth: 30 }}>
+              <Table.Thead className={clsx(styles.header, { [styles.scrolled]: scrolled })}>
+                <Table.Tr>
+                  <Table.Th style={{ maxWidth: 30 }}>
                     <BackButton url={`/user/${username}`} />
-                  </th>
-                  <th colSpan={3}>
+                  </Table.Th>
+                  <Table.Th colSpan={3}>
                     <Group justify="space-between">
                       <Group gap={4}>
                         <Text size="lg">Model Category Manager</Text>
@@ -245,23 +251,23 @@ export default function ManageCategories({
                         </Menu>
                       </Group>
                     </Group>
-                  </th>
-                </tr>
-              </thead>
-              <tbody style={{ position: 'relative' }}>
+                  </Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody style={{ position: 'relative' }}>
                 {hasModels ? (
                   rows
                 ) : (
-                  <tr>
-                    <td colSpan={3}>
+                  <Table.Tr>
+                    <Table.Td colSpan={3}>
                       {loadingModels && <LoadingOverlay visible />}
                       <Center py="md">
                         <NoContent message="You have no draft models" />
                       </Center>
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 )}
-              </tbody>
+              </Table.Tbody>
             </Table>
           </ScrollArea>
           {pagination.totalPages > 1 && (

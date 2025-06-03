@@ -45,6 +45,7 @@ function Heading({
     <Stack gap={0}>
       <Anchor
         href={`#${heading.id}`}
+        underline="never"
         variant="text"
         style={{
           padding: theme.spacing.sm,
@@ -56,7 +57,9 @@ function Heading({
             ? colorScheme === 'dark'
               ? theme.colors.blue[2]
               : theme.colors.blue[6]
-            : undefined,
+            : colorScheme === 'dark'
+            ? theme.colors.dark[0]
+            : theme.black,
         }}
         onClick={(event: React.MouseEvent) => {
           event.preventDefault();

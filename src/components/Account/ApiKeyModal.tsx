@@ -1,14 +1,5 @@
 import type { ModalProps } from '@mantine/core';
-import {
-  Box,
-  Button,
-  Code,
-  CopyButton,
-  Group,
-  Modal,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Box, Button, Code, CopyButton, Group, Modal, Stack, Text } from '@mantine/core';
 import { IconClipboard } from '@tabler/icons-react';
 import type { TypeOf } from 'zod';
 import { Form, InputText, useForm } from '~/libs/form';
@@ -27,7 +18,7 @@ export function ApiKeyModal({ ...props }: Props) {
     shouldUnregister: false,
     defaultValues: { name: '', scope: [KeyScope.Read, KeyScope.Write] },
   });
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const {
     data: apiKey,

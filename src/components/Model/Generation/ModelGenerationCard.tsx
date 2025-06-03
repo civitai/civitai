@@ -53,7 +53,7 @@ export function ModelGenerationCard({
   withEditingActions,
 }: Props) {
   const theme = useMantineTheme();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { data = [] } = trpc.modelVersion.getExplorationPromptsById.useQuery({ id: versionId });
 

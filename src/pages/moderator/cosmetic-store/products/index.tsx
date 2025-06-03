@@ -129,29 +129,29 @@ export default function CosmeticStoreProducts() {
             <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
             <Table>
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Cosmetic Name</th>
-                  <th>Type</th>
-                  <th>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Title</Table.Th>
+                  <Table.Th>Cosmetic Name</Table.Th>
+                  <Table.Th>Type</Table.Th>
+                  <Table.Th>
                     <Text align="center">Sample</Text>
-                  </th>
-                  <th>Price</th>
-                  <th>Purchases</th>
-                  <th>Available From</th>
-                  <th>Available To</th>
-                  <th>Remaining Quantity</th>
-                  <th>Archived At</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
+                  </Table.Th>
+                  <Table.Th>Price</Table.Th>
+                  <Table.Th>Purchases</Table.Th>
+                  <Table.Th>Available From</Table.Th>
+                  <Table.Th>Available To</Table.Th>
+                  <Table.Th>Remaining Quantity</Table.Th>
+                  <Table.Th>Archived At</Table.Th>
+                  <Table.Th>&nbsp;</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {cosmeticShopItems.map((shopItem) => {
                   const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
                   return (
-                    <tr key={shopItem.id}>
-                      <td>
+                    <Table.Tr key={shopItem.id}>
+                      <Table.Td>
                         <Stack gap={0} maw={350}>
                           <Text fw="bold">{shopItem.title}</Text>
                           {shopItem.description && (
@@ -160,34 +160,40 @@ export default function CosmeticStoreProducts() {
                             </ContentClamp>
                           )}
                         </Stack>
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <Stack gap={0} maw={350} align="flex-start">
                           <Text>{shopItem.cosmetic.name}</Text>
                         </Stack>
-                      </td>
-                      <td>{getDisplayName(shopItem.cosmetic.type)}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{getDisplayName(shopItem.cosmetic.type)}</Table.Td>
+                      <Table.Td>
                         <Center>
                           <CosmeticSample cosmetic={shopItem.cosmetic} />
                         </Center>
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <CurrencyBadge unitAmount={shopItem.unitAmount} currency={Currency.BUZZ} />
-                      </td>
-                      <td>{meta.purchases ?? 0}</td>
-                      <td>{shopItem.availableFrom ? formatDate(shopItem.availableFrom) : '-'}</td>
-                      <td>{shopItem.availableTo ? formatDate(shopItem.availableTo) : '-'}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{meta.purchases ?? 0}</Table.Td>
+                      <Table.Td>
+                        {shopItem.availableFrom ? formatDate(shopItem.availableFrom) : '-'}
+                      </Table.Td>
+                      <Table.Td>
+                        {shopItem.availableTo ? formatDate(shopItem.availableTo) : '-'}
+                      </Table.Td>
+                      <Table.Td>
                         {(shopItem.availableQuantity ?? null) !== null
                           ? `${Math.max(
                               0,
                               (shopItem.availableQuantity ?? 0) - (meta.purchases ?? 0)
                             )}/${shopItem.availableQuantity}`
                           : '-'}
-                      </td>{' '}
-                      <td>{shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}</td>
-                      <td>
+                      </Table.Td>{' '}
+                      <Table.Td>
+                        {shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}
+                      </Table.Td>
+                      <Table.Td>
                         <Group gap={4} wrap="nowrap">
                           <LegacyActionIcon
                             component={Link}
@@ -199,11 +205,11 @@ export default function CosmeticStoreProducts() {
                             <IconTrash />
                           </LegacyActionIcon>
                         </Group>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   );
                 })}
-              </tbody>
+              </Table.Tbody>
               {pagination && pagination.totalPages > 1 && (
                 <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>

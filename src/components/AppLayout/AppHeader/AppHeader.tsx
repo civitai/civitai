@@ -15,7 +15,7 @@ import { UploadTracker } from '~/components/Resource/UploadTracker';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { AutocompleteSearch } from '../../AutocompleteSearch/AutocompleteSearch';
+import { AutocompleteSearch } from '~/components/AutocompleteSearch/AutocompleteSearch';
 import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserMenu } from '~/components/AppLayout/AppHeader/UserMenu';
@@ -70,6 +70,7 @@ export function AppHeader({
         className={clsx('flex h-full flex-nowrap items-center justify-between px-2 @md:px-4', {
           ['hidden']: showSearch,
         })}
+        classNames={{ inner: 'flex-nowrap' }}
         m={0}
         gutter="xs"
         align="center"
@@ -91,7 +92,7 @@ export function AppHeader({
         >
           {renderSearchComponent({ onSearchDone, isMobile: false })}
         </Grid.Col>
-        <Grid.Col span="auto" className="@max-md:hidden flex items-center justify-end gap-3">
+        <Grid.Col span="auto" className="flex items-center justify-end gap-3 @max-md:hidden">
           <div className="flex items-center gap-3">
             {!isMuted && <CreateMenu />}
             {currentUser && (

@@ -4,7 +4,7 @@ import {
   useUserPaymentConfiguration,
 } from '~/components/UserPaymentConfiguration/util';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Container, Stack, Title, Text, SegmentedControl, Center, Loader } from '@mantine/core';
 import { Meta } from '~/components/Meta/Meta';
 
