@@ -53,7 +53,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
+import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
