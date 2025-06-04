@@ -53,7 +53,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
+import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
@@ -257,6 +257,8 @@ export const getModelsRaw = async ({
     disablePoi,
     disableMinor,
     isFeatured,
+    poiOnly,
+    minorOnly,
   } = input;
 
   let pending = input.pending;
@@ -294,6 +296,15 @@ export const getModelsRaw = async ({
   }
   if (disableMinor) {
     AND.push(Prisma.sql`m."minor" = false`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      AND.push(Prisma.sql`m."poi" = true`);
+    }
+    if (minorOnly) {
+      AND.push(Prisma.sql`m."minor" = true`);
+    }
   }
 
   if (needsReview && sessionUser?.isModerator) {

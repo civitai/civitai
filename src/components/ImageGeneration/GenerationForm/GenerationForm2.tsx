@@ -1362,7 +1362,7 @@ export function GenerationFormContent() {
                           <Text component={Link} href="/safety#content-policies" td="underline">
                             our content policies
                           </Text>{' '}
-                          will result in the loss of your access to the image generator.
+                          will result in the loss of your access to the image generator. Illegal or exploitative content will be removed and reported.
                         </Text>
                         <Button
                           color="yellow"

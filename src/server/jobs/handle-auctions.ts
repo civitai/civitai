@@ -23,6 +23,7 @@ import {
 } from '~/server/services/auction.service';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import { resourceDataCache } from '~/server/services/model-version.service';
 import { bustFeaturedModelsCache, getTopWeeklyEarners } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -390,6 +391,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     );
     await bustFeaturedModelsCache();
     await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
+    await resourceDataCache.bust(winnerIds);
     await modelVersionResourceCache.bust(winnerIds);
     await bustOrchestratorModelCache(winnerIds);
 

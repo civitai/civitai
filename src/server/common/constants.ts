@@ -1298,6 +1298,11 @@ export const banReasonDetails: Record<
     publicBanReasonLabel: 'Content violated ToS',
     privateBanReasonLabel: 'Images depicting scat',
   },
+  [BanReasonCode.Nudify]: {
+    code: BanReasonCode.Nudify,
+    publicBanReasonLabel: 'Content violated ToS',
+    privateBanReasonLabel: 'Publishing resource that nudifies subjects',
+  },
   [BanReasonCode.Harassment]: {
     code: BanReasonCode.Harassment,
     publicBanReasonLabel: 'Community Abuse',

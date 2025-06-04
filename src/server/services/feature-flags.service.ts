@@ -161,7 +161,7 @@ const hasFeature = (
     serverMatch = domains.some(([color, domain]) => {
       if (
         color === 'blue' &&
-        ['stage.civitai.com', 'dev.civitai.com'].includes(host) &&
+        ['stage.civitai.com', 'stage-0.civitai.com', 'dev.civitai.com'].includes(host) &&
         // No reason to forcefully enable `isBlue` if we can avoid it. The app doesn't rely on it for the most part.
         key !== 'isBlue'
       )

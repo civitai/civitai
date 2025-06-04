@@ -1396,6 +1396,7 @@ export const bustMvCache = async (ids: number | number[], userId?: number) => {
   await resourceDataCache.bust(versionIds);
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.bust(versionIds);
+  // TODO shouldnt this be the model IDs?
   await modelsSearchIndex.queueUpdate(
     versionIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
