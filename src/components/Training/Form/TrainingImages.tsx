@@ -1846,6 +1846,9 @@ const AttestDiv = () => {
           Accuracy: I attest that the likeness depicted in this model aligns with the consents
           granted, and I will immediately remove or modify the content if consent is revoked.
         </List.Item>
+        <List.Item mb={2}>
+          Legality: I will not upload any material that is illegal or exploitative (e.g., child sexual abuse material, non-consensual imagery, extremist propaganda). Such content will be removed and reported to the relevant authorities.
+        </List.Item>
       </List>
     </>
   );

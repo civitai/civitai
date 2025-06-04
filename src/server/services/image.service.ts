@@ -792,6 +792,8 @@ export const getAllImages = async (
     excludedUserIds,
     disablePoi,
     disableMinor,
+    poiOnly,
+    minorOnly,
   } = input;
   let { browsingLevel, userId: targetUserId } = input;
 
@@ -870,6 +872,16 @@ export const getAllImages = async (
   }
   if (disableMinor) {
     AND.push(Prisma.sql`(i."minor" != TRUE)`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      AND.push(Prisma.sql`(i."poi" = TRUE)`);
+    }
+
+    if (minorOnly) {
+      AND.push(Prisma.sql`(i."minor" = TRUE)`);
+    }
   }
 
   let from = 'FROM "Image" i';
@@ -1691,6 +1703,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     disablePoi,
     disableMinor,
     requiringMeta,
+    poiOnly,
+    minorOnly,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1719,6 +1733,15 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
   if (disableMinor) {
     filters.push(`(NOT minor = true)`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      filters.push(`poi = true`);
+    }
+    if (minorOnly) {
+      filters.push(`minor = true`);
+    }
   }
 
   // Filter
@@ -2676,6 +2699,8 @@ export const getImagesForPosts = async ({
   pending,
   disablePoi,
   disableMinor,
+  poiOnly,
+  minorOnly,
 }: {
   postIds: number | number[];
   // excludedIds?: number[];
@@ -2685,6 +2710,8 @@ export const getImagesForPosts = async ({
   pending?: boolean;
   disablePoi?: boolean;
   disableMinor?: boolean;
+  poiOnly?: boolean;
+  minorOnly?: boolean;
 }) => {
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
@@ -2724,6 +2751,15 @@ export const getImagesForPosts = async ({
 
   if (disableMinor) {
     imageWhere.push(Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      imageWhere.push(Prisma.sql`i."poi" = true`);
+    }
+    if (minorOnly) {
+      imageWhere.push(Prisma.sql`i."minor" = true`);
+    }
   }
 
   const engines = Object.keys(videoGenerationConfig2);
