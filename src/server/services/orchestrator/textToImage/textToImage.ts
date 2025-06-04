@@ -71,7 +71,7 @@ export async function createTextToImageStep(
     remixOfId: input.remixOfId,
   });
 
-  const timeSpan = new TimeSpan(0, 10, 0);
+  const timeSpan = new TimeSpan(0, 20, 0);
   // add one minute for each additional resource minus the checkpoint
   timeSpan.addMinutes(Object.keys(input.resources).length - 1);
 
