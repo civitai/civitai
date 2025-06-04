@@ -278,7 +278,6 @@ export const getModelsRaw = async ({
       return {
         items: [],
         isPrivate: false,
-        nextCursor: null,
       };
     }
   }
