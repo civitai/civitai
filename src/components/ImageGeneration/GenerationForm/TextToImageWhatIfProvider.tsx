@@ -9,6 +9,7 @@ import {
   fluxUltraAir,
   getBaseModelSetType,
   getIsFlux,
+  getIsFluxStandard,
   getIsSD3,
   getSizeFromAspectRatio,
   whatIfQueryOverrides,
@@ -58,7 +59,8 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
 
     let modelId = model?.id ?? defaultModel.id;
     const isFlux = getIsFlux(params.baseModel);
-    if (isFlux && params.fluxMode) {
+    const isFluxStandard = getIsFluxStandard(modelId);
+    if (isFlux && params.fluxMode && isFluxStandard) {
       const { version } = parseAIR(params.fluxMode);
       modelId = version;
       if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
