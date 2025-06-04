@@ -198,8 +198,8 @@ export const defaultsByTier: Record<string, GenerationLimits> = {
 export const generationStatusSchema = z.object({
   available: z.boolean().default(true),
   message: z.string().nullish(),
-  minorFallback: z.boolean().default(true),
-  sfwEmbed: z.boolean().default(true),
+  // minorFallback: z.boolean().default(true),
+  // sfwEmbed: z.boolean().default(true),
   limits: z
     .record(userTierSchema, generationLimitsSchema.partial())
     .default(defaultsByTier)
@@ -212,8 +212,8 @@ export const generationStatusSchema = z.object({
       return mergedLimits;
     }),
   charge: z.boolean().default(true),
-  checkResourceAvailability: z.boolean().default(false),
-  membershipPriority: z.boolean().default(false),
+  // checkResourceAvailability: z.boolean().default(false),
+  // membershipPriority: z.boolean().default(false),
 });
 export type GenerationStatus = z.infer<typeof generationStatusSchema>;
 

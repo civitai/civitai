@@ -418,9 +418,9 @@ export function GenerationFormContent() {
     >
       <Watch
         {...form}
-        fields={['baseModel', 'fluxMode', 'draft', 'model', 'workflow', 'sourceImage']}
+        fields={['fluxMode', 'draft', 'model', 'workflow', 'sourceImage', 'variant']}
       >
-        {({ baseModel, fluxMode, draft, model, workflow, sourceImage, variant }) => {
+        {({ fluxMode, draft, model, workflow, sourceImage, variant }) => {
           // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
           const isImg2Img = workflow?.startsWith('img') || (isOpenAI && sourceImage);
           const isDraft = isFlux

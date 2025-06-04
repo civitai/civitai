@@ -88,7 +88,8 @@ export function usePersistForm<
     if (!_storageSchema.current) return defaults;
 
     const prompt = localStorage.getItem('generation:prompt') ?? '';
-    const negativePrompt = localStorage.getItem('generation:negativePrompt') ?? '';
+    let negativePrompt = localStorage.getItem('generation:negativePrompt') ?? '';
+    if (negativePrompt === 'undefined') negativePrompt = '';
     // const sourceImage = localStorage.getItem('generation:sourceImage') ?? undefined;
 
     const obj = JSON.parse(value);

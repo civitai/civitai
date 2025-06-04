@@ -915,14 +915,14 @@ export async function queryGeneratedImageWorkflows({
   };
 }
 
-const MEMBERSHIP_PRIORITY: Record<UserTier, Priority> = {
-  free: Priority.LOW,
-  founder: Priority.NORMAL,
-  bronze: Priority.NORMAL,
-  silver: Priority.NORMAL,
-  gold: Priority.HIGH,
-};
-export function getUserPriority(status: GenerationStatus, user: { tier?: UserTier }) {
-  if (!status.membershipPriority) return Priority.NORMAL;
-  return MEMBERSHIP_PRIORITY[user.tier ?? 'free'];
-}
+// const MEMBERSHIP_PRIORITY: Record<UserTier, Priority> = {
+//   free: Priority.LOW,
+//   founder: Priority.NORMAL,
+//   bronze: Priority.NORMAL,
+//   silver: Priority.NORMAL,
+//   gold: Priority.HIGH,
+// };
+// export function getUserPriority(status: GenerationStatus, user: { tier?: UserTier }) {
+//   if (!status.membershipPriority) return Priority.NORMAL;
+//   return MEMBERSHIP_PRIORITY[user.tier ?? 'free'];
+// }
