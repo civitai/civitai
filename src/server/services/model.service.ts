@@ -223,7 +223,7 @@ export const getModelsRaw = async ({
     user,
     take,
     cursor,
-    query, // TODO: Support
+    query,
     followed,
     archived,
     tag,
@@ -261,6 +261,28 @@ export const getModelsRaw = async ({
     minorOnly,
   } = input;
 
+  // TODO yes, this will not work with pagination. dont have time to adjust the cursor for both dbs.
+  let searchModelIds: number[] = [];
+  if (query && searchClient) {
+    const request: SearchParams = {
+      limit: take ?? 100,
+    };
+
+    const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
+      .index(MODELS_SEARCH_INDEX)
+      .search(query, request);
+
+    // console.log(results.hits);
+    searchModelIds = results.hits.map((m) => m.id);
+    if (!searchModelIds.length) {
+      return {
+        items: [],
+        isPrivate: false,
+        nextCursor: null,
+      };
+    }
+  }
+
   let pending = input.pending;
   const hasDraftModels = status?.includes(ModelStatus.Draft);
 
@@ -277,6 +299,10 @@ export const getModelsRaw = async ({
 
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
+
+  if (searchModelIds.length) {
+    AND.push(Prisma.sql`m.id IN (${Prisma.join(searchModelIds, ',')})`);
+  }
 
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
@@ -663,22 +689,9 @@ export const getModelsRaw = async ({
   // model version query
   // additional subqueries?
 
-  let models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
+  const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
     modelQuery
   );
-
-  if (query && models.length > 0 && searchClient) {
-    const request: SearchParams = {
-      filter: `id IN [${models.map((m) => m.id).join(',')}]`,
-      limit: models.length,
-    };
-
-    const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
-      .index(MODELS_SEARCH_INDEX)
-      .search(query, request);
-
-    models = models.filter((m) => results.hits.some((h) => h.id === m.id));
-  }
 
   const userIds = models.map((m) => m.user.id);
   const profilePictures = await getProfilePicturesForUsers(userIds);
