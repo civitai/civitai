@@ -84,3 +84,8 @@ export type ResetPlayerByIdInput = z.infer<typeof resetPlayerByIdSchema>;
 export const resetPlayerByIdSchema = z.object({
   playerId: z.number(),
 });
+
+export type GetImageRatersInput = z.infer<typeof getImageRatersSchema>;
+export const getImageRatersSchema = z.object({
+  imageId: z.number(),
+});

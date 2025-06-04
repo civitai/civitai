@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { notifDbWrite } from '~/server/db/notifDb';
-import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import type { Task } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { formatDateMin } from '~/utils/date-helpers';
 

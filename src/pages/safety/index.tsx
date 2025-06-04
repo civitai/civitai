@@ -13,7 +13,8 @@ import {
 import { IconList } from '@tabler/icons-react';
 import fs from 'fs';
 import matter from 'gray-matter';
-import { GetStaticProps, InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
+import { GetStaticProps } from 'next';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
@@ -117,8 +118,7 @@ export default function Safety({
                   Therefore, we have stringent policies against the creation of photorealistic
                   images of minors, depictions of extreme or illegal conduct, and any content that
                   may be deemed disturbing or offensive. We also prohibit the use of our resources
-                  to generate the likeness of specific individuals for non-consensual or commercial
-                  purposes.
+                  to generate the likeness of real-world individuals.
                 </p>
                 <p>
                   At Civitai, we utilize AI systems along with the power of community to maintain a
@@ -150,8 +150,7 @@ export default function Safety({
                 <ul>
                   <li>
                     Resources that are trained for the purpose of generating the likeness of a
-                    specific individual must be non-commercial and non-sexual in nature, and may be
-                    removed upon request from the person depicted.
+                    specific individual must be non-commercial and non-sexual in nature.
                   </li>
                 </ul>
                 <Title order={4}>Extreme or Illegal Conduct</Title>
@@ -197,15 +196,23 @@ export default function Safety({
                 <AdditionalContent content={content['minors']} />
 
                 <Title order={3}>Real People</Title>
-                <p>Any images that depict the likeness of an actual person must be:</p>
+                <p>
+                  Content that reproduces the likeness of real people, in any context, is
+                  prohibited.
+                </p>
                 <ul>
                   <li>
-                    Non-commercial: including not soliciting donations or promoting a business.
+                    This prohibition includes fan-art or representations of characters as portrayed
+                    by a recognizable individual (e.g., Indiana Jones as portrayed by Harrison
+                    Ford).
                   </li>
-                  <li>Consensual: content may be removed upon request.</li>
-                  <li>Non-sexual or suggestive</li>
+                  <li>
+                    The use of names, facial features, or any other personally identifiable
+                    attributes to reference or imply a real individual is also disallowed.
+                  </li>
                 </ul>
-                <AdditionalContent content={content['real-people']} />
+                {/* <AdditionalContent content={content['real-people']} /> */}
+
                 <Title order={3}>Disturbing Imagery and Hate Speech</Title>
                 <ul>
                   <li>
@@ -240,8 +247,7 @@ export default function Safety({
                 </p>
                 <p>
                   This includes, but is not limited to, restrictions on mature content as it applies
-                  to depictions of real individuals or minors, illegal or violent activities, and
-                  disrespectful or offensive content.
+                  to minors, illegal or violent activities, and disrespectful or offensive content.
                 </p>
                 <Title order={3}>Prohibited Image Generation Attempts</Title>
                 <p>
@@ -303,12 +309,6 @@ export default function Safety({
                     <strong>Selective Hiding:</strong> Users can choose to hide specific images,
                     models, or even all models created by a specific user.
                   </li>
-                  <li>
-                    <strong>Content Categories:</strong> Users can opt-into which categories of
-                    moderated content they wish to view, such as enabling nudity, but not explicit
-                    nudity. Furthermore, moderated content remains hidden until a user registers an
-                    account and sets their personal content visibility preferences.
-                  </li>
                 </ul>
                 <Title order={3}>Automated Content Labeling and Moderation</Title>
                 <p>
@@ -317,9 +317,9 @@ export default function Safety({
                 </p>
                 <ul>
                   <li>
-                    <strong>Automated Content Labeling</strong>: We use Amazon Rekognition as well
-                    as an open-source image tagging system to automatically apply content labels and
-                    screen images for moderated content.
+                    <strong>Automated Content Labeling</strong>: We use a number of automated image
+                    tagging systems to automatically apply content labels and screen images for
+                    moderated content.
                   </li>
                   <li>
                     <strong>Community-Driven Moderation</strong>: Users can vote on the content

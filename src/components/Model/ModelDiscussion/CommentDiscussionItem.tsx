@@ -1,5 +1,5 @@
 import { Badge, Button, Card, Group, Text, ThemeIcon, Tooltip } from '@mantine/core';
-import { ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons-react';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -10,8 +10,8 @@ import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { CommentGetAllItem } from '~/types/router';
+import type { ReactionDetails } from '~/server/selectors/reaction.selector';
+import type { CommentGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 

@@ -1,4 +1,4 @@
-import { IncomingHttpHeaders } from 'http';
+import type { IncomingHttpHeaders } from 'http';
 import { camelCase } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client';
@@ -104,7 +104,7 @@ const featureFlags = createFeatureFlags({
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
-  canBuyBuzz: ['public', 'green'],
+  canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
@@ -119,7 +119,10 @@ const featureFlags = createFeatureFlags({
   newOrderGame: ['mod', 'member', 'granted'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
-  annualMemberships: ['mod'],
+  annualMemberships: ['public'],
+  disablePayments: ['public'],
+  coinbasePayments: ['public'],
+  nowpaymentPayments: [],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -158,7 +161,7 @@ const hasFeature = (
     serverMatch = domains.some(([color, domain]) => {
       if (
         color === 'blue' &&
-        ['stage.civitai.com', 'dev.civitai.com'].includes(host) &&
+        ['stage.civitai.com', 'stage-0.civitai.com', 'dev.civitai.com'].includes(host) &&
         // No reason to forcefully enable `isBlue` if we can avoid it. The app doesn't rely on it for the most part.
         key !== 'isBlue'
       )

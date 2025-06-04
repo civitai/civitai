@@ -1,4 +1,5 @@
-import { Badge, Button, ButtonProps, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Badge, Button, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconBolt, IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { BidModelButton, getEntityDataForBidModelButton } from '~/components/Auction/AuctionUtils';
@@ -41,7 +42,7 @@ export function GenerateButton({
       ? generationPanel.open({
           type: 'modelVersion',
           id: vId,
-          epochNumbers: epochNumber ? [`${vId}@${epochNumber}`] : undefined,
+          epoch: epochNumber,
         })
       : generationPanel.open();
 

@@ -1,3 +1,4 @@
+import type { MantineSize } from '@mantine/core';
 import {
   ActionIcon,
   Anchor,
@@ -5,7 +6,6 @@ import {
   Button,
   Divider,
   Group,
-  MantineSize,
   Popover,
   Stack,
   Text,
@@ -34,8 +34,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
-import { UserContextMenu } from '~/components/Profile/old/OldProfileLayout';
+import { UserContextMenu } from '~/components/Profile/UserContextMenu';
 import { UserStats } from '~/components/Profile/UserStats';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { Username } from '~/components/User/Username';
@@ -45,8 +44,9 @@ import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -125,9 +125,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     <Button
       leftIcon={isMobile ? undefined : <IconPencilMinus size={16} />}
       size={sizeOpts.button}
-      onClick={() => {
-        openUserProfileEditModal({});
-      }}
+      onClick={() => openUserProfileEditModal()}
       sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
       radius="xl"
       fullWidth

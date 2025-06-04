@@ -1,4 +1,4 @@
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import type { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 const timeframeOrder: MetricTimeframe[] = ['Day', 'Week', 'Month', 'Year', 'AllTime'];
 export function getPeriods(period: MetricTimeframe) {

@@ -36,7 +36,7 @@ import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
-import { Job } from '~/server/jobs/job';
+import type { Job } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';

@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbRead } from '~/server/db/client';
 import { JobEndpoint } from '~/server/utils/endpoint-helpers';
 import { parseKey } from '~/utils/s3-utils';

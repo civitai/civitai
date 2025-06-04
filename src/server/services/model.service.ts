@@ -1,32 +1,35 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import dayjs, { ManipulateType } from 'dayjs';
+import type { ManipulateType } from 'dayjs';
+import dayjs from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
-import { SessionUser } from 'next-auth';
+import type { SearchParams, SearchResponse } from 'meilisearch';
+import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
+import { clickhouse } from '~/server/clickhouse/client';
+import type { BaseModel, BaseModelType } from '~/server/common/constants';
 import {
-  BaseModel,
-  BaseModelType,
   CacheTTL,
   constants,
   FEATURED_MODEL_COLLECTION_ID,
+  MODELS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
+import { searchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, modelTagCache, userContentOverviewCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
-import { ModelVersionMeta } from '~/server/schema/model-version.schema';
-import {
+import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
+import type {
   GetAllModelsOutput,
   GetModelVersionsSchema,
   IngestModelInput,
-  ingestModelSchema,
   LimitOnly,
   MigrateResourceToCollectionInput,
   ModelGallerySettingsSchema,
@@ -41,15 +44,17 @@ import {
   ToggleModelLockInput,
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
+import { ingestModelSchema } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { UserSettingsSchema } from '~/server/schema/user.schema';
+import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
+import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -62,10 +67,10 @@ import {
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
-  ImagesForModelVersions,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
@@ -86,7 +91,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { RuleDefinition } from '~/server/utils/mod-rules';
+import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   DEFAULT_PAGE_SIZE,
   getCursor,
@@ -98,15 +103,14 @@ import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import type { CommercialUse, ModelType } from '~/shared/utils/prisma/enums';
 import {
   AuctionType,
   Availability,
-  CommercialUse,
   EntityType,
   MetricTimeframe,
   ModelModifier,
   ModelStatus,
-  ModelType,
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
@@ -115,13 +119,12 @@ import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { getS3Client } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
-import {
+import type {
   GetAssociatedResourcesInput,
   GetModelsWithCategoriesSchema,
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { clickhouse } from '~/server/clickhouse/client';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -220,7 +223,7 @@ export const getModelsRaw = async ({
     user,
     take,
     cursor,
-    query, // TODO: Support
+    query,
     followed,
     archived,
     tag,
@@ -254,7 +257,30 @@ export const getModelsRaw = async ({
     disablePoi,
     disableMinor,
     isFeatured,
+    poiOnly,
+    minorOnly,
   } = input;
+
+  // TODO yes, this will not work with pagination. dont have time to adjust the cursor for both dbs.
+  let searchModelIds: number[] = [];
+  if (query && searchClient) {
+    const request: SearchParams = {
+      limit: take ?? 100,
+    };
+
+    const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
+      .index(MODELS_SEARCH_INDEX)
+      .search(query, request);
+
+    // console.log(results.hits);
+    searchModelIds = results.hits.map((m) => m.id);
+    if (!searchModelIds.length) {
+      return {
+        items: [],
+        isPrivate: false,
+      };
+    }
+  }
 
   let pending = input.pending;
   const hasDraftModels = status?.includes(ModelStatus.Draft);
@@ -273,41 +299,16 @@ export const getModelsRaw = async ({
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
 
+  if (searchModelIds.length) {
+    AND.push(Prisma.sql`m.id IN (${Prisma.join(searchModelIds, ',')})`);
+  }
+
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
 
   // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
   // At that point, we should be relying more on unlisted status which is set by the owner.
   const hidePrivateModels = !ids && !clubId && !username && !user && !followed && !collectionId;
-
-  if (query) {
-    const lowerQuery = query?.toLowerCase();
-
-    AND.push(
-      Prisma.sql`(${Prisma.join(
-        [
-          Prisma.sql`
-        m."name" ILIKE ${`%${query}%`}
-      `,
-          Prisma.sql`
-        EXISTS (
-          SELECT 1 FROM "ModelVersion" mvq
-          JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
-          JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
-          WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
-        )
-      `,
-          Prisma.sql`
-        EXISTS (
-          SELECT 1 FROM "ModelVersion" mvq
-          WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
-        )
-      `,
-        ],
-        ' OR '
-      )})`
-    );
-  }
 
   if (!archived) {
     AND.push(
@@ -316,10 +317,19 @@ export const getModelsRaw = async ({
   }
 
   if (disablePoi) {
-    AND.push(Prisma.sql`m."poi" = false`);
+    AND.push(Prisma.sql`(m."poi" = false OR m."userId" = ${userId})`);
   }
   if (disableMinor) {
     AND.push(Prisma.sql`m."minor" = false`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      AND.push(Prisma.sql`m."poi" = true`);
+    }
+    if (minorOnly) {
+      AND.push(Prisma.sql`m."minor" = true`);
+    }
   }
 
   if (needsReview && sessionUser?.isModerator) {

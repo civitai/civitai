@@ -11,12 +11,10 @@ import {
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
 import { generationConfig } from '~/server/common/constants';
-import {
-  SourceImageProps,
-  sourceImageSchema,
-} from '~/server/orchestrator/infrastructure/base.schema';
-import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
+import type { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -46,7 +44,7 @@ export function UpscaleImageModal({
 
   const whatIf = trpc.orchestrator.whatIf.useQuery({
     $type: 'image',
-    data: { workflow, type: 'img2img', ...defaultValues, ...watched },
+    data: { workflow, process: 'img2img', ...defaultValues, ...watched },
   });
 
   const generate = useGenerateWithCost(whatIf.data?.cost?.total);
@@ -54,7 +52,7 @@ export function UpscaleImageModal({
   async function handleSubmit(data: z.infer<typeof schema>) {
     await generate.mutate({
       $type: 'image',
-      data: { workflow, type: 'img2img', ...data, metadata },
+      data: { workflow, process: 'img2img', ...data, metadata },
     });
     dialog.onClose();
   }

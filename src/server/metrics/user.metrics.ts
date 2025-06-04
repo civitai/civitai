@@ -1,4 +1,5 @@
-import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { usersSearchIndex } from '~/server/search-index';
 import { createLogger } from '~/utils/logging';

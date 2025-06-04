@@ -1,7 +1,7 @@
+import type { ButtonProps } from '@mantine/core';
 import {
   ActionIcon,
   Button,
-  ButtonProps,
   Chip,
   Divider,
   Drawer,
@@ -24,8 +24,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { activeBaseModels, BaseModel } from '~/server/common/constants'; // Add this import
-import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import type { BaseModel } from '~/server/common/constants';
+import { activeBaseModels } from '~/server/common/constants'; // Add this import
+import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 
@@ -92,7 +93,9 @@ export function MediaFiltersDropdown({
     (!!mergedFilters.techniques?.length ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
     (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0) +
-    (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0);
+    (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0) +
+    (mergedFilters.poiOnly ? 1 : 0) +
+    (mergedFilters.minorOnly ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -210,6 +213,22 @@ export function MediaFiltersDropdown({
           >
             <span>Metadata only</span>
           </FilterChip>
+          {currentUser && isModerator && (
+            <>
+              <FilterChip
+                checked={mergedFilters.poiOnly}
+                onChange={(checked) => handleChange({ poiOnly: checked })}
+              >
+                <span>POI</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.minorOnly}
+                onChange={(checked) => handleChange({ minorOnly: checked })}
+              >
+                <span>Minor</span>
+              </FilterChip>
+            </>
+          )}
           {currentUser && (
             <FilterChip
               checked={mergedFilters.requiringMeta}

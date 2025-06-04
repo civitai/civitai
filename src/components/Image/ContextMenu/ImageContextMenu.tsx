@@ -1,13 +1,5 @@
-import {
-  ActionIconProps,
-  Box,
-  Group,
-  HoverCard,
-  Menu,
-  Stack,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
+import type { ActionIconProps } from '@mantine/core';
+import { Box, Group, HoverCard, Menu, Stack, Text, ThemeIcon } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconBan,
@@ -29,23 +21,23 @@ import React, { createContext, useContext } from 'react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';
 import { useReportTosViolation } from '~/components/Image/hooks/useReportTosViolation';
 import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
 import { useReportCsamImages } from '~/components/Image/image.utils';
-import { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ImageModerationSchema } from '~/server/schema/image.schema';
+import type { ImageModerationSchema } from '~/server/schema/image.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { imageStore, useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -138,8 +130,8 @@ function ImageMenuItems(
 
   const handleSaveClick = () => {
     if (context === 'post' && postId)
-      openContext('addToCollection', { postId, type: CollectionType.Post });
-    if (isImage) openContext('addToCollection', { imageId, type: CollectionType.Image });
+      openAddToCollectionModal({ props: { postId, type: CollectionType.Post } });
+    if (isImage) openAddToCollectionModal({ props: { imageId, type: CollectionType.Image } });
   };
 
   const handleReportClick = () =>

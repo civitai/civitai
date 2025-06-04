@@ -1,4 +1,5 @@
-import { CSSProperties, useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DndContext, PointerSensor, useSensor, useSensors, rectIntersection } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -6,10 +7,9 @@ import {
   verticalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { trpc } from '~/utils/trpc';
-import { HomeBlockGetAll } from '~/types/router';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import type { HomeBlockGetAll } from '~/types/router';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import {
   Accordion,
   ActionIcon,
@@ -22,11 +22,13 @@ import {
   Loader,
   Stack,
   Text,
+  Modal,
 } from '@mantine/core';
 import { IconGripVertical, IconInfoCircle, IconPlus, IconTrash } from '@tabler/icons-react';
 import { CSS } from '@dnd-kit/utilities';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
 const useStyles = createStyles((theme) => ({
   sectionHeader: {
@@ -37,17 +39,15 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const { openModal: openManageHomeBlocksModal, Modal } = createContextModal({
-  name: 'manageHomeBlocks',
-  title: 'Manage Home Page',
-  size: 'md',
-  Element: ({ context, props }) => {
-    return <ManageHomeBlocks {...props} onClose={context.close} />;
-  },
-});
+export default function ManageHomeBlocksModal() {
+  const dialog = useDialogContext();
 
-export { openManageHomeBlocksModal };
-export default Modal;
+  return (
+    <Modal {...dialog} title="Manage Home Page" size="md">
+      <ManageHomeBlocks onClose={dialog.onClose} />
+    </Modal>
+  );
+}
 
 type Props = { onClose: VoidFunction };
 function ManageHomeBlocks({ onClose }: Props) {

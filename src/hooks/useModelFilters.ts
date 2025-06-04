@@ -3,7 +3,8 @@ import { useRouter } from 'next/router';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';
 import { QS } from '~/utils/qs';
-import { SetStateAction, useCallback, useMemo } from 'react';
+import type { SetStateAction } from 'react';
+import { useCallback, useMemo } from 'react';
 import { isDefined } from '~/utils/type-guards';
 import { constants } from '~/server/common/constants';
 

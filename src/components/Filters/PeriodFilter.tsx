@@ -5,13 +5,8 @@ import { FilterChip } from '~/components/Filters/FilterChip';
 import { PeriodModeToggle } from '~/components/Filters/PeriodModeToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import {
-  FilterSubTypes,
-  hasPeriodMode,
-  PeriodModeType,
-  useFiltersContext,
-  useSetFilters,
-} from '~/providers/FiltersProvider';
+import type { FilterSubTypes, PeriodModeType } from '~/providers/FiltersProvider';
+import { hasPeriodMode, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -89,7 +84,8 @@ function StatefulPeriodFilter({ type, disabled, hideMode, variant }: StatefulPro
         type !== 'generation' &&
         type !== 'tools' &&
         type !== 'buzzWithdrawalRequests' &&
-        type !== 'changelogs'
+        type !== 'changelogs' &&
+        type !== 'auctions'
           ? state[type].period
           : undefined,
       [type]

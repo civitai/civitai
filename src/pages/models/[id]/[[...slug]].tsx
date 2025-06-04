@@ -49,7 +49,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -65,8 +65,11 @@ import {
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
 import {
+  openAddToCollectionModal,
   openMigrateModelToCollectionModal,
+  openBlockModelTagsModal,
   openReportModal,
+  openUnpublishModal,
 } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
@@ -104,12 +107,12 @@ import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
-import { openContext } from '~/providers/CustomModalsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
-import { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
@@ -122,7 +125,7 @@ import {
   ModelStatus,
   ModelType,
 } from '~/shared/utils/prisma/enums';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -285,6 +288,7 @@ export default function ModelDetailsV2({
       },
     }
   );
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
@@ -407,9 +411,11 @@ export default function ModelDetailsV2({
   });
 
   const handleCollect = () => {
-    openContext('addToCollection', {
-      modelId: id,
-      type: CollectionType.Model,
+    openAddToCollectionModal({
+      props: {
+        modelId: id,
+        type: CollectionType.Model,
+      },
     });
   };
 
@@ -548,6 +554,18 @@ export default function ModelDetailsV2({
     );
 
   if (modelDoesntExist || ((modelDeleted || modelNotVisible || isBlocked) && !isModerator)) {
+    return <NotFound />;
+  }
+
+  if (
+    model.poi &&
+    browsingSettingsAddons.settings.disablePoi &&
+    model.user.id !== currentUser?.id
+  ) {
+    return <NotFound />;
+  }
+
+  if (model.minor && browsingSettingsAddons.settings.disableMinor) {
     return <NotFound />;
   }
 
@@ -829,7 +847,7 @@ export default function ModelDetailsV2({
                               <Menu.Item
                                 color="yellow"
                                 icon={<IconBan size={14} stroke={1.5} />}
-                                onClick={() => openContext('unpublishModel', { modelId: model.id })}
+                                onClick={() => openUnpublishModal({ props: { modelId: model.id } })}
                               >
                                 Unpublish as Violation
                               </Menu.Item>
@@ -871,9 +889,11 @@ export default function ModelDetailsV2({
                         {features.collections && (
                           <AddToCollectionMenuItem
                             onClick={() =>
-                              openContext('addToCollection', {
-                                modelId: model.id,
-                                type: CollectionType.Model,
+                              openAddToCollectionModal({
+                                props: {
+                                  modelId: model.id,
+                                  type: CollectionType.Model,
+                                },
                               })
                             }
                           />
@@ -921,7 +941,9 @@ export default function ModelDetailsV2({
                             <HideModelButton as="menu-item" modelId={model.id} />
                             <Menu.Item
                               icon={<IconTagOff size={14} stroke={1.5} />}
-                              onClick={() => openContext('blockModelTags', { modelId: model.id })}
+                              onClick={() =>
+                                openBlockModelTagsModal({ props: { modelId: model.id } })
+                              }
                             >
                               Hide content with these tags
                             </Menu.Item>

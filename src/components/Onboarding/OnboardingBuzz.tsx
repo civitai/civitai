@@ -31,8 +31,8 @@ import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
 import { z } from 'zod';
+import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
 import {
-  CaptchaState,
   TurnstilePrivacyNotice,
   TurnstileWidget,
 } from '~/components/TurnstileWidget/TurnstileWidget';

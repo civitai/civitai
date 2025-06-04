@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, constants } from '~/server/common/constants';
@@ -37,7 +37,7 @@ import type {
   RecommendedSettingsSchema,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
-import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
+import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import {
   imagesMetricsSearchIndex,
   imagesSearchIndex,
@@ -59,13 +59,8 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
-import {
-  Availability,
-  CommercialUse,
-  ModelStatus,
-  ModelType,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
+import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
+import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 
@@ -1401,6 +1396,7 @@ export const bustMvCache = async (ids: number | number[], userId?: number) => {
   await resourceDataCache.bust(versionIds);
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.bust(versionIds);
+  // TODO shouldnt this be the model IDs?
   await modelsSearchIndex.queueUpdate(
     versionIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
@@ -1433,7 +1429,7 @@ export const resourceDataCache = createCachedArray({
   cacheNotFound: false,
   lookupFn: async (ids) => {
     if (!ids.length) return {};
-    const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`
+    const dbResults = await dbWrite.$queryRaw<GenerationResourceDataModel[]>`
       SELECT
         mv."id",
         mv."name",
@@ -1443,9 +1439,10 @@ export const resourceDataCache = createCachedArray({
         mv."availability",
         mv."clipSkip",
         mv."vaeId",
-        mv."earlyAccessEndsAt",
-        (CASE WHEN mv."availability" = 'EarlyAccess' THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        mv."status",
+        (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
         gc."covered",
+        FALSE AS "hasAccess",
         (
           SELECT to_json(obj)
           FROM (
@@ -1467,16 +1464,17 @@ export const resourceDataCache = createCachedArray({
       WHERE mv.id IN (${Prisma.join(ids)})
     `;
 
-    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>(
-      (acc, result) => ({ ...acc, [result.id]: result }),
-      {}
-    );
+    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>((acc, item) => {
+      if (['Public', 'Unsearchable'].includes(item.availability) && item.status === 'Published')
+        item.hasAccess = true;
+
+      return { ...acc, [item.id]: item };
+    }, {});
     return results;
   },
   idKey: 'id',
   dontCacheFn: (data) => {
-    const cacheable = ['Public', 'Unsearchable'].includes(data.availability);
-    return !cacheable || !data.covered;
+    return !data.hasAccess || !data.covered;
   },
   ttl: CacheTTL.hour,
 });
@@ -1490,10 +1488,10 @@ export type GenerationResourceDataModel = {
   baseModel: string;
   settings: RecommendedSettingsSchema | null;
   availability: Availability;
-  earlyAccessEndsAt: Date | null;
   earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
   covered: boolean | null;
-  air: string;
+  status: ModelStatus;
+  hasAccess: boolean;
   model: {
     id: number;
     name: string;

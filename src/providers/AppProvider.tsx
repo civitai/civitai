@@ -1,5 +1,5 @@
 import React, { createContext, useContext } from 'react';
-import { UserSettingsSchema } from '~/server/schema/user.schema';
+import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import { trpc } from '~/utils/trpc';
 
 type AppContext = { seed: number; canIndex: boolean };

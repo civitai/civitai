@@ -1,14 +1,5 @@
-import {
-  Alert,
-  Anchor,
-  Badge,
-  Button,
-  Text,
-  ThemeIcon,
-  Title,
-  Tooltip,
-  TooltipProps,
-} from '@mantine/core';
+import type { TooltipProps } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
 import { IconClock, IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
@@ -26,7 +17,7 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 // import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { PostDetailEditable } from '~/server/services/post.service';
+import type { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -36,7 +27,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { Flags } from '~/shared/utils';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isValidAIGeneration } from '~/utils/image-utils';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]

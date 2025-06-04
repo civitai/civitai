@@ -1,6 +1,7 @@
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { WorkflowDefinition, workflowDefinitionLabel } from '~/server/services/orchestrator/types';
-import { ComfyNode } from '~/shared/types/generation.types';
+import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import { workflowDefinitionLabel } from '~/server/services/orchestrator/types';
+import type { ComfyNode } from '~/shared/types/generation.types';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 import { workflowDefinitions } from '~/server/services/orchestrator/comfy/comfy.types';

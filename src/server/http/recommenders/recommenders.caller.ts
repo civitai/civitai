@@ -1,10 +1,10 @@
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
-import {
+import type {
   RecommendationRequest,
   RecommendationsResponse,
-  recommendationsResponseSchema,
 } from '~/server/schema/recommenders.schema';
+import { recommendationsResponseSchema } from '~/server/schema/recommenders.schema';
 
 // DOCUMENTATION
 // https://github.com/civitai/rec-r2r

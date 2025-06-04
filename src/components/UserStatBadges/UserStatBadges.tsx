@@ -1,13 +1,5 @@
-import {
-  Badge,
-  BadgeProps,
-  Box,
-  Group,
-  MantineSize,
-  Text,
-  Tooltip,
-  useMantineTheme,
-} from '@mantine/core';
+import type { BadgeProps, MantineSize } from '@mantine/core';
+import { Badge, Box, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import {
   IconUpload,
   IconUsers,

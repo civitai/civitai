@@ -3,7 +3,7 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 
 export const knightsNewOrderNotifications = createNotificationProcessor({
   'new-order-smite-received': {
-    displayName: 'Knights of New Order: you got a smite!',
+    displayName: 'Knights of New Order: Smite',
     prepareMessage: () => ({
       message:
         'Knights of New Order: Oh no! You got a smite because one of your ratings did not meet the guidelines. Jump back in to cleanse the smite as soon as possible!',
@@ -12,7 +12,7 @@ export const knightsNewOrderNotifications = createNotificationProcessor({
     category: NotificationCategory.Other,
   },
   'new-order-smite-cleansed': {
-    displayName: 'Knights of New Order: your smite was cleansed!',
+    displayName: 'Knights of New Order: Cleansed Smite',
     category: NotificationCategory.Other,
     prepareMessage: ({ details }) => ({
       message: `Knights of New Order: One of your smites was cleansed with the following reason: ${details.cleansedReason}`,
@@ -20,7 +20,7 @@ export const knightsNewOrderNotifications = createNotificationProcessor({
     }),
   },
   'new-order-game-over': {
-    displayName: 'Knights of New Order: Game Over 💀',
+    displayName: 'Knights of New Order: Game Over',
     category: NotificationCategory.Other,
     prepareMessage: () => ({
       message:

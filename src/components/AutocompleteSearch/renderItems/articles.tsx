@@ -1,5 +1,6 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Badge, Center, Group, Stack, ThemeIcon } from '@mantine/core';
+import type { AutocompleteItem } from '@mantine/core';
+import { Badge, Center, Group, Stack, ThemeIcon } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import {
   IconBookmark,
@@ -16,7 +17,7 @@ import {
   useSearchItemStyles,
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
-import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 

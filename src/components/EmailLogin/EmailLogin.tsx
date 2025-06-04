@@ -1,11 +1,12 @@
-import { Alert, Button, MantineSize, Stack, Text, ThemeIcon } from '@mantine/core';
+import type { MantineSize } from '@mantine/core';
+import { Alert, Button, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconMail } from '@tabler/icons-react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { z } from 'zod';
+import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
 import {
-  CaptchaState,
   TurnstilePrivacyNotice,
   TurnstileWidget,
 } from '~/components/TurnstileWidget/TurnstileWidget';
@@ -64,7 +65,7 @@ export const EmailLogin = ({
         return;
       }
       onStatusChange('submitted');
-    } catch (error) { 
+    } catch (error) {
       showErrorNotification({
         title: 'Failed to sign in',
         error: new Error('Email sign-in is not available. Please try again later.'),

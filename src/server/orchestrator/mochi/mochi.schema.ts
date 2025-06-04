@@ -1,4 +1,4 @@
-import { MochiVideoGenInput } from '@civitai/client';
+import type { MochiVideoGenInput } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -21,7 +21,10 @@ export const mochiGenerationConfig = VideoGenerationConfig2({
   metadataDisplayProps: ['process'],
   schema,
   processes: ['txt2vid'],
-  transformFn: (data) => ({ ...data, process: 'txt2vid' }),
+  transformFn: (data) => {
+    delete data.priority;
+    return { ...data, process: 'txt2vid' };
+  },
   inputFn: (args): MochiVideoGenInput => {
     return { ...args };
   },

@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
-import dayjs, { ManipulateType } from 'dayjs';
+import type { ManipulateType } from 'dayjs';
+import dayjs from 'dayjs';
 import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
@@ -43,7 +44,7 @@ import {
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import {
+import type {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
   GetEntitiesCoverImage,
@@ -51,7 +52,6 @@ import {
   GetInfiniteImagesOutput,
   GetMyImagesInput,
   ImageEntityType,
-  imageMetaOutput,
   ImageMetaProps,
   ImageModerationSchema,
   ImageRatingReviewOutput,
@@ -59,7 +59,6 @@ import {
   ImageSchema,
   ImageUploadProps,
   IngestImageInput,
-  ingestImageSchema,
   RemoveImageResourceSchema,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
@@ -69,6 +68,7 @@ import {
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
+import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import {
   articlesSearchIndex,
@@ -82,7 +82,8 @@ import type {
 } from '~/server/search-index/metrics-images.search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
+import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
@@ -120,6 +121,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import type { ModelType, ReportReason, ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
@@ -129,10 +131,7 @@ import {
   EntityType,
   ImageIngestionStatus,
   MediaType,
-  ModelType,
-  ReportReason,
   ReportStatus,
-  ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';
@@ -265,6 +264,23 @@ type AffectedImage = {
   postId: number | undefined;
 };
 
+const reviewTypeToBlockedReason = {
+  csam: BlockImageReason.CSAM,
+  minor: BlockImageReason.TOS,
+  poi: BlockImageReason.TOS,
+  reported: BlockImageReason.TOS,
+  blocked: BlockImageReason.TOS,
+  tag: BlockImageReason.TOS,
+  newUser: BlockImageReason.Ownership,
+  appeal: BlockImageReason.TOS,
+  modRule: BlockImageReason.TOS,
+} as const;
+
+export const reviewTypeToBlockedReasonKeys = Object.keys(reviewTypeToBlockedReason) as [
+  string,
+  ...string[]
+];
+
 export const moderateImages = async ({
   ids,
   needsReview,
@@ -305,6 +321,15 @@ export const moderateImages = async ({
         },
       }).catch();
     }
+
+    await bulkAddBlockedImages({
+      data: affected
+        .filter((x) => !!x.pHash)
+        .map((x) => ({
+          hash: x.pHash,
+          reason: reviewTypeToBlockedReason[reviewType],
+        })),
+    });
 
     return affected;
   } else if (reviewAction === 'removeName') {
@@ -767,6 +792,8 @@ export const getAllImages = async (
     excludedUserIds,
     disablePoi,
     disableMinor,
+    poiOnly,
+    minorOnly,
   } = input;
   let { browsingLevel, userId: targetUserId } = input;
 
@@ -841,10 +868,20 @@ export const getAllImages = async (
   }
 
   if (disablePoi) {
-    AND.push(Prisma.sql`(i."poi" != TRUE)`);
+    AND.push(Prisma.sql`(i."poi" != TRUE OR p."userId" = ${userId})`);
   }
   if (disableMinor) {
     AND.push(Prisma.sql`(i."minor" != TRUE)`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      AND.push(Prisma.sql`(i."poi" = TRUE)`);
+    }
+
+    if (minorOnly) {
+      AND.push(Prisma.sql`(i."minor" = TRUE)`);
+    }
   }
 
   let from = 'FROM "Image" i';
@@ -1666,6 +1703,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     disablePoi,
     disableMinor,
     requiringMeta,
+    poiOnly,
+    minorOnly,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1690,10 +1729,19 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
 
   if (disablePoi) {
-    filters.push(`(NOT poi = true)`);
+    filters.push(`(NOT poi = true OR "userId" = ${currentUserId})`);
   }
   if (disableMinor) {
     filters.push(`(NOT minor = true)`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      filters.push(`poi = true`);
+    }
+    if (minorOnly) {
+      filters.push(`minor = true`);
+    }
   }
 
   // Filter
@@ -2065,8 +2113,9 @@ const getImageMetrics = async (ids: number[]) => {
   if (missing.length > 0) {
     if (clickhouse) {
       // - find the missing IDs' data in clickhouse
-      // TODO put retries
-      clickData = await clickhouse.$query<DeepNonNullable<PgDataType>>(`
+      clickData = await withRetries(
+        () =>
+          clickhouse!.$query<DeepNonNullable<PgDataType>>(`
           SELECT entityId                                              as "imageId",
                  SUM(if(metricType = 'ReactionLike', metricValue, 0))  as "reactionLike",
                  SUM(if(metricType = 'ReactionHeart', metricValue, 0)) as "reactionHeart",
@@ -2082,7 +2131,10 @@ const getImageMetrics = async (ids: number[]) => {
           WHERE entityType = 'Image'
             AND entityId IN (${missing.join(',')})
           GROUP BY imageId
-        `);
+        `),
+        3,
+        300
+      );
 
       // - if there is nothing at all in clickhouse, fill this with zeroes
       const missingClickIds = missingIds.filter(
@@ -2492,12 +2544,11 @@ export const getImagesForModelVersion = async ({
 
   const engines = Object.keys(videoGenerationConfig2);
   const query = Prisma.sql`
-    -- getImagesForModelVersion
-   WITH targets AS (
+     WITH targets AS (
       SELECT
         i.id,
-        mv.id AS "modelVersionId"
-      FROM unnest(ARRAY[${Prisma.join(modelVersionIds)}]) AS mv(id) 
+        full_mv.id::int AS "modelVersionId"
+      FROM unnest(ARRAY[${Prisma.join(modelVersionIds)}]) AS full_mv(id)
       CROSS JOIN LATERAL
       (
         SELECT
@@ -2507,10 +2558,10 @@ export const getImagesForModelVersion = async ({
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE (p."userId" = m."userId" OR m."userId" = -1)
-          AND p."modelVersionId" = mv.id
-          AND p."publishedAt" IS NOT NULL AND i."needsReview" IS NULL AND i."acceptableMinor" = FALSE AND i."nsfwLevel" != 0
+          AND p."modelVersionId" = full_mv.id
+          AND ${Prisma.join(imageWhere, ' AND ')}
         ORDER BY i."postId", i.index
-        LIMIT 20
+        LIMIT ${imagesPerVersion}
       ) i
     )
     SELECT
@@ -2648,6 +2699,8 @@ export const getImagesForPosts = async ({
   pending,
   disablePoi,
   disableMinor,
+  poiOnly,
+  minorOnly,
 }: {
   postIds: number | number[];
   // excludedIds?: number[];
@@ -2657,6 +2710,8 @@ export const getImagesForPosts = async ({
   pending?: boolean;
   disablePoi?: boolean;
   disableMinor?: boolean;
+  poiOnly?: boolean;
+  minorOnly?: boolean;
 }) => {
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
@@ -2691,11 +2746,20 @@ export const getImagesForPosts = async ({
   }
 
   if (disablePoi) {
-    imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL)`);
+    imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL OR i."userId" = ${userId})`);
   }
 
   if (disableMinor) {
     imageWhere.push(Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      imageWhere.push(Prisma.sql`i."poi" = true`);
+    }
+    if (minorOnly) {
+      imageWhere.push(Prisma.sql`i."minor" = true`);
+    }
   }
 
   const engines = Object.keys(videoGenerationConfig2);
@@ -4077,6 +4141,8 @@ export async function updateImageNsfwLevel({
       update: { nsfwLevel },
     });
   }
+
+  return nsfwLevel;
 }
 
 type ImageRatingRequestResponse = {

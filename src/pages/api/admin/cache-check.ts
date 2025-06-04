@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';

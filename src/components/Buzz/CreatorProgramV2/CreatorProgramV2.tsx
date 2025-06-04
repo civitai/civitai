@@ -27,7 +27,8 @@ import {
 import clsx from 'clsx';
 import dayjs from 'dayjs';
 import { capitalize } from 'lodash-es';
-import React, { HTMLProps, useEffect } from 'react';
+import type { HTMLProps } from 'react';
+import React, { useEffect } from 'react';
 import {
   useBankedBuzz,
   useCompensationPool,
@@ -76,7 +77,8 @@ import {
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
-import { CashWithdrawalMethod, Currency } from '~/shared/utils/prisma/enums';
+import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, roundMinutes } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import {

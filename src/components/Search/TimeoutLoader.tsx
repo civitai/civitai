@@ -1,4 +1,5 @@
-import { LoaderProps, Loader } from '@mantine/core';
+import type { LoaderProps } from '@mantine/core';
+import { Loader } from '@mantine/core';
 import { useTimeout } from '@mantine/hooks';
 import { useState } from 'react';
 

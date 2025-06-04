@@ -1,10 +1,11 @@
-import { OAuth2Client } from 'google-auth-library';
+import type { OAuth2Client } from 'google-auth-library';
 import { Readable } from 'node:stream';
 import sanitize from 'sanitize-html';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/server';
 import { fetchBlob } from '~/utils/file-utils';
-import { youtube, auth, youtube_v3 } from 'googleapis/build/src/apis/youtube';
+import type { youtube_v3 } from 'googleapis/build/src/apis/youtube';
+import { youtube, auth } from 'googleapis/build/src/apis/youtube';
 
 const OAuth2 = auth.OAuth2;
 

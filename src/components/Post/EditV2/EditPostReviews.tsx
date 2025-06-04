@@ -10,7 +10,7 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { PostDetailEditable } from '~/server/services/post.service';
+import type { PostDetailEditable } from '~/server/services/post.service';
 
 export function EditPostReviews({ post }: { post: PostDetailEditable }) {
   const currentUser = useCurrentUser();

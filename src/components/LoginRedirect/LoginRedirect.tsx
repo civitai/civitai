@@ -1,7 +1,8 @@
 import { useRouter } from 'next/router';
-import React, { cloneElement } from 'react';
+import type React from 'react';
+import { cloneElement } from 'react';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { LoginRedirectReason } from '~/utils/login-helpers';
+import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { requireLogin } from '~/components/Login/requireLogin';
 import { QS } from '~/utils/qs';
 

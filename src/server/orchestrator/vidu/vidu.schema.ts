@@ -1,4 +1,5 @@
-import { ViduVideoGenInput, ViduVideoGenStyle } from '@civitai/client';
+import type { ViduVideoGenInput } from '@civitai/client';
+import { ViduVideoGenStyle } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -54,6 +55,7 @@ export const viduGenerationConfig = VideoGenerationConfig2({
     return data;
   },
   transformFn: (data) => {
+    delete data.priority;
     if (data.model === 'q1') {
       data.duration = 5;
     }

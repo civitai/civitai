@@ -1,13 +1,16 @@
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
-import { clickhouse, CustomClickHouseClient } from '~/server/clickhouse/client';
+import type { CustomClickHouseClient } from '~/server/clickhouse/client';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
-import { AugmentedPool, templateHandler } from '~/server/db/db-helpers';
+import type { AugmentedPool } from '~/server/db/db-helpers';
+import { templateHandler } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
-import { createJob, getJobDate, JobContext } from './job';
+import type { JobContext } from './job';
+import { createJob, getJobDate } from './job';
 
 const BATCH_SIZE = 500;
 const log = createLogger('update-user-score');

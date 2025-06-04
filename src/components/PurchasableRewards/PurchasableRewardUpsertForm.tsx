@@ -1,9 +1,9 @@
+import type { ChipProps, TooltipProps } from '@mantine/core';
 import {
   ActionIcon,
   Avatar,
   Button,
   Chip,
-  ChipProps,
   Divider,
   Grid,
   Group,
@@ -11,7 +11,6 @@ import {
   Stack,
   Text,
   Tooltip,
-  TooltipProps,
 } from '@mantine/core';
 import { IconCalendar, IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import React from 'react';
@@ -32,7 +31,7 @@ import {
 } from '~/libs/form';
 import { purchasableRewardUpsertSchema } from '~/server/schema/purchasable-reward.schema';
 import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
-import { PurchasableRewardGetById } from '~/types/router';
+import type { PurchasableRewardGetById } from '~/types/router';
 import { getDisplayName } from '~/utils/string-helpers';
 
 const tooltipProps: Partial<TooltipProps> = {

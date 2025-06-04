@@ -1,7 +1,7 @@
 import { createStyles } from '@mantine/core';
 import { Lightbulb } from './Lightbulb';
 import { useLocalStorage } from '@mantine/hooks';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 const useStyles = createStyles<string, { size: number }>((_, params) => ({
   root: {

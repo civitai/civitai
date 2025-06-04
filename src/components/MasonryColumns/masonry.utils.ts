@@ -1,9 +1,10 @@
-import {
+import type {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
 import { useEffect, useMemo } from 'react';
-import { AdFeedItem, useCreateAdFeed } from '~/components/Ads/ads.utils';
+import type { AdFeedItem } from '~/components/Ads/ads.utils';
+import { useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';

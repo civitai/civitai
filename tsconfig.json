@@ -37,7 +37,7 @@
     // "**/*.mjs",
     "scripts",
     "src",
-    // ".next/types/**/*.ts"
+    "tests",
     ".next/types/**/*.ts"
   ],
   "exclude": ["node_modules"]

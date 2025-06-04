@@ -1,3 +1,4 @@
+import type { InputWrapperProps } from '@mantine/core';
 import {
   Box,
   Button,
@@ -8,7 +9,6 @@ import {
   Divider,
   Group,
   Input,
-  InputWrapperProps,
   Loader,
   Paper,
   Select,
@@ -19,7 +19,7 @@ import React, { useMemo, useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
 import { trpc } from '~/utils/trpc';
 import { isEqual } from 'lodash-es';
-import { ClubResourceSchema } from '~/server/schema/club.schema';
+import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import { useQueryUserContributingClubs } from './club.utils';
 
 type ClubResourceManagementInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {

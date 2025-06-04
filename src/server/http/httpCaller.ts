@@ -23,9 +23,17 @@ export abstract class HttpCaller {
     return { ok: false, status: 500, message: error.message } as const;
   }
 
-  public async getRaw(endpoint: string, opts?: { queryParams?: MixedObject }) {
+  public async getRaw(
+    endpoint: string,
+    opts?: { queryParams?: MixedObject; headers?: MixedObject }
+  ) {
     const url = QS.stringifyUrl({ url: `${this.baseUrl}${endpoint}`, query: opts?.queryParams });
-    return await fetch(url, { headers: this.baseHeaders });
+    return await fetch(url, {
+      headers: {
+        ...this.baseHeaders,
+        ...opts?.headers,
+      },
+    });
   }
 
   public async get<TResponse = unknown>(endpoint: string, opts?: { queryParams?: MixedObject }) {

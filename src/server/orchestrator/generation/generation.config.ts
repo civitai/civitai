@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 import type { BaseModelSetType } from '~/server/common/constants';
 import { haiperGenerationConfig } from '~/server/orchestrator/haiper/haiper.schema';
 import { hunyuanGenerationConfig } from '~/server/orchestrator/hunyuan/hunyuan.schema';
@@ -9,9 +9,12 @@ import { mochiGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema'
 import { viduGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
 import { wanGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
 
-// TODO - update this with new Wan base models
 export const baseModelEngineMap: Partial<Record<BaseModelSetType, OrchestratorEngine2>> = {
   WanVideo: 'wan',
+  WanVideo14B_I2V_480p: 'wan',
+  WanVideo14B_I2V_720p: 'wan',
+  WanVideo14B_T2V: 'wan',
+  WanVideo1_3B_T2V: 'wan',
   HyV1: 'hunyuan',
 };
 
@@ -28,6 +31,10 @@ export const videoGenerationConfig2 = {
   hunyuan: hunyuanGenerationConfig,
   wan: wanGenerationConfig,
 };
+
+export function isVideoGenerationEngine(engine?: string) {
+  return engine ? !!videoGenerationConfig2[engine as OrchestratorEngine2] : false;
+}
 
 export function getVideoGenerationConfig(key: string): VideoGenerationConfig | undefined {
   return videoGenerationConfig2[key as OrchestratorEngine2];

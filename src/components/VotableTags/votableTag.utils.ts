@@ -1,6 +1,6 @@
-import { TagType } from '~/shared/utils/prisma/enums';
+import type { TagType } from '~/shared/utils/prisma/enums';
 import { useUpdateHiddenPreferences, useHiddenPreferencesData } from '~/hooks/hidden-preferences';
-import { VotableTagModel } from '~/libs/tags';
+import type { VotableTagModel } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
 import { useVotableTagStore } from '~/components/VotableTags/VotableTag';

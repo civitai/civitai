@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
-import { EventInput, eventSchema, teamScoreHistorySchema } from '~/server/schema/event.schema';
+import type { EventInput } from '~/server/schema/event.schema';
+import { eventSchema, teamScoreHistorySchema } from '~/server/schema/event.schema';
 import {
   activateEventCosmetic,
   donate,

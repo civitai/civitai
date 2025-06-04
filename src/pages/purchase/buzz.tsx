@@ -1,15 +1,5 @@
-import {
-  Alert,
-  Center,
-  Container,
-  Divider,
-  Group,
-  List,
-  ListProps,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import type { ListProps } from '@mantine/core';
+import { Alert, Center, Container, Divider, Group, List, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { z } from 'zod';
@@ -123,7 +113,7 @@ export default function PurchaseBuzz() {
   }
 
   return (
-    <Container size="md" mb="lg">
+    <Container size="lg" mb="lg">
       {minBuzzAmount && (
         <Alert radius="sm" color="info" mb="xl">
           <Stack spacing={0}>
@@ -146,13 +136,13 @@ export default function PurchaseBuzz() {
         </Group>
       </Alert>
       <ContainerGrid gutter={48}>
-        <ContainerGrid.Col xs={12} md={4}>
+        <ContainerGrid.Col xs={12} md={3}>
           <Stack>
             <Title order={2}>Buzz Benefits</Title>
             <BuzzFeatures />
           </Stack>
         </ContainerGrid.Col>
-        <ContainerGrid.Col xs={12} md={8}>
+        <ContainerGrid.Col xs={12} md={9}>
           <BuzzPurchase
             onPurchaseSuccess={handlePurchaseSuccess}
             minBuzzAmount={minBuzzAmount}

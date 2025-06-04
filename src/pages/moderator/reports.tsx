@@ -1,3 +1,4 @@
+import type { MantineSize, SelectItem } from '@mantine/core';
 import {
   ActionIcon,
   Anchor,
@@ -8,10 +9,8 @@ import {
   Group,
   Input,
   Loader,
-  MantineSize,
   Menu,
   SegmentedControl,
-  SelectItem,
   Stack,
   Text,
   Title,
@@ -24,13 +23,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { upperFirst } from 'lodash-es';
-import {
-  MantineReactTable,
+import type {
   MRT_ColumnDef,
   MRT_ColumnFiltersState,
   MRT_PaginationState,
   MRT_SortingState,
 } from 'mantine-react-table';
+import { MantineReactTable } from 'mantine-react-table';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
@@ -44,12 +43,9 @@ import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import { constants } from '~/server/common/constants';
-import { GetReportsProps } from '~/server/controllers/report.controller';
-import {
-  ReportEntity,
-  reportStatusColorScheme,
-  SetReportStatusInput,
-} from '~/server/schema/report.schema';
+import type { GetReportsProps } from '~/server/controllers/report.controller';
+import type { SetReportStatusInput } from '~/server/schema/report.schema';
+import { ReportEntity, reportStatusColorScheme } from '~/server/schema/report.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';

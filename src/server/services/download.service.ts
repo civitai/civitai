@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
+import type { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 

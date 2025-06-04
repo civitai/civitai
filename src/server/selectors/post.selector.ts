@@ -1,4 +1,4 @@
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { simpleTagSelect } from './tag.selector';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -14,6 +14,8 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   hideMeta: true,
   generationProcess: true,
   needsReview: true,
+  poi: true,
+  minor: true,
   mimeType: true,
   type: true,
   metadata: true,

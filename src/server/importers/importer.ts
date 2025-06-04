@@ -1,4 +1,4 @@
-import { ImportStatus } from '~/shared/utils/prisma/enums';
+import type { ImportStatus } from '~/shared/utils/prisma/enums';
 
 type Importer = {
   canHandle: (source: string) => boolean;

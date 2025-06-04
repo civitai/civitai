@@ -1,4 +1,5 @@
-import { Group, GroupProps } from '@mantine/core';
+import type { GroupProps } from '@mantine/core';
+import { Group } from '@mantine/core';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

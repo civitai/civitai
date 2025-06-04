@@ -55,6 +55,8 @@ const modelFilterSchema = z.object({
   pending: z.boolean().optional(),
   availability: z.nativeEnum(Availability).optional(),
   isFeatured: z.boolean().optional(),
+  poiOnly: z.boolean().optional(),
+  minorOnly: z.boolean().optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
@@ -85,6 +87,8 @@ const imageFilterSchema = z.object({
   remixesOnly: z.boolean().optional(),
   nonRemixesOnly: z.boolean().optional(),
   requiringMeta: z.boolean().optional(),
+  poiOnly: z.boolean().optional(),
+  minorOnly: z.boolean().optional(),
 });
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
@@ -182,6 +186,11 @@ const changelogFilterSchema = getChangelogsInput.omit({
   search: true,
 });
 
+export type AuctionFilterSchema = z.infer<typeof auctionFilterSchema>;
+const auctionFilterSchema = z.object({
+  baseModels: z.enum(constants.baseModels).array().optional(),
+});
+
 type StorageState = {
   models: ModelFilterSchema;
   questions: QuestionFilterSchema;
@@ -198,6 +207,7 @@ type StorageState = {
   tools: ToolFilterSchema;
   buzzWithdrawalRequests: BuzzWithdrawalRequestFilterSchema;
   changelogs: ChangelogFilterSchema;
+  auctions: AuctionFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 
@@ -224,6 +234,7 @@ type StoreState = FilterState & {
   setToolFilters: (filters: Partial<ToolFilterSchema>) => void;
   setBuzzWithdrawalRequestFilters: (filters: Partial<BuzzWithdrawalRequestFilterSchema>) => void;
   setChangelogFilters: (filters: Partial<ChangelogFilterSchema>) => void;
+  setAuctionFilters: (filters: Partial<AuctionFilterSchema>) => void;
 };
 
 type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
@@ -246,6 +257,7 @@ const localStorageSchemas: LocalStorageSchema = {
     schema: buzzWithdrawalRequestFilterSchema,
   },
   changelogs: { key: 'changelog-filters', schema: changelogFilterSchema },
+  auctions: { key: 'auction-filters', schema: auctionFilterSchema },
 };
 
 const getInitialValues = <TSchema extends z.AnyZodObject>({
@@ -326,6 +338,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'buzzWithdrawalRequests', data, state })),
       setChangelogFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'changelogs', data, state })),
+      setAuctionFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'auctions', data, state })),
     }))
   );
 
@@ -380,6 +394,7 @@ export function useSetFilters(type: FilterSubTypes) {
           tools: state.setToolFilters,
           buzzWithdrawalRequests: state.setBuzzWithdrawalRequestFilters,
           changelogs: state.setChangelogFilters,
+          auctions: state.setAuctionFilters,
         }[type]),
       [type]
     )

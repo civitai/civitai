@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { publicApiContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';

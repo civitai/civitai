@@ -1,16 +1,9 @@
-import {
-  Badge,
-  BadgeProps,
-  Loader,
-  MantineSize,
-  Text,
-  Tooltip,
-  useMantineTheme,
-} from '@mantine/core';
+import type { BadgeProps, MantineSize } from '@mantine/core';
+import { Badge, Loader, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import NumberFlow from '@number-flow/react';
-import { IconProps } from '@tabler/icons-react';
+import type { IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
-import { BuzzTypeDistribution } from '~/components/Buzz/buzz.utils';
+import type { BuzzTypeDistribution } from '~/components/Buzz/buzz.utils';
 import { CurrencyConfig } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';

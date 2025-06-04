@@ -51,7 +51,7 @@ import { saveAs } from 'file-saver';
 import { capitalize, isEqual, uniq } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import pLimit from 'p-limit';
-import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { openImageSelectModal } from '~/components/Dialog/dialog-registry';
@@ -69,9 +69,12 @@ import {
   TrainingImagesSwitchLabel,
   TrainingImagesTags,
   TrainingImagesTagViewer,
+  blankTagStr,
+  labelDescriptions,
 } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
-import { BaseModel, constants } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import {
   IMAGE_MIME_TYPE,
@@ -121,8 +124,6 @@ const AutoLabelModal = dynamic(() =>
 );
 
 const MAX_FILES_ALLOWED = 1000;
-
-export const blankTagStr = '@@none@@';
 
 const limit = pLimit(10);
 
@@ -175,32 +176,6 @@ const minWidth = 256;
 const minHeight = 256;
 const maxWidth = 2048;
 const maxHeight = 2048;
-
-export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
-  tag: (
-    <Stack spacing={0}>
-      <Text>Short, comma-separated descriptions.</Text>
-      <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
-      <Text mt="sm">
-        Preferred for <Badge color="violet">SD1</Badge> and <Badge color="grape">SDXL</Badge>{' '}
-        models.
-      </Text>
-    </Stack>
-  ),
-  caption: (
-    <Stack spacing={0}>
-      <Text>Natural language, long-form sentences.</Text>
-      <Text fs="italic">
-        Ex: &quot;There is a dolphin in the ocean. It is jumping out against a gorgeous backdrop of
-        a setting sun.&quot;
-      </Text>
-      <Text mt="sm">
-        Preferred for <Badge color="red">Flux</Badge>, <Badge color="pink">SD3</Badge>, and{' '}
-        <Badge color="teal">Video</Badge> models.
-      </Text>
-    </Stack>
-  ),
-};
 
 const LabelSelectModal = ({
   modelId,
@@ -1858,18 +1833,21 @@ const AttestDiv = () => {
       </Text>
       <List size="sm" type="ordered">
         <List.Item mb={2}>
-          Consent: If the content depicts the likeness of a real person, who is not a public figure,
-          I am either that person or have obtained clear, explicit consent from that person for
-          their likeness to be used in this model.
+          Consent: If the content depicts the likeness of a real person, I am either that person or
+          have obtained clear, explicit consent from that person for their likeness to be used in
+          this creation of this model.
         </List.Item>
         <List.Item mb={2}>
           Responsibility: I understand that I am solely responsible for ensuring that all necessary
           permissions have been obtained, and I acknowledge that failure to do so may result in the
-          removal of content, my account or other actions by Civitai.
+          removal of content, my account, or other actions by Civitai.
         </List.Item>
         <List.Item mb={2}>
           Accuracy: I attest that the likeness depicted in this model aligns with the consents
           granted, and I will immediately remove or modify the content if consent is revoked.
+        </List.Item>
+        <List.Item mb={2}>
+          Legality: I will not upload any material that is illegal or exploitative (e.g., child sexual abuse material, non-consensual imagery, extremist propaganda). Such content will be removed and reported to the relevant authorities.
         </List.Item>
       </List>
     </>

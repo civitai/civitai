@@ -1,3 +1,4 @@
+import type { MenuItemProps } from '@mantine/core';
 import {
   ActionIcon,
   Center,
@@ -7,7 +8,6 @@ import {
   Modal,
   Text,
   Stack,
-  MenuItemProps,
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
@@ -30,7 +30,8 @@ import {
   IconDiamond,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { DragEvent, useState } from 'react';
+import type { DragEvent } from 'react';
+import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 // import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
@@ -46,8 +47,8 @@ import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQ
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { constants } from '~/server/common/constants';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import {
+import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import type {
   NormalizedGeneratedImage,
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
@@ -60,7 +61,7 @@ import {
 import { generationStore, useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
 import { UpscaleEnhancementModal } from '~/components/Orchestrator/components/UpscaleEnhancementModal';
 import { EnhanceVideoModal } from '~/components/Orchestrator/components/EnhanceVideoModal';
@@ -70,10 +71,12 @@ import type { WorkflowDefinitionKey } from '~/server/services/orchestrator/comfy
 import { useGeneratedItemStore } from '~/components/Generation/stores/generated-item.store';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
-import { EmblaCarouselType } from 'embla-carousel';
+import type { EmblaCarouselType } from 'embla-carousel';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
+import { capitalize } from '~/utils/string-helpers';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -98,6 +101,7 @@ export function GeneratedImage({
     stepName: step.name,
     imageId: image.id,
   });
+  const isSelecting = orchestratorImageSelect.useIsSelecting();
 
   const [nsfwLevelError, setNsfwLevelError] = useState(false);
 
@@ -117,11 +121,15 @@ export function GeneratedImage({
   const handleImageClick = () => {
     if (!image || !available || isLightbox || nsfwLevelError) return;
 
-    dialogStore.trigger({
-      id: 'generated-image',
-      component: GeneratedImageLightbox,
-      props: { image, request },
-    });
+    if (isSelecting) {
+      handleToggleSelect();
+    } else {
+      dialogStore.trigger({
+        id: 'generated-image',
+        component: GeneratedImageLightbox,
+        props: { image, request },
+      });
+    }
   };
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
@@ -221,27 +229,31 @@ export function GeneratedImage({
     handleDataTransfer(e);
   }
 
+  function handleToggleSelect(value = !selected) {
+    toggleSelect(value);
+    if (running && value) helpers?.next();
+  }
+
   const blockedReason = getImageBlockedReason(image.blockedReason);
   const isBlocked = !!nsfwLevelError || !!blockedReason;
+  const aspectRatio = isBlocked ? 1 : image.aspectRatio ?? image.width / image.height;
 
   return (
     <TwCard
       ref={ref}
       className={clsx('max-h-full max-w-full', classes.imageWrapper)}
-      style={{
-        aspectRatio: image.aspectRatio ?? image.width / image.height,
-      }}
+      style={{ aspectRatio }}
     >
       {(isLightbox || inView) && (
         <>
-          <div className={clsx('relative flex flex-1 flex-col items-center justify-center')}>
+          <div className={clsx('relative flex flex-1 flex-col items-center justify-center ')}>
             {nsfwLevelError ? (
               <BlockedBlock
                 title="Blocked for Adult Content"
                 message="Private generation is limited to PG, PG-13 only."
               />
             ) : blockedReason ? (
-              <BlockedBlock title="Blocked Image" message={blockedReason} />
+              <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
             ) : (
               <EdgeMedia2
                 src={image.url}
@@ -284,10 +296,7 @@ export function GeneratedImage({
               <Checkbox
                 className={classes.checkbox}
                 checked={selected}
-                onChange={(e) => {
-                  toggleSelect(e.target.checked);
-                  if (running && e.target.checked) helpers?.next();
-                }}
+                onChange={(e) => handleToggleSelect(e.target.checked)}
               />
             </label>
           )}
@@ -453,18 +462,26 @@ const useStyles = createStyles((theme, _params, getRef) => {
   };
 });
 
-function BlockedBlock({ title, message }: { title: string; message: string }) {
+function BlockedBlock({
+  title,
+  message,
+}: {
+  title: string;
+  message: string | (() => JSX.Element);
+}) {
   return (
-    <Center px="md">
-      <Stack spacing="xs">
-        <Text color="red" weight="bold" align="center" size="sm">
-          {title}
-        </Text>
+    <Stack spacing="xs" className="p-2">
+      <Text color="red" weight="bold" align="center" size="sm">
+        {title}
+      </Text>
+      {typeof message === 'string' ? (
         <Text align="center" size="sm">
-          {message} Please adjust your prompt and try again.
+          {message}
         </Text>
-      </Stack>
-    </Center>
+      ) : (
+        message()
+      )}
+    </Stack>
   );
 }
 
@@ -642,6 +659,18 @@ function GeneratedImageWorkflowMenuItems({
     });
   }
 
+  async function handleImg2Vid() {
+    generationStore.setData({
+      resources: [],
+      params: {
+        ...(step.params as any),
+        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+      },
+      type: 'video',
+      engine: useGenerationFormStore.getState().engine,
+    });
+  }
+
   async function handleSelectWorkflow(workflow: string) {
     handleGenerate({ workflow, sourceImage: image.url as any }); // TODO - see if there is a good way to handle this type mismatch. We're converting a string to a sourceImage object after we pass the data to the generation store
   }
@@ -776,19 +805,7 @@ function GeneratedImageWorkflowMenuItems({
       {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
       {!isBlocked && !!img2vidConfigs.length && (
         <>
-          <Menu.Item
-            onClick={async () =>
-              handleGenerate(
-                { sourceImage: await getSourceImageFromUrl({ url: image.url }) },
-                {
-                  type: 'video',
-                  engine: useGenerationFormStore.getState().engine,
-                }
-              )
-            }
-          >
-            Image To Video
-          </Menu.Item>
+          <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
       {/* {!isBlocked && image.type === 'video' && (
@@ -858,12 +875,32 @@ function handleAuxClick(url: string) {
   window.open(url, '_blank');
 }
 
-const imageBlockedReasonMap: Record<string, string> = {
+const imageBlockedReasonMap: Record<string, string | (() => JSX.Element)> = {
   ChildReference: 'An inappropriate child reference was detected.',
-  Bestiality: 'Detected bestiality in the image.',
+  Bestiality: 'Bestiality detected.',
   'Child Sexual - Anime': 'Inappropriate minor content detected.',
   'Child Sexual - Realistic': 'Inappropriate minor content detected.',
   NSFWLevel: 'Mature content restriction.',
+  NSFWLevelSourceImageRestricted: () => (
+    <div className="flex flex-col gap-1">
+      <Text align="center" size="sm">
+        Mature content restriction.
+      </Text>
+      <Text align="center" size="sm">
+        If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs
+        only.
+      </Text>
+      <Text
+        align="center"
+        size="sm"
+        component={NextLink}
+        variant="link"
+        href="https://civitai.com/changelog?id=11"
+      >
+        More info.
+      </Text>
+    </div>
+  ),
 };
 
 function getImageBlockedReason(reason?: string | null) {

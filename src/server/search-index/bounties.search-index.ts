@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import {
+import type {
   BountyType,
   CosmeticSource,
   CosmeticType,
@@ -12,8 +12,9 @@ import {
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
-import { ImageMetadata } from '~/server/schema/media.schema';
-import { ImageModelWithIngestion, profileImageSelect } from '../selectors/image.selector';
+import type { ImageMetadata } from '~/server/schema/media.schema';
+import type { ImageModelWithIngestion } from '../selectors/image.selector';
+import { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const READ_BATCH_SIZE = 1000; // 10 items per bounty are fetched for images. Careful with this number

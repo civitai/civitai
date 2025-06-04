@@ -1,16 +1,14 @@
 import { LoadingOverlay } from '@mantine/core';
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import {
+import type {
   FieldValues,
-  FormProvider,
   SubmitErrorHandler,
   UseFormReturn,
   SubmitHandler,
-  useWatch,
   Path,
-  useFormContext,
 } from 'react-hook-form';
-import { z } from 'zod';
+import { FormProvider, useWatch, useFormContext } from 'react-hook-form';
+import type { z } from 'zod';
 import clsx from 'clsx';
 
 const CustomFormCtx = createContext<{

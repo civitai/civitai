@@ -1,9 +1,6 @@
 import { Alert, Button, Text } from '@mantine/core';
-import {
-  PostEditMediaDetail,
-  usePostEditStore,
-  usePostPreviewContext,
-} from '~/components/Post/EditV2/PostEditProvider';
+import type { PostEditMediaDetail } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { CustomCard } from '~/components/Post/EditV2/PostImageCards/CustomCard';
 
 export function BlockedImage({ image }: { image: PostEditMediaDetail }) {

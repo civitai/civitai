@@ -1,17 +1,13 @@
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import {
-  OrchestratorEngine2,
-  videoGenerationConfig2,
-} from '~/server/orchestrator/generation/generation.config';
+import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { useMemo, useState, useEffect } from 'react';
 import { hashify } from '~/utils/string-helpers';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 
-import { Form } from '~/libs/form';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useIsMutating } from '@tanstack/react-query';
@@ -24,10 +20,7 @@ import { getQueryKey } from '@trpc/react-query';
 import { trpc } from '~/utils/trpc';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { IconX } from '@tabler/icons-react';
-import {
-  useSelectedVideoGenerationEngine,
-  useVideoGenerationStore,
-} from '~/components/Generation/Video/VideoGenerationProvider';
+import { useVideoGenerationStore } from '~/components/Generation/Video/VideoGenerationProvider';
 import { ViduFormInput } from './ViduFormInput';
 import { WanFormInput } from '~/components/Generation/Video/WanFormInput';
 import { HunyuanFormInput } from '~/components/Generation/Video/HunyuanFormInput';
@@ -99,7 +92,6 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
         mutate({
           $type: 'videoGen',
           data: validated,
-          tags: [WORKFLOW_TAGS.VIDEO, engine],
         });
       });
     } catch (e: any) {

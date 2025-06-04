@@ -78,3 +78,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
     </>
   );
 }
+
+export const UserProfileLayout = (page: React.ReactElement) => (
+  <ProfileLayout2>{page}</ProfileLayout2>
+);

@@ -1,4 +1,5 @@
-import { MiniMaxVideoGenInput, MiniMaxVideoGenModel } from '@civitai/client';
+import type { MiniMaxVideoGenInput } from '@civitai/client';
+import { MiniMaxVideoGenModel } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -21,6 +22,7 @@ export const minimaxGenerationConfig = VideoGenerationConfig2({
   schema,
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
+    delete data.priority;
     if (!data.sourceImage) {
       data.process = 'txt2vid';
     }

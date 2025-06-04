@@ -1,5 +1,5 @@
 import { startCase } from 'lodash-es';
-import { ModelFileType } from '~/server/common/constants';
+import type { ModelFileType } from '~/server/common/constants';
 import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';

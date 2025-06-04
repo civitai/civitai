@@ -1,6 +1,7 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-import { ModelFileVisibility, ModelHashType, ModelModifier } from '~/shared/utils/prisma/enums';
+import type { ModelHashType } from '~/shared/utils/prisma/enums';
+import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ModelSort } from '~/server/common/enums';

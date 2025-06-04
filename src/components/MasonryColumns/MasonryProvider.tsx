@@ -1,4 +1,5 @@
-import { Box, BoxProps } from '@mantine/core';
+import type { BoxProps } from '@mantine/core';
+import { Box } from '@mantine/core';
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useResizeObserver } from '~/hooks/useResizeObserver';

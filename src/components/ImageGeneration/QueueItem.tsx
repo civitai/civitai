@@ -1,3 +1,4 @@
+import type { RingProgressProps, TooltipProps } from '@mantine/core';
 import {
   ActionIcon,
   Alert,
@@ -7,10 +8,8 @@ import {
   Group,
   Loader,
   RingProgress,
-  RingProgressProps,
   Text,
   Tooltip,
-  TooltipProps,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import {
@@ -41,15 +40,16 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
 
-import { TimeSpan, WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/client';
+import { TimeSpan } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { GenerationResource } from '~/server/services/generation/generation.service';
-import {
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
@@ -58,6 +58,7 @@ import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { TransactionsPopover } from '~/components/ImageGeneration/GenerationForm/TransactionsPopover';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -106,7 +107,6 @@ export function QueueItem({
     });
   }
 
-  const cost = request.totalCost;
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
 
@@ -167,8 +167,6 @@ export function QueueItem({
       ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
       : status;
 
-  const actualCost = cost;
-
   const completedCount = images.filter((x) => x.status === 'succeeded').length;
   const processingCount = images.filter((x) => x.status === 'processing').length;
 
@@ -207,15 +205,12 @@ export function QueueItem({
               <Text size="xs" color="dimmed">
                 {formatDateMin(request.createdAt)}
               </Text>
-              {!!actualCost &&
-                dayjs(request.createdAt).toDate() >=
-                  constants.buzz.generationBuzzChargingStartDate && (
-                  <GenerationCostPopover
-                    workflowCost={request.cost ?? {}}
-                    readOnly
-                    variant="badge"
-                  />
-                )}
+              {!!request.cost?.total && (
+                <GenerationCostPopover workflowCost={request.cost} readOnly variant="badge" />
+              )}
+              {request.transactions.length > 0 && (
+                <TransactionsPopover data={request.transactions} />
+              )}
               {!!request.duration && currentUser?.isModerator && (
                 <Badge color="yellow">Duration: {request.duration}</Badge>
               )}

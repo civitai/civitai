@@ -1,32 +1,32 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
-import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
+import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
+import type { BaseModel, BaseModelType, ModelFileType } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   ModelSort,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
-import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
-import {
+import type { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import type {
   ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   RecommendedSettingsSchema,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import {
+import type {
   ChangeModelModifierSchema,
   CopyGallerySettingsInput,
   DeclineReviewSchema,
   DeleteModelSchema,
   FindResourcesToAssociateSchema,
   GetAllModelsOutput,
-  getAllModelsSchema,
   GetAssociatedResourcesInput,
   GetDownloadSchema,
   GetModelVersionsSchema,
@@ -46,6 +46,7 @@ import {
   UnpublishModelSchema,
   UpdateGallerySettingsInput,
 } from '~/server/schema/model.schema';
+import { getAllModelsSchema } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   associatedResourceSelect,
@@ -125,7 +126,7 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
-import { BountyDetailsSchema } from '../schema/bounty.schema';
+import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   getResourceData,
   getUnavailableResources,
@@ -195,10 +196,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const recommendedResourceIds =
       model.modelVersions.flatMap((version) => version?.recommendedResources.map((x) => x.id)) ??
       [];
-    const generationResources = await getResourceData({
-      ids: recommendedResourceIds,
-      user: ctx?.user,
-    });
+    const generationResources = await getResourceData(recommendedResourceIds, ctx?.user);
 
     return {
       ...model,

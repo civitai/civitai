@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getCustomPutUrl, getS3Client } from '~/utils/s3-utils';
 import { env } from '~/env/server';

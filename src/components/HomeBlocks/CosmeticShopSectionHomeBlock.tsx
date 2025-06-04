@@ -3,7 +3,7 @@ import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBloc
 import { useHomeBlockGridStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ShopItem } from '~/components/Shop/ShopItem';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
 
 export function CosmeticShopSectionHomeBlock({ showAds, ...props }: Props) {

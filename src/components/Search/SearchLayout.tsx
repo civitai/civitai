@@ -15,10 +15,11 @@ import { IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client';
-import { SearchIndex } from '~/components/Search/parsers/base';
-import { Configure, InstantSearch, InstantSearchProps } from 'react-instantsearch';
+import type { SearchIndex } from '~/components/Search/parsers/base';
+import type { InstantSearchProps } from 'react-instantsearch';
+import { Configure, InstantSearch } from 'react-instantsearch';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
-import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
+import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
@@ -29,7 +30,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
-import { UiState } from 'instantsearch.js';
+import type { UiState } from 'instantsearch.js';
 
 const SIDEBAR_SIZE = 377;
 

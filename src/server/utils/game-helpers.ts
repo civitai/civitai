@@ -1,5 +1,5 @@
 import { newOrderConfig } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 
 const BASE_XP_FOR_NEXT_LEVEL = 250;
 const BASE_GROWTH_RATE = 1.18;

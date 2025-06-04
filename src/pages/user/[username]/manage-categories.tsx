@@ -18,7 +18,7 @@ import {
 } from '@mantine/core';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconChevronDown, IconExclamationMark, IconExternalLink } from '@tabler/icons-react';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCallback, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';

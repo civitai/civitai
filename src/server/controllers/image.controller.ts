@@ -7,10 +7,10 @@ import {
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
   addBlockedImage,
@@ -37,7 +37,7 @@ import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsin
 import { Flags } from '~/shared/utils';
 import { BlockImageReason, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import {
+import type {
   GetEntitiesCoverImage,
   GetImageInput,
   GetInfiniteImagesOutput,
@@ -57,22 +57,6 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
-
-const reviewTypeToBlockedReason = {
-  csam: BlockImageReason.CSAM,
-  minor: BlockImageReason.TOS,
-  poi: BlockImageReason.TOS,
-  reported: BlockImageReason.TOS,
-  blocked: BlockImageReason.TOS,
-  tag: BlockImageReason.TOS,
-  newUser: BlockImageReason.Ownership,
-  appeal: BlockImageReason.TOS,
-  modRule: BlockImageReason.TOS,
-} as const;
-export const reviewTypeToBlockedReasonKeys = Object.keys(reviewTypeToBlockedReason) as [
-  string,
-  ...string[]
-];
 
 export const moderateImageHandler = async ({
   input,
@@ -108,15 +92,6 @@ export const moderateImageHandler = async ({
           ownerId: userId,
         });
       }
-
-      await bulkAddBlockedImages({
-        data: affected
-          .filter((x) => !!x.pHash)
-          .map((x) => ({
-            hash: x.pHash,
-            reason: reviewTypeToBlockedReason[input.reviewType],
-          })),
-      });
     } else {
       await bulkRemoveBlockedImages({ ids: input.ids });
     }

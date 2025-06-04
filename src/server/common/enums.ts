@@ -293,6 +293,7 @@ export enum BanReasonCode {
   SexualPOI = 'SexualPOI',
   Bestiality = 'Bestiality',
   Scat = 'Scat',
+  Nudify = 'Nudify',
   Harassment = 'Harassment',
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
@@ -365,7 +366,7 @@ export enum NewOrderImageRatingStatus {
 export enum NewOrderDamnedReason {
   InappropriateMinors = 'InappropriateMinors',
   RealisticMinors = 'RealisticMinors',
-  InappropriateRealPerson = 'InappropriateRealPerson',
+  DepictsRealPerson = 'DepictsRealPerson',
   Bestiality = 'Bestiality',
   GraphicViolence = 'GraphicViolence',
 }

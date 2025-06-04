@@ -1,4 +1,5 @@
-import React, { cloneElement } from 'react';
+import type React from 'react';
+import { cloneElement } from 'react';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { ReportEntity } from '~/server/schema/report.schema';
 

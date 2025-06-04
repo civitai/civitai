@@ -18,7 +18,7 @@ import remarkBreaks from 'remark-breaks';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { SetUserSettingsInput } from '~/server/schema/user.schema';
+import type { SetUserSettingsInput } from '~/server/schema/user.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

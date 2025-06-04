@@ -1,4 +1,5 @@
-import { Dispatch, SetStateAction, useEffect, useRef, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export type NestedHeading = {
   id: string;

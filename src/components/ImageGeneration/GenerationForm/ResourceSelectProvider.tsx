@@ -1,62 +1,101 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { immer } from 'zustand/middleware/immer';
+import { createContext, useContext, useState } from 'react';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import type {
+  ResourceFilter,
+  ResourceSelectOptions,
+  ResourceSelectSource,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
-import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
 
-// type StoreState = {
-//   resources: GenerationResource[];
-//   baseModel: string;
-//   addResources: (resources: GenerationResource[]) => void;
-//   setResources: (resources: GenerationResource[]) => void;
-//   removeResource: (id: number) => void;
-// };
+type GenerationResourceWithImage = GenerationResource & {
+  image: SearchIndexDataMap['models'][number]['images'][number];
+};
+export type ResourceSelectModalProps = {
+  title?: React.ReactNode;
+  onSelect: (value: GenerationResourceWithImage) => void;
+  onClose?: () => void;
+  options?: ResourceSelectOptions;
+  selectSource?: ResourceSelectSource;
+};
 
-// const useGenerationResourceStore = create<StoreState>()(
-//   immer(
-//     persist(
-//       (set, get) => ({
-//         resources: [] as GenerationResource[],
-//         baseModel: 'Flux1',
-//         addResources: (resources) => {
-//           set((state) => {
-//             state.baseModel = getBaseModel(resources);
-//           });
-//         },
-//         setResources: (resources) => {
-//           set((state) => {
-//             state.resources = resources;
-//             state.baseModel = getBaseModel(resources);
-//           });
-//         },
-//         removeResource: (id) => {
-//           set((state) => {
-//             state.resources = state.resources.filter((x) => x.id !== id);
-//           });
-//         },
-//       }),
-//       { name: 'generation-resources' }
-//     )
-//   )
-// );
+type ResourceSelectState = Omit<ResourceSelectModalProps, 'options'> & {
+  canGenerate?: boolean;
+  excludedIds: number[];
+  resources: DeepRequired<ResourceSelectOptions>['resources'];
+  filters: ResourceFilter;
+  setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
+};
 
-// function setGenerationResources(resources: GenerationResource[]) {}
+const ResourceSelectContext = createContext<ResourceSelectState | null>(null);
+export const useResourceSelectContext = () => {
+  const context = useContext(ResourceSelectContext);
+  if (!context) throw new Error('missing ResourceSelectContext');
+  return context;
+};
 
-// function getBaseModel(resources: GenerationResource[]) {
-//   return getBaseModelFromResources(
-//     resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
-//   );
-// }
+export function ResourceSelectProvider({
+  children,
+  ...props
+}: { children: React.ReactNode } & ResourceSelectModalProps) {
+  const dialog = useDialogContext();
+  const { generation } = useCurrentUserSettings();
+  const [filters, setFilters] = useState<ResourceFilter>({
+    types: [],
+    baseModels: [],
+  });
+  const resources = (props.options?.resources ?? []).map(
+    ({ type, baseModels = [], partialSupport = [] }) => ({
+      type,
+      // if generation, check toggle
+      // if modelVersion or addResource, always include all
+      // otherwise (training, auction, etc.), only include baseModels
+      baseModels:
+        props.selectSource === 'generation'
+          ? generation?.advancedMode
+            ? [...baseModels, ...partialSupport]
+            : baseModels
+          : props.selectSource === 'modelVersion' || props.selectSource === 'addResource'
+          ? [...baseModels, ...partialSupport]
+          : baseModels,
+      partialSupport,
+    })
+  );
+  const resourceTypes = resources.map((x) => x.type);
+  const types =
+    resources.length > 0
+      ? filters.types.filter((type) => resourceTypes.includes(type))
+      : filters.types;
 
-// function reduceResources(resources: GenerationResource[]) {
-//   return resources.reduce<Partial<Record<ModelType, GenerationResource[]>>>((acc, resource) => {
-//     const type = resource.model.type;
-//     acc[type] = [...(acc[type] ?? []), resource];
-//     return acc;
-//   }, {});
-// }
+  const resourceBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
+  const baseModels =
+    resourceBaseModels.length > 0
+      ? filters.baseModels.filter((baseModel) => resourceBaseModels.includes(baseModel))
+      : filters.baseModels;
 
-// export function ResourceSelectProvider({ children }: { children: React.ReactNode }) {
-//   return <>{children}</>;
-// }
+  function handleSelect(value: GenerationResourceWithImage) {
+    props.onSelect(value);
+    dialog.onClose();
+  }
+
+  return (
+    <ResourceSelectContext.Provider
+      value={{
+        ...props,
+        selectSource: props.selectSource ?? 'generation',
+        canGenerate: props.options?.canGenerate,
+        excludedIds: props.options?.excludeIds ?? [],
+        resources,
+        filters: {
+          types,
+          baseModels,
+        },
+        setFilters,
+        onSelect: handleSelect,
+      }}
+    >
+      {children}
+    </ResourceSelectContext.Provider>
+  );
+}

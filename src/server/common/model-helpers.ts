@@ -1,6 +1,7 @@
 import { ImageGenerationProcess, ModelStatus, TrainingStatus } from '~/shared/utils/prisma/enums';
-import { constants, ModelFileType } from '~/server/common/constants';
-import { MyDraftModelGetAll, MyTrainingModelGetAll } from '~/types/router';
+import type { ModelFileType } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
+import type { MyDraftModelGetAll, MyTrainingModelGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 import dayjs from 'dayjs';
 

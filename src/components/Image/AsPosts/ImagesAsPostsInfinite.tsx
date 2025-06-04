@@ -30,6 +30,7 @@ import { SortFilter } from '~/components/Filters';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
+import { ImagesAsPostsInfiniteProvider } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
@@ -42,28 +43,13 @@ import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerati
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Flags } from '~/shared/utils';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { GalleryModerationModal } from './GalleryModerationModal';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
-type ImagesAsPostsInfiniteState = {
-  model: ModelById;
-  modelVersions?: ModelVersionsProps[];
-  filters: {
-    modelId?: number;
-    username?: string;
-  } & Record<string, unknown>;
-  showModerationOptions?: boolean;
-};
-const ImagesAsPostsInfiniteContext = createContext<ImagesAsPostsInfiniteState | null>(null);
-export const useImagesAsPostsInfiniteContext = () => {
-  const context = useContext(ImagesAsPostsInfiniteContext);
-  if (!context) throw new Error('ImagesInfiniteContext not in tree');
-  return context;
-};
 
 type ImagesAsPostsInfiniteProps = {
   selectedVersionId?: number;
@@ -164,9 +150,7 @@ export default function ImagesAsPostsInfinite({
     !!gallerySettings?.hiddenTags.length;
 
   return (
-    <ImagesAsPostsInfiniteContext.Provider
-      value={{ filters, modelVersions, showModerationOptions, model }}
-    >
+    <ImagesAsPostsInfiniteProvider value={{ filters, modelVersions, showModerationOptions, model }}>
       <MasonryProvider
         columnWidth={320}
         maxColumnCount={6}
@@ -347,6 +331,6 @@ export default function ImagesAsPostsInfinite({
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-    </ImagesAsPostsInfiniteContext.Provider>
+    </ImagesAsPostsInfiniteProvider>
   );
 }

@@ -1,4 +1,5 @@
-import { ChipProps, Chip, createStyles } from '@mantine/core';
+import type { ChipProps } from '@mantine/core';
+import { Chip, createStyles } from '@mantine/core';
 
 export function FilterChip({ children, ...props }: ChipProps) {
   const { classes } = useStyles();

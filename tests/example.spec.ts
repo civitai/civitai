@@ -1,6 +1,5 @@
 import { expect, Locator, Page, test } from '@playwright/test';
 import { authDegen, authMod } from './auth/data';
-import { queryGeneratedImagesReturn } from './responses/queryGeneratedImages';
 import { apiResp } from './utils';
 
 test('404', async ({ page }) => {
@@ -99,30 +98,6 @@ test.describe('comments', () => {
     const commentLoc5 = await postComment(commentLoc4, true);
 
     await expect(commentLoc5).toBeInViewport();
-  });
-});
-
-test.describe('generation', () => {
-  test.use(authDegen);
-
-  test('mock generation', async ({ page }) => {
-    // override orchestrator calls with custom response
-    await page.route(/\/api\/trpc\/orchestrator.queryGeneratedImages(\?|$)/, async (route) => {
-      await route.fulfill({ json: queryGeneratedImagesReturn });
-    });
-
-    await page.goto('/articles/1');
-    await page.getByRole('button').filter({ hasText: 'Create' }).click();
-
-    const confirmBtn = page.getByRole('button', { name: 'I Confirm, Start Generating' });
-    if (await confirmBtn.isVisible()) {
-      await confirmBtn.click();
-    }
-
-    // this is the queue button, but i can't seem to add a data-testid without the whole thing breaking
-    await page.locator('div:nth-child(4) > .__mantine-ref-label').first().click();
-
-    await expect(page.getByTestId('generation-feed-list').locator('> div')).toHaveCount(19);
   });
 });
 

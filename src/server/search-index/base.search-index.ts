@@ -1,26 +1,27 @@
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
-import { MeiliSearch } from 'meilisearch';
-import { clickhouse, CustomClickHouseClient } from '~/server/clickhouse/client';
+import type { MeiliSearch } from 'meilisearch';
+import type { CustomClickHouseClient } from '~/server/clickhouse/client';
+import { clickhouse } from '~/server/clickhouse/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { AugmentedPool } from '~/server/db/db-helpers';
+import type { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
-import { getJobDate, JobContext } from '~/server/jobs/job';
+import type { JobContext } from '~/server/jobs/job';
+import { getJobDate } from '~/server/jobs/job';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
   swapIndex,
 } from '~/server/meilisearch/util';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
-import {
-  getTaskQueueWorker,
+import type {
   PullTask,
   PushTask,
   Task,
-  TaskQueue,
   TransformTask,
 } from '~/server/search-index/utils/taskQueue';
+import { getTaskQueueWorker, TaskQueue } from '~/server/search-index/utils/taskQueue';
 import { createLogger } from '~/utils/logging';
 
 const DEFAULT_UPDATE_INTERVAL = 30 * 1000;

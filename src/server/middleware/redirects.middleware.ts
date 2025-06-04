@@ -1,5 +1,6 @@
 import { pathToRegexp } from 'path-to-regexp';
-import { createMiddleware, Middleware } from '~/server/middleware/middleware-utils';
+import type { Middleware } from '~/server/middleware/middleware-utils';
+import { createMiddleware } from '~/server/middleware/middleware-utils';
 
 const redirects: Redirect[] = [];
 

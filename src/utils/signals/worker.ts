@@ -1,6 +1,6 @@
+import type { HubConnection } from '@microsoft/signalr';
 import {
   HttpTransportType,
-  HubConnection,
   HubConnectionBuilder,
   HubConnectionState,
   LogLevel,

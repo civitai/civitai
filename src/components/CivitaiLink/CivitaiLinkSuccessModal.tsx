@@ -1,15 +1,17 @@
-import { Stack, Title, Button, ThemeIcon } from '@mantine/core';
-import { closeAllModals, ContextModalProps } from '@mantine/modals';
+import { Stack, Title, Button, ThemeIcon, Modal } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import { z } from 'zod';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Form, InputText, useForm } from '~/libs/form';
 
 const schema = z.object({
   name: z.string(),
 });
 
-export default function CivitaiLinkSuccessModal({ context, id }: ContextModalProps) {
+export default function CivitaiLinkSuccessModal() {
+  const dialog = useDialogContext();
   const form = useForm({
     schema,
   });
@@ -19,24 +21,26 @@ export default function CivitaiLinkSuccessModal({ context, id }: ContextModalPro
   const handleSubmit = (data: z.infer<typeof schema>) => {
     if (!instance?.id) return;
     renameInstance(instance.id, data.name);
-    closeAllModals();
+    dialogStore.closeAll();
   };
 
   return (
-    <Stack p="xl">
-      <Stack spacing={0} justify="center" align="center">
-        <ThemeIcon color="green" size="xl" radius="xl">
-          <IconCheck />
-        </ThemeIcon>
-        <Title align="center">{`You're connected!`}</Title>
-      </Stack>
-
-      <Form form={form} onSubmit={handleSubmit}>
-        <Stack>
-          <InputText name="name" label="Name your Stable Diffusion instance" placeholder="name" />
-          <Button type="submit">Save</Button>
+    <Modal {...dialog} withCloseButton={false} closeOnClickOutside={false} closeOnEscape={false}>
+      <Stack p="xl">
+        <Stack spacing={0} justify="center" align="center">
+          <ThemeIcon color="green" size="xl" radius="xl">
+            <IconCheck />
+          </ThemeIcon>
+          <Title align="center">{`You're connected!`}</Title>
         </Stack>
-      </Form>
-    </Stack>
+
+        <Form form={form} onSubmit={handleSubmit}>
+          <Stack>
+            <InputText name="name" label="Name your Stable Diffusion instance" placeholder="name" />
+            <Button type="submit">Save</Button>
+          </Stack>
+        </Form>
+      </Stack>
+    </Modal>
   );
 }

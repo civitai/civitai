@@ -1,9 +1,7 @@
 import { TimeSpan } from '@civitai/client';
-import {
-  VideoGenerationSchema2,
-  videoGenerationConfig2,
-} from '~/server/orchestrator/generation/generation.config';
-import { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
+import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
+import type { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { createVideoEnhancementStep } from '~/server/orchestrator/video-enhancement/video-enhancement';
 import { populateWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { getRoundedWidthHeight, getUpscaleFactor } from '~/shared/constants/generation.constants';
@@ -30,7 +28,7 @@ export async function createVideoGenStep(args: VideoGenerationSchema2) {
     $type: 'videoGen' as const,
     priority,
     input: config.inputFn(args as any),
-    metadata: { params: removeEmpty(config.transformFn(rest as any)) },
+    metadata: { params: removeEmpty(config.metadataFn(rest as any)) },
   };
 }
 

@@ -1,7 +1,7 @@
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { publicApiContext } from '~/server/createContext';
 
 import { appRouter } from '~/server/routers';

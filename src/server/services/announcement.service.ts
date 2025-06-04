@@ -1,7 +1,7 @@
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import {
+import type {
   AnnouncementMetaSchema,
   GetAnnouncementsPagedSchema,
   UpsertAnnouncementSchema,

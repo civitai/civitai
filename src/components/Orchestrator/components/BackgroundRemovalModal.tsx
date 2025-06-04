@@ -4,10 +4,8 @@ import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImag
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
-import {
-  SourceImageProps,
-  sourceImageSchema,
-} from '~/server/orchestrator/infrastructure/base.schema';
+import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import {
   useGenerate,
   useGenerateWithCost,
@@ -39,14 +37,14 @@ export function BackgroundRemovalModal({
 
   const whatIf = trpc.orchestrator.whatIf.useQuery({
     $type: 'image',
-    data: { workflow, type: 'img2img', ...defaultValues, ...watched },
+    data: { workflow, process: 'img2img', ...defaultValues, ...watched },
   });
   const generate = useGenerateWithCost(whatIf.data?.cost?.total);
 
   async function handleSubmit(data: z.infer<typeof schema>) {
     await generate.mutateAsync({
       $type: 'image',
-      data: { workflow, type: 'img2img', ...data, metadata },
+      data: { workflow, process: 'img2img', ...data, metadata },
     });
     dialog.onClose();
   }

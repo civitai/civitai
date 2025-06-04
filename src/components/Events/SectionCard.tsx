@@ -1,4 +1,5 @@
-import { CardProps, Card, Stack, Text, Title, createStyles } from '@mantine/core';
+import type { CardProps } from '@mantine/core';
+import { Card, Stack, Text, Title, createStyles } from '@mantine/core';
 
 const useStyles = createStyles((theme) => ({
   card: {

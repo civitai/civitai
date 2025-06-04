@@ -1,14 +1,15 @@
-import { MantineSize, Text } from '@mantine/core';
+import type { MantineSize } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import {
+import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
-import { CosmeticGetById } from '~/types/router';
+import type { CosmeticGetById } from '~/types/router';
 
 const cosmeticSampleSizeMap: Record<
   'sm' | 'md' | 'lg',

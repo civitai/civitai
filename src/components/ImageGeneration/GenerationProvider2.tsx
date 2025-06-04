@@ -12,7 +12,7 @@ import {
   NormalizedGeneratedImage,
   NormalizedGeneratedImageResponse,
 } from '~/server/services/orchestrator';
-import { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/client';
 import { isDefined } from '~/utils/type-guards';
 import { queryClient, trpc } from '~/utils/trpc';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';

@@ -1,24 +1,33 @@
-import { ActionIcon, Badge, Card, ScrollArea, Tooltip, UnstyledButton } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Card,
+  Loader,
+  ScrollArea,
+  Text,
+  Tooltip,
+  UnstyledButton,
+} from '@mantine/core';
 import { IconChevronLeft, IconHammer } from '@tabler/icons-react';
 import { useState } from 'react';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { GetPlayer } from '~/types/router';
-import { useInquisitorTools } from '~/components/Games/KnightsNewOrder.utils';
+import { useInquisitorTools, useQueryImageRaters } from '~/components/Games/KnightsNewOrder.utils';
 import { PlayerStats } from '~/components/Games/PlayerCard';
+import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
-export function NewOrderImageRatings({ imageId, imageNsfwLevel, ratings }: Props) {
+export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
   const [opened, setOpened] = useState(false);
 
   const { smitePlayer, applyingSmite, smitePayload } = useInquisitorTools();
-
-  if (!ratings || ratings.length === 0) return null;
+  const { raters, isLoading } = useQueryImageRaters({ imageId });
+  const nothingFound = raters.Knight?.length === 0 && raters.Templar?.length === 0;
 
   return (
     <div className={`fixed right-0 top-1/2 -translate-y-1/2 ${opened ? 'z-30' : 'z-0'}`}>
       <div
         className={`relative flex items-center transition-transform duration-300 ${
-          opened ? 'translate-x-0' : 'translate-x-[300px]'
+          opened ? 'translate-x-0' : 'translate-x-[350px]'
         }`}
       >
         <UnstyledButton
@@ -31,47 +40,66 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel, ratings }: Props
           />
         </UnstyledButton>
         <div
-          className={`flex w-[300px] flex-col gap-2 overflow-hidden rounded-l-lg bg-dark-7 p-4 transition-all duration-300 ${
+          className={`flex w-[350px] flex-col gap-2 overflow-hidden rounded-l-lg bg-dark-7 p-4 transition-all duration-300 ${
             opened ? 'opacity-100' : 'opacity-0'
           }`}
         >
           <h2 className="text-lg font-semibold text-white">Raters</h2>
           <ScrollArea.Autosize maxHeight={400}>
-            <div className="flex flex-col gap-2">
-              {ratings?.map(({ player, rating }) => {
-                const loading = smitePayload?.playerId === player.id && applyingSmite;
+            {isLoading ? (
+              <div className="flex size-full items-center justify-center">
+                <Loader />
+              </div>
+            ) : nothingFound ? (
+              <div className="flex size-full items-center justify-center p-4">
+                <Text c="dimmed">There are no raters yet</Text>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {[NewOrderRankType.Templar, NewOrderRankType.Knight].map((rankType) => {
+                  const ratersForRank = raters[rankType] ?? [];
 
-                return (
-                  <Card key={player.id} className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm">{player.username}</span>
-                          <Badge
-                            className={`${
-                              rating === imageNsfwLevel ? 'text-green-500' : 'text-red-500'
-                            }`}
-                          >
-                            {browsingLevelLabels[rating] ?? '?'}
-                          </Badge>
-                        </div>
-                        <PlayerStats stats={{ ...player.stats }} size="sm" showSmiteCount />
-                      </div>
-                      <Tooltip label="Smite player" withinPortal>
-                        <ActionIcon
-                          color="red"
-                          variant="filled"
-                          onClick={() => smitePlayer({ playerId: player.id, imageId })}
-                          loading={loading}
-                        >
-                          <IconHammer size={18} />
-                        </ActionIcon>
-                      </Tooltip>
+                  return ratersForRank.length > 0 ? (
+                    <div key={rankType}>
+                      <h3 className="mb-1 text-sm font-bold text-white">{rankType}s</h3>
+                      {ratersForRank.map(({ player, rating }) => {
+                        const loading = smitePayload?.playerId === player.id && applyingSmite;
+
+                        return (
+                          <Card key={player.id} className="mb-2 flex flex-col gap-1">
+                            <div className="flex items-center justify-between">
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm">{player.username}</span>
+                                  <Badge
+                                    className={`${
+                                      rating === imageNsfwLevel ? 'text-green-500' : 'text-red-500'
+                                    }`}
+                                  >
+                                    {browsingLevelLabels[rating] ?? '?'}
+                                  </Badge>
+                                </div>
+                                <PlayerStats stats={{ ...player.stats }} size="sm" showSmiteCount />
+                              </div>
+                              <Tooltip label="Smite player" withinPortal>
+                                <ActionIcon
+                                  color="red"
+                                  variant="filled"
+                                  onClick={() => smitePlayer({ playerId: player.id, imageId })}
+                                  loading={loading}
+                                >
+                                  <IconHammer size={18} />
+                                </ActionIcon>
+                              </Tooltip>
+                            </div>
+                          </Card>
+                        );
+                      })}
                     </div>
-                  </Card>
-                );
-              })}
-            </div>
+                  ) : null;
+                })}
+              </div>
+            )}
           </ScrollArea.Autosize>
         </div>
       </div>
@@ -82,5 +110,4 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel, ratings }: Props
 type Props = {
   imageId: number;
   imageNsfwLevel: NsfwLevel;
-  ratings: Array<{ player: GetPlayer; rating: NsfwLevel }> | null;
 };

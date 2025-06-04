@@ -1,5 +1,5 @@
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
+import type { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   answerMetrics,
@@ -10,7 +10,7 @@ import {
   postMetrics,
   questionMetrics,
 } from '~/server/metrics';
-import { ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 export const toggleReaction = async ({
   entityType,

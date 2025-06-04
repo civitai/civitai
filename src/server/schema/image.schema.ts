@@ -342,6 +342,9 @@ export const getInfiniteImagesSchema = baseQuerySchema
     nonRemixesOnly: z.boolean().optional(),
     disablePoi: z.boolean().optional(),
     disableMinor: z.boolean().optional(),
+    // Mod only:
+    poiOnly: z.boolean().optional(),
+    minorOnly: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

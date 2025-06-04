@@ -6,7 +6,7 @@ import { ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 

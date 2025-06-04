@@ -1,8 +1,8 @@
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetByUsernameSchema } from '~/server/schema/user.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetByUsernameSchema } from '~/server/schema/user.schema';
 import {
   createResourceReview,
   deleteResourceReview,
@@ -16,7 +16,7 @@ import {
   throwBadRequestError,
   throwDbError,
 } from '~/server/utils/errorHandling';
-import {
+import type {
   CreateResourceReviewInput,
   UpdateResourceReviewInput,
   UpsertResourceReviewInput,

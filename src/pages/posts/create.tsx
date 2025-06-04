@@ -20,9 +20,9 @@ import { BackButton } from '~/components/BackButton/BackButton';
 import { CollectionUploadSettingsWrapper } from '~/components/Collections/components/CollectionUploadSettingsWrapper';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
+import type { ReviewEditCommandsRef } from '~/components/ResourceReview/EditUserResourceReview';
 import {
   EditUserResourceReviewV2,
-  ReviewEditCommandsRef,
   UserResourceReviewComposite,
 } from '~/components/ResourceReview/EditUserResourceReview';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
@@ -213,18 +213,18 @@ export default Page(
           )}
           <AlertWithIcon icon={<IconAlertCircle />}>
             There may be a short delay before your uploaded media appears in the Model Gallery and
-            Image Feeds. Please allow a few minutes for your media to become visible after posting.
+            Feeds. Please allow a few minutes for your media to become visible after posting.
           </AlertWithIcon>
           {!displayReview && (
             <Text size="xs" color="dimmed">
               Our site is mostly used for sharing AI generated content. You can start generating
-              images using our{' '}
+              content using our{' '}
               <Link legacyBehavior href="/generate" passHref>
                 <Anchor>onsite generator</Anchor>
               </Link>{' '}
-              or train your model using your own images by using our{' '}
+              or train your model using your own content by using our{' '}
               <Link legacyBehavior href="/models/train" passHref>
-                <Anchor>onsite LoRA trainer</Anchor>
+                <Anchor>onsite trainer</Anchor>
               </Link>
               .
             </Text>

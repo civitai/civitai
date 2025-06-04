@@ -1,4 +1,4 @@
-import { VideoMetadata } from '~/server/schema/media.schema';
+import type { VideoMetadata } from '~/server/schema/media.schema';
 import { createBlurHash } from '~/utils/blurhash';
 
 const hasAudio = (video: any): boolean => {

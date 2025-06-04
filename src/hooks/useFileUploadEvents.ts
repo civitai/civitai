@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
+import type {
   CustomProgressEvent,
   FileUpload,
   FileUploadOptions,

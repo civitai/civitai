@@ -1,4 +1,5 @@
-import { ActionIcon, ActionIconProps, Loader, Menu } from '@mantine/core';
+import type { ActionIconProps } from '@mantine/core';
+import { ActionIcon, Loader, Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons-react';
@@ -6,7 +7,6 @@ import { useRouter } from 'next/router';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import type { ArticleGetAllRecord } from '~/server/services/article.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -15,12 +15,12 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { ArticleStatus, CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ToggleLockComments } from '../CommentsV2';
+import { ToggleLockComments } from '../CommentsV2/ToggleLockComments';
 import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
-import { ArticleGetById } from '~/types/router';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import type { ArticleGetById } from '~/types/router';
+import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();
@@ -114,9 +114,11 @@ export function ArticleContextMenu({ article, ...props }: Props) {
           <AddToCollectionMenuItem
             key="add-to-collection"
             onClick={() =>
-              openContext('addToCollection', {
-                articleId: article.id,
-                type: CollectionType.Article,
+              openAddToCollectionModal({
+                props: {
+                  articleId: article.id,
+                  type: CollectionType.Article,
+                },
               })
             }
           />

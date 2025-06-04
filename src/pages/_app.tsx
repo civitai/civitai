@@ -1,5 +1,5 @@
 // src/pages/_app.tsx
-import { ColorScheme } from '@mantine/core';
+import type { ColorScheme } from '@mantine/core';
 import { NotificationsProvider } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, getCookies } from 'cookies-next';
@@ -17,12 +17,13 @@ import { SessionProvider } from 'next-auth/react';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
-import React, { ReactElement } from 'react';
+import type { ReactElement } from 'react';
+import React from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
-import { CustomNextPage } from '~/components/AppLayout/Page';
+import type { CustomNextPage } from '~/components/AppLayout/Page';
 import { AuctionContextProvider } from '~/components/Auction/AuctionProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import {
@@ -42,7 +43,7 @@ import { IntersectionObserverProvider } from '~/components/IntersectionObserver/
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import { SignalProvider } from '~/components/Signals/SignalsProvider';
+import { SignalsProviderStack } from '~/components/Signals/SignalsProviderStack';
 import { ToursProvider } from '~/components/Tours/ToursProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
@@ -52,7 +53,6 @@ import { civitaiTokenCookieName } from '~/libs/auth';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
-import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
@@ -62,15 +62,17 @@ import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
-import { UserSettingsSchema } from '~/server/schema/user.schema';
+import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags, serverDomainMap } from '~/server/services/feature-flags.service';
-import { parseCookies, ParsedCookies } from '~/shared/utils';
+import type { ParsedCookies } from '~/shared/utils';
+import { parseCookies } from '~/shared/utils';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -158,7 +160,7 @@ function MyApp(props: CustomAppProps) {
                       <BrowserSettingsProvider>
                         <BrowsingLevelProvider>
                           <BrowsingSettingsAddonsProvider>
-                            <SignalProvider>
+                            <SignalsProviderStack>
                               <ActivityReportingProvider>
                                 <ReferralsProvider {...cookies.referrals}>
                                   <FiltersProvider>
@@ -199,7 +201,7 @@ function MyApp(props: CustomAppProps) {
                                   </FiltersProvider>
                                 </ReferralsProvider>
                               </ActivityReportingProvider>
-                            </SignalProvider>
+                            </SignalsProviderStack>
                           </BrowsingSettingsAddonsProvider>
                         </BrowsingLevelProvider>
                       </BrowserSettingsProvider>

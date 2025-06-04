@@ -1,4 +1,5 @@
-import { Badge, createStyles, Tabs, TabsProps, Text } from '@mantine/core';
+import type { TabsProps } from '@mantine/core';
+import { Badge, createStyles, Tabs, Text } from '@mantine/core';
 import {
   getCategoryDisplayName,
   useNotificationSettings,

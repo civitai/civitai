@@ -1,7 +1,8 @@
 import { Air } from '@civitai/client';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
-import { BaseModel, baseModelSets } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { baseModelSets, getEcosystemFromBaseModel } from '~/server/common/constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
@@ -195,6 +196,24 @@ export function trimNonAlphanumeric(str: string | null | undefined) {
   return str?.replace(/^[^\w]+|[^\w]+$/g, '');
 }
 
+type CivitaiAir = {
+  source: 'civitai';
+  version: number;
+  model: number;
+};
+
+type OrchestratorAir = {
+  source: 'orchestrator';
+  jobId: string;
+  fileName: string;
+};
+
+type AIR = {
+  ecosystem: string;
+  type: string;
+  format?: string | undefined;
+} & (CivitaiAir | OrchestratorAir);
+
 export function parseAIR(identifier: string) {
   const { id, version, ...value } = Air.parse(identifier);
   return { ...value, model: Number(id), version: Number(version) };
@@ -246,24 +265,17 @@ export function stringifyAIR({
   id?: number | string;
   source?: string;
 }) {
-  const ecosystem =
-    Object.entries(baseModelSets).find(([, baseModelSet]) =>
-      (baseModelSet.baseModels as string[]).includes(baseModel)
-    )?.[0] ?? 'multi';
+  const ecosystem = getEcosystemFromBaseModel(baseModel);
 
   const urnType = typeUrnMap[type] ?? 'unknown';
 
   return Air.stringify({
-    ecosystem: ecosystem.toLowerCase(),
+    ecosystem: ecosystem,
     type: urnType,
     source,
     id: String(modelId),
     version: String(id),
-  })
-    ?.replace('pony', 'sdxl')
-    ?.replace('illustrious', 'sdxl')
-    ?.replace('noobai', 'sdxl')
-    ?.replace('sd3_5m', 'sd3');
+  });
 }
 
 export function getBaseModelEcosystemName(baseModel: BaseModel | undefined) {

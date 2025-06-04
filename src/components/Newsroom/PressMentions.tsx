@@ -1,6 +1,6 @@
 import { Card, createStyles, Text, Title } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { PressMention } from '~/shared/utils/prisma/models';
+import type { PressMention } from '~/shared/utils/prisma/models';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 

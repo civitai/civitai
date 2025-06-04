@@ -15,7 +15,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
-import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { Page } from '~/components/AppLayout/Page';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
