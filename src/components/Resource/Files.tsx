@@ -12,6 +12,7 @@ import {
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
+  Anchor,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { useViewportSize } from '@mantine/hooks';
@@ -30,6 +31,8 @@ import { isEqual, startCase } from 'lodash-es';
 import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
 import { useRef, useState } from 'react';
 
+import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
+import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
@@ -116,6 +119,7 @@ export function Files() {
           </Stack>
         </Group>
       </Dropzone>
+    <UploadNotice className="-mt-2" />
       {files.length > 0 ? (
         <Button
           onClick={async () => {

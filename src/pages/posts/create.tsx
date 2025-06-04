@@ -213,18 +213,18 @@ export default Page(
           )}
           <AlertWithIcon icon={<IconAlertCircle />}>
             There may be a short delay before your uploaded media appears in the Model Gallery and
-            Image Feeds. Please allow a few minutes for your media to become visible after posting.
+            Feeds. Please allow a few minutes for your media to become visible after posting.
           </AlertWithIcon>
           {!displayReview && (
             <Text size="xs" c="dimmed">
               Our site is mostly used for sharing AI generated content. You can start generating
-              images using our{' '}
+              content using our{' '}
               <Link legacyBehavior href="/generate" passHref>
                 <Anchor>onsite generator</Anchor>
               </Link>{' '}
-              or train your model using your own images by using our{' '}
+              or train your model using your own content by using our{' '}
               <Link legacyBehavior href="/models/train" passHref>
-                <Anchor>onsite LoRA trainer</Anchor>
+                <Anchor>onsite trainer</Anchor>
               </Link>
               .
             </Text>

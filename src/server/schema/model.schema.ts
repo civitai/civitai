@@ -110,6 +110,9 @@ export const getAllModelsSchema = baseQuerySchema
     disablePoi: z.boolean().optional(),
     disableMinor: z.boolean().optional(),
     isFeatured: z.boolean().optional(),
+    // Mod only:
+    poiOnly: z.boolean().optional(),
+    minorOnly: z.boolean().optional(),
   });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;

@@ -101,7 +101,9 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fileFormats?.length ?? 0) +
     (!!mergedFilters.availability ? 1 : 0) +
-    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
+    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
+    (mergedFilters.poiOnly ? 1 : 0) +
+    (mergedFilters.minorOnly ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -331,6 +333,23 @@ export function DumbModelFiltersDropdown({
                 onChange={(checked) => handleChange({ hidden: checked })}
               >
                 <span>Hidden</span>
+              </FilterChip>
+            </>
+          )}
+
+          {currentUser && currentUser?.isModerator && (
+            <>
+              <FilterChip
+                checked={mergedFilters.poiOnly}
+                onChange={(checked) => handleChange({ poiOnly: checked })}
+              >
+                <span>POI</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.minorOnly}
+                onChange={(checked) => handleChange({ minorOnly: checked })}
+              >
+                <span>Minor</span>
               </FilterChip>
             </>
           )}

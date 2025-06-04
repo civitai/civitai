@@ -257,6 +257,8 @@ export const getModelsRaw = async ({
     disablePoi,
     disableMinor,
     isFeatured,
+    poiOnly,
+    minorOnly,
   } = input;
 
   let pending = input.pending;
@@ -294,6 +296,15 @@ export const getModelsRaw = async ({
   }
   if (disableMinor) {
     AND.push(Prisma.sql`m."minor" = false`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      AND.push(Prisma.sql`m."poi" = true`);
+    }
+    if (minorOnly) {
+      AND.push(Prisma.sql`m."minor" = true`);
+    }
   }
 
   if (needsReview && sessionUser?.isModerator) {

@@ -11,7 +11,7 @@ const violations = [
   'Sale of illegal substances',
   'Child abuse and exploitation',
   'Photorealistic depiction of a minor',
-  'Prohibited prompts',
+  'Prohibited concepts',
 ];
 
 export const TosViolationForm = createReportForm({

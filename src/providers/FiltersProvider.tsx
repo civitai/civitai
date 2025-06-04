@@ -55,6 +55,8 @@ const modelFilterSchema = z.object({
   pending: z.boolean().optional(),
   availability: z.nativeEnum(Availability).optional(),
   isFeatured: z.boolean().optional(),
+  poiOnly: z.boolean().optional(),
+  minorOnly: z.boolean().optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
@@ -85,6 +87,8 @@ const imageFilterSchema = z.object({
   remixesOnly: z.boolean().optional(),
   nonRemixesOnly: z.boolean().optional(),
   requiringMeta: z.boolean().optional(),
+  poiOnly: z.boolean().optional(),
+  minorOnly: z.boolean().optional(),
 });
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;

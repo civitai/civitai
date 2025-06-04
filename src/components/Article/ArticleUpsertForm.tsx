@@ -48,6 +48,7 @@ import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
@@ -361,6 +362,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 </Paper>
               )}
             />
+            <UploadNotice className="-mt-2" />
             <ActionButtons
               article={article}
               saveButtonProps={{
