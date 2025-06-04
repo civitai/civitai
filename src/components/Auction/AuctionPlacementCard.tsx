@@ -1,6 +1,5 @@
 import type { GroupProps, HighlightProps } from '@mantine/core';
 import {
-  ActionIcon,
   Badge,
   Button,
   Divider,
@@ -343,11 +342,12 @@ const SectionBidInfo = ({
     <Stack
       py="sm"
       px="xs"
-      w={140}
       align="center"
       gap="sm"
       className={
-        mobile ? 'w-full border-t border-solid border-t-gray-4 dark:border-t-dark-4' : 'ml-[-16px]'
+        mobile
+          ? 'w-full border-t border-solid border-t-gray-4 dark:border-t-dark-4'
+          : 'ml-[-16px] w-[140px]'
       }
       style={{
         flexGrow: 1,

@@ -1,58 +1,56 @@
 import type { GroupProps } from '@mantine/core';
 import {
+  Box,
+  Button,
+  Center,
+  Divider,
   Group,
-  ActionIcon,
+  Loader,
   Menu,
   Stack,
   Text,
-  Button,
-  Box,
-  UnstyledButton,
-  Divider,
   ThemeIcon,
-  Center,
-  Loader,
+  UnstyledButton,
 } from '@mantine/core';
-import { useEffect, useState } from 'react';
-import { CreateComment } from './CreateComment';
-import { CommentForm } from './CommentForm';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
-  IconDotsVertical,
-  IconTrash,
-  IconEdit,
-  IconFlag,
   IconArrowBackUp,
+  IconDotsVertical,
+  IconEdit,
   IconEye,
   IconEyeOff,
+  IconFlag,
   IconPinned,
   IconPinnedOff,
+  IconTrash,
 } from '@tabler/icons-react';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ReportEntity } from '~/server/schema/report.schema';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import clsx from 'clsx';
+import React, { useEffect, useState } from 'react';
 import { create } from 'zustand';
-import React from 'react';
-import { CommentReactions } from './CommentReactions';
-import { DeleteComment } from './DeleteComment';
-import { CommentProvider, useCommentV2Context } from './CommentProvider';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
-import { useMutateComment } from '../commentv2.utils';
-import { constants } from '../../../server/common/constants';
-import { LineClamp } from '~/components/LineClamp/LineClamp';
+import {
+  CommentsProvider,
+  useCommentsContext,
+  useRootThreadContext,
+} from '~/components/CommentsV2/CommentsProvider';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { LineClamp } from '~/components/LineClamp/LineClamp';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { type Comment } from '~/server/services/commentsv2.service';
 import { trpc } from '~/utils/trpc';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  useRootThreadContext,
-  useCommentsContext,
-  CommentsProvider,
-} from '~/components/CommentsV2/CommentsProvider';
+import { constants } from '../../../server/common/constants';
+import { useMutateComment } from '../commentv2.utils';
 import classes from './Comment.module.css';
-import clsx from 'clsx';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { CommentForm } from './CommentForm';
+import { CommentProvider, useCommentV2Context } from './CommentProvider';
+import { CommentReactions } from './CommentReactions';
+import { CreateComment } from './CreateComment';
+import { DeleteComment } from './DeleteComment';
 
 type Store = {
   id?: number;
@@ -332,7 +330,7 @@ function CommentReplies({ commentId, userId }: { commentId: number; userId?: num
         {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
           isLoading ? (
             <Center>
-              <Loader variant="bars" />
+              <Loader type="bars" />
             </Center>
           ) : (
             <Stack>

@@ -32,6 +32,7 @@ import {
   IconSend,
   IconX,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import produce from 'immer';
 import Linkify from 'linkify-react';
 import { throttle } from 'lodash-es';
@@ -44,6 +45,7 @@ import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util'
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -59,8 +61,6 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './ExistingChat.module.scss';
-import clsx from 'clsx';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type TypingStatus = {
   [key: string]: boolean;
@@ -426,7 +426,7 @@ export function ExistingChat() {
             {!!typingText && (
               <Group className={classes.isTypingBox}>
                 <Text size="xs">{typingText}</Text>
-                <Loader variant="dots" />
+                <Loader type="dots" />
               </Group>
             )}
           </Box>

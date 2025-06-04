@@ -1,5 +1,6 @@
 import type { MantineSize, SegmentedControlProps } from '@mantine/core';
 import {
+  Alert,
   Badge,
   Box,
   Center,
@@ -10,34 +11,33 @@ import {
   Loader,
   NavLink,
   Popover,
+  SegmentedControl,
   Stack,
   Text,
   Title,
-  SegmentedControl,
-  Alert,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
+import clsx from 'clsx';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CreatorList } from '~/components/Leaderboard/CreatorList';
-import { Meta } from '~/components/Meta/Meta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { Meta } from '~/components/Meta/Meta';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { env } from '~/env/client';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { numericString, stringDate } from '~/utils/zod-helpers';
-import { env } from '~/env/client';
-import { removeEmpty } from '~/utils/object-helpers';
-import { constants } from '~/server/common/constants';
-import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import classes from './[id].module.css';
-import clsx from 'clsx';
 
 const excludeLegendsRegex = /Donors|Knights/i;
 
@@ -338,7 +338,7 @@ const UserPosition = ({
   if (loading)
     return (
       <Badge color="gray">
-        <Loader variant="dots" size="xs" color="gray" />
+        <Loader type="dots" size="xs" color="gray" />
       </Badge>
     );
   if (!position) return null;

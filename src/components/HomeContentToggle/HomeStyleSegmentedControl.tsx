@@ -1,18 +1,18 @@
 import type { SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
 import {
   Anchor,
+  Badge,
   Group,
+  Loader,
   SegmentedControl,
   Text,
   ThemeIcon,
-  Badge,
-  Loader,
-  useMantineTheme,
   useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import type { IconProps } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import classes from './HomeStyleSegmentedControl.module.css';
 
@@ -49,7 +49,7 @@ export function HomeStyleSegmentedControl({
             {/* Ideally this is a temporary solution. We should be using the `canViewNsfw` feature flag to return the correct numbers to the users */}
             {canViewNsfw && value.count != null && (
               <Badge classNames={{ label: 'overflow-visible' }}>
-                {loading ? <Loader size="xs" variant="dots" /> : value.count.toLocaleString()}
+                {loading ? <Loader size="xs" type="dots" /> : value.count.toLocaleString()}
               </Badge>
             )}
           </Group>

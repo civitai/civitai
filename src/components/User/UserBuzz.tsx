@@ -1,9 +1,9 @@
 import type { MantineSize, TextProps } from '@mantine/core';
 import { Group, Loader, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { useBuzz } from '~/components/Buzz/useBuzz';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { CurrencyConfig } from '~/server/common/constants';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 type Props = TextProps & {
   iconSize?: number;
@@ -32,7 +32,7 @@ export function UserBuzz({
   const content = balanceLoading ? (
     <Group gap={4} wrap="nowrap">
       <Icon size={iconSize} color={config.color(theme)} fill={config.color(theme)} />
-      <Loader color={config.color(theme)} variant="dots" size="xs" />
+      <Loader color={config.color(theme)} type="dots" size="xs" />
     </Group>
   ) : (
     <Text component="div" c={config.color(theme)} tt="uppercase" {...textProps}>
@@ -40,7 +40,7 @@ export function UserBuzz({
         <Icon size={iconSize} color="currentColor" fill="currentColor" />
         <Text size={textSize} fw={600} lh={0} style={{ fontVariantNumeric: 'tabular-nums' }} span>
           {balance === null ? (
-            <Loader size="sm" variant="dots" color={config.color(theme)} />
+            <Loader size="sm" type="dots" color={config.color(theme)} />
           ) : withAbbreviation ? (
             abbreviateNumber(balance, { floor: true })
           ) : (

@@ -250,6 +250,7 @@
     "autoprefixer": "^10.4.19",
     "cross-env": "^7.0.3",
     "cssnano": "^7.0.1",
+    "esbuild": "^0.25.5",
     "eslint": "8.22.0",
     "eslint-config-airbnb": "^19.0.4",
     "eslint-config-airbnb-typescript": "^17.0.0",

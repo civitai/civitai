@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Box,
   Divider,
@@ -14,15 +13,15 @@ import {
 } from '@mantine/core';
 import { getHotkeyHandler, useClickOutside, useDebouncedValue, usePrevious } from '@mantine/hooks';
 import { IconPlus, IconStar, IconX } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
 import type { PostDetailEditable } from '~/server/services/post.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import classes from './EditPostTags.module.scss';
-import clsx from 'clsx';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type TagProps = {
   id?: number;
@@ -291,7 +290,7 @@ function TagPicker() {
         <Box style={{ width: 300 }} ref={setDropdown}>
           <Group justify="space-between" px="sm" py="xs">
             <Text fw={500}>{label} Tags</Text>
-            {isFetching && <Loader variant="dots" />}
+            {isFetching && <Loader type="dots" />}
           </Group>
           <Divider />
           {!!filteredData?.length && (

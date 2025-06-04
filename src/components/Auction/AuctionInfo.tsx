@@ -1,6 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
 import {
-  ActionIcon,
   Badge,
   Button,
   Center,
@@ -507,10 +506,7 @@ export const AuctionInfo = () => {
           <Paper
             shadow="xs"
             radius="sm"
-            w="fit-content"
-            px="md"
-            py="xs"
-            className="w-full cursor-default bg-gray-0 dark:bg-dark-6"
+            className="w-full cursor-default bg-gray-0 px-4 py-2.5 dark:bg-dark-6"
             data-tour="auction:info"
           >
             <Group gap="sm" className="max-md:justify-between max-md:gap-1">
@@ -520,7 +516,7 @@ export const AuctionInfo = () => {
                     <Text>Spots</Text>
                   </Badge>
 
-                  {auctionData ? <Text>{auctionData.quantity}</Text> : <Loader variant="dots" />}
+                  {auctionData ? <Text>{auctionData.quantity}</Text> : <Loader type="dots" />}
                 </Group>
               </Tooltip>
 
@@ -535,7 +531,7 @@ export const AuctionInfo = () => {
                   {auctionData ? (
                     <Text>{auctionData.minPrice.toLocaleString()}</Text>
                   ) : (
-                    <Loader variant="dots" />
+                    <Loader type="dots" />
                   )}
                 </Group>
               </Tooltip>
@@ -565,7 +561,7 @@ export const AuctionInfo = () => {
                       For {validFor} day{validFor !== 1 ? 's' : ''}
                     </Text>
                   ) : (
-                    <Loader variant="dots" />
+                    <Loader type="dots" />
                   )}
                 </Group>
               </Tooltip>
@@ -586,7 +582,7 @@ export const AuctionInfo = () => {
               >
                 <Group gap="sm" className="max-md:w-full">
                   <Badge className="max-md:w-[80px]">
-                    <Text>Ends In</Text>
+                    <Text inherit>Ends In</Text>
                   </Badge>
 
                   {auctionData ? (
@@ -596,7 +592,7 @@ export const AuctionInfo = () => {
                       format={mobile ? 'short' : 'long'}
                     />
                   ) : (
-                    <Loader variant="dots" />
+                    <Loader type="dots" />
                   )}
                 </Group>
               </Tooltip>

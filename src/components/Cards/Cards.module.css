@@ -156,7 +156,7 @@
 .chip {
   border-radius: var(--mantine-radius-xl);
   height: 26px;
-  
+
   > * {
     font-weight: bold !important;
   }

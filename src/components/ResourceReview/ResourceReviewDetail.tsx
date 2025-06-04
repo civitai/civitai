@@ -14,12 +14,12 @@ import {
   Title,
 } from '@mantine/core';
 import { truncate } from 'lodash-es';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Meta } from '~/components/Meta/Meta';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ResourceReviewCarousel } from '~/components/ResourceReview/ResourceReviewCarousel';
@@ -183,7 +183,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
               </Text>
             )}
             {loadingRelatedPosts && !relatedPosts ? (
-              <Loader variant="dots" />
+              <Loader type="dots" />
             ) : (
               relatedPosts?.items.map((post) => (
                 <Link
