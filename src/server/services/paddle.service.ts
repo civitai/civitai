@@ -451,6 +451,7 @@ export const upsertSubscription = async (
       where: { userId: user.id },
       data: {
         status: userSubscription?.status ?? 'canceled',
+        cancelAt: userSubscription?.currentPeriodEnd ?? new Date(),
         canceledAt: userSubscription?.currentPeriodEnd ?? new Date(),
         cancelAtPeriodEnd: true,
       },
@@ -928,6 +929,8 @@ export const updateSubscriptionPlan = async ({
 };
 
 export const refreshSubscription = async ({ userId }: { userId: number }) => {
+  return true; // Disable refreshing from Paddle since they're dead
+
   let customerId = '';
   const user = await dbWrite.user.findUnique({
     where: { id: userId },

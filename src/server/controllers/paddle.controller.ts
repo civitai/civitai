@@ -1,5 +1,7 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import type { Context } from '~/server/createContext';
+import { dbWrite } from '~/server/db/client';
+import { paddleCancellationEmail } from '~/server/email/templates';
 import {
   getPaddleCustomerSubscriptions,
   getPaddleSubscription,
@@ -106,6 +108,42 @@ export const cancelSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable<
   }
 };
 
+export const cancelEmailHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const subscription = await getUserSubscription({ userId: ctx.user.id });
+    if (!subscription) {
+      throw throwNotFoundError('Subscription not found');
+    }
+
+    if (subscription.product.provider !== PaymentProvider.Paddle) {
+      throw throwBadRequestError('Current subscription is not managed by Paddle');
+    }
+
+    // Cancel for them on our end
+    const status = subscription.currentPeriodEnd < new Date() ? 'canceled' : subscription.status;
+    await dbWrite.customerSubscription.update({
+      where: { userId: ctx.user.id },
+      data: {
+        status: subscription.currentPeriodEnd < new Date() ? 'canceled' : subscription.status,
+        cancelAt: subscription.currentPeriodEnd ?? new Date(),
+        canceledAt: status === 'canceled' ? new Date() : null,
+        cancelAtPeriodEnd: true,
+      },
+    });
+
+    // Email paddle to cancel the subscription
+    if (!!ctx.user.email) {
+      await paddleCancellationEmail.send({
+        email: ctx.user.email as string,
+      });
+    }
+
+    return true;
+  } catch (e) {
+    throw getTRPCErrorFromUnknown(e);
+  }
+};
+
 export const getManagementUrlsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     const urls: {
@@ -203,6 +241,9 @@ export const refreshSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable
 };
 
 export const hasPaddleSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  // Grab this from the DB since Paddle is dead
+  return fromDbSubscriptionHandler({ ctx });
+
   try {
     const user = { id: ctx.user.id, email: ctx.user.email as string };
     const customerId = await createCustomer(user);
@@ -226,6 +267,25 @@ export const hasPaddleSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullab
     );
 
     return nonFreeSubscriptions.length > 0;
+  } catch (e) {
+    throw getTRPCErrorFromUnknown(e);
+  }
+};
+
+const fromDbSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const subscription = (
+      await dbWrite.$queryRaw<{ id: string }[]>`
+      SELECT cs.id
+      FROM "CustomerSubscription" cs
+      JOIN "Price" p ON p.id = cs."priceId"
+      WHERE cs."userId" = ${ctx.user.id}
+      AND cs.status = 'active'
+      AND p."unitAmount" > 0;
+    `
+    )?.[0];
+
+    return !!subscription;
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }

@@ -9,6 +9,7 @@ import {
   refreshSubscriptionHandler,
   hasPaddleSubscriptionHandler,
   getAdjustmentsInfiniteHandler,
+  cancelEmailHandler,
 } from '~/server/controllers/paddle.controller';
 import { router, protectedProcedure, moderatorProcedure } from '~/server/trpc';
 import {
@@ -30,7 +31,8 @@ export const paddleRouter = router({
   updateSubscription: protectedProcedure
     .input(updateSubscriptionInputSchema)
     .mutation(updateSubscriptionPlanHandler),
-  cancelSubscription: protectedProcedure.mutation(cancelSubscriptionHandler),
+  // cancelSubscription: protectedProcedure.mutation(cancelSubscriptionHandler),
+  cancelSubscription: protectedProcedure.mutation(cancelEmailHandler),
   purchaseBuzzWithSubscription: protectedProcedure
     .input(transactionWithSubscriptionCreateSchema)
     .mutation(purchaseBuzzWithSubscriptionHandler),
