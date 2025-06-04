@@ -343,7 +343,7 @@ export async function parseGenerateImageInput({
   if (params.draft) {
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
-    params.sampler = 'LCM';
+    if (!injectableResources.draft) params.sampler = 'LCM';
   }
 
   let upscaleWidth = params.upscaleHeight;
@@ -704,44 +704,10 @@ function formatTextToImageStep({
   const stepResources = getResources(step);
 
   const resources = combineResourcesWithInputResource(allResources, stepResources);
-  const versionIds = resources.map((x) => x.id);
 
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
   const baseModel = getBaseModelSetType(checkpoint?.baseModel);
   const injectable = getInjectablResources(baseModel);
-
-  let prompt = input.prompt ?? '';
-  let negativePrompt = input.negativePrompt ?? '';
-  for (const item of Object.values(injectable).filter(isDefined)) {
-    const resource = resources.find((x) => x.id === item.id);
-    if (!resource) continue;
-    const triggerWord = resource.trainedWords?.[0];
-    if (triggerWord) {
-      if (item?.triggerType === 'negative')
-        // while (negativePrompt.startsWith(triggerWord)) {
-        negativePrompt = negativePrompt.replaceAll(`${triggerWord}, `, '');
-      // }
-      if (item?.triggerType === 'positive')
-        // while (prompt.startsWith(triggerWord)) {
-        prompt = prompt.replaceAll(`${triggerWord}, `, '');
-      // }
-    }
-  }
-
-  // infer draft from resources if not included in meta params
-  const isDraft =
-    metadata?.params?.draft ??
-    (injectable.draft ? versionIds.includes(injectable.draft.id) : false);
-
-  let quantity = input.quantity ?? 1;
-  if (isDraft) {
-    quantity *= 4;
-  }
-
-  const sampler =
-    Object.entries(samplersToSchedulers).find(
-      ([sampler, scheduler]) => scheduler.toLowerCase() === input.scheduler?.toLowerCase()
-    )?.[0] ?? generation.defaultValues.sampler;
 
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
@@ -773,40 +739,9 @@ function formatTextToImageStep({
     .map((x) => x?.id)
     .filter(isDefined);
 
-  const upscale =
-    'upscale' in input
-      ? {
-          upscaleWidth: input.width * (input.upscale as number),
-          upscaleHeight: input.height * (input.upscale as number),
-        }
-      : {};
-
   const params = metadata?.params;
 
   const data = {
-    // baseModel,
-    // prompt,
-    // negativePrompt,
-    // quantity,
-    // engine: input.engine,
-    // // controlNets: input.controlNets,
-    // // aspectRatio: getClosestAspectRatio(input.width, input.height, baseModel),
-
-    // width: input.width,
-    // height: input.height,
-    // seed: input.seed,
-    // draft: isDraft,
-    // workflow: 'txt2img',
-    // //support using metadata params first (one of the quirks of draft mode makes this necessary)
-    // clipSkip: params?.clipSkip ?? input.clipSkip,
-    // steps: params?.steps ?? input.steps,
-    // cfgScale: params?.cfgScale ?? input.cfgScale,
-    // sampler: params?.sampler ?? sampler,
-    // ...upscale,
-    // precision: params?.precision,
-    // variant: params?.variant,
-
-    // fluxMode: params?.fluxMode ?? undefined,
     ...params,
     fluxUltraRaw:
       input.engine === 'flux-pro-raw' ? true : input.model === fluxUltraAir ? false : undefined,
