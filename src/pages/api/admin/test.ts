@@ -1,28 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
-import { queryWorkflows, submitWorkflow } from '~/server/services/orchestrator/workflows';
-import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { env } from '~/env/server';
-import { getSystemPermissions } from '~/server/services/system-cache';
-import { addGenerationEngine } from '~/server/services/generation/engines';
-import { dbWrite, dbRead } from '~/server/db/client';
-import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
-import { getResourceData } from '~/server/services/generation/generation.service';
-import { Prisma } from '@prisma/client';
-import { getCommentsThreadDetails2 } from '~/server/services/commentsv2.service';
-import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
-import {
-  getWorkflowDefinitions,
-  setWorkflowDefinition,
-} from '~/server/services/orchestrator/comfy/comfy.utils';
-import { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import { pgDbWrite } from '~/server/db/pgDb';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
-import { setExperimentalConfig } from '~/server/services/orchestrator/experimental';
-import { resourceDataCache } from '~/server/services/model-version.service';
 
 type Row = {
   userId: number;
@@ -96,12 +74,12 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   setWorkflowDefinition(workflow.key, workflow);
     // }
 
-    // const data = await getResourceData({ ids: [1820704], epochNumbers: ['1820704@10'] });
-    const data = await getResourceData([{ id: 1802730 }], session?.user);
+    // const data = await getGenerationResourceData({ ids: [1703341] });
 
     // await setExperimentalConfig({ userIds: [5] });
 
-    res.status(200).send({ data });
+    // res.status(200).send({ data });
+    res.status(200).send({ ok: true });
   } catch (e) {
     console.log(e);
     res.status(400).end();
