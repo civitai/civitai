@@ -902,7 +902,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
                   Terms of service
                 </Anchor>
-                .
+                .<br/>
+                Illegal or exploitative content will be removed and reported.
               </Text>
               <List size="xs" spacing={8}>
                 <List.Item>
