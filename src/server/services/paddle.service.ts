@@ -403,7 +403,13 @@ export const upsertSubscription = async (
   const userSubscription = await dbWrite.customerSubscription.findFirst({
     // I rather we trust this than the subscriptionId on the user.
     where: { userId: user.id },
-    select: { id: true, status: true, metadata: true, product: { select: { provider: true } } },
+    select: {
+      id: true,
+      status: true,
+      metadata: true,
+      currentPeriodEnd: true,
+      product: { select: { provider: true } },
+    },
   });
 
   const userHasSubscription = !!userSubscription;
@@ -429,14 +435,24 @@ export const upsertSubscription = async (
   }
 
   if (subscriptionNotification.status === 'canceled') {
+    // @justin - Disabling this for now since Paddle is immediately canceling...
     // immediate cancel:
-    log('upsertSubscription :: Subscription canceled immediately');
+    // log('upsertSubscription :: Subscription canceled immediately');
+    // await dbWrite.customerSubscription.update({
+    //   where: { userId: user.id },
+    //   data: {
+    //     status: 'canceled',
+    //     canceledAt: new Date(),
+    //     cancelAtPeriodEnd: false,
+    //   },
+    // });
+    // @justin - Cancel at period end for now...
     await dbWrite.customerSubscription.update({
       where: { userId: user.id },
       data: {
-        status: 'canceled',
-        canceledAt: new Date(),
-        cancelAtPeriodEnd: false,
+        status: userSubscription?.status ?? 'canceled',
+        canceledAt: userSubscription?.currentPeriodEnd ?? new Date(),
+        cancelAtPeriodEnd: true,
       },
     });
     await getMultipliersForUser(user.id, true);
