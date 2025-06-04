@@ -931,74 +931,74 @@ export const updateSubscriptionPlan = async ({
 export const refreshSubscription = async ({ userId }: { userId: number }) => {
   return true; // Disable refreshing from Paddle since they're dead
 
-  let customerId = '';
-  const user = await dbWrite.user.findUnique({
-    where: { id: userId },
-    select: { paddleCustomerId: true, email: true, id: true },
-  });
+  // let customerId = '';
+  // const user = await dbWrite.user.findUnique({
+  //   where: { id: userId },
+  //   select: { paddleCustomerId: true, email: true, id: true },
+  // });
 
-  const customerSubscription = await dbWrite.customerSubscription.findFirst({
-    where: {
-      userId,
-      status: {
-        in: ['active', 'trialing'],
-      },
-    },
-  });
+  // const customerSubscription = await dbWrite.customerSubscription.findFirst({
+  //   where: {
+  //     userId,
+  //     status: {
+  //       in: ['active', 'trialing'],
+  //     },
+  //   },
+  // });
 
-  if (!user?.email && !user?.paddleCustomerId) {
-    throw throwBadRequestError('Email is required to create a customer');
-  }
+  // if (!user?.email && !user?.paddleCustomerId) {
+  //   throw throwBadRequestError('Email is required to create a customer');
+  // }
 
-  if (!user?.paddleCustomerId) {
-    customerId = await createCustomer({ id: userId, email: user.email as string });
-  } else {
-    customerId = user.paddleCustomerId;
-  }
+  // if (!user?.paddleCustomerId) {
+  //   customerId = await createCustomer({ id: userId, email: user.email as string });
+  // } else {
+  //   customerId = user.paddleCustomerId;
+  // }
 
-  const subscriptions = await getPaddleCustomerSubscriptions({ customerId });
+  // const subscriptions = await getPaddleCustomerSubscriptions({ customerId });
 
-  if (subscriptions.length === 0) {
-    throwBadRequestError('No active subscriptions found on Paddle');
-  }
+  // if (subscriptions.length === 0) {
+  //   throwBadRequestError('No active subscriptions found on Paddle');
+  // }
 
-  const subscription = subscriptions[0];
+  // const subscription = subscriptions[0];
 
-  if (customerSubscription && customerSubscription.id !== subscription.id) {
-    // This is a different subscription, we should update the user.
-    await dbWrite.customerSubscription.delete({ where: { id: customerSubscription.id } });
-  }
-  try {
-    // This should trigger an update...
-    await updatePaddleSubscription({
-      subscriptionId: subscription.id,
-      customData: {
-        ...subscription.customData,
-        refreshed: new Date().toISOString(),
-      },
-    });
+  // if (customerSubscription && customerSubscription.id !== subscription.id) {
+  //   // This is a different subscription, we should update the user.
+  //   await dbWrite.customerSubscription.delete({ where: { id: customerSubscription.id } });
+  // }
+  // try {
+  //   // This should trigger an update...
+  //   await updatePaddleSubscription({
+  //     subscriptionId: subscription.id,
+  //     customData: {
+  //       ...subscription.customData,
+  //       refreshed: new Date().toISOString(),
+  //     },
+  //   });
 
-    await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
+  //   await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 
-    await invalidateSession(userId);
-    await getMultipliersForUser(userId, true);
+  //   await invalidateSession(userId);
+  //   await getMultipliersForUser(userId, true);
 
-    return true;
-  } catch (error) {
-    if (error instanceof ApiError) {
-      // Check if they are ok errors
-      const apiError = error as ApiError;
-      if (
-        apiError.code === 'subscription_locked_renewal' ||
-        apiError.code === 'subscription_locked_pending_changes'
-      ) {
-        // Not a bad error, we can ignore this.
-        return true;
-      }
-    }
+  //   return true;
+  // } catch (error) {
+  //   if (error instanceof ApiError) {
+  //     // Check if they are ok errors
+  //     const apiError = error as ApiError;
+  //     if (
+  //       apiError.code === 'subscription_locked_renewal' ||
+  //       apiError.code === 'subscription_locked_pending_changes'
+  //     ) {
+  //       // Not a bad error, we can ignore this.
+  //       return true;
+  //     }
+  //   }
 
-    throw error;
-  }
+  //   throw error;
+  // }
 };
 
 export const cancelAllPaddleSubscriptions = async ({ customerId }: { customerId: string }) => {
