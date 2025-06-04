@@ -152,11 +152,11 @@ export function PostImageDropzone({
       {!!files.length && showProgress && <Progress value={progress} animate size="lg" />}
       {!files.length && (
         <Text size="xs" align="center">
-          By uploading images to our site you agree to our{' '}
+          By uploading content to our site you agree to our{' '}
           <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
             Terms of service
           </Anchor>
-          . Be sure to read our <ContentPolicyLink /> before uploading any images.
+          . Be sure to read our <ContentPolicyLink /> before uploading any images. Illegal or exploitative content will be removed and reported.
         </Text>
       )}
     </div>
