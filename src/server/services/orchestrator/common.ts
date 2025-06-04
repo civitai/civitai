@@ -784,27 +784,30 @@ function formatTextToImageStep({
   const params = metadata?.params;
 
   const data = {
-    baseModel,
-    prompt,
-    negativePrompt,
-    quantity,
-    engine: input.engine,
-    // controlNets: input.controlNets,
-    // aspectRatio: getClosestAspectRatio(input.width, input.height, baseModel),
+    // baseModel,
+    // prompt,
+    // negativePrompt,
+    // quantity,
+    // engine: input.engine,
+    // // controlNets: input.controlNets,
+    // // aspectRatio: getClosestAspectRatio(input.width, input.height, baseModel),
 
-    width: input.width,
-    height: input.height,
-    seed: input.seed,
-    draft: isDraft,
-    workflow: 'txt2img',
-    //support using metadata params first (one of the quirks of draft mode makes this necessary)
-    clipSkip: params?.clipSkip ?? input.clipSkip,
-    steps: params?.steps ?? input.steps,
-    cfgScale: params?.cfgScale ?? input.cfgScale,
-    sampler: params?.sampler ?? sampler,
-    ...upscale,
+    // width: input.width,
+    // height: input.height,
+    // seed: input.seed,
+    // draft: isDraft,
+    // workflow: 'txt2img',
+    // //support using metadata params first (one of the quirks of draft mode makes this necessary)
+    // clipSkip: params?.clipSkip ?? input.clipSkip,
+    // steps: params?.steps ?? input.steps,
+    // cfgScale: params?.cfgScale ?? input.cfgScale,
+    // sampler: params?.sampler ?? sampler,
+    // ...upscale,
+    // precision: params?.precision,
+    // variant: params?.variant,
 
-    fluxMode: params?.fluxMode ?? undefined,
+    // fluxMode: params?.fluxMode ?? undefined,
+    ...params,
     fluxUltraRaw:
       input.engine === 'flux-pro-raw' ? true : input.model === fluxUltraAir ? false : undefined,
   } as TextToImageParams;
@@ -823,7 +826,7 @@ function formatTextToImageStep({
     name: step.name,
     // TODO - after a month from deployment(?), we should be able to start using `step.metadata.params`
     // at that point in time, we can also make params and resources required properties on metadata to ensure that it doesn't get removed by step metadata updates
-    params: data,
+    params: removeEmpty(data),
     images,
     status: step.status,
     metadata: metadata,
