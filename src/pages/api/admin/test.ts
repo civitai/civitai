@@ -10,7 +10,10 @@ import { getSystemPermissions } from '~/server/services/system-cache';
 import { addGenerationEngine } from '~/server/services/generation/engines';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
-import { getResourceData } from '~/server/services/generation/generation.service';
+import {
+  getGenerationResourceData,
+  getResourceData,
+} from '~/server/services/generation/generation.service';
 import { Prisma } from '@prisma/client';
 import { getCommentsThreadDetails2 } from '~/server/services/commentsv2.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
@@ -96,8 +99,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   setWorkflowDefinition(workflow.key, workflow);
     // }
 
-    // const data = await getResourceData({ ids: [1820704], epochNumbers: ['1820704@10'] });
-    const data = await getResourceData([{ id: 1820704 }], session?.user);
+    const data = await getGenerationResourceData({ ids: [1703341] });
 
     // await setExperimentalConfig({ userIds: [5] });
 

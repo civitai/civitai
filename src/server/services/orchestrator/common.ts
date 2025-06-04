@@ -46,6 +46,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { InjectableResource } from '~/shared/constants/generation.constants';
 import {
   allInjectableResourceIds,
+  fluxDraftAir,
   fluxModeOptions,
   fluxUltraAir,
   fluxUltraAirId,
@@ -54,6 +55,7 @@ import {
   getBaseModelSetType,
   getInjectablResources,
   getIsFlux,
+  getIsFluxStandard,
   getIsSD3,
   getRoundedWidthHeight,
   samplersToSchedulers,
@@ -132,7 +134,7 @@ export async function parseGenerateImageInput({
 
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
-  if (isFlux && originalParams.fluxMode) {
+  if (isFlux) {
     // const { version } = parseAIR(originalParams.fluxMode);
     originalParams.sampler = 'undefined';
     // originalResources = [{ id: version, strength: 1 }];
@@ -140,7 +142,7 @@ export async function parseGenerateImageInput({
     originalParams.draft = false;
     originalParams.negativePrompt = '';
     delete originalParams.clipSkip;
-    if (originalParams.fluxMode === fluxModeOptions[0].value) {
+    if (originalParams.fluxMode === fluxDraftAir) {
       originalParams.steps = 4;
       originalParams.cfgScale = 1;
     }
@@ -150,8 +152,6 @@ export async function parseGenerateImageInput({
       delete originalParams.negativePrompt;
       delete originalParams.clipSkip;
     }
-  } else {
-    originalParams.fluxMode = undefined;
   }
 
   const isSD3 = getIsSD3(originalParams.baseModel);
@@ -165,7 +165,6 @@ export async function parseGenerateImageInput({
     }
   }
 
-  let params = { ...originalParams };
   const status = await getGenerationStatus();
   const limits = status.limits[user.tier ?? 'free'];
   const resourceLimit = limits.resources;
@@ -211,6 +210,15 @@ export async function parseGenerateImageInput({
     (x) => x.model.type === ModelType.Checkpoint || x.model.type === ModelType.Upscaler
   );
   if (!model) throw throwBadRequestError('A checkpoint is required to make a generation request');
+  const isFluxStandard = getIsFluxStandard(model.model.id);
+  if (!isFluxStandard) {
+    delete originalParams.fluxMode;
+    delete originalParams.fluxUltraAspectRatio;
+    delete originalParams.fluxUltraRaw;
+  }
+
+  let params = { ...originalParams };
+
   if (params.baseModel !== getBaseModelSetType(model.baseModel))
     throw throwBadRequestError(
       `Invalid base model. Checkpoint with baseModel: ${model.baseModel} does not match the input baseModel: ${params.baseModel}`
