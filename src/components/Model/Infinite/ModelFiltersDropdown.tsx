@@ -71,6 +71,7 @@ export function DumbModelFiltersDropdown({
   setFilters: (filters: Partial<ModelFilterSchema>) => void;
 }) {
   const currentUser = useCurrentUser();
+  const isModerator = currentUser?.isModerator;
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const flags = useFeatureFlags();
@@ -103,7 +104,9 @@ export function DumbModelFiltersDropdown({
     (!!mergedFilters.availability ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
     (mergedFilters.poiOnly ? 1 : 0) +
-    (mergedFilters.minorOnly ? 1 : 0);
+    (mergedFilters.minorOnly ? 1 : 0) +
+    (isModerator && mergedFilters.disablePoi ? 1 : 0) +
+    (isModerator && mergedFilters.disableMinor ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -350,6 +353,18 @@ export function DumbModelFiltersDropdown({
                 onChange={(checked) => handleChange({ minorOnly: checked })}
               >
                 <span>Minor</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.poiOnly}
+                onChange={(checked) => handleChange({ disablePoi: checked })}
+              >
+                <span>Disable POI</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.minorOnly}
+                onChange={(checked) => handleChange({ disableMinor: checked })}
+              >
+                <span>Disable Minor</span>
               </FilterChip>
             </>
           )}

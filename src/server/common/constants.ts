@@ -1376,6 +1376,7 @@ export const specialCosmeticRewards = {
     866, // bulk buzz buy - badge
     872, // bulk buzz buy - background
   ],
+  crypto: [874],
 };
 
 export type LiveFeatureFlags = {

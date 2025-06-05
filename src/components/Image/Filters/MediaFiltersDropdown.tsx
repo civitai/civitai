@@ -100,7 +100,9 @@ export function MediaFiltersDropdown({
     (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0) +
     (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0) +
     (mergedFilters.poiOnly ? 1 : 0) +
-    (mergedFilters.minorOnly ? 1 : 0);
+    (mergedFilters.minorOnly ? 1 : 0) +
+    (isModerator && mergedFilters.disablePoi ? 1 : 0) +
+    (isModerator && mergedFilters.disableMinor ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -231,6 +233,18 @@ export function MediaFiltersDropdown({
                 onChange={(checked) => handleChange({ minorOnly: checked })}
               >
                 <span>Minor</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.poiOnly}
+                onChange={(checked) => handleChange({ disablePoi: checked })}
+              >
+                <span>Disable POI</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.minorOnly}
+                onChange={(checked) => handleChange({ disableMinor: checked })}
+              >
+                <span>Disable Minor</span>
               </FilterChip>
             </>
           )}

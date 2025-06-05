@@ -2,7 +2,7 @@ import { Divider, Group, Stack, Text, ThemeIcon, Tooltip, UnstyledButton } from 
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-import { IconChevronsLeft } from '@tabler/icons-react';
+import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client';
@@ -22,6 +22,7 @@ import { constants } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
 import type { UiState } from 'instantsearch.js';
+import { includesInappropriate } from '~/utils/metadata/audit';
 import classes from './SearchLayout.module.scss';
 import clsx from 'clsx';
 
@@ -95,7 +96,22 @@ export function SearchLayout({
     if (!result.success) return;
 
     const { query, sortBy: index, ...filters } = result.data;
+
     if (query && index) trackSearch({ query, index, filters });
+  }, [router.query]);
+
+  const isIllegalSearch = useMemo(() => {
+    const result = searchQuerySchema.safeParse(router.query);
+    if (!result.success) return;
+
+    const { query, sortBy: index, ...filters } = result.data;
+
+    if (query) {
+      const illegalSearch = includesInappropriate({ prompt: query });
+      return illegalSearch === 'minor';
+    }
+
+    return false;
   }, [router.query]);
 
   return (
@@ -115,7 +131,84 @@ export function SearchLayout({
           scrollable={isMobile ? !sidebarOpen : true}
           left={leftSidebar}
         >
-          {children}
+          {isIllegalSearch ? (
+            <SearchLayout.Root>
+              <SearchLayout.Content>
+                <Center>
+                  <Stack maw={750} align="center" justify="center" className="h-full">
+                    <Stack align="center" spacing={0}>
+                      <IconAlertTriangle size={42} color="red" />
+                      <Text weight={700} size="xl" color="red">
+                        Warning
+                      </Text>
+                    </Stack>
+                    <Text align="center">
+                      Your search may be for{' '}
+                      <Text span weight={700} color="red">
+                        illegal and abusive sexual material involving minors
+                      </Text>
+                      .
+                    </Text>
+                    <Text align="center">
+                      Viewing, sharing, or creating such content is a{' '}
+                      <Text span weight={700}>
+                        serious crime
+                      </Text>
+                      . If you feel worried about your sexual thoughts about anyone under 18,{' '}
+                      <Text span weight={700}>
+                        free, confidential, and anonymous help is available
+                      </Text>
+                      :
+                    </Text>
+                    <List spacing="xs" size="md" center>
+                      <List.Item>
+                        <Text span weight={700}>
+                          Phone (UK)
+                        </Text>{' '}
+                        Stop It Now! helpline —{' '}
+                        <Text span weight={700}>
+                          0808 1000 900
+                        </Text>
+                        <br />
+                        <Text size="xs" color="dimmed">
+                          (24/7, no caller ID saved)
+                        </Text>
+                      </List.Item>
+                      <List.Item>
+                        <Text span weight={700}>
+                          Online Support (global)
+                        </Text>{' '}
+                        <Anchor
+                          href="https://get-help.stopitnow.org.uk"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Get Help
+                        </Anchor>{' '}
+                        – self-help tools, live chat, and secure email
+                      </List.Item>
+                    </List>
+                    <Text align="center" color="dimmed" size="sm" mt="md">
+                      We strictly enforce our{' '}
+                      <Anchor href="/content/tos#content-policies" target="_blank">
+                        Terms of Service
+                      </Anchor>
+                      . Abuse will be reported and may lead to criminal investigation. Visit our{' '}
+                      <Anchor href="/safety" target="_blank">
+                        Safety Center
+                      </Anchor>{' '}
+                      for more information.
+                    </Text>
+                    <Anchor href="/" mt="md">
+                      <Text size="md">Go Back ↩︎</Text>
+                    </Anchor>
+                  </Stack>
+                </Center>
+              </SearchLayout.Content>
+            </SearchLayout.Root>
+          ) : (
+            <>{children}</>
+          )}
         </AppLayout>
       </InstantSearch>
     </SearchLayoutCtx.Provider>
