@@ -6,10 +6,8 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 export const ViewMoreItem = forwardRef<HTMLDivElement, ComboboxItem>(({ value, ...props }, ref) => {
   return (
-    <Center ref={ref} {...props} key="view-more">
-      <Anchor fw="bold" td="none !important">
-        View more results
-      </Anchor>
+    <Center ref={ref} {...props} w="100%" key="view-more">
+      <Anchor td="none !important">View more results</Anchor>
     </Center>
   );
 });

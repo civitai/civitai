@@ -38,6 +38,7 @@ export const CollectionsSearchItem = forwardRef<
           position: 'relative',
           overflow: 'hidden',
           borderRadius: '10px',
+          flexShrink: 0,
         }}
       >
         {nsfw ? (

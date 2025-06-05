@@ -43,6 +43,7 @@ export const ArticlesSearchItem = forwardRef<
           position: 'relative',
           overflow: 'hidden',
           borderRadius: '10px',
+          flexShrink: 0,
         }}
       >
         {coverImage ? (

@@ -40,6 +40,7 @@ export const BountiesSearchItem = forwardRef<
           position: 'relative',
           overflow: 'hidden',
           borderRadius: '10px',
+          flexShrink: 0,
         }}
       >
         {image ? (

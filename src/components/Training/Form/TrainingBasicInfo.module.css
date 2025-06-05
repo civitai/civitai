@@ -1,4 +1,6 @@
 .centerRadio {
+  height: 100%;
+  
   .mantine-Group-root {
     justify-content: space-between;
     align-items: stretch;

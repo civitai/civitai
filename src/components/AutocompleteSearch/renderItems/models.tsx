@@ -38,6 +38,7 @@ export const ModelSearchItem = forwardRef<
           position: 'relative',
           overflow: 'hidden',
           borderRadius: theme.radius.sm,
+          flexShrink: 0,
         }}
       >
         {coverImage ? (

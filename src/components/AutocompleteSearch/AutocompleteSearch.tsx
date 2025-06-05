@@ -56,6 +56,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import { getBlockedNsfwWords, includesInappropriate, includesPoi } from '~/utils/metadata/audit';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { truncate } from 'lodash-es';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -223,12 +224,80 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   });
 
   const items = useMemo(() => {
+    const isIllegalQuery = debouncedSearch
+      ? includesInappropriate({ prompt: debouncedSearch }) === 'minor'
+      : false;
+    const canPerformQuery = debouncedSearch
+      ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
+      : true;
+    const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
+
+    if (isIllegalQuery) {
+      return [
+        {
+          key: 'blocked',
+          value: debouncedSearch,
+          hit: null as any,
+          label: 'Blocked',
+        },
+      ];
+    }
+
+    if (!canPerformQuery) {
+      return [
+        {
+          key: 'disabled',
+          value: debouncedSearch,
+          hit: null as any,
+          label: 'Blocked',
+        },
+      ];
+    }
+    if (hasBlockedWords) {
+      return [
+        {
+          key: 'blocked-words',
+          value: debouncedSearch,
+          hit: null as any,
+          label: 'Blocked',
+        },
+      ];
+    }
+
+    if (searchErrorState) {
+      return [
+        {
+          key: 'error',
+          value: debouncedSearch,
+          hit: null as any,
+          label: 'Error',
+        },
+      ];
+    }
+
     if (status === 'stalled') {
       return []; // Wait it out
     }
-    const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: '' }));
+
+    const items = filtered.map((hit) => ({
+      key: String(hit.id),
+      hit,
+      value: String(hit.id),
+      label:
+        'prompt' in hit
+          ? truncate(hit.prompt, { length: 50 })
+          : 'name' in hit
+          ? hit.name
+          : 'title' in hit
+          ? hit.title
+          : 'username' in hit
+          ? hit.username
+          : '',
+    }));
+
     if (!!results?.nbHits && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT)
-      items.push({ key: 'view-more', value: query, hit: null as any });
+      items.push({ key: 'view-more', value: query, hit: null as any, label: 'View more results' });
+
     return items;
   }, [status, filtered, results?.nbHits, query]);
 
@@ -275,6 +344,16 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const handleItemClick = (value: string) => {
     const item = getItemFromValue(value);
+
+    if (
+      item.key === 'blocked' ||
+      item.key === 'disabled' ||
+      item.key === 'blocked-words' ||
+      item.key === 'error'
+    ) {
+      // Do not allow to click on blocked items
+      return;
+    }
 
     if (item.hit) {
       // when an item is clicked
@@ -343,15 +422,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     }
   };
 
-  const isIllegalQuery = debouncedSearch
-    ? includesInappropriate({ prompt: debouncedSearch }) === 'minor'
-    : false;
-  const canPerformQuery = debouncedSearch
-    ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
-    : true;
-
-  const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
-
   return (
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
@@ -386,34 +456,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           classNames={classes}
           placeholder="Search Civitai"
           type="search"
-          // TODO: Mantine7
-          // nothingFound={
-          //   isIllegalQuery ? (
-          //     <Stack gap={0} align="center">
-          //       <Text>Your search query contains inappropriate content and has been blocked.</Text>
-          //       <Text size="xs">Please try a different search term.</Text>
-          //     </Stack>
-          //   ) : !canPerformQuery ? (
-          //     <Stack gap={0} align="center">
-          //       <Text>
-          //         Due to your current browsing settings, searching for people of interest has been
-          //         disabled.
-          //       </Text>
-          //       <Text size="xs">
-          //         You may remove X and XXX browsing settings to search for these.
-          //       </Text>
-          //     </Stack>
-          //   ) : searchErrorState ? (
-          //     <Stack gap={0} align="center">
-          //       <Text>There was an error while performing your request&hellip;</Text>
-          //       <Text size="xs">Please try again later</Text>
-          //     </Stack>
-          //   ) : query && !hits.length ? (
-          //     <Stack gap={0} align="center">
-          //       <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-          //     </Stack>
-          //   ) : undefined
-          // }
           limit={
             results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
               ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
@@ -421,7 +463,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           }
           defaultValue={query}
           value={search}
-          data={canPerformQuery && !hasBlockedWords && !isIllegalQuery ? items : []}
+          data={items}
           onChange={setSearch}
           onBlur={handleClear}
           onClear={handleClear}
@@ -432,11 +474,60 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           onOptionSubmit={(v) => handleItemClick(v)}
           renderOption={({ option }) => {
             const item = getItemFromValue(option.value);
+            // Render special states
+            if (item.key === 'blocked') {
+              return (
+                <Stack gap="xs" align="center">
+                  <Text size="sm" align="center">
+                    Your search query contains inappropriate content and has been blocked.
+                  </Text>
+                  <Text size="xs" align="center">
+                    Please try a different search term.
+                  </Text>
+                </Stack>
+              );
+            }
+            if (item.key === 'disabled') {
+              return (
+                <Stack gap="xs" align="center">
+                  <Text size="sm" align="center">
+                    Due to your current browsing settings, searching for people of interest has been
+                    disabled.
+                  </Text>
+                  <Text size="xs" align="center">
+                    You may remove X and XXX browsing settings to search for these.
+                  </Text>
+                </Stack>
+              );
+            }
+            if (item.key === 'blocked-words') {
+              return (
+                <Stack gap="xs" align="center">
+                  <Text size="sm" align="center">
+                    Your search query contains blocked words and has been filtered.
+                  </Text>
+                  <Text size="xs" align="center">
+                    Please try a different search term.
+                  </Text>
+                </Stack>
+              );
+            }
+            if (item.key === 'error') {
+              return (
+                <Stack gap="xs" align="center">
+                  <Text size="sm" align="center">
+                    There was an error while performing your request&hellip;
+                  </Text>
+                  <Text size="xs" align="center">
+                    Please try again later
+                  </Text>
+                </Stack>
+              );
+            }
 
             const Render = IndexRenderItem[indexName] ?? ModelSearchItem;
             return <Render {...item} />;
           }}
-          // itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
           rightSection={
             <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
               <HoverCard.Target>
@@ -470,9 +561,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             </HoverCard>
           }
           // prevent default filtering behavior
-          // filter={() => true}
+          filter={({ options }) => options}
           clearable={query.length > 0}
-          maxDropdownHeight={isMobile ? 'calc(90vh - var(--header-height))' : undefined}
+          maxDropdownHeight={isMobile ? 'calc(90vh - var(--header-height))' : 500}
           {...autocompleteProps}
         />
         <LegacyActionIcon
