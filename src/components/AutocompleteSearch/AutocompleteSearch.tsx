@@ -386,33 +386,34 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           classNames={classes}
           placeholder="Search Civitai"
           type="search"
-          nothingFound={
-            isIllegalQuery ? (
-              <Stack spacing={0} align="center">
-                <Text>Your search query contains inappropriate content and has been blocked.</Text>
-                <Text size="xs">Please try a different search term.</Text>
-              </Stack>
-            ) : !canPerformQuery ? (
-              <Stack spacing={0} align="center">
-                <Text>
-                  Due to your current browsing settings, searching for people of interest has been
-                  disabled.
-                </Text>
-                <Text size="xs">
-                  You may remove X and XXX browsing settings to search for these.
-                </Text>
-              </Stack>
-            ) : searchErrorState ? (
-              <Stack spacing={0} align="center">
-                <Text>There was an error while performing your request&hellip;</Text>
-                <Text size="xs">Please try again later</Text>
-              </Stack>
-            ) : query && !hits.length ? (
-              <Stack spacing={0} align="center">
-                <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-              </Stack>
-            ) : undefined
-          }
+          // TODO: Mantine7
+          // nothingFound={
+          //   isIllegalQuery ? (
+          //     <Stack gap={0} align="center">
+          //       <Text>Your search query contains inappropriate content and has been blocked.</Text>
+          //       <Text size="xs">Please try a different search term.</Text>
+          //     </Stack>
+          //   ) : !canPerformQuery ? (
+          //     <Stack gap={0} align="center">
+          //       <Text>
+          //         Due to your current browsing settings, searching for people of interest has been
+          //         disabled.
+          //       </Text>
+          //       <Text size="xs">
+          //         You may remove X and XXX browsing settings to search for these.
+          //       </Text>
+          //     </Stack>
+          //   ) : searchErrorState ? (
+          //     <Stack gap={0} align="center">
+          //       <Text>There was an error while performing your request&hellip;</Text>
+          //       <Text size="xs">Please try again later</Text>
+          //     </Stack>
+          //   ) : query && !hits.length ? (
+          //     <Stack gap={0} align="center">
+          //       <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+          //     </Stack>
+          //   ) : undefined
+          // }
           limit={
             results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
               ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option

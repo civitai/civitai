@@ -1,17 +1,28 @@
-import { Divider, Group, Stack, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core';
+import {
+  Anchor,
+  Center,
+  Divider,
+  Group,
+  List,
+  Stack,
+  Text,
+  ThemeIcon,
+  Tooltip,
+  UnstyledButton,
+} from '@mantine/core';
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import Link from 'next/link';
 import { env } from '~/env/client';
 import type { SearchIndex } from '~/components/Search/parsers/base';
 import type { InstantSearchProps } from 'react-instantsearch';
 import { Configure, InstantSearch } from 'react-instantsearch';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { z } from 'zod';
@@ -136,7 +147,7 @@ export function SearchLayout({
               <SearchLayout.Content>
                 <Center>
                   <Stack maw={750} align="center" justify="center" className="h-full">
-                    <Stack align="center" spacing={0}>
+                    <Stack align="center" gap={0}>
                       <IconAlertTriangle size={42} color="red" />
                       <Text weight={700} size="xl" color="red">
                         Warning
@@ -170,7 +181,7 @@ export function SearchLayout({
                           0808 1000 900
                         </Text>
                         <br />
-                        <Text size="xs" color="dimmed">
+                        <Text size="xs" c="dimmed">
                           (24/7, no caller ID saved)
                         </Text>
                       </List.Item>
@@ -188,7 +199,7 @@ export function SearchLayout({
                         – self-help tools, live chat, and secure email
                       </List.Item>
                     </List>
-                    <Text align="center" color="dimmed" size="sm" mt="md">
+                    <Text align="center" c="dimmed" size="sm" mt="md">
                       We strictly enforce our{' '}
                       <Anchor href="/content/tos#content-policies" target="_blank">
                         Terms of Service
@@ -199,7 +210,7 @@ export function SearchLayout({
                       </Anchor>{' '}
                       for more information.
                     </Text>
-                    <Anchor href="/" mt="md">
+                    <Anchor component={Link} href="/" mt="md">
                       <Text size="md">Go Back ↩︎</Text>
                     </Anchor>
                   </Stack>
