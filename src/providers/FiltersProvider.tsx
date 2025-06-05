@@ -57,6 +57,8 @@ const modelFilterSchema = z.object({
   isFeatured: z.boolean().optional(),
   poiOnly: z.boolean().optional(),
   minorOnly: z.boolean().optional(),
+  disablePoi: z.boolean().optional(),
+  disableMinor: z.boolean().optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
@@ -89,6 +91,8 @@ const imageFilterSchema = z.object({
   requiringMeta: z.boolean().optional(),
   poiOnly: z.boolean().optional(),
   minorOnly: z.boolean().optional(),
+  disablePoi: z.boolean().optional(),
+  disableMinor: z.boolean().optional(),
 });
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
