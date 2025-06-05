@@ -50,7 +50,7 @@ import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tool
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { getBlockedNsfwWords, includesPoi } from '~/utils/metadata/audit';
+import { getBlockedNsfwWords, includesInappropriate, includesPoi } from '~/utils/metadata/audit';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -403,6 +403,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     }
   };
 
+  const isIllegalQuery = debouncedSearch
+    ? includesInappropriate({ prompt: debouncedSearch }) === 'minor'
+    : false;
   const canPerformQuery = debouncedSearch
     ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
     : true;
@@ -443,7 +446,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           placeholder="Search Civitai"
           type="search"
           nothingFound={
-            !canPerformQuery ? (
+            isIllegalQuery ? (
+              <Stack spacing={0} align="center">
+                <Text>Your search query contains inappropriate content and has been blocked.</Text>
+                <Text size="xs">Please try a different search term.</Text>
+              </Stack>
+            ) : !canPerformQuery ? (
               <Stack spacing={0} align="center">
                 <Text>
                   Due to your current browsing settings, searching for people of interest has been
@@ -471,7 +479,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           }
           defaultValue={query}
           value={search}
-          data={canPerformQuery && !hasBlockedWords ? items : []}
+          data={canPerformQuery && !hasBlockedWords && !isIllegalQuery ? items : []}
           onChange={setSearch}
           onBlur={handleClear}
           onClear={handleClear}
