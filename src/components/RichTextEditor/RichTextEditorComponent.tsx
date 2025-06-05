@@ -333,8 +333,14 @@ export function RichTextEditor({
         id={id}
         classNames={{
           ...props.classNames,
-          content: clsx(classes.richTextEditor, props.classNames?.content),
-          toolbar: clsx('border-l border-l-gray-4 dark:border-l-dark-4', props.classNames?.toolbar),
+          content: clsx(
+            classes.richTextEditor,
+            props.classNames && 'content' in props.classNames ? props.classNames.content : undefined
+          ),
+          toolbar: clsx(
+            'border-l border-l-gray-4 dark:border-l-dark-4',
+            props.classNames && 'toolbar' in props.classNames ? props.classNames.toolbar : undefined
+          ),
         }}
         style={
           {
