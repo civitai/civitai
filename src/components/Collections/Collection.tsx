@@ -98,6 +98,7 @@ import { isDefined } from '~/utils/type-guards';
 import { Meta } from '../Meta/Meta';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+import classes from './Collection.module.scss';
 
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
@@ -613,15 +614,7 @@ export function Collection({
                   <Stack gap={8} style={{ flex: 1 }}>
                     <Stack gap={0}>
                       <Group>
-                        <Title
-                          order={1}
-                          lineClamp={1}
-                          styles={{
-                            [containerQuery.smallerThan('sm')]: {
-                              fontSize: '28px',
-                            },
-                          }}
-                        >
+                        <Title order={1} lineClamp={1} className={classes.title}>
                           {collection?.name ?? 'Loading...'}
                         </Title>
                         {submissionPeriod}

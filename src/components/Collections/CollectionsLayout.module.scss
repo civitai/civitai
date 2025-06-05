@@ -37,3 +37,10 @@
   margin-bottom: 0;
   box-shadow: var(--mantine-shadow-sm);
 }
+
+.filterContainer {
+  border-top: light-dark(
+    1px solid var(--mantine-color-gray-2),
+    1px solid var(--mantine-color-dark-4)
+  ) !important;
+}

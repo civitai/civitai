@@ -181,10 +181,10 @@ export function NewOrderSidebar() {
         </div>
       ) : (
         <Card component="nav" p={0} h="100%" w="33%" zIndex={1} withBorder>
-          <Card.Section className="border-b p-4 m-0 border-gray-4 dark:border-b-dark-4">
+          <Card.Section className="m-0 border-b border-gray-4 p-4 dark:border-b-dark-4">
             {header}
           </Card.Section>
-          <Card.Section h="100%" className="p-4 m-0">
+          <Card.Section h="100%" className="m-0 p-4">
             {content}
           </Card.Section>
         </Card>

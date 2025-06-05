@@ -274,7 +274,7 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
       <Drawer
         opened={drawerOpen}
         onClose={close}
-        size="full"
+        size="100%"
         title={
           <Text size="lg" fw={500}>
             Leaderboards

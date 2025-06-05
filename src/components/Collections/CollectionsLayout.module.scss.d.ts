@@ -4,3 +4,4 @@ export declare const drawerButton: string;
 export declare const drawerHeader: string;
 export declare const sidebar: string;
 export declare const sidebarToggle: string;
+export declare const filterContainer: string;

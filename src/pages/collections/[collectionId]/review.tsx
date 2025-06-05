@@ -204,15 +204,17 @@ const ReviewCollection = () => {
               )}
               <Group justify="space-between">
                 <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
-                  <Chip value={CollectionItemStatus.REVIEW}>
-                    <span>Review</span>
-                  </Chip>
-                  <Chip value={CollectionItemStatus.REJECTED}>
-                    <span>Rejected</span>
-                  </Chip>
-                  <Chip value={CollectionItemStatus.ACCEPTED}>
-                    <span>Accepted</span>
-                  </Chip>
+                  <Group gap="xs">
+                    <Chip value={CollectionItemStatus.REVIEW}>
+                      <span>Review</span>
+                    </Chip>
+                    <Chip value={CollectionItemStatus.REJECTED}>
+                      <span>Rejected</span>
+                    </Chip>
+                    <Chip value={CollectionItemStatus.ACCEPTED}>
+                      <span>Accepted</span>
+                    </Chip>
+                  </Group>
                 </Chip.Group>
 
                 <SelectMenuV2

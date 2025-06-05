@@ -76,7 +76,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
           label={<Text>{c.name}</Text>}
         />
       ))}
-      {contributingFilteredCollections.length > 0 && <Divider label="Following" mt="sm" />}
+      {contributingFilteredCollections.length > 0 && <Divider label="Following" mt="sm" ml="sm" />}
       {contributingFilteredCollections.map((c) => (
         <NavLink
           key={c.id}

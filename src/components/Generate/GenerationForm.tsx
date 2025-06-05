@@ -10,7 +10,7 @@ import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvi
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 import { useIsClient } from '~/providers/IsClientProvider';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
   generationFormStore,
   useGenerationFormStore,
