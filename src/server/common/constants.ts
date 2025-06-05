@@ -962,6 +962,30 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  HiDream: {
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 1771369,
+      name: '',
+      trainedWords: [],
+      baseModel: 'HiDream',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      covered: true,
+      model: {
+        id: 1562709,
+        name: 'HiDream',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
   SD3: {
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
@@ -1076,12 +1100,15 @@ export const generation = {
     creatorTip: 0.25,
     fluxUltraAspectRatio: '4',
     fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
+    fluxUltraRaw: false,
     model: generationConfig.Flux1.checkpoint,
     priority: 'low',
     sourceImage: null,
     openAIQuality: 'medium',
     vae: null,
     resources: null,
+    precision: 'fp8',
+    variant: 'fast',
   },
   maxValues: {
     seed: 4294967295,

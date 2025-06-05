@@ -7,7 +7,10 @@ import { useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 
-const NotificationsDrawer = dynamic(() => import('~/components/Notifications/NotificationsDrawer'));
+const NotificationsDrawer = dynamic(
+  () => import('~/components/Notifications/NotificationsDrawer'),
+  { ssr: false }
+);
 
 export function NotificationBell() {
   const router = useRouter();
