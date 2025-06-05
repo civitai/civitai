@@ -211,53 +211,6 @@ const handleJobQueueCleanIfEmpty = createJob(
   }
 );
 
-// // A more lightweight job to update nsfw levels for collections which runs every five minutes
-// const updateCollectionNsfwLevelsJob = createJob(
-//   'update-collection-nsfw-levels',
-//   '*/5 * * * *',
-//   async () => {
-//     const now = new Date();
-//     const jobQueue = await dbRead.jobQueue.findMany({
-//       where: { type: JobQueueType.UpdateNsfwLevel, entityType: EntityType.Collection },
-//     });
-//     const collectionIds = jobQueue.map((x) => x.entityId);
-//     if (!collectionIds.length) return;
-
-//     const batches = chunk(collectionIds, 100);
-//     const batchesCount = batches.length;
-//     let index = 0;
-//     for (const batch of batches) {
-//       console.log(
-//         `Processing batch ${index + 1} of ${batchesCount} for updating collection nsfw levels`
-//       );
-//       await dbWrite.$executeRaw`
-//         UPDATE "Collection" c
-//         SET "nsfwLevel" = (
-//           SELECT COALESCE(bit_or(COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel",0)), 0)
-//           FROM "CollectionItem" ci
-//           LEFT JOIN "Image" i on i.id = ci."imageId" AND c.type = 'Image'
-//           LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post' AND p."publishedAt" IS NOT NULL
-//           LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model' AND m."status" = 'Published'
-//           LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article' AND a."publishedAt" IS NOT NULL
-//           WHERE ci."collectionId" = c.id AND ci.status = ${
-//             CollectionItemStatus.ACCEPTED
-//           }::"CollectionItemStatus"
-//         )
-//         WHERE c.id in (${Prisma.join(batch)});
-//       `;
-//       index++;
-//     }
-
-//     await dbWrite.jobQueue.deleteMany({
-//       where: {
-//         createdAt: { lt: now },
-//         type: JobQueueType.UpdateNsfwLevel,
-//         entityType: EntityType.Collection,
-//       },
-//     });
-//   }
-// );
-
 export const jobQueueJobs = [
   updateNsfwLevelJob,
   handleJobQueueCleanup,
