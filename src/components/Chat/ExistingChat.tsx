@@ -343,7 +343,7 @@ export function ExistingChat() {
               {/* TODO online status (later), blocked users, etc */}
 
               {otherMembers?.map((cm) => (
-                <Button key={cm.userId} variant="light" color="gray" size="compact-md">
+                <Button key={cm.userId} variant="light" color="gray" size="compact-sm">
                   <UserAvatar
                     user={cm.user}
                     size="xs"
@@ -466,7 +466,7 @@ export function ExistingChat() {
                 {myMember.status === ChatMemberStatus.Left && (
                   <Button
                     variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                    size="compact-md"
+                    size="compact-sm"
                     disabled={isJoining}
                     onClick={handleJoinChat}
                   >

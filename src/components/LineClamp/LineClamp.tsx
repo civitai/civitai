@@ -20,7 +20,7 @@ export function LineClamp({
 
   return (
     <>
-      <Text ref={ref} lineClamp={!showMore ? lineClamp : undefined} {...props}>
+      <Text ref={ref} component="div" lineClamp={!showMore ? lineClamp : undefined} {...props}>
         {children}
       </Text>
       {clamped && (

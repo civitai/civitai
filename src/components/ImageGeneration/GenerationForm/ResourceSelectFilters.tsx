@@ -114,7 +114,7 @@ export function ResourceSelectFiltersDropdown() {
         rightSection={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
-        size="compact-md"
+        size="compact-sm"
       >
         <Group gap={4} wrap="nowrap">
           <IconFilter size={16} />

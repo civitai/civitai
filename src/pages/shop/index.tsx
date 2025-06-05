@@ -110,7 +110,7 @@ export default function CosmeticShopMain() {
                   }}
                   style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
                   radius="xl"
-                  size="compact-md"
+                  size="compact-sm"
                 >
                   Customize profile
                 </Button>

@@ -173,7 +173,7 @@ export function FlaggedModelsList() {
             ml="auto"
             onClick={() => handleResolveSelectedModels(table)}
             loading={resolveFlaggedModelMutation.isLoading}
-            size="compact-md"
+            size="compact-sm"
           >
             Resolve Selected
           </Button>

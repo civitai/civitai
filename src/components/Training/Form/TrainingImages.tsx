@@ -1344,7 +1344,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   </Text>
                 </Paper>
                 <Group gap="xs">
-                  <Button size="compact-md" color="indigo" onClick={() => setIsZoomed((z) => !z)}>
+                  <Button size="compact-sm" color="indigo" onClick={() => setIsZoomed((z) => !z)}>
                     {isZoomed ? <IconZoomOut size={16} /> : <IconZoomIn size={16} />}
                     <Text inline ml={4}>
                       Zoom {isZoomed ? 'Out' : 'In'}
@@ -1355,7 +1355,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     disabled={connected}
                   >
                     <Button
-                      size="compact-md"
+                      size="compact-sm"
                       color="violet"
                       disabled={autoLabeling.isRunning || !connected}
                       style={!connected ? { pointerEvents: 'initial' } : undefined}
@@ -1378,7 +1378,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     </Button>
                   </Tooltip>
                   <Button
-                    size="compact-md"
+                    size="compact-sm"
                     color="cyan"
                     loading={zipping}
                     onClick={() => handleNextAfterCheck(true)}
@@ -1390,7 +1390,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   </Button>
 
                   <Button
-                    size="compact-md"
+                    size="compact-sm"
                     color="red"
                     disabled={autoLabeling.isRunning}
                     onClick={() => {

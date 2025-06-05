@@ -65,7 +65,7 @@ export const EntityCollaboratorList = ({
                     });
                   }}
                   loading={actioningEntityCollaborator}
-                  size="compact-md"
+                  size="compact-sm"
                   w="100%"
                 >
                   Accept invite
@@ -80,7 +80,7 @@ export const EntityCollaboratorList = ({
                     });
                   }}
                   loading={actioningEntityCollaborator}
-                  size="compact-md"
+                  size="compact-sm"
                   variant="outline"
                   w="100%"
                 >
@@ -99,7 +99,7 @@ export const EntityCollaboratorList = ({
                     });
                   }}
                   loading={removingEntityCollaborator}
-                  size="compact-md"
+                  size="compact-sm"
                   color="red"
                   mt="xs"
                 >

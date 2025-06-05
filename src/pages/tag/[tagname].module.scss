@@ -3,7 +3,7 @@
   margin-top: calc(-1 * var(--mantine-spacing-md));
   padding-top: calc(var(--mantine-spacing-xl) * 2);
   padding-bottom: calc(var(--mantine-spacing-xl) * 2);
-  background-color: light-dark(var(--mantine-color-dark-8), var(--mantine-color-gray-1));
+  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-8));
 
   @container (max-width: theme('screens.xs')) {
     padding-top: var(--mantine-spacing-md);

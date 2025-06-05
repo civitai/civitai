@@ -1,6 +1,8 @@
 .listItem {
   &:nth-of-type(2n + 1) {
-    background-color: light-dark(var(--mantine-color-dark-6, #2c2e33),
-        var(--mantine-color-gray-0, #f8f9fa));
+    background-color: light-dark(
+      var(--mantine-color-gray-0),
+      var(--mantine-color-dark-6)
+    );
   }
 }

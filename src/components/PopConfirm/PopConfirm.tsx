@@ -39,10 +39,10 @@ export function PopConfirm({
         <Stack>
           {message}
           <Group gap={8} justify="flex-end">
-            <Button variant="outline" size="compact-md" onClick={handleCancel}>
+            <Button variant="outline" size="compact-sm" onClick={handleCancel}>
               No
             </Button>
-            <Button size="compact-md" onClick={handleConfirm}>
+            <Button size="compact-sm" onClick={handleConfirm}>
               Yes
             </Button>
           </Group>

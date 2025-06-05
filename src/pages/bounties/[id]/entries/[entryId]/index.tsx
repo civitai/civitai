@@ -181,7 +181,7 @@ export default function BountyEntryDetailsPage({
 
   const navigateBackSection = (
     <div className="flex items-center justify-between">
-      <Text size="xs" c="dimmed">
+      <Text className="text-xs" c="dimmed">
         Entry added on {formatDate(bountyEntry.createdAt)} by
       </Text>
       <NavigateBack url={`/bounties/${bounty.id}`}>
@@ -229,13 +229,13 @@ export default function BountyEntryDetailsPage({
             radius="xl"
             color="gray"
             variant={colorScheme === 'dark' ? 'filled' : 'light'}
-            size="compact-md"
+            size="compact-sm"
             fullWidth
             component="a"
           >
             <Group gap={4} wrap="nowrap">
               <IconPencilMinus size={14} />
-              <Text size="xs">Edit</Text>
+              <Text className="text-xs">Edit</Text>
             </Group>
           </Button>
         </Link>
@@ -245,7 +245,7 @@ export default function BountyEntryDetailsPage({
           radius="xl"
           color="gray"
           variant={colorScheme === 'dark' ? 'filled' : 'light'}
-          size="compact-md"
+          size="compact-sm"
           fullWidth
           onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             e.preventDefault();
@@ -273,7 +273,7 @@ export default function BountyEntryDetailsPage({
         >
           <Group gap={4} wrap="nowrap">
             <IconTrash size={14} />
-            <Text size="xs">Delete</Text>
+            <Text className="text-xs">Delete</Text>
           </Group>
         </Button>
       )}
@@ -285,7 +285,7 @@ export default function BountyEntryDetailsPage({
         {({ onClick, isLoading }) => (
           <Button
             disabled={isLoading}
-            size="compact-md"
+            size="compact-sm"
             radius="xl"
             color="gray"
             variant={colorScheme === 'dark' ? 'filled' : 'light'}
@@ -296,14 +296,14 @@ export default function BountyEntryDetailsPage({
               <ThemeIcon variant="transparent" size="auto" color="yellow.6">
                 <IconTrophy size={14} fill="currentColor" />
               </ThemeIcon>
-              <Text size="xs">Award bounty</Text>
+              <Text className="text-xs">Award bounty</Text>
             </Group>
           </Button>
         )}
       </AwardBountyAction>
       <ShareButton url={router.asPath} title={bounty.name}>
         <Button
-          size="compact-md"
+          size="compact-sm"
           radius="xl"
           color="gray"
           variant={colorScheme === 'dark' ? 'filled' : 'light'}
@@ -311,7 +311,7 @@ export default function BountyEntryDetailsPage({
         >
           <Group gap={4} wrap="nowrap">
             <IconShare3 size={14} />
-            <Text size="xs">Share</Text>
+            <Text className="text-xs">Share</Text>
           </Group>
         </Button>
       </ShareButton>
@@ -322,6 +322,7 @@ export default function BountyEntryDetailsPage({
               radius="xl"
               color="gray"
               size="md"
+              className="shrink-0"
               variant={colorScheme === 'dark' ? 'filled' : 'light'}
             >
               <IconDotsVertical size={16} />

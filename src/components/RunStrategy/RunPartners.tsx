@@ -151,7 +151,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                             <Group gap="xs">
                               {homepage && (
                                 <Button
-                                  size="compact-md"
+                                  size="compact-sm"
                                   variant="light"
                                   component="a"
                                   href={homepage}
@@ -163,7 +163,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                               )}
                               {tos && (
                                 <Button
-                                  size="compact-md"
+                                  size="compact-sm"
                                   variant="light"
                                   component="a"
                                   href={tos}
@@ -175,7 +175,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                               )}
                               {privacy && (
                                 <Button
-                                  size="compact-md"
+                                  size="compact-sm"
                                   variant="light"
                                   component="a"
                                   href={privacy}

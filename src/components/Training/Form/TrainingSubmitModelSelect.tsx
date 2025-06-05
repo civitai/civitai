@@ -120,7 +120,7 @@ const ModelSelector = ({
           <ResourceSelect
             buttonLabel="Select custom model"
             buttonProps={{
-              size: 'compact-md',
+              size: 'compact-sm',
               styles: { label: { fontSize: 12 } },
             }}
             options={{

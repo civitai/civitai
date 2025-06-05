@@ -1,16 +1,5 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
-import {
-  Anchor,
-  Button,
-  Group,
-  Stack,
-  Text,
-  Title,
-  Tooltip,
-  Paper,
-  Input,
-  useMantineTheme,
-} from '@mantine/core';
+import { Anchor, Button, Group, Stack, Text, Title, Tooltip, Paper, Input } from '@mantine/core';
 import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -29,7 +18,6 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import utilClasses from '~/libs/helpers.module.scss';
 import { upsertArticleInput } from '~/server/schema/article.schema';
 import type { ArticleGetById } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
@@ -76,7 +64,6 @@ export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
 
 export function ArticleUpsertForm({ article }: Props) {
   const currentUser = useCurrentUser();
-  const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const features = useFeatureFlags();
@@ -230,7 +217,7 @@ export function ArticleUpsertForm({ article }: Props) {
           <Stack
             style={{
               position: 'sticky',
-              top: 70 + theme.spacing.xl,
+              top: 'calc(var(--header-height) + var(--mantine-spacing-md))',
             }}
             gap="xl"
           >
@@ -246,7 +233,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
-              className={utilClasses.hideMobile}
+              className="hidden @sm:flex"
             />
             <InputSelect
               name="userNsfwLevel"
@@ -261,7 +248,7 @@ export function ArticleUpsertForm({ article }: Props) {
                     color="gray"
                     onClick={openBrowsingLevelGuide}
                   >
-                    <IconQuestionMark />
+                    <IconQuestionMark size={18} />
                   </LegacyActionIcon>
                   <ContentPolicyLink size="xs" variant="text" c="dimmed" td="underline" />
                 </Group>
@@ -375,7 +362,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
-              className={utilClasses.showMobile}
+              className="@sm:hidden"
             />
           </Stack>
         </ContainerGrid2.Col>
@@ -388,13 +375,12 @@ type Props = { article?: ArticleGetById };
 
 function ActionButtons({
   article,
-  className,
   saveButtonProps,
   publishButtonProps,
   ...stackProps
 }: ActionButtonProps) {
   return (
-    <Stack gap={8} {...stackProps}>
+    <Stack {...stackProps} gap={8}>
       {article?.publishedAt ? (
         <Button
           {...(article.status !== ArticleStatus.Published ? publishButtonProps : saveButtonProps)}
@@ -424,7 +410,7 @@ function ActionButtons({
             label="Click the publish button to make your article public to share with the Civitai community for comments and reactions."
             {...tooltipProps}
           >
-            <Text span underline>
+            <Text td="underline" span inherit>
               hidden
             </Text>
           </Tooltip>

@@ -32,7 +32,10 @@
   bottom: 6px;
   left: 6px;
   border-radius: var(--mantine-radius-sm);
-  background: light-dark(alpha(var(--mantine-color-dark-6), 0.6), var(--mantine-color-gray-0));
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    alpha(var(--mantine-color-dark-6), 0.6)
+  );
   /* backdrop-filter: blur(13px) saturate(160%); */
   box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
   padding: 4px;

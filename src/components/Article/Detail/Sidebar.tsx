@@ -32,7 +32,7 @@ export function Sidebar({ articleId, attachments, creator }: Props) {
     <aside
       style={{
         position: 'sticky',
-        top: 70 + theme.spacing.xl,
+        top: 'calc(var(--header-height) + var(--mantine-spacing-md))',
       }}
     >
       <Stack>
@@ -66,7 +66,7 @@ export function Sidebar({ articleId, attachments, creator }: Props) {
                 </Accordion.Item>
               )}
               {hasAttachments && (
-                <Accordion.Item value="attachments">
+                <Accordion.Item className="mt-0" value="attachments">
                   <Accordion.Control icon={<IconPaperclip size={20} />}>
                     Attachments
                   </Accordion.Control>

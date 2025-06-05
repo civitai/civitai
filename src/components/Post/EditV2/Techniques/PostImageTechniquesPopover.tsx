@@ -117,14 +117,14 @@ export function ImageTechniquesPopover({
               </div>
               <Divider />
             </div>
-            <Button size="compact-md" disabled={isLoading} onClick={() => handleAddTechniques()}>
+            <Button size="compact-sm" disabled={isLoading} onClick={() => handleAddTechniques()}>
               Add
             </Button>
             {imageCount > 1 && (
               <Button
                 className="text-sm"
                 variant="default"
-                size="compact-md"
+                size="compact-sm"
                 disabled={isLoading}
                 onClick={() => handleAddTechniques(true)}
               >

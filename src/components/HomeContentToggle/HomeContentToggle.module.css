@@ -11,7 +11,7 @@
   background-position: -300% 50%;
   background-repeat: no-repeat;
   color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3));
-  animation: button-highlight 5s linear infinite;
+  animation: global(button-highlight) 5s linear infinite;
   will-change: background-position;
 }
 

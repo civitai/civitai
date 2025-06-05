@@ -159,7 +159,7 @@ export function UserCard({ data }: { data: UserSearchIndexRecord }) {
               subText={`Joined ${formatDate(data.createdAt)}`}
               withUsername
             />
-            <FollowUserButton userId={data.id} size="compact-md" />
+            <FollowUserButton userId={data.id} size="compact-sm" />
           </Group>
           <Group gap={8}>
             {data.rank && <RankBadge size="md" rank={data.rank} />}

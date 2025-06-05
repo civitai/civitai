@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -12,7 +11,6 @@ import {
   Paper,
   Center,
   Tooltip,
-  useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
 import {
@@ -210,15 +208,13 @@ export function PostDetailContent({ postId }: Props) {
                     {relatedResource && (
                       <>
                         Posted to{' '}
-                        <Link
+                        <Anchor
+                          component={Link}
                           href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
-                          passHref
-                          legacyBehavior
+                          inherit
                         >
-                          <Anchor>
-                            {relatedResource.modelName} - {relatedResource.modelVersionName}
-                          </Anchor>
-                        </Link>{' '}
+                          {relatedResource.modelName} - {relatedResource.modelVersionName}
+                        </Anchor>{' '}
                       </>
                     )}
                     {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
@@ -236,7 +232,7 @@ export function PostDetailContent({ postId }: Props) {
                       }
                       size="compact-md"
                     >
-                      <Text size="xs">Save</Text>
+                      <Text className="text-xs">Save</Text>
                     </Button>
                     <ShareButton
                       url={`/posts/${post.id}`}
@@ -250,7 +246,7 @@ export function PostDetailContent({ postId }: Props) {
                         leftSection={<IconShare3 size={14} />}
                         size="compact-md"
                       >
-                        <Text size="xs">Share</Text>
+                        <Text className="text-xs">Share</Text>
                       </Button>
                     </ShareButton>
                     <PostControls
@@ -398,7 +394,7 @@ export function PostDetailContent({ postId }: Props) {
                   )}
                 </>
               )}
-              <Stack gap="xl" mt="xl" id="comments" mb={90}>
+              <Stack className="mb-20 mt-6 gap-6" id="comments" mb={90}>
                 {!!post.tags.length && (
                   <Collection
                     items={post.tags}
@@ -416,11 +412,10 @@ export function PostDetailContent({ postId }: Props) {
                           color="gray"
                           radius="xl"
                           size="xl"
-                          p="md"
                           style={{ cursor: 'pointer' }}
                           variant={colorScheme === 'dark' ? 'filled' : 'light'}
                         >
-                          <Text size="xs" tt="capitalize" fw={500}>
+                          <Text className="text-xs" tt="capitalize" fw={500}>
                             {item.name}
                           </Text>
                         </Badge>

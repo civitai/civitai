@@ -108,7 +108,7 @@ export default function UserLists() {
                             <Anchor variant="text">
                               <Group justify="space-between">
                                 <UserAvatar user={user} withUsername />
-                                <FollowUserButton userId={user.id} size="compact-md" />
+                                <FollowUserButton userId={user.id} size="compact-sm" />
                               </Group>
                             </Anchor>
                           </Link>
@@ -140,7 +140,7 @@ export default function UserLists() {
                             <Anchor variant="text">
                               <Group justify="space-between">
                                 <UserAvatar user={user} withUsername />
-                                <FollowUserButton userId={user.id} size="compact-md" />
+                                <FollowUserButton userId={user.id} size="compact-sm" />
                               </Group>
                             </Anchor>
                           </Link>
@@ -174,7 +174,7 @@ export default function UserLists() {
                                 <Anchor variant="text">
                                   <Group justify="space-between">
                                     <UserAvatar user={user} withUsername />
-                                    <HideUserButton userId={user.id} size="compact-md" />
+                                    <HideUserButton userId={user.id} size="compact-sm" />
                                   </Group>
                                 </Anchor>
                               </Link>
@@ -206,7 +206,7 @@ export default function UserLists() {
                                 <Anchor variant="text">
                                   <Group justify="space-between">
                                     <Text>{user.username}</Text>
-                                    <BlockUserButton userId={user.id} size="compact-md" />
+                                    <BlockUserButton userId={user.id} size="compact-sm" />
                                   </Group>
                                 </Anchor>
                               </Link>

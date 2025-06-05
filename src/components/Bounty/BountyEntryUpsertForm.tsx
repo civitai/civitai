@@ -210,14 +210,14 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
           name="description"
           label="Notes"
           editorSize="xl"
-          labelProps={{ size: 'xl' }}
+          labelProps={{ className: 'text-xl' }}
           description="Please describe your entry in detail. This will help participants understand what you are offering and how to use it."
           includeControls={['colors', 'formatting', 'heading', 'link', 'list']}
           stickyToolbar
         />
         <Input.Wrapper
           label="Example Images"
-          labelProps={{ size: 'xl' }}
+          labelProps={{ className: 'text-xl' }}
           description="Please add at least 1 image to your bounty entry. This will serve as a reference point for participants and will also be used as your cover image."
           withAsterisk
         >
@@ -363,7 +363,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               </Group>
             }
             orientation="vertical"
-            labelProps={{ size: 'xl' }}
+            labelProps={{ className: 'text-xl' }}
             dropzoneProps={{
               maxFiles: 10,
               accept: [...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE],
@@ -584,7 +584,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             name="unlockAmount"
             label="Unlock amount"
             description="Set a specific amount people have to award you before they can download your files. This only affects bounty files - sample files are always unlocked."
-            labelProps={{ size: 'xl' }}
+            labelProps={{ className: 'text-xl' }}
             leftSection={<CurrencyIcon currency={currency} size={18} />}
             format={currency !== Currency.BUZZ ? 'currency' : undefined}
             currency={currency}

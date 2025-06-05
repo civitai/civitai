@@ -533,7 +533,7 @@ const ImageGridMedia = ({
               type: 'Training Data',
             })}
             color="cyan"
-            size="compact-md"
+            size="compact-sm"
             leftSection={<IconDownload size={16} />}
           >
             <Text align="center">{`Download (${formatKBytes(sizeKB)})`}</Text>

@@ -183,6 +183,7 @@ export function EditResourceReview({
                         padding: 0,
                         fontSize: 12,
 
+                        // TODO: Mantine7: move this into css module
                         '.ProseMirror': {
                           padding: `6px 10px`,
                           minHeight: 22,

@@ -328,12 +328,7 @@ export const CreatorCardV2 = ({
                       ) : (
                         <>
                           {creator.createdAt && (
-                            <Text
-                              size="xs"
-                              lh={1}
-                              lineClamp={1}
-                              style={{ color: `rgba(${theme.white}, 0.75)` }}
-                            >
+                            <Text size="xs" lh={1} lineClamp={1} className="text-white/75">
                               Joined {formatDate(creator.createdAt)}
                             </Text>
                           )}

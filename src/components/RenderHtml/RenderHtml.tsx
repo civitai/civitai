@@ -1,10 +1,5 @@
 import type { TypographyStylesProviderProps } from '@mantine/core';
-import {
-  TypographyStylesProvider,
-  useComputedColorScheme,
-  lighten,
-  darken,
-} from '@mantine/core';
+import { TypographyStylesProvider, useComputedColorScheme, lighten, darken } from '@mantine/core';
 import { useMemo } from 'react';
 
 import { DEFAULT_ALLOWED_ATTRIBUTES, needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';

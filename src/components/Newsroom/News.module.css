@@ -1,5 +1,5 @@
 .root {
-  background-color: light-dark(var(--mantine-color-dark-8), var(--mantine-color-white));
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-8));
   padding-top: calc(var(--mantine-spacing-xl) * 2);
   padding-bottom: calc(var(--mantine-spacing-xl) * 2);
 }
@@ -16,7 +16,7 @@
   transition: border-color 0.2s;
 
   &:hover {
-    /* background-color: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-1)); */
+    /* background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5)); */
     border-color: var(--mantine-color-blue-7);
   }
 
@@ -49,7 +49,7 @@
 
 .publishDate {
   font-size: var(--mantine-font-size-sm);
-  color: light-dark(var(--mantine-color-dark-2), var(--mantine-color-gray-6));
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
 }
 
 .summary {

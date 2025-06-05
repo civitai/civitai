@@ -1,9 +1,9 @@
 .content {
   padding: 0;
   font-size: 14px;
-  background-color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-gray-0));
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7));
 
-  .ProseMirror {
+  :global .ProseMirror {
     padding: 8px 12px;
     min-height: 38px;
     cursor: text;

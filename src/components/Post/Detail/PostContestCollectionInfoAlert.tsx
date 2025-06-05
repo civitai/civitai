@@ -67,14 +67,14 @@ export const PostContestCollectionInfoAlert = ({
             <Button
               component={Link}
               href={`/posts/create?collectionId=${collectionItem.collection.id}`}
-              size="compact-md"
+              size="compact-sm"
             >
               Submit Another Entry
             </Button>
             <Button
               component={Link}
               href={`/collections/${collectionItem.collection.id}`}
-              size="compact-md"
+              size="compact-sm"
               variant="outline"
             >
               View Contest Collection

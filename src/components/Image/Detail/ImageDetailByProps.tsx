@@ -42,9 +42,6 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import React from 'react';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useIsMutating } from '@tanstack/react-query';
@@ -157,11 +154,12 @@ export function ImageDetailByProps({
                         linkToProfile
                       />
                       <Group gap="md">
-                        <FollowUserButton userId={user.id} size="compact-md" />
+                        <FollowUserButton userId={user.id} size="compact-sm" />
                         <CloseButton
                           size="md"
                           radius="xl"
                           variant="transparent"
+                          className={classes.desktopOnly}
                           iconSize={20}
                           onClick={onClose}
                         />
@@ -184,7 +182,7 @@ export function ImageDetailByProps({
                           radius="xl"
                           color="gray"
                           variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                          size="compact-md"
+                          size="compact-sm"
                         >
                           <Group gap={4}>
                             <IconEye size={14} />
@@ -204,7 +202,7 @@ export function ImageDetailByProps({
                             },
                           })
                         }
-                        size="compact-md"
+                        size="compact-sm"
                       >
                         <Group gap={4}>
                           <IconBookmark size={14} />

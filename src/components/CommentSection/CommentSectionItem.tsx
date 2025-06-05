@@ -1,4 +1,4 @@
-import { ActionIcon, Anchor, Badge, Button, Group, Menu, Stack, Text } from '@mantine/core';
+import { Badge, Button, Group, Menu, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowBackUp,

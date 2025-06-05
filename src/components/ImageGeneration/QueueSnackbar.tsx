@@ -124,7 +124,7 @@ export function QueueSnackbar() {
           ) : null}
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-1 py-2">
-          <Text fw={500} className="flex items-center gap-1 text-sm">
+          <Text fw={500} component="div" className="flex items-center gap-1 text-sm">
             {!!queued.length && queueStatus ? (
               dictionary[queueStatus]()
             ) : includeQueueLink ? (
@@ -189,7 +189,7 @@ export function QueueSnackbar() {
                 You can queue {requestLimit} jobs at once
               </div>
             </Text>
-            <Button size="compact-md" color="dark" radius="xl" component={Link} href="/pricing">
+            <Button size="compact-sm" color="dark" radius="xl" component={Link} href="/pricing">
               <Text c="yellow">Increase</Text>
             </Button>
           </div>

@@ -131,14 +131,14 @@ export function ImageToolsPopover({
               </div>
               <Divider />
             </div>
-            <Button size="compact-md" disabled={isLoading} onClick={() => handleAddTools()}>
+            <Button size="compact-sm" disabled={isLoading} onClick={() => handleAddTools()}>
               Add
             </Button>
             {imageCount > 1 && (
               <Button
                 className="text-sm"
                 variant="default"
-                size="compact-md"
+                size="compact-sm"
                 disabled={isLoading}
                 onClick={() => handleAddTools(true)}
               >

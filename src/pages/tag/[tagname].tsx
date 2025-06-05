@@ -1,4 +1,4 @@
-import { Box, Center, Group, Stack, Text, Title } from '@mantine/core';
+import { Box, Center, Group, Stack, Title } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next/types';
 import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';

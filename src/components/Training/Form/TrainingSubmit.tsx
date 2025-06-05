@@ -554,7 +554,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             <Button
               color="green"
               variant="light"
-              size="compact-md"
+              size="compact-sm"
               leftSection={<IconPlus size={16} />}
               disabled={runs.length >= maxRuns}
               onClick={() => {
@@ -568,7 +568,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             <Button
               color="cyan"
               variant="light"
-              size="compact-md"
+              size="compact-sm"
               leftSection={<IconCopy size={16} />}
               disabled={runs.length >= maxRuns}
               onClick={() => {
@@ -582,7 +582,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             <Button
               color="red"
               variant="light"
-              size="compact-md"
+              size="compact-sm"
               leftSection={<IconX size={16} />}
               disabled={runs.length <= 1}
               onClick={() => {

@@ -4,7 +4,6 @@ import {
   Anchor,
   Button,
   Divider,
-  Grid,
   Group,
   Input,
   List,
@@ -331,7 +330,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
           </AlertWithIcon>
         )}
         <ContainerGrid2 gutter="xl">
-          <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
+          <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
             <Stack gap={32}>
               <Stack gap="xl">
                 {!alreadyStarted && (
@@ -585,6 +584,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                       target="_blank"
                       rel="nofollow noreferrer"
                       span
+                      inherit
                     >
                       here
                     </Anchor>
@@ -684,7 +684,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 <Alert>
                   If uploading a data set to your bounty you attest that the Images contained within
                   adhere to our{' '}
-                  <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
+                  <Anchor href="/content/tos" target="_blank" rel="nofollow" span inherit>
                     TOS
                   </Anchor>
                   .
@@ -740,7 +740,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               </Stack>
             </Stack>
           </ContainerGrid2.Col>
-          <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
+          <ContainerGrid2.Col span={{ base: 12, sm: 4 }}>
             <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
@@ -814,7 +814,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               />
 
               {currentUser?.isModerator && (
-                <Paper radius="md" p="xl" withBorder>
+                <Paper radius="md" p="lg" withBorder>
                   <InputMultiSelect
                     name="lockedProperties"
                     label="Locked properties"
@@ -833,7 +833,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               )}
               <Text size="xs">
                 Bounty requests MUST adhere to the content rules defined in our{' '}
-                <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
+                <Anchor href="/content/tos" target="_blank" rel="nofollow" span inherit>
                   Terms of service
                 </Anchor>
                 .<br/>
@@ -851,7 +851,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   image posts on your resources.
                 </List.Item>
                 <List.Item>
-                  <ContentPolicyLink />
+                  <ContentPolicyLink inherit />
                 </List.Item>
               </List>
             </Stack>

@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   AspectRatio,
   Badge,
@@ -59,7 +58,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -70,6 +68,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -299,8 +298,8 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               </AlertWithIcon>
             )}
           </Stack>
-          <Grid gutter="xl">
-            <Grid.Col span={{ base: 12, md: 8 }}>
+          <ContainerGrid2 gutter="xl">
+            <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
               <Stack gap="xs">
                 {image && (
                   <AspectRatio
@@ -374,15 +373,15 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   {actionButtons}
                 </Group>
               </Stack>
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 4 }}>
+            </ContainerGrid2.Col>
+            <ContainerGrid2.Col span={{ base: 12, sm: 4 }}>
               <Sidebar
                 creator={article.user}
                 attachments={article.attachments}
                 articleId={article.id}
               />
-            </Grid.Col>
-          </Grid>
+            </ContainerGrid2.Col>
+          </ContainerGrid2>
           <ArticleDetailComments articleId={article.id} userId={article.user.id} />
         </Container>
       </SensitiveShield>

@@ -55,7 +55,7 @@ export default function ReviewTrainingDataPage() {
                     Created: {formatDate(item.createdAt)}
                   </Text>
                 </div>
-                <Button size="compact-md" component={Link} href={`${router.asPath}/${item.id}`}>
+                <Button size="compact-sm" component={Link} href={`${router.asPath}/${item.id}`}>
                   Review
                 </Button>
               </div>

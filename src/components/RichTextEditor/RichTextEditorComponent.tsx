@@ -15,7 +15,7 @@ import Youtube from '@tiptap/extension-youtube';
 import type { Editor, Extensions } from '@tiptap/react';
 import { BubbleMenu, Extension, mergeAttributes, nodePasteRule, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect, useImperativeHandle, useRef } from 'react';
+import React, { useEffect, useImperativeHandle, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import slugify from 'slugify';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
@@ -30,6 +30,7 @@ import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 import classes from './RichTextEditorComponent.module.scss';
+import clsx from 'clsx';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -125,7 +126,7 @@ export function RichTextEditor({
   onSuperEnter,
   withLinkValidation,
   stickyToolbar,
-  toolbarOffset = 70,
+  toolbarOffset = 0,
   inputClasses,
   ...props
 }: Props) {
@@ -314,6 +315,8 @@ export function RichTextEditor({
     },
   }));
 
+  const editorSizeStyles = mapEditorSize[editorSize] || mapEditorSize.sm;
+
   return (
     <Input.Wrapper
       id={id}
@@ -324,7 +327,26 @@ export function RichTextEditor({
       error={error}
       className={inputClasses}
     >
-      <RTE {...props} editor={editor} id={id} classNames={{ content: classes.richTextEditor }}>
+      <RTE
+        {...props}
+        editor={editor}
+        id={id}
+        classNames={{
+          ...props.classNames,
+          content: clsx(classes.richTextEditor, props.classNames?.content),
+          toolbar: clsx('border-l border-l-gray-4 dark:border-l-dark-4', props.classNames?.toolbar),
+        }}
+        style={
+          {
+            '--editor-min-height': editorSizeStyles.minHeight
+              ? `${editorSizeStyles.minHeight}px`
+              : undefined,
+            '--editor-font-size': editorSizeStyles.fontSize
+              ? `${editorSizeStyles.fontSize}px`
+              : undefined,
+          } as React.CSSProperties
+        }
+      >
         {!hideToolbar && (
           <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
             {addHeading && (
@@ -425,7 +447,7 @@ type ControlType =
   | 'mentions'
   | 'polls'
   | 'colors';
-type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
+export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
     includeControls?: ControlType[];

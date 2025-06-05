@@ -27,7 +27,7 @@ export function SubscriptionCard() {
             Membership
           </Title>
           <Button
-            size="compact-md"
+            size="compact-sm"
             radius="xl"
             color="gray"
             rightSection={<IconSettings size={16} />}

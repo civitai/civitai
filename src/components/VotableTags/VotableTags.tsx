@@ -1,5 +1,5 @@
 import type { GroupProps } from '@mantine/core';
-import { ActionIcon, Center, Group, Loader } from '@mantine/core';
+import { Center, Group, Loader } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useEffect, useMemo } from 'react';

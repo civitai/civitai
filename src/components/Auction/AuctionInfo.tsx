@@ -96,7 +96,7 @@ const QuickBid = ({
     <Tooltip label={label} position="top" withinPortal>
       <Button
         variant="subtle"
-        size="compact-md"
+        size="compact-sm"
         className="underline underline-offset-2"
         fz="xs"
         onClick={onClick}

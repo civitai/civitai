@@ -24,7 +24,7 @@
   display: flex;
   flex-direction: column;
 
-  @container (max-width: theme('screens.md')) {
+  @media (max-width: theme('screens.md')) {
     position: absolute;
     top: 100%;
     left: 0;
@@ -40,13 +40,13 @@
 }
 
 .mobileOnly {
-  @container (min-width: theme('screens.md')) {
+  @media (min-width: theme('screens.md')) {
     display: none;
   }
 }
 
 .desktopOnly {
-  @container (max-width: theme('screens.md')) {
+  @media (max-width: theme('screens.md')) {
     display: none;
   }
 }

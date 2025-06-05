@@ -89,7 +89,6 @@ import { env } from '~/env/client';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useIsMutating } from '@tanstack/react-query';
