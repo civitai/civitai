@@ -2,10 +2,11 @@ import { env } from 'process';
 import { logToAxiom } from '../logging/client';
 import Decimal from 'decimal.js';
 import type { CreateBuzzCharge } from '~/server/schema/coinbase.schema';
-import { COINBASE_FIXED_FEE } from '~/server/common/constants';
+import { COINBASE_FIXED_FEE, specialCosmeticRewards } from '~/server/common/constants';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
 import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 import { grantBuzzPurchase } from '~/server/services/buzz.service';
+import { grantCosmetics } from '~/server/services/cosmetic.service';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'coinbase-service', type: 'error', ...data }).catch();
@@ -65,6 +66,14 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
       chargeId: eventData.id,
       type: 'info',
     });
+
+    const cosmeticIds = specialCosmeticRewards.crypto;
+    if (cosmeticIds.length > 0) {
+      await grantCosmetics({
+        userId,
+        cosmeticIds,
+      });
+    }
 
     await log({
       message: 'Buzz purchase granted successfully',

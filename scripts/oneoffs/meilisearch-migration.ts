@@ -1,7 +1,8 @@
 import { MeiliSearch } from 'meilisearch';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { limitConcurrency, sleep, Task } from '~/server/utils/concurrency-helpers';
+import type { Task } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import { withRetries } from '~/utils/errorHandling';
 
 async function main() {
@@ -143,7 +144,7 @@ async function main() {
 
         console.log('Total number of tasks: ', tasks.length);
 
-        await limitConcurrency(tasks, 10);
+        await limitConcurrency(tasks, 5);
 
         console.log('Index migration completed :: ', index);
       } catch (e) {
