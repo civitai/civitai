@@ -103,7 +103,8 @@ export default function UserMembership() {
   const features = useFeatureFlags();
   const canUpgrade = useCanUpgrade();
   const router = useRouter();
-  const isCheckingPaddleSubscription = usePaddleSubscriptionRefresh();
+  // const isCheckingPaddleSubscription = usePaddleSubscriptionRefresh();
+  const isCheckingPaddleSubscription = false; // No refreshing for now since Paddle is dead
   const query = querySchema.safeParse(router.query);
   const isDrowngrade = query.success ? query.data?.downgraded : false;
   const downgradedTier = query.success ? isDrowngrade && query.data?.tier : null;
@@ -313,7 +314,7 @@ export default function UserMembership() {
                           />
                         )}
                       </Group>
-                      {!subscription.cancelAt && isPaddle && managementUrls && (
+                      {!subscription.cancelAt && isPaddle && managementUrls?.updatePaymentMethod && (
                         <Anchor
                           href={managementUrls?.updatePaymentMethod as string}
                           target="_blank"

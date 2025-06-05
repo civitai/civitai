@@ -5,6 +5,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useMutatePaddle } from '~/components/Paddle/util';
+import { CancelMembershipBenefitsModal } from '~/components/Stripe/MembershipChangePrevention';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -48,31 +49,38 @@ export function CancelMembershipAction({
       e.stopPropagation();
       if (!subscription) return;
 
-      const result = await paddle.Retain.initCancellationFlow({
-        subscriptionId: subscription.id,
+      dialogStore.trigger({
+        component: CancelMembershipBenefitsModal,
+        props: {
+          onContinue: handleRefresh,
+        },
       });
 
-      if (result.status === 'error') {
-        return showErrorNotification({
-          title: 'Failed to cancel membership',
-          error: new Error(
-            'There was an error while trying to cancel your membership. Please try again later.'
-          ),
-        });
-      }
+      // const result = await paddle.Retain.initCancellationFlow({
+      //   subscriptionId: subscription.id,
+      // });
 
-      if (result.status === 'chose_to_cancel') {
-        if (hasUsedVaultStorage) {
-          dialogStore.trigger({
-            component: VaultStorageDowngrade,
-            props: {
-              onContinue: handleRefresh,
-            },
-          });
-        } else {
-          await handleRefresh();
-        }
-      }
+      // if (result.status === 'error') {
+      //   return showErrorNotification({
+      //     title: 'Failed to cancel membership',
+      //     error: new Error(
+      //       'There was an error while trying to cancel your membership. Please try again later.'
+      //     ),
+      //   });
+      // }
+
+      // if (result.status === 'chose_to_cancel') {
+      //   if (hasUsedVaultStorage) {
+      //     dialogStore.trigger({
+      //       component: VaultStorageDowngrade,
+      //       props: {
+      //         onContinue: handleRefresh,
+      //       },
+      //     });
+      //   } else {
+      //     await handleRefresh();
+      //   }
+      // }
     },
     // No need to add paddle.Retain to dependenciees as suggested by eslint
     // eslint-disable-next-line react-hooks/exhaustive-deps
