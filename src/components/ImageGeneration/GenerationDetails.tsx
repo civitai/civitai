@@ -43,6 +43,7 @@ export function GenerationDetails({
         chevron: upsideDown
           ? {
               transform: 'rotate(180deg)',
+              // TODO: Mantine7: Move this to css module
               '&[data-rotate]': { transform: 'rotate(0deg)' },
             }
           : undefined,

@@ -314,7 +314,7 @@ export const TrainingImagesTagViewer = ({
   return (
     <Accordion variant="contained" transitionDuration={0}>
       <Accordion.Item value="tag-viewer">
-        <Accordion.Control>
+        <Accordion.Control py="md" pl="md" pr={8}>
           <Group gap="xs">
             <Text>Tag Viewer</Text>
             <Badge color="indigo" leftSection={<IconPhoto size={14} />}>

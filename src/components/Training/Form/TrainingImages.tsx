@@ -194,7 +194,8 @@ const LabelSelectModal = ({
     >
       <Stack>
         <Stack gap={0}>
-          <Text>You&apos;ve included some labeling.</Text> <Text>Which type are they?</Text>
+          <Text>You&apos;ve included some labeling.</Text>
+          <Text>Which type are they?</Text>
         </Stack>
         <Group gap="xs">
           <Text size="sm">Current type: </Text>
@@ -215,7 +216,7 @@ const LabelSelectModal = ({
           fullWidth
         />
         <Paper shadow="xs" radius="xs" p="md" withBorder>
-          <Text>{labelDescriptions[labelValue]}</Text>
+          <Text component="div">{labelDescriptions[labelValue]}</Text>
         </Paper>
         <Group justify="flex-end" mt="xl">
           <Button onClick={handleSelect}>OK</Button>
@@ -1798,7 +1799,9 @@ const AttestDiv = () => {
           granted, and I will immediately remove or modify the content if consent is revoked.
         </List.Item>
         <List.Item mb={2}>
-          Legality: I will not upload any material that is illegal or exploitative (e.g., child sexual abuse material, non-consensual imagery, extremist propaganda). Such content will be removed and reported to the relevant authorities.
+          Legality: I will not upload any material that is illegal or exploitative (e.g., child
+          sexual abuse material, non-consensual imagery, extremist propaganda). Such content will be
+          removed and reported to the relevant authorities.
         </List.Item>
       </List>
     </>

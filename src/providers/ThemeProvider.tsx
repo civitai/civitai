@@ -1,5 +1,5 @@
 import type { MantineColorScheme } from '@mantine/core';
-import { ColorSchemeScript, createTheme, MantineProvider, ScrollArea } from '@mantine/core';
+import { ColorSchemeScript, createTheme, MantineProvider } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 
 const theme = createTheme({
@@ -13,9 +13,9 @@ const theme = createTheme({
       //   target:
       //     typeof window !== 'undefined' ? document.getElementById('root') : undefined,
       // },
-      defaultProps: {
-        scrollAreaComponent: ScrollArea.Autosize,
-      },
+      // defaultProps: {
+      //   scrollAreaComponent: ScrollArea.Autosize,
+      // },
     },
     Drawer: {
       styles: {
@@ -82,11 +82,11 @@ const theme = createTheme({
         variant: 'subtle',
       },
     },
-    Text: {
-      defaultProps: {
-        size: 'sm',
-      },
-    },
+    // Text: {
+    //   defaultProps: {
+    //     size: 'sm',
+    //   },
+    // },
     // InputWrapper: {
     //   classNames: { label: 'w-full' },
     // },

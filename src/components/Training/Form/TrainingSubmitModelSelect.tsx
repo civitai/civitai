@@ -102,7 +102,8 @@ const ModelSelector = ({
               value: k,
             };
           })}
-          value={value ?? undefined} // TODO undefined vs null?
+          // @ts-ignore: requires null to prevent auto-selecting first item
+          value={value ?? null}
           onChange={(value) => {
             makeDefaultParams({
               base: value,
@@ -253,7 +254,7 @@ export const ModelSelect = ({
       <Stack gap={0}>
         <Title mt="md" order={5}>
           Base Model for Training{' '}
-          <Text span color="red">
+          <Text span c="red">
             *
           </Text>
         </Title>

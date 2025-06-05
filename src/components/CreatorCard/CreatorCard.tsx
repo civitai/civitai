@@ -1,8 +1,6 @@
 import { uniqBy } from 'lodash-es';
 import type { CardProps } from '@mantine/core';
 import {
-  ActionIcon,
-  BackgroundImage,
   Box,
   Card,
   Group,
@@ -18,7 +16,7 @@ import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
-import { constants, creatorCardStats, creatorCardStatsDefaults } from '~/server/common/constants';
+import { constants, creatorCardStatsDefaults } from '~/server/common/constants';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -30,12 +28,11 @@ import type {
   ProfileBackgroundCosmetic,
   SimpleCosmetic,
 } from '~/server/selectors/cosmetic.selector';
-import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { BadgeDisplay, Username } from '../User/Username';
 import type { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import classes from './CreatorCard.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

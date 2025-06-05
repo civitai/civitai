@@ -85,7 +85,7 @@ const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
   color: 'gray',
   className: 'h-9 min-w-9 rounded-full normal-case',
-  classNames: { root: 'flex gap-1 items-center' },
+  classNames: { label: 'flex gap-1 items-center' },
 };
 
 const sharedButtonProps: Partial<Omit<ButtonProps, 'children'>> = {

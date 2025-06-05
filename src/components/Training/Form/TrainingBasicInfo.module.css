@@ -28,3 +28,24 @@
     }
   }
 }
+
+.radioCard {
+  padding: var(--mantine-spacing-sm);
+  border: none;
+  width: auto;
+
+  &:hover {
+    background-color: alpha(var(--mantine-color-blue-2), 0.1);
+  }
+
+  &[data-checked] {
+    background-color: alpha(var(--mantine-color-blue-9), 0.2);
+  }
+
+  figure {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+}

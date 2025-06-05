@@ -232,7 +232,7 @@ export const AdvancedSettings = ({
         classNames={{
           content: 'p-0',
           item: 'overflow-hidden shadow-sm border-gray-3 dark:border-dark-4',
-          control: 'p-2',
+          control: 'py-4 pl-4 pr-2',
         }}
       >
         <Accordion.Item value="custom-prompts">

@@ -70,6 +70,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
           type="always"
           offsetScrollbars
           styles={{
+            // TODO: Mantine7: move this to css module
             scrollbar: { '&[data-orientation="horizontal"]': { display: 'none' } },
             viewport: { paddingBottom: 0 },
           }}

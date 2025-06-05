@@ -23,7 +23,7 @@ import type { TrainingModelData } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import styles from './TrainingBasicInfo.module.css';
+import classes from './TrainingBasicInfo.module.css';
 
 type tmTypes = TrainingDetailsObj['type'];
 type tMediaTypes = TrainingDetailsObj['mediaType'];
@@ -92,7 +92,7 @@ const RadioImg = ({
       <figure>
         <Image src={src} w={180} h={255} alt={value} radius="sm" withPlaceholder />
         <figcaption>
-          <Text c="dimmed" align="center" mt={10}>
+          <Text component="div" c="dimmed" align="center" mt={10}>
             {caption}
           </Text>
         </figcaption>
@@ -114,14 +114,18 @@ const RadioImg = ({
           <source src={src} type="video/mp4" />
         </video>
         <figcaption>
-          <Text c="dimmed" align="center" mt={10}>
+          <Text component="div" c="dimmed" align="center" mt={10}>
             {caption}
           </Text>
         </figcaption>
       </figure>
     );
 
-  return <Radio.Card value={value}>{media}</Radio.Card>;
+  return (
+    <Radio.Card className={classes.radioCard} value={value}>
+      {media}
+    </Radio.Card>
+  );
 };
 
 export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
@@ -364,12 +368,12 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           />
         </Input.Wrapper>
         <InputRadioGroup
-          className={styles.centerRadio}
+          className={classes.centerRadio}
           name="trainingModelType"
           label="Choose your LoRA type"
           withAsterisk
         >
-          <Group justify="between" gap="md">
+          <Group justify="space-between" gap="md" grow>
             {Object.entries(trainingModelTypesMap)
               .filter(([, v]) =>
                 !!trainingMediaType ? v.allowedTypes.includes(trainingMediaType) : true

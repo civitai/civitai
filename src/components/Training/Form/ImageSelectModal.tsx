@@ -664,7 +664,7 @@ const ImageGridMedia = ({
       />
 
       <div className="absolute left-2 top-2">
-        <Checkbox checked={isSelected} onChange={onChange} />
+        <Checkbox checked={isSelected} readOnly />
       </div>
       {type === 'generation' || !!img.meta ? (
         <div className="absolute bottom-2 right-2">

@@ -2,7 +2,6 @@ import type { VotableTagConnectorInput } from '~/server/schema/tag.schema';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import {
-  ActionIcon,
   Badge,
   Group,
   HoverCard,
@@ -40,6 +39,7 @@ import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/Hidd
 import { useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import classes from './VotableTag.module.scss';
 
 type VotableTagProps = VotableTagConnectorInput & {
   tagId: number;
@@ -175,23 +175,14 @@ export function VotableTag({
       radius="sm"
       key={tagId}
       style={{
-        position: 'relative',
-        background: badgeBg,
-        borderColor: badgeBorder,
+        '--badge-border-color': badgeBorder,
+        '--badge-bg': badgeBg,
+        '--badge-color': badgeColor.color,
+        '--progress-bg': progressBg,
+        '--progress-width': `${opacity * 100}%`,
         borderWidth: moderatorVariant ? 3 : 1,
-        color: badgeColor.color,
-        userSelect: 'none',
-
-        [`&:before`]: {
-          content: '""',
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          bottom: 0,
-          backgroundColor: progressBg,
-          width: `${opacity * 100}%`,
-        },
       }}
+      className={classes.mainBadge}
       pl={canVote ? 3 : 4}
       pr={!!currentUser ? 0 : undefined}
     >

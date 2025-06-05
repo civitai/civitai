@@ -76,8 +76,10 @@ $black: var(--mantine-color-black, #000000);
       }
 
       &::-webkit-scrollbar-thumb {
-        background-color: light-dark(rgba($white, 0.5),
-            rgba($black, 0.5));
+        background-color: light-dark(
+          rgba($black, 0.5),
+          rgba($white, 0.5)
+        );
       }
     }
   }
