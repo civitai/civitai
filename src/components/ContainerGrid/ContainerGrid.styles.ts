@@ -1,11 +1,6 @@
-import {
-  createStyles,
-  MantineNumberSize,
-  MantineTheme,
-  MANTINE_SIZES,
-  MantineSize,
-} from '@mantine/styles';
-import React from 'react';
+import type { MantineNumberSize, MantineTheme, MantineSize } from '@mantine/styles';
+import { createStyles, MANTINE_SIZES } from '@mantine/styles';
+import type React from 'react';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export interface GridStylesParams {

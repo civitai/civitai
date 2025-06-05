@@ -1,17 +1,28 @@
 export async function fetchBlob(src: string | Blob | File) {
-  let blob: Blob | File | null;
-  if (typeof src === 'string')
-    blob = await fetch(src)
-      .then((response) => response.blob())
-      .catch(() => null);
-  else blob = src;
-  return blob;
+  if (src instanceof Blob) return src;
+  else return await fetch(src).then((response) => response.blob().catch(() => null));
 }
 
-export async function fetchBlobAsFile(src: string | Blob | File, fileName: string) {
+export function blobToFile(
+  blob: Blob,
+  filename = new Date().getTime().toString(),
+  type = blob.type
+) {
+  return new File([blob], filename, { type });
+}
+
+export async function fetchBlobAsFile(src: string | Blob | File, filename?: string) {
+  if (src instanceof File) return src;
   const blob = await fetchBlob(src);
   if (!blob) return null;
-  return new File([blob], fileName, { type: blob.type });
+  let type = blob.type;
+
+  // have to do this to handle cases where content-type is application/octet-stream
+  if (typeof src === 'string') {
+    if (src.endsWith('.mp4')) type = 'video/mp4';
+    else if (src.endsWith('.jpg') || src.endsWith('.jpeg')) type = 'image/jpeg';
+  }
+  return blobToFile(blob, filename, type);
 }
 
 export async function fetchBlobAsBase64(src: string | Blob | File) {

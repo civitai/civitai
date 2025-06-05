@@ -1,9 +1,10 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission, VaultSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
+import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
+import type {
   GetPaginatedVaultItemsSchema,
   VaultItemFilesSchema,
   VaultItemsAddModelVersionSchema,
@@ -478,4 +479,49 @@ export const toggleModelVersionOnVault = async ({
   } else {
     return await addModelVersionToVault({ userId, modelVersionId });
   }
+};
+
+export const setVaultFromSubscription = async ({ userId }: { userId: number }) => {
+  const subscription = await dbWrite.customerSubscription.findFirst({
+    where: {
+      userId,
+      status: { in: ['active', 'trialing'] },
+      currentPeriodEnd: { gte: new Date() },
+    },
+    include: {
+      product: {
+        select: {
+          metadata: true,
+        },
+      },
+    },
+  });
+
+  const userVault = await dbWrite.vault.findFirst({
+    where: { userId: userId },
+  });
+
+  if (!subscription) {
+    await dbWrite.vault.update({
+      where: { userId },
+      data: {
+        storageKb: 0,
+      },
+    });
+
+    throw throwBadRequestError('User does not have an active subscription.');
+  }
+
+  const parsedMeta = subscriptionProductMetadataSchema.safeParse(subscription?.product?.metadata);
+  const vault = userVault ? userVault : await getOrCreateVault({ userId });
+  if (parsedMeta.success && vault.storageKb !== parsedMeta.data.vaultSizeKb) {
+    await dbWrite.vault.update({
+      where: { userId: vault.userId },
+      data: {
+        storageKb: parsedMeta.data.vaultSizeKb,
+      },
+    });
+  }
+
+  return true;
 };

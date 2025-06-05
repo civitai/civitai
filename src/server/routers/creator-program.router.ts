@@ -10,6 +10,7 @@ import {
   getCash,
   getCompensationPool,
   getCreatorRequirements,
+  getPrevMonthStats,
   getWithdrawalHistory,
   joinCreatorsProgram,
   withdrawCash,
@@ -39,4 +40,5 @@ export const creatorProgramRouter = router({
   withdrawCash: protectedProcedure.input(withdrawCashSchema).mutation(({ ctx, input }) => {
     return withdrawCash(ctx.user.id, input.amount);
   }),
+  getPrevMonthStats: protectedProcedure.query(({ ctx }) => getPrevMonthStats()),
 });

@@ -1,5 +1,5 @@
 import { sleep } from '~/server/utils/errorHandling';
-import { createLogger } from '~/utils/logging';
+import type { createLogger } from '~/utils/logging';
 
 export type Task = PullTask | TransformTask | PushTask | OnCompleteTask;
 

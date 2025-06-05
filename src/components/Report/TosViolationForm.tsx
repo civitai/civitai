@@ -4,14 +4,14 @@ import { InputRadioGroup, InputTextArea } from '~/libs/form';
 import { reportTosViolationDetailsSchema } from '~/server/schema/report.schema';
 
 const violations = [
-  'Actual person displayed in NSFW context',
+  'Depiction of real-person likeness',
   'Graphic violence',
   'False impersonation',
   'Deceptive content',
   'Sale of illegal substances',
   'Child abuse and exploitation',
   'Photorealistic depiction of a minor',
-  'Prohibited prompts',
+  'Prohibited concepts',
 ];
 
 export const TosViolationForm = createReportForm({

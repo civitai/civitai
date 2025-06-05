@@ -2,15 +2,15 @@ import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { BlockedReason } from '~/server/common/enums';
+import type { BlockedReason } from '~/server/common/enums';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
-import { Availability } from '~/shared/utils/prisma/enums';
+import type { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 
 const READ_BATCH_SIZE = 100000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -50,6 +50,9 @@ const filterableAttributes = [
   'flags.promptNsfw',
   'remixOfId',
   'availability',
+  'poi',
+  'minor',
+  'blockedFor',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
@@ -145,6 +148,8 @@ export type SearchBaseImage = {
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
   availability?: Availability;
+  poi: boolean;
+  acceptableMinor?: boolean;
 };
 
 type Metrics = {
@@ -159,6 +164,7 @@ type ModelVersions = {
   baseModel: string;
   modelVersionIdsAuto: number[];
   modelVersionIdsManual: number[];
+  poi: boolean;
 };
 
 type ImageTool = {
@@ -193,12 +199,16 @@ const transformData = async ({
       const imageTools = tools.filter((t) => t.imageId === imageRecord.id);
       const imageTechniques = techniques.filter((t) => t.imageId === imageRecord.id);
 
-      const { modelVersionIdsAuto, modelVersionIdsManual, baseModel } = modelVersions.find(
-        (mv) => mv.id === imageRecord.id
-      ) || {
+      const {
+        modelVersionIdsAuto,
+        modelVersionIdsManual,
+        baseModel,
+        poi: resourcePoi,
+      } = modelVersions.find((mv) => mv.id === imageRecord.id) || {
         modelVersionIdsAuto: [] as number[],
         modelVersionIdsManual: [] as number[],
         baseModel: '',
+        poi: false,
       };
 
       const imageMetrics = metrics.find((m) => m.id === imageRecord.id) ?? {
@@ -215,6 +225,8 @@ const transformData = async ({
       return {
         ...imageRecord,
         ...imageMetrics,
+        // Best way we currently have to detect current POI of processed images.
+        poi: imageRecord.poi ?? resourcePoi,
         combinedNsfwLevel: nsfwLevelLocked
           ? imageRecord.nsfwLevel
           : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),
@@ -302,7 +314,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     logger(`PullData :: ${indexName} :: Pulling data for batch ::`, batchLogKey);
 
     if (step === 0) {
-      const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
+      const engines = Object.keys(videoGenerationConfig2);
 
       const images = await db.$queryRaw<SearchBaseImage[]>`
       SELECT
@@ -323,6 +335,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."needsReview",
         i."blockedFor",
         i.minor,
+        i.poi,
+        i."acceptableMinor",
         p."publishedAt",
         p."availability",
         (
@@ -343,8 +357,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         (
           CASE
             WHEN i.meta->>'civitaiResources' IS NOT NULL
-              OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
-                ${Prisma.join(workflows)}
+              OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
+                ${Prisma.join(engines)}
               ]::text[])
             THEN TRUE
             ELSE FALSE
@@ -445,7 +459,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             ir."imageId" as id,
             string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
             coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is true), '{}') as "modelVersionIdsAuto",
-            coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is not true), '{}') as "modelVersionIdsManual"
+            coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is not true), '{}') as "modelVersionIdsManual",
+            SUM(IIF(m.poi, 1, 0)) > 0 "poi"
           FROM "ImageResourceNew" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
           JOIN "Model" m ON mv."modelId" = m."id"

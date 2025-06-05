@@ -1,17 +1,19 @@
-import { Button, ButtonProps, Divider, Input, InputWrapperProps, Stack, Text } from '@mantine/core';
+import type { ButtonProps, InputWrapperProps } from '@mantine/core';
+import { Button, Divider, Input, Stack, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
-import React, { forwardRef, useEffect } from 'react';
+import React, { forwardRef, useEffect, useMemo, useRef } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
 import { getDisplayName } from '~/utils/string-helpers';
-import { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { ResourceSelectHandler } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 
-type ResourceSelectMultipleProps = {
+export type ResourceSelectMultipleProps = {
   limit?: number;
-  value?: GenerationResource[];
-  onChange?: (value?: GenerationResource[]) => void;
+  value?: GenerationResource[] | null;
+  onChange?: (value: GenerationResource[] | null) => void;
   buttonLabel: React.ReactNode;
   modalTitle?: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
@@ -40,12 +42,14 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
     },
     ref
   ) => {
-    // const { types } = options;
-    const types = options.resources?.map((x) => x.type);
+    const { types, baseModels, select, getValues } = ResourceSelectHandler(options);
+    const stringDependency = JSON.stringify(types) + JSON.stringify(baseModels);
 
     // _types used to set up groups
-    const _types = types ?? [...new Set(value?.map((x) => x.model.type))];
-    const _values = types ? [...value].filter((x) => types.includes(x.model.type)) : value;
+    const _types = [...new Set(!!types.length ? types : value?.map((x) => x.model.type))];
+    const _values = useMemo(() => getValues(value) ?? [], [value, stringDependency]);
+    const valuesRef = useRef(_values);
+    valuesRef.current = _values;
     const groups = _types
       .map((type) => ({
         type,
@@ -54,21 +58,6 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
       }))
       .filter((x) => !!x.resources.length);
     const canAdd = !limit || _values.length < limit;
-
-    const handleAdd = (resource: GenerationResource) => {
-      if (!canAdd) return;
-      if (
-        selectSource === 'generation' &&
-        resource &&
-        !resource.canGenerate &&
-        resource.substitute?.canGenerate
-      ) {
-        onChange?.([..._values, { ...resource, ...resource.substitute }]);
-      } else {
-        onChange?.([..._values, resource]);
-      }
-      onCloseModal?.();
-    };
 
     const handleRemove = (id: number) => {
       const filtered = [..._values.filter((x) => x.id !== id)];
@@ -87,16 +76,24 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     // removes resources that have unsupported types
     useEffect(() => {
-      if (_values.length !== value.length) onChange?.(_values.length ? _values : undefined);
-    }, [value]); //eslint-disable-line
+      if (_values.length > 0 && _values.length !== value?.length)
+        onChange?.(_values.length ? _values : null);
+      else {
+        setTimeout(() => {
+          const updated = valuesRef.current;
+          if (updated.length !== value?.length) onChange?.(updated.length ? updated : null);
+        }, 0);
+      }
+    }, [_values, stringDependency]); //eslint-disable-line
 
     const handleOpenModal = () => {
-      openResourceSelectModal({
+      select({
         title: modalTitle ?? buttonLabel,
-        onSelect: handleAdd,
-        options,
-        onClose: onCloseModal,
         selectSource,
+        excludedIds: _values.map((x) => x.id),
+      }).then((resource) => {
+        if (!resource) return;
+        onChange?.([..._values, resource]);
       });
     };
 

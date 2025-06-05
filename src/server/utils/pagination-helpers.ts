@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
-import { NextApiRequest } from 'next';
+import type { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
-import { PaginationInput } from '~/server/schema/base.schema';
+import type { PaginationInput } from '~/server/schema/base.schema';
 import { QS } from '~/utils/qs';
 
 export const DEFAULT_PAGE_SIZE = 20;

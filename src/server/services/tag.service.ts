@@ -1,13 +1,13 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
-import { SessionUser } from 'next-auth';
-import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
+import type { SessionUser } from 'next-auth';
+import type { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import {
+import type {
   AdjustTagsSchema,
   DeleteTagsSchema,
   GetTagsInput,

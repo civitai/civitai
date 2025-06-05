@@ -1,11 +1,12 @@
+import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useState } from 'react';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { useDebouncedValue } from '@mantine/hooks';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { Flags } from '~/shared/utils';
 
 type BrowsingModeProviderState = {
@@ -73,7 +74,7 @@ export function useBrowsingLevelDebounced() {
     useBrowsingLevelContext();
   const browsingLevel = forcedBrowsingLevel ?? browsingLevelOverride ?? userBrowsingLevel;
   const [debounced] = useDebouncedValue(browsingLevel, 500);
-  return debounced;
+  return debounced ? debounced : NsfwLevel.PG;
 }
 
 export function BrowsingLevelProviderOptional({

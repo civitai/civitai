@@ -14,13 +14,13 @@ import {
 import { IconCheck, IconDiscountCheck } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrevention';
@@ -58,7 +58,7 @@ const useStyles = createStyles((theme) => ({
 export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
-  const featureFlags = useFeatureFlags();
+  const features = useFeatureFlags();
   const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
     {},
     {
@@ -102,7 +102,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
   }
 
   const metadata = (targetPlan.metadata ?? {}) as SubscriptionProductMetadata;
-  const planMeta = getPlanDetails(targetPlan, featureFlags);
+  const planMeta = getPlanDetails(targetPlan, features);
   const { image, benefits } = planMeta;
 
   const targetTier = metadata.tier ?? 'free';
@@ -146,12 +146,17 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
               radius="xl"
               size="md"
               mt="sm"
+              disabled={features.disablePayments}
               onClick={() => {
                 dialogStore.trigger({
                   component: MembershipUpgradeModal,
                   props: {
                     priceId,
                     meta: planMeta,
+                    price: {
+                      id: priceId,
+                      interval: 'month', // All our default plans are monthly
+                    },
                   },
                 });
               }}
@@ -160,7 +165,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
               /Month
             </Button>
           ) : (
-            <SubscribeButton priceId={priceId}>
+            <SubscribeButton priceId={priceId} disabled={features.disablePayments}>
               <Button radius="xl" size="md" mt="sm">
                 Get {capitalize(targetTier)} - $
                 {formatPriceForDisplay(unitAmount, undefined, { decimals: false })}

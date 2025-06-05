@@ -1,11 +1,13 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
-import { Prisma, PrismaClient, User } from '@prisma/client';
+import type { Prisma, PrismaClient, User } from '@prisma/client';
 import dayjs from 'dayjs';
-import { NextApiRequest, NextApiResponse } from 'next';
-import NextAuth, { type NextAuthOptions, Session } from 'next-auth';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Session } from 'next-auth';
+import NextAuth, { type NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import DiscordProvider from 'next-auth/providers/discord';
-import EmailProvider, { SendVerificationRequestParams } from 'next-auth/providers/email';
+import type { SendVerificationRequestParams } from 'next-auth/providers/email';
+import EmailProvider from 'next-auth/providers/email';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
@@ -274,6 +276,30 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
             }),
           ]
         : []),
+      CredentialsProvider({
+        id: 'token-login',
+        name: 'Token Login',
+        credentials: {
+          token: { label: 'token', type: 'text' },
+        },
+        async authorize(credentials) {
+          const { token } = credentials ?? {};
+          if (!token) throw new Error('No token provided.');
+
+          const tokenMap = env.TOKEN_LOGINS?.[token];
+          if (!tokenMap) throw new Error('Invalid token.');
+
+          try {
+            const userId = Number(tokenMap);
+            const user = await getSessionUser({ userId });
+            if (!user) throw new Error('No user found.');
+            return user;
+          } catch (e: unknown) {
+            const err = e as Error;
+            throw new Error(`Failed to authenticate: ${err.message}.`);
+          }
+        },
+      }),
     ],
     cookies: {
       sessionToken: {

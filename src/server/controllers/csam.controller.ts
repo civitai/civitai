@@ -1,6 +1,6 @@
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
-import { Context } from '~/server/createContext';
-import { CreateCsamReportSchema } from '~/server/schema/csam.schema';
+import type { Context } from '~/server/createContext';
+import type { CreateCsamReportSchema } from '~/server/schema/csam.schema';
 import { createCsamReport } from '~/server/services/csam.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';

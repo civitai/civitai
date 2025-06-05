@@ -1,8 +1,8 @@
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { TRPCError } from '@trpc/server';
+import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from 'dayjs';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
@@ -68,6 +68,7 @@ const imagesEndpointSchema = z.object({
   type: z.nativeEnum(MediaType).optional(),
   baseModels: commaDelimitedEnumArray(z.enum(constants.baseModels)).optional(),
   withMeta: booleanString().optional(),
+  requiringMeta: booleanString().optional(),
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -107,6 +108,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       browsingLevel: _browsingLevel,
       withMeta,
       user: session?.user,
+      disableMinor: true,
+      disablePoi: true,
     });
 
     const metadata: Metadata = {

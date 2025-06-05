@@ -1,10 +1,5 @@
-import {
-  IndexOptions,
-  MeiliSearchErrorInfo,
-  MeiliSearchTimeOutError,
-  Task,
-  MeiliSearch,
-} from 'meilisearch';
+import type { IndexOptions, MeiliSearchErrorInfo, Task, MeiliSearch } from 'meilisearch';
+import { MeiliSearchTimeOutError } from 'meilisearch';
 import { searchClient } from '~/server/meilisearch/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { withRetries } from '~/server/utils/errorHandling';

@@ -13,31 +13,45 @@ import {
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
-import { isDev, isProd } from '~/env/other';
+import { isProd } from '~/env/other';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { getMetadata, encodeMetadata } from '~/utils/metadata';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
+import { blobToFile } from '~/utils/file-utils';
+import { createImageElement, imageToJpegBlob } from '~/utils/image-utils';
+import { getMetadata, encodeMetadata, ExifParser } from '~/utils/metadata';
 import { auditMetaData } from '~/utils/metadata/audit';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
   const [meta, setMeta] = useState<ImageMetaProps | undefined>();
   const [nsfw, setNsfw] = useState<boolean>(false);
-  const nodeJson = useGlobalValue('nodeJson');
-  const exif = useGlobalValue('exif');
 
   const onDrop = async (files: File[]) => {
-    console.log(files);
-    const [file] = files;
-    const meta = await getMetadata(file);
+    console.log({ files });
+    // const [file] = files;
+    const jpegBlob = await imageToJpegBlob(files[0]);
+    const file = await blobToFile(jpegBlob);
+    // const [file] = files;
+
+    const parser = await ExifParser(file);
+    const parsed = parser.parse();
+    console.log({ parsed });
+    const meta = await parser.getMetadata();
+    const encoded = parser.encode(meta);
+    // const meta = await getMetadata(file);
     setMeta(meta);
-    console.log(meta);
-    const encoded = await encodeMetadata(meta);
-    console.log(encoded);
+
+    const img = await createImageElement(file);
+    console.log({ img });
+
+    console.log({ meta });
+    // const encoded = await encodeMetadata(meta);
+    console.log({ encoded });
     const result = auditMetaData(meta, nsfw);
-    console.log(result);
+    console.log({ result });
   };
+
+  const resources = (meta?.resources ?? []) as any[];
 
   return (
     <Container size={350}>
@@ -74,10 +88,10 @@ export default function MetadataTester() {
         </Dropzone>
         {meta && (
           <>
-            {meta.resources && (
+            {!!resources.length && (
               <Card withBorder p="sm">
-                {(meta.resources as any[]).map((resource) => (
-                  <Card.Section key={resource.id} inheritPadding py="xs" withBorder>
+                {resources.map((resource, i) => (
+                  <Card.Section key={i} inheritPadding py="xs" withBorder>
                     <Group spacing={4}>
                       <Text size="sm" weight={500}>
                         {resource.name}
@@ -94,44 +108,21 @@ export default function MetadataTester() {
                 ))}
               </Card>
             )}
-            {/* <ImageMeta meta={meta} /> */}
           </>
         )}
-        {nodeJson && (
-          <Card withBorder p="sm">
-            <Card.Section p="sm" py="xs" withBorder>
-              <Text weight={500}>Node JSON</Text>
-            </Card.Section>
-            <Card.Section p="sm">
-              <pre className="text-xs">{JSON.stringify(nodeJson, null, 2)}</pre>
-            </Card.Section>
-          </Card>
-        )}
-        {exif && (
-          <Card withBorder p="sm">
-            <Card.Section p="sm" py="xs" withBorder>
-              <Text weight={500}>EXIF</Text>
-            </Card.Section>
-            <Card.Section p="sm">
-              <pre className="text-xs">{JSON.stringify(exif, null, 2)}</pre>
-            </Card.Section>
-          </Card>
-        )}
+        <GlobalValueCard name="nodeJson" />
+        <GlobalValueCard name="exif" />
       </Stack>
     </Container>
   );
 }
 
-// # region global listener
-
-function useGlobalValue(key: string) {
-  if (typeof window === 'undefined' || isProd) return null;
-  const windowKey = key as keyof Window;
-  const [value, setValue] = useState(window[windowKey]);
+function GlobalValueCard({ name }: { name: string }) {
+  const [value, setValue] = useState<any>();
 
   useEffect(() => {
     const handler = () => {
-      setValue(window[windowKey]);
+      setValue(window[name as keyof Window]);
     };
 
     // Attach a listener for changes to the global variable
@@ -141,9 +132,19 @@ function useGlobalValue(key: string) {
     return () => {
       window.removeEventListener('globalValueChange', handler);
     };
-  }, [key]);
+  }, [name]);
 
-  return value;
+  if (typeof window === 'undefined' || isProd || !value) return null;
+
+  return (
+    <Card withBorder p="sm">
+      <Card.Section p="sm" py="xs" withBorder>
+        <Text weight={500}>{name}</Text>
+      </Card.Section>
+      <Card.Section p="sm">
+        <pre className="text-xs">{JSON.stringify(value, null, 2)}</pre>
+      </Card.Section>
+    </Card>
+  );
 }
-
 // # endregion

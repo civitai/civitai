@@ -5,7 +5,7 @@ import Router from 'next/router';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
+import type { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import type {
   AutoCaptionResponse,
@@ -16,6 +16,7 @@ import type {
 import {
   autoLabelLimits,
   defaultTrainingState,
+  defaultTrainingStateVideo,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
@@ -138,7 +139,7 @@ export const useOrchestratorUpdateSignal = () => {
     type,
   }: {
     context?: { data: TagDataResponse | CaptionDataResponse; modelId: number; isDone: boolean };
-    jobProperties?: { modelId: number; userId: number };
+    jobProperties?: Orchestrator.Training.ImageAutoTagJobPayload['properties'];
     jobType: string;
     type: Orchestrator.JobStatus;
   }) => {
@@ -149,10 +150,15 @@ export const useOrchestratorUpdateSignal = () => {
     if (!['Updated', 'Failed'].includes(type)) return;
 
     if (!isDefined(jobProperties)) return;
-    const { modelId } = jobProperties;
+    const { modelId, mediaType: mt } = jobProperties;
     const storeState = useTrainingImageStore.getState();
+
+    // TODO get the mediaType back so we know which training state to use
+    const mediaType = mt ?? 'image';
+    const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+
     const { autoLabeling, autoTagging, autoCaptioning } = storeState[modelId] ?? {
-      ...defaultTrainingState,
+      ...defaultState,
     };
     const { updateImage, setAutoLabeling } = trainingStore;
 
@@ -162,7 +168,7 @@ export const useOrchestratorUpdateSignal = () => {
         title: 'Failed to auto label',
         autoClose: false,
       });
-      setAutoLabeling(modelId, { ...defaultTrainingState.autoLabeling });
+      setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
       return;
     }
 
@@ -186,7 +192,10 @@ export const useOrchestratorUpdateSignal = () => {
         const appendList = getTextTagsAsList(autoTagging.appendTags ?? '');
 
         if (returnDataList.length === 0) {
-          setAutoLabeling(modelId, { ...autoLabeling, fails: [...autoLabeling.fails, k] });
+          setAutoLabeling(modelId, mediaType, {
+            ...autoLabeling,
+            fails: [...autoLabeling.fails, k],
+          });
         } else {
           let tags = returnDataList
             .sort(([, a], [, b]) => b - a)
@@ -200,32 +209,41 @@ export const useOrchestratorUpdateSignal = () => {
 
           tags = [...prependList, ...tags, ...appendList];
 
-          updateImage(modelId, {
+          updateImage(modelId, mediaType, {
             matcher: k,
             label: tags.join(', '),
             appendLabel: autoTagging.overwrite === 'append',
           });
-          setAutoLabeling(modelId, { ...autoLabeling, successes: autoLabeling.successes + 1 });
+          setAutoLabeling(modelId, mediaType, {
+            ...autoLabeling,
+            successes: autoLabeling.successes + 1,
+          });
         }
       });
     } else {
       data = context.data as CaptionDataResponse;
 
       const tagList = Object.entries(data).map(([f, t]) => ({
-        [f]: t.joyCaption.caption,
+        [f]: t.joyCaption?.caption ?? '',
       }));
       const returnData: AutoCaptionResponse = Object.assign({}, ...tagList);
 
       Object.entries(returnData).forEach(([k, v]) => {
         if (v.length === 0) {
-          setAutoLabeling(modelId, { ...autoLabeling, fails: [...autoLabeling.fails, k] });
+          setAutoLabeling(modelId, mediaType, {
+            ...autoLabeling,
+            fails: [...autoLabeling.fails, k],
+          });
         } else {
-          updateImage(modelId, {
+          updateImage(modelId, mediaType, {
             matcher: k,
             label: v,
             appendLabel: autoCaptioning.overwrite === 'append',
           });
-          setAutoLabeling(modelId, { ...autoLabeling, successes: autoLabeling.successes + 1 });
+          setAutoLabeling(modelId, mediaType, {
+            ...autoLabeling,
+            successes: autoLabeling.successes + 1,
+          });
         }
       });
     }
@@ -237,7 +255,7 @@ export const useOrchestratorUpdateSignal = () => {
           autoLabeling.successes === 1 ? '' : 's'
         }. Failures: ${autoLabeling.fails.length}`,
       });
-      setAutoLabeling(modelId, { ...defaultTrainingState.autoLabeling });
+      setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
     }
   };
   useSignalConnection(SignalMessages.OrchestratorUpdate, onUpdate);

@@ -2,7 +2,6 @@
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
 import {
-  booleanString,
   commaDelimitedStringArray,
   commaDelimitedStringObject,
   stringToArray,
@@ -94,7 +93,6 @@ export const serverSchema = z.object({
   ORCHESTRATOR_ENDPOINT: isProd ? z.string().url() : z.string().url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),
   ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
-  ORCHESTRATOR_EXPERIMENTAL: booleanString().default(false),
   AXIOM_TOKEN: z.string().optional(),
   AXIOM_ORG_ID: z.string().optional(),
   AXIOM_DATASTREAM: z.string().optional(),
@@ -129,8 +127,16 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
   EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
   BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
+  MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 
-  EXTERNAL_IMAGE_SCANNER: z.enum(['hive', 'rekognition']).optional().default('hive').catch('hive'),
+  CLAVATA_ENDPOINT: z.string().url().optional(),
+  CLAVATA_TOKEN: z.string().optional(),
+  CLAVATA_POLICY: z.string().optional(),
+
+  TOKEN_LOGINS: commaDelimitedStringObject().optional(),
+
+  EXTERNAL_IMAGE_SCANNER: z.string().optional(),
+  CLAVATA_SCAN: z.enum(['off', 'shadow', 'active']).default('shadow'),
   MINOR_SCANNER: z.enum(['custom', 'hive']).optional().catch(undefined),
   HIVE_VISUAL_TOKEN: z.string().optional(),
 
@@ -214,6 +220,18 @@ export const serverSchema = z.object({
   CREATOR_POOL_TAXES: z.coerce.number().optional(),
   CREATOR_POOL_PORTION: z.coerce.number().optional(),
   CREATOR_POOL_FORECAST_PORTION: z.coerce.number().optional().default(50),
+
+  // NOWPayments Related:
+
+  // API Related:
+  NOW_PAYMENTS_API_URL: z.string().optional(),
+  NOW_PAYMENTS_API_KEY: z.string().optional(),
+  NOW_PAYMENTS_IPN_KEY: z.string().optional(),
+
+  // Coinbase Related:
+  COINBASE_API_URL: z.string().optional(),
+  COINBASE_API_KEY: z.string().optional(),
+  COINBASE_WEBHOOK_SECRET: z.string().optional(),
 });
 
 /**

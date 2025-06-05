@@ -210,5 +210,5 @@ export const jobQueueJobs = [
   updateNsfwLevelJob,
   handleJobQueueCleanup,
   handleJobQueueCleanIfEmpty,
-  updateCollectionNsfwLevelsJob,
+  // updateCollectionNsfwLevelsJob,
 ];

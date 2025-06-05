@@ -81,4 +81,16 @@ export abstract class Flags {
   static diff(a: number, b: number) {
     return a & ~b;
   }
+
+  /** returns the number of bit positions between two flag values */
+  static distance(a: number, b: number): number {
+    const pos1 = Math.log2(a);
+    const pos2 = Math.log2(b);
+
+    return Math.abs(pos1 - pos2);
+  }
+
+  static increaseByBits(instance: number, bits = 1) {
+    return instance << bits;
+  }
 }

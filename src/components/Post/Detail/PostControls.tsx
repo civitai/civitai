@@ -1,5 +1,5 @@
 import { Menu, useMantineTheme } from '@mantine/core';
-import { IconEdit, IconFlag, IconTrash, IconInfoCircle } from '@tabler/icons-react';
+import { IconEdit, IconFlag, IconTrash, IconInfoCircle, IconShieldHalf } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
@@ -9,11 +9,12 @@ import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 export function PostControls({
   postId,
   userId,
-  isModelVersionPost,
   children,
 }: {
   postId: number;
@@ -27,12 +28,31 @@ export function PostControls({
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
   const isOwnerOrModerator = isOwner || isModerator;
+  const enqueuNsfwLevelUpdateMutation = trpc.post.enqueueNsfwLevelUpdate.useMutation({
+    onSuccess: () => showSuccessNotification({ message: 'Nsfw level update queued' }),
+  });
+  function handleEnqueueNsfwLevelUpdate() {
+    enqueuNsfwLevelUpdateMutation.mutate({ id: postId });
+  }
 
   return (
     <Menu position="bottom-end" transition="pop-top-right">
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
         {/* TODO.posts - reports */}
+        {isModerator && (
+          <Menu.Item
+            icon={<IconShieldHalf size={14} stroke={1.5} />}
+            color="yellow"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              handleEnqueueNsfwLevelUpdate();
+            }}
+          >
+            Enqueue NsfwLevel Update
+          </Menu.Item>
+        )}
         {isOwnerOrModerator && (
           <>
             <DeletePostButton postId={postId}>
@@ -54,11 +74,6 @@ export function PostControls({
             </Menu.Item>
           </>
         )}
-        {/* {features.collections && (
-          <AddToCollectionMenuItem
-            onClick={() => openContext('addToCollection', { postId, type: CollectionType.Post })}
-          />
-        )} */}
         {(!isOwner || !currentUser) && (
           <LoginRedirect reason="report-content">
             <Menu.Item

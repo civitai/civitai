@@ -1,8 +1,9 @@
-import { Badge, BadgeProps, Divider, Text } from '@mantine/core';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import type { BadgeProps } from '@mantine/core';
+import { Badge, Divider, Text } from '@mantine/core';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { IconHorse } from '@tabler/icons-react';
 import { IconNose } from '~/components/SVG/IconNose';
-import { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
 import { getDisplayName } from '~/utils/string-helpers';
 
 const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> = {
@@ -39,6 +40,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   ODOR: <IconNose size={16} strokeWidth={2} />,
   Illustrious: 'IL',
   NoobAI: 'NAI',
+  HiDream: 'HID',
 };
 
 export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {

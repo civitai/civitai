@@ -3,22 +3,26 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { generationConfig } from '~/server/common/constants';
-import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
+import type { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   fluxStandardAir,
+  fluxUltraAir,
   getBaseModelSetType,
   getIsFlux,
+  getIsFluxStandard,
   getIsSD3,
   getSizeFromAspectRatio,
   whatIfQueryOverrides,
+  fluxModelId,
 } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 
-import { UseTRPCQueryResult } from '@trpc/react-query/shared';
+import type { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
+import type { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { removeEmpty } from '~/utils/object-helpers';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
@@ -37,12 +41,14 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const currentUser = useCurrentUser();
   const watched = useWatch({ control: form.control });
   const [enabled, setEnabled] = useState(false);
-  const defaultModel =
-    generationConfig[getBaseModelSetType(watched.baseModel) as keyof typeof generationConfig]
-      ?.checkpoint ?? watched.model;
 
   const query = useMemo(() => {
-    const { model, resources = [], vae, ...params } = watched;
+    const values = { ...form.getValues(), ...watched };
+    const { model, resources, vae, ...params } = values;
+    const defaultModel =
+      generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
+        ?.checkpoint ?? model;
+
     if (params.aspectRatio) {
       const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
       if (size) {
@@ -52,25 +58,37 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     }
 
     let modelId = model?.id ?? defaultModel.id;
-    const isFlux = getIsFlux(watched.baseModel);
-    if (isFlux && watched.fluxMode) {
-      const { version } = parseAIR(watched.fluxMode);
+    const isFlux = getIsFlux(params.baseModel);
+    const isFluxStandard = getIsFluxStandard(modelId);
+    if (isFlux && params.fluxMode && isFluxStandard) {
+      const { version } = parseAIR(params.fluxMode);
       modelId = version;
-      if (watched.fluxMode !== fluxStandardAir) params.priority = 'low';
+      if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
-    const additionalResources = resources
-      .filter((x) => isDefined(x.id))
-      .map((x) => ({ id: x.id as number, epochNumber: x.epochDetails?.epochNumber }));
+    // if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
+    // else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+    // else params.engine = undefined;
+
+    delete params.engine;
+    if (model.id === fluxModelId && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
+      params.engine = 'flux-pro-raw';
+    if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+
+    const additionalResources =
+      resources?.map((x) => {
+        if (!x.epochDetails?.epochNumber) return { id: x.id as number };
+        return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber };
+      }) ?? [];
 
     return {
       resources: [{ id: modelId }, ...additionalResources],
-      params: {
+      params: removeEmpty({
         ...params,
         ...whatIfQueryOverrides,
-      } as TextToImageInput,
+      } as TextToImageInput),
     };
-  }, [watched, defaultModel.id]);
+  }, [watched]);
 
   useEffect(() => {
     // enable after timeout to prevent multiple requests as form data is set

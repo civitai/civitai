@@ -17,7 +17,8 @@ import { IconCheck, IconPlus, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { GameState, GlobalState, NewGame } from '~/components/Chopped/chopped.shared-types';
+import type { NewGame } from '~/components/Chopped/chopped.shared-types';
+import { GameState, GlobalState } from '~/components/Chopped/chopped.shared-types';
 import { ComputeCost, useChoppedStore } from '~/components/Chopped/chopped.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getRandom, shuffle } from '~/utils/array-helpers';
@@ -81,7 +82,7 @@ export function Setup() {
 
   // Charge
   const server = useChoppedServer();
-  const { mutateAsync: startGame, isLoading } = trpc.games.startChoppedGame.useMutation({
+  const { mutateAsync: startGame, isLoading } = trpc.games.chopped.start.useMutation({
     onSuccess: (data) => {
       console.log('Game created', data);
       newGameState.code = data.code;

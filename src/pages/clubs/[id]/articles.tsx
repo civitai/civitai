@@ -11,7 +11,7 @@ import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
-import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
+import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { createServerSideProps } from '../../../server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({

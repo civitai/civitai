@@ -1,32 +1,35 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import dayjs, { ManipulateType } from 'dayjs';
+import type { ManipulateType } from 'dayjs';
+import dayjs from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
-import { SessionUser } from 'next-auth';
+import type { SearchParams, SearchResponse } from 'meilisearch';
+import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
+import { clickhouse } from '~/server/clickhouse/client';
+import type { BaseModel, BaseModelType } from '~/server/common/constants';
 import {
-  BaseModel,
-  BaseModelType,
   CacheTTL,
   constants,
   FEATURED_MODEL_COLLECTION_ID,
+  MODELS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
+import { searchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, modelTagCache, userContentOverviewCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
-import { ModelVersionMeta } from '~/server/schema/model-version.schema';
-import {
+import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
+import type {
   GetAllModelsOutput,
   GetModelVersionsSchema,
   IngestModelInput,
-  ingestModelSchema,
   LimitOnly,
   MigrateResourceToCollectionInput,
   ModelGallerySettingsSchema,
@@ -41,19 +44,21 @@ import {
   ToggleModelLockInput,
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
+import { ingestModelSchema } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { UserSettingsSchema } from '~/server/schema/user.schema';
+import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
+import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { deleteBidsForModel } from '~/server/services/auction.service';
+import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -62,10 +67,10 @@ import {
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
-  ImagesForModelVersions,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
@@ -86,7 +91,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { RuleDefinition } from '~/server/utils/mod-rules';
+import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   DEFAULT_PAGE_SIZE,
   getCursor,
@@ -98,15 +103,14 @@ import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import type { CommercialUse, ModelType } from '~/shared/utils/prisma/enums';
 import {
   AuctionType,
   Availability,
-  CommercialUse,
   EntityType,
   MetricTimeframe,
   ModelModifier,
   ModelStatus,
-  ModelType,
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
@@ -115,7 +119,7 @@ import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { getS3Client } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
-import {
+import type {
   GetAssociatedResourcesInput,
   GetModelsWithCategoriesSchema,
   SetAssociatedResourcesInput,
@@ -148,6 +152,7 @@ type ModelRaw = {
   type: ModelType;
   poi?: boolean;
   minor?: boolean;
+  sfwOnly?: boolean;
   nsfw: boolean;
   nsfwLevel: number;
   allowNoCredit?: boolean;
@@ -218,7 +223,7 @@ export const getModelsRaw = async ({
     user,
     take,
     cursor,
-    query, // TODO: Support
+    query,
     followed,
     archived,
     tag,
@@ -249,8 +254,33 @@ export const getModelsRaw = async ({
     excludedUserIds,
     collectionTagId,
     availability,
+    disablePoi,
+    disableMinor,
     isFeatured,
+    poiOnly,
+    minorOnly,
   } = input;
+
+  // TODO yes, this will not work with pagination. dont have time to adjust the cursor for both dbs.
+  let searchModelIds: number[] = [];
+  if (query && searchClient) {
+    const request: SearchParams = {
+      limit: take ?? 100,
+    };
+
+    const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
+      .index(MODELS_SEARCH_INDEX)
+      .search(query, request);
+
+    // console.log(results.hits);
+    searchModelIds = results.hits.map((m) => m.id);
+    if (!searchModelIds.length) {
+      return {
+        items: [],
+        isPrivate: false,
+      };
+    }
+  }
 
   let pending = input.pending;
   const hasDraftModels = status?.includes(ModelStatus.Draft);
@@ -269,6 +299,10 @@ export const getModelsRaw = async ({
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
 
+  if (searchModelIds.length) {
+    AND.push(Prisma.sql`m.id IN (${Prisma.join(searchModelIds, ',')})`);
+  }
+
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
 
@@ -276,39 +310,26 @@ export const getModelsRaw = async ({
   // At that point, we should be relying more on unlisted status which is set by the owner.
   const hidePrivateModels = !ids && !clubId && !username && !user && !followed && !collectionId;
 
-  if (query) {
-    const lowerQuery = query?.toLowerCase();
-
-    AND.push(
-      Prisma.sql`(${Prisma.join(
-        [
-          Prisma.sql`
-        m."name" ILIKE ${`%${query}%`}
-      `,
-          Prisma.sql`
-        EXISTS (
-          SELECT 1 FROM "ModelVersion" mvq
-          JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
-          JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
-          WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
-        )
-      `,
-          Prisma.sql`
-        EXISTS (
-          SELECT 1 FROM "ModelVersion" mvq
-          WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
-        )
-      `,
-        ],
-        ' OR '
-      )})`
-    );
-  }
-
   if (!archived) {
     AND.push(
       Prisma.sql`(m."mode" IS NULL OR m."mode" != ${ModelModifier.Archived}::"ModelModifier")`
     );
+  }
+
+  if (disablePoi) {
+    AND.push(Prisma.sql`(m."poi" = false OR m."userId" = ${userId})`);
+  }
+  if (disableMinor) {
+    AND.push(Prisma.sql`m."minor" = false`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      AND.push(Prisma.sql`m."poi" = true`);
+    }
+    if (minorOnly) {
+      AND.push(Prisma.sql`m."minor" = true`);
+    }
   }
 
   if (needsReview && sessionUser?.isModerator) {
@@ -620,7 +641,9 @@ export const getModelsRaw = async ({
         m."allowCommercialUse",
         m."allowDerivatives",
         m."allowDifferentLicense",
-      `} m."type", m."minor",
+      `} m."type",
+      m."minor",
+      m."sfwOnly",
       m."poi",
       m."nsfw",
       m."nsfwLevel",
@@ -721,6 +744,14 @@ export const getModelsRaw = async ({
         // If not getting full details, only return the latest version
         if (!includeDetails) modelVersions = modelVersions.slice(0, 1);
 
+        if (!!input.excludedTagIds && input.excludedTagIds.length) {
+          // Support for excluded tags
+          const hasExcludedTag = data.tags.some((tag) =>
+            (input.excludedTagIds ?? []).includes(tag.tagId)
+          );
+          if (hasExcludedTag) return null;
+        }
+
         return {
           ...model,
           rank: {
@@ -802,7 +833,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     clubId,
   } = input;
 
-  const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
   let isPrivate = false;
@@ -1064,6 +1094,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     number,
     { modelVersionId: number; images: ImagesForModelVersions[] }
   > = {};
+  const { excludedTagIds, status } = input;
   if (!!modelVersionIds.length) {
     if (input.pending) {
       const images = await getImagesForModelVersion({
@@ -1072,6 +1103,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         pending: input.pending,
         browsingLevel: input.browsingLevel,
         user,
+        include: excludedTagIds ? ['tags'] : undefined,
       });
       for (const image of images) {
         if (!modelVersionImages[image.modelVersionId])
@@ -1086,7 +1118,6 @@ export const getModelsWithImagesAndModelVersions = async ({
     }
   }
 
-  const { excludedTagIds, status } = input;
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
   const unavailableGenResources = await getUnavailableResources();
@@ -1434,6 +1465,7 @@ export const upsertModel = async (
         poi: true,
         userId: true,
         minor: true,
+        sfwOnly: true,
         nsfw: true,
         gallerySettings: true,
         meta: true,
@@ -1454,6 +1486,7 @@ export const upsertModel = async (
         nsfwLevel: true,
         poi: true,
         minor: true,
+        sfwOnly: true,
         nsfw: true,
         gallerySettings: true,
         status: true,
@@ -1466,7 +1499,7 @@ export const upsertModel = async (
         meta: isEmpty(meta) ? Prisma.JsonNull : meta,
         gallerySettings: {
           ...prevGallerySettings,
-          level: input.minor ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
+          level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
         },
         tagsOnModels: tagsOnModels
           ? {
@@ -1498,7 +1531,8 @@ export const upsertModel = async (
 
     // Check any changes that would require a search index update
     const poiChanged = result.poi !== beforeUpdate.poi;
-    const minorChanged = result.minor !== beforeUpdate.minor;
+    const minorChanged =
+      result.minor !== beforeUpdate.minor || result.sfwOnly !== beforeUpdate.sfwOnly;
     const nsfwChanged = result.nsfw !== beforeUpdate.nsfw;
     const nameChanged = input.name !== beforeUpdate.name;
     const descriptionChanged = input.description !== beforeUpdate.description;
@@ -1529,6 +1563,41 @@ export const upsertModel = async (
       ingestModel({ ...parsedModel }).catch((error) =>
         logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
       );
+    }
+
+    if (minorChanged || poiChanged) {
+      // Update all images:
+      const modelVersions = await dbWrite.modelVersion.findMany({
+        where: { modelId: id },
+        select: { id: true },
+      });
+
+      const modelVersionIds = modelVersions.map(({ id }) => id);
+
+      if (modelVersionIds.length !== 0) {
+        const imageIds = await dbRead.$queryRaw<{ id: number }[]>`
+          SELECT i.id
+          FROM "Image" i
+          JOIN "Post" p ON i."postId" = p.id
+          WHERE p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
+        `;
+
+        if (imageIds.length !== 0) {
+          await dbWrite.$executeRaw`
+            UPDATE "Image"
+              SET minor = ${result.minor},
+                  poi = ${result.poi}
+            WHERE id IN (${Prisma.join(
+              imageIds.map(({ id }) => id),
+              ','
+            )})
+          `;
+
+          await imagesSearchIndex.queueUpdate(
+            imageIds.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+          );
+        }
+      }
     }
 
     if (showcaseCollectionChanged) {
@@ -1608,6 +1677,7 @@ export const publishModelById = async ({
           poi: true,
           nsfw: true,
           minor: true,
+          sfwOnly: true,
           type: true,
           userId: true,
           modelVersions: { select: { id: true, baseModel: true } },
@@ -1867,14 +1937,14 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
     },
   };
 
-  const items = await dbRead.modelVersion.findMany({
+  const items = await dbWrite.modelVersion.findMany({
     select,
     skip,
     take,
     where,
     orderBy: { updatedAt: 'desc' },
   });
-  const count = await dbRead.modelVersion.count({ where });
+  const count = await dbWrite.modelVersion.count({ where });
 
   return getPagingData({ items, count }, take, page);
 };
@@ -1956,6 +2026,14 @@ export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   const model = await dbWrite.model.update({ where: { id }, data: { locked } });
   await userContentOverviewCache.bust(model.userId);
 };
+
+export async function toggleLockComments({ id, locked }: { id: number; locked: boolean }) {
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    SET meta = jsonb_set(meta, '{commentsLocked}', to_jsonb(${locked}))
+    WHERE id = ${id}
+  `;
+}
 
 export const getSimpleModelWithVersions = async ({
   id,
@@ -2698,7 +2776,15 @@ export async function migrateResourceToCollection({
 export async function ingestModelById({ id }: GetByIdInput) {
   const model = await dbRead.model.findUnique({
     where: { id },
-    select: { id: true, name: true, description: true, poi: true, nsfw: true, minor: true },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+    },
   });
   if (!model) throw new TRPCError({ code: 'NOT_FOUND' });
 
@@ -2739,6 +2825,7 @@ export async function ingestModel(data: IngestModelInput) {
         POI: data.poi,
         NSFW: data.nsfw,
         minor: data.minor,
+        sfwOnly: data.sfwOnly,
         triggerwords: triggerWords,
       },
     },
@@ -2926,6 +3013,7 @@ export const privateModelFromTraining = async ({
         nsfwLevel: true,
         poi: true,
         minor: true,
+        sfwOnly: true,
         nsfw: true,
         gallerySettings: true,
         status: true,
@@ -3101,3 +3189,57 @@ export const toggleCannotPromote = async ({
     meta: updated.meta as ModelMeta | null,
   };
 };
+
+export async function getTopWeeklyEarners(fresh = false) {
+  if (fresh) await bustFetchThroughCache(REDIS_KEYS.CACHES.TOP_EARNERS);
+
+  const results = await fetchThroughCache(
+    REDIS_KEYS.CACHES.TOP_EARNERS,
+    async () => {
+      const auctionReset = await getLastAuctionReset();
+      if (!auctionReset) return [];
+
+      const topEarners = await clickhouse!.$query<{ modelVersionId: number; earned: number }>`
+        SELECT
+        modelVersionId,
+        cast(SUM(total) as int) as earned
+        FROM buzz_resource_compensation
+        WHERE date >= toStartOfDay(${auctionReset}::Date)
+        GROUP BY modelVersionId
+        ORDER BY earned DESC
+        LIMIT 100;
+      `;
+      const asArray = topEarners.map((x) => [x.modelVersionId, x.earned] as const);
+      const json = JSON.stringify(asArray);
+
+      const data = await dbWrite.$queryRawUnsafe<
+        { modelId: number; modelVersionId: number; earnedAmount: number }[]
+      >(`
+        WITH input_data AS (
+          SELECT
+            (value->>0)::INT AS modelVersionId,
+            (value->>1)::INT AS earned
+          FROM jsonb_array_elements('${json}'::jsonb) AS arr(value)
+        )
+        SELECT
+          m.id as "modelId",
+          mv.id as "modelVersionId",
+          i.earned as "earnedAmount"
+        FROM input_data i
+        JOIN "ModelVersion" mv ON mv.id = i.modelVersionId
+        JOIN "Model" m ON m.id = mv."modelId"
+        WHERE
+          m.type = 'Checkpoint'
+          AND mv.id NOT IN (SELECT id FROM "EcosystemCheckpoints")
+        ORDER BY i.earned DESC
+        LIMIT 100;
+      `);
+      return data;
+    },
+    { ttl: CacheTTL.day }
+  );
+  // TODO: fetch additional details about these models as needed, we just don't need to catch all that data...
+  // If it's expensive/slow, feel free to throw it in the cache instead...
+
+  return results;
+}

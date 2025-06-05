@@ -1,4 +1,4 @@
-import Stripe from 'stripe';
+import type Stripe from 'stripe';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory, StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
 import { env } from '../../env/server';
@@ -7,10 +7,10 @@ import { logToAxiom } from '../logging/client';
 import { throwBadRequestError } from '../utils/errorHandling';
 import { getServerStripe } from '../utils/get-server-stripe';
 import { createNotification } from './notification.service';
-import { UserPaymentConfiguration } from '~/shared/utils/prisma/models';
+import type { UserPaymentConfiguration } from '~/shared/utils/prisma/models';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
-import { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
-import { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
+import type { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
+import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
@@ -255,7 +255,14 @@ export async function createTipaltiPayee({ userId }: { userId: number }) {
 
     // Send invite right away:
     // TODO: store some info on the meta object.
-    const invitation = await client.createPayeeInvitation(tipaltiPayee.id);
+    console.log('Tipalti payee created', tipaltiPayee.id);
+    await client.createPayeeInvitation(tipaltiPayee.id).catch((error) => {
+      log({
+        method: 'createTipaltiPayeeInvitation',
+        error,
+        userId,
+      });
+    });
 
     const updatedPaymentConfiguration = await dbWrite.userPaymentConfiguration.upsert({
       create: {

@@ -3,7 +3,8 @@ import CustomParseFormat from 'dayjs/plugin/customParseFormat';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
-import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
+import type { UnpublishReason } from '~/server/common/moderation-helpers';
+import { unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   baseQuerySchema,
   getByIdSchema,
@@ -106,7 +107,12 @@ export const getAllModelsSchema = baseQuerySchema
     pending: z.boolean().optional(),
     collectionTagId: z.number().optional(),
     availability: z.nativeEnum(Availability).optional(),
+    disablePoi: z.boolean().optional(),
+    disableMinor: z.boolean().optional(),
     isFeatured: z.boolean().optional(),
+    // Mod only:
+    poiOnly: z.boolean().optional(),
+    minorOnly: z.boolean().optional(),
   });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
@@ -148,16 +154,13 @@ export const getDownloadSchema = z.object({
 });
 export type GetDownloadSchema = z.infer<typeof getDownloadSchema>;
 
-export type ModelGallerySettingsSchema = z.infer<typeof modelGallerySettingsSchema>;
-export const modelGallerySettingsSchema = z.object({
-  users: z.number().array().optional(),
-  tags: z.number().array().optional(),
-  images: z.number().array().optional(),
-  level: z.number().optional(),
-  pinnedPosts: z
-    .record(z.string(), z.number().array().max(constants.modelGallery.maxPinnedPosts))
-    .optional(),
-});
+export type ModelGallerySettingsSchema = {
+  users?: number[] | undefined;
+  tags?: number[] | undefined;
+  images?: number[] | undefined;
+  level?: number | undefined;
+  pinnedPosts?: Record<string, number[]> | undefined;
+};
 
 export type ModelGallerySettingsInput = z.infer<typeof modelGallerySettingsInput>;
 export const modelGallerySettingsInput = z.object({
@@ -187,9 +190,11 @@ export const modelUpsertSchema = licensingSchema.extend({
   nsfw: z.boolean().optional(),
   lockedProperties: z.string().array().optional(),
   minor: z.boolean().default(false).optional(),
+  sfwOnly: z.boolean().default(false).optional(),
   meta: z
     .object({
       showcaseCollectionId: z.number().nullish(),
+      commentsLocked: z.boolean().default(false),
     })
     .passthrough()
     .transform((val) => val as ModelMeta | null)
@@ -250,6 +255,7 @@ export type ModelMeta = Partial<{
   declinedAt: string;
   showcaseCollectionId: number;
   cannotPromote: boolean;
+  commentsLocked: boolean;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;
@@ -360,6 +366,7 @@ export const ingestModelSchema = z.object({
   poi: z.coerce.boolean(),
   nsfw: z.coerce.boolean(),
   minor: z.coerce.boolean(),
+  sfwOnly: z.coerce.boolean(),
 });
 
 export type LimitOnly = z.input<typeof limitOnly>;

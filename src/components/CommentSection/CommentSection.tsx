@@ -12,20 +12,20 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { closeAllModals } from '@mantine/modals';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconLock } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
-import { z } from 'zod';
-
+import type { z } from 'zod';
 import { CommentSectionItem } from '~/components/CommentSection/CommentSectionItem';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { commentUpsertInput } from '~/server/schema/comment.schema';
-import { CommentGetById, CommentGetCommentsById } from '~/types/router';
+import type { CommentGetById, CommentGetCommentsById } from '~/types/router';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -36,6 +36,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
   const theme = useMantineTheme();
   const queryUtils = trpc.useContext();
   const { classes } = useStyles();
+  const features = useFeatureFlags();
   highlights = highlights?.filter((x) => x);
 
   const editorRef = useRef<EditorCommandsRef | null>(null);
@@ -102,7 +103,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
           commentCount === 1 ? 'Comment' : 'Comments'
         }`}</Title>
       </Group>
-      {!mainComment?.locked && !isMuted ? (
+      {features.canWrite && !mainComment?.locked && !isMuted ? (
         <Group align="flex-start">
           <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
           <Form form={form} onSubmit={handleSubmitComment} style={{ flex: '1 1 0' }}>
@@ -115,7 +116,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                         You must be logged in to add a comment
                       </Text>
                       <Link href={`/login?returnUrl=${router.asPath}`}>
-                        <Button size="xs" onClick={() => closeAllModals()} compact>
+                        <Button size="xs" onClick={() => dialogStore.closeLatest()} compact>
                           Log In
                         </Button>
                       </Link>
@@ -135,6 +136,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                   onSuperEnter={() => form.handleSubmit(handleSubmitComment)()}
                   hideToolbar
                   // withLinkValidation
+                  inputClasses="break-all"
                 />
               </Box>
               {showCommentActions ? (
@@ -161,6 +163,8 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
           <Center>
             {isMuted
               ? 'You cannot add comments because you have been muted'
+              : !features.canWrite
+              ? 'Civitai is in read-only mode'
               : 'This thread has been locked'}
           </Center>
         </Alert>

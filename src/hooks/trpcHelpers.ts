@@ -1,4 +1,4 @@
-import { QueryKey } from '@tanstack/react-query';
+import type { QueryKey } from '@tanstack/react-query';
 import produce from 'immer';
 import { queryClient } from '~/utils/trpc';
 

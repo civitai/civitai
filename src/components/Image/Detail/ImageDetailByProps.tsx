@@ -33,14 +33,13 @@ import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { trpc } from '~/utils/trpc';
 import { useDidUpdate, useHotkeys } from '@mantine/hooks';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
-import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
+import type { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import React from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { truncate } from 'lodash-es';
@@ -51,6 +50,7 @@ import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { openAddToCollectionModal } from '~/components/Dialog/dialog-registry';
 
 export function ImageDetailByProps({
   imageId,
@@ -193,9 +193,11 @@ export function ImageDetailByProps({
                         color="gray"
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                         onClick={() =>
-                          openContext('addToCollection', {
-                            imageId: image.id,
-                            type: CollectionType.Image,
+                          openAddToCollectionModal({
+                            props: {
+                              imageId: image.id,
+                              type: CollectionType.Image,
+                            },
                           })
                         }
                         compact

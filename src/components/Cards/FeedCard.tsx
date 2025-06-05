@@ -1,6 +1,6 @@
-import { AspectRatio, CardProps } from '@mantine/core';
+import type { AspectRatio, CardProps } from '@mantine/core';
 import React, { forwardRef } from 'react';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';

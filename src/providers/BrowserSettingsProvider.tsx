@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { createStore, useStore } from 'zustand';
 import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
-import { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { setCookie } from '~/utils/cookies-helpers';
 import { createDebouncer } from '~/utils/debouncer';
@@ -9,12 +8,15 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isEqual } from 'lodash-es';
 import { devtools } from 'zustand/middleware';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
+import type { ColorDomain } from '~/server/common/constants';
+import { useDomainColor } from '~/hooks/useDomainColor';
 
 const Context = createContext<ContentSettingsStore | null>(null);
 
 const debouncer = createDebouncer(1000);
 export function BrowserSettingsProvider({ children }: { children: React.ReactNode }) {
+  const domain = useDomainColor();
   const { type, settings } = useCivitaiSessionContext();
   const { mutate } = trpc.user.updateContentSettings.useMutation({
     onError: (error) => {
@@ -28,7 +30,7 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const snapshotRef = useRef<Partial<StoreState>>({});
   const storeRef = useRef<ContentSettingsStore | null>(null);
   if (!storeRef.current) {
-    storeRef.current = createContentSettingsStore({ ...settings });
+    storeRef.current = createContentSettingsStore({ ...settings, domain });
     snapshotRef.current = settings;
   }
 
@@ -44,9 +46,14 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
     if (!store || type === 'unauthed') return;
     const unsubscribe = store.subscribe(({ setState, ...curr }, prev) => {
       debouncer(() => {
-        const changed = getChanged(curr, snapshotRef.current);
+        const changed = getChanged({ ...curr, domain }, { ...snapshotRef.current, domain });
         if (Object.keys(changed).length > 0) {
-          mutate(changed);
+          // The reason why we pass domain it's cause that way we can store the content values on different places depending
+          // on how it makes sense. For instance, for RED - Browssing level is stored under the name `redBrowsingLevel` inside the user settings.
+          mutate({
+            ...changed,
+            domain,
+          });
           snapshotRef.current = curr;
         }
 
@@ -83,6 +90,7 @@ type StoreState = {
   disableHidden: boolean;
   allowAds: boolean;
   autoplayGifs: boolean;
+  domain: ColorDomain;
 };
 
 type SetStateCallback = (state: StoreState) => Partial<StoreState>;

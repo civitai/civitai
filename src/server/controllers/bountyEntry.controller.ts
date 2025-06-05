@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
-import { Context } from '../createContext';
-import { GetByIdInput } from '../schema/base.schema';
+import type { Context } from '../createContext';
+import type { GetByIdInput } from '../schema/base.schema';
 import {
   handleLogError,
   throwBadRequestError,
@@ -17,8 +17,8 @@ import {
   getEntryById,
   upsertBountyEntry,
 } from '../services/bountyEntry.service';
-import { UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { getBountyById } from '../services/bounty.service';
 import { bountiesSearchIndex } from '~/server/search-index';

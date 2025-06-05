@@ -95,8 +95,7 @@ export const processScheduledPublishing = createJob(
             AND (p."publishedAt" IS NULL)
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
-          RETURNING p.id
-          ;
+          RETURNING p.id;
         `;
 
           // commenting this out, because it should be covered by the db_trigger `update_image_sort_at`

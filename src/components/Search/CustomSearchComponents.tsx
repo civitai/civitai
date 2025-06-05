@@ -1,10 +1,12 @@
-import {
-  Configure,
+import type {
   ConfigureProps,
   RangeInputProps,
   RefinementListProps,
   SearchBoxProps,
   SortByProps,
+} from 'react-instantsearch';
+import {
+  Configure,
   useClearRefinements,
   useConfigure,
   useRange,
@@ -12,11 +14,11 @@ import {
   useSearchBox,
   useSortBy,
 } from 'react-instantsearch';
+import type { ButtonProps } from '@mantine/core';
 import {
   Accordion,
   Box,
   Button,
-  ButtonProps,
   Chip,
   Code,
   createStyles,
@@ -27,18 +29,28 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import React, {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
-import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
-import { uniqBy } from 'lodash-es';
+import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
+import { filter, uniqBy } from 'lodash-es';
 import { DatePicker } from '@mantine/dates';
 import dayjs from 'dayjs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
 import { Flags } from '~/shared/utils';
+import { getBlockedNsfwWords, getPossibleBlockedNsfwWords } from '~/utils/metadata/audit';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDefined } from '~/utils/type-guards';
 
 const useStyles = createStyles((theme) => ({
   divider: {
@@ -254,26 +266,37 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
 
 export const BrowsingLevelFilter = ({
   attributeName,
+  filters: _filters,
   ...props
-}: { attributeName: string } & ConfigureProps) => {
+}: { attributeName: string; filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
   const browsingLevel = useBrowsingLevelDebounced();
-  const browsingLevelArray = Flags.instanceToArray(browsingLevel);
-  const { refine } = useConfigure({
-    ...props,
-    filters: attributeName
-      ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
-      : undefined,
-  });
 
-  return null;
+  const filters = useMemo(() => {
+    const browsingLevelArray = Flags.instanceToArray(browsingLevel);
+    const browsingLevelFilter = attributeName
+      ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
+      : null;
+    const filterList = Array.isArray(_filters) ? _filters : [_filters];
+
+    return [...filterList, browsingLevelFilter].filter(isDefined);
+  }, [browsingLevel, attributeName, _filters]);
+
+  return <ApplyCustomFilter filters={filters} {...props} />;
 };
+
+function getBlockedPromptFilters(search: string) {
+  const matches = getPossibleBlockedNsfwWords(search);
+  return { filters: matches.map((w) => `NOT prompt CONTAINS ${w}`).join(' AND ') };
+}
 
 export const CustomSearchBox = forwardRef<
   { focus: () => void },
   SearchBoxProps & RenderSearchComponentProps
 >(({ isMobile, onSearchDone, ...props }, ref) => {
+  const currentUser = useCurrentUser();
   const { query, refine } = useSearchBox({ ...props });
   const [search, setSearch] = useState(query);
+  // const config = useConfigure(getBlockedPromptFilters(query));
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const { classes } = useSearchInputStyles();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -286,8 +309,12 @@ export const CustomSearchBox = forwardRef<
   }));
 
   useEffect(() => {
-    if (debouncedSearch !== query) {
+    const canSearch = !currentUser?.isModerator
+      ? !getBlockedNsfwWords(debouncedSearch).length
+      : true;
+    if (debouncedSearch !== query && canSearch) {
       refine(debouncedSearch);
+      // config.refine(getBlockedPromptFilters(debouncedSearch));
     }
   }, [debouncedSearch]);
 
@@ -419,14 +446,19 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
   );
 }
 
-export const ApplyCustomFilter = ({ filters, ...props }: { filters: string } & ConfigureProps) => {
-  const { refine } = useConfigure({
-    ...props,
-    filters: filters,
-  });
+export const ApplyCustomFilter = ({
+  filters: _filters,
+  ...props
+}: { filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
+  const filters = useMemo(() => {
+    const filterList = Array.isArray(_filters) ? _filters : [_filters];
+    return filterList.map((f) => `(${f})`).join(' AND ');
+  }, [_filters]);
+
+  const { refine } = useConfigure({ ...props, filters });
 
   useEffect(() => {
-    refine(filters);
+    refine({ filters });
   }, [filters]);
 
   return null;

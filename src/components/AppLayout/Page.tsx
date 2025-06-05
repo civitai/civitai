@@ -1,5 +1,5 @@
-import { NextPage } from 'next';
-import { UseFeatureFlagsReturn } from '~/providers/FeatureFlagsProvider';
+import type { NextPage } from 'next';
+import type { UseFeatureFlagsReturn } from '~/providers/FeatureFlagsProvider';
 
 type PageOptions = {
   getLayout?: (page: React.ReactElement) => JSX.Element;

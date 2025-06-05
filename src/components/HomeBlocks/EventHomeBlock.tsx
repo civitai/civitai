@@ -6,7 +6,7 @@ import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { Lightbulb } from '~/components/Decorations/Lightbulb';
 import { useQueryEvent } from '~/components/Events/events.utils';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 

@@ -1,7 +1,11 @@
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAnswersInput, UpsertAnswerInput, AnswerVoteInput } from './../schema/answer.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
+  GetAnswersInput,
+  UpsertAnswerInput,
+  AnswerVoteInput,
+} from './../schema/answer.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 
 export const getAnswers = async <TSelect extends Prisma.AnswerSelect>({
   questionId,

@@ -34,4 +34,13 @@ export const challengeNotifications = createNotificationProcessor({
       url: `/articles/${details.articleId}`,
     }),
   },
+  'challenge-resource': {
+    displayName: `Your resource has been selected for today's challenge`,
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `Your resource "${details.resourceName}" has been selected for the "${details.challengeName}" challenge! Check all the details by clicking on this notification.`,
+      url: `/articles/${details.articleId}`,
+    }),
+  },
 });

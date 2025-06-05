@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
-import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
+import type { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -16,11 +17,8 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
-import {
-  ImageGenerationProcess,
-  ImageIngestionStatus,
-  MediaType,
-} from '~/shared/utils/prisma/enums';
+import type { ImageGenerationProcess, MediaType } from '~/shared/utils/prisma/enums';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -66,6 +64,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'toolNames',
     'techniqueNames',
     'flags.promptNsfw',
+    'poi',
+    'minor',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {

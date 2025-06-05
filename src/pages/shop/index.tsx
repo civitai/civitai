@@ -23,8 +23,7 @@ import {
   useQueryShop,
   useShopLastViewed,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
-import { CosmeticShopSectionMeta, GetShopInput } from '~/server/schema/cosmetic-shop.schema';
-import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
+import type { CosmeticShopSectionMeta, GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
@@ -36,6 +35,8 @@ import { formatPriceForDisplay } from '~/utils/number-helpers';
 
 import merchProducts from '~/utils/shop/civitai-merch-products.json';
 import projectOdysseyProducts from '~/utils/shop/project-odyssey-products.json';
+import clsx from 'clsx';
+import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
 
 const merchSections = {
   civitai: {
@@ -106,7 +107,7 @@ export default function CosmeticShopMain() {
                 <Button
                   leftIcon={<IconPencilMinus size={16} />}
                   onClick={() => {
-                    openUserProfileEditModal({});
+                    openUserProfileEditModal();
                   }}
                   sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
                   radius="xl"
@@ -139,42 +140,45 @@ export default function CosmeticShopMain() {
           <div className="ml-auto">
             <ShopFiltersDropdown filters={filters} setFilters={setFilters} />
           </div>
-          {isEmpty(filters) && <MerchShowcaseSection type="projectOdyssey" />}
-          {isLoading ? (
-            <Center p="xl">
-              <Loader />
-            </Center>
-          ) : cosmeticShopSections?.length > 0 ? (
-            cosmeticShopSections.map((section) => {
-              const { image, items } = section;
-              const meta = section.meta as CosmeticShopSectionMeta;
+          <div className="flex flex-col gap-6">
+            {isLoading ? (
+              <Center p="xl">
+                <Loader />
+              </Center>
+            ) : cosmeticShopSections?.length > 0 ? (
+              cosmeticShopSections.map((section, index) => {
+                const { image, items } = section;
+                const meta = section.meta as CosmeticShopSectionMeta;
+                const className = clsx(index === 0 ? 'order-1' : `order-3`);
 
-              return (
-                <ShopSection
-                  key={section.id}
-                  title={section.title}
-                  description={section.description}
-                  imageUrl={image?.url}
-                  hideTitle={meta.hideTitle}
-                >
-                  <ShopSection.Items>
-                    {items.map((item) => {
-                      const { shopItem } = item;
-                      return (
-                        <ShopItem
-                          key={shopItem.id}
-                          item={shopItem}
-                          sectionItemCreatedAt={item.createdAt}
-                        />
-                      );
-                    })}
-                  </ShopSection.Items>
-                </ShopSection>
-              );
-            })
-          ) : (
-            <NoContent message="It looks like we're still working on some changes. Please come back later." />
-          )}
+                return (
+                  <ShopSection
+                    key={section.id}
+                    title={section.title}
+                    description={section.description}
+                    imageUrl={image?.url}
+                    hideTitle={meta.hideTitle}
+                    className={className}
+                  >
+                    <ShopSection.Items>
+                      {items.map((item) => {
+                        const { shopItem } = item;
+                        return (
+                          <ShopItem
+                            key={shopItem.id}
+                            item={shopItem}
+                            sectionItemCreatedAt={item.createdAt}
+                          />
+                        );
+                      })}
+                    </ShopSection.Items>
+                  </ShopSection>
+                );
+              })
+            ) : (
+              <NoContent message="It looks like we're still working on some changes. Please come back later." />
+            )}
+          </div>
         </Stack>
       </Container>
     </>
@@ -183,14 +187,20 @@ export default function CosmeticShopMain() {
 
 const MAX_SHOWN_ITEMS = 4;
 
-function MerchShowcaseSection({ type }: { type: keyof typeof merchSections }) {
+function MerchShowcaseSection({
+  type,
+  className,
+}: {
+  type: keyof typeof merchSections;
+  className?: string;
+}) {
   const [opened, { open, close }] = useDisclosure();
   const merch = merchSections[type];
   const displayedItems = merch.products.slice(0, MAX_SHOWN_ITEMS);
   const collapsedItems = merch.products.slice(MAX_SHOWN_ITEMS);
 
   return (
-    <section className="flex flex-col gap-8">
+    <section className={clsx('flex flex-col gap-8', className)}>
       <div className="hidden w-full overflow-hidden rounded-[20px] md:block">
         <Image
           src={merch.bannerImage.url}

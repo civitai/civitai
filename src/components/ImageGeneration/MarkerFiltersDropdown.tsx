@@ -1,21 +1,18 @@
-import {
-  ButtonProps,
-  ChipProps,
-  Divider,
-  Indicator,
-  Popover,
-  PopoverProps,
-  ScrollArea,
-  Stack,
-} from '@mantine/core';
+import type { ButtonProps, PopoverProps } from '@mantine/core';
+import { Divider, Indicator, Popover, ScrollArea, Stack } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
-import { ReactNode, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
+import { FilterChip } from '~/components/Filters/FilterChip';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { GenerationFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
+import type { GenerationFilterSchema } from '~/providers/FiltersProvider';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { FilterChip } from '~/components/Filters/FilterChip';
+import { titleCase } from '~/utils/string-helpers';
+
+const tagGroups = {};
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -115,7 +112,7 @@ export function DumbMarkerFiltersDropdown({
                         setFilters({ marker: checked ? marker : undefined });
                       }}
                     >
-                      <span>{marker}</span>
+                      <span>{titleCase(marker)}</span>
                     </FilterChip>
                   );
                 })}

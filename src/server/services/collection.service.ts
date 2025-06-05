@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { uniq, uniqBy } from 'lodash-es';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
+import type { NsfwLevel } from '~/server/common/enums';
 import {
   ArticleSort,
   CollectionReviewSort,
@@ -10,18 +11,14 @@ import {
   ImageSort,
   ModelSort,
   NotificationCategory,
-  NsfwLevel,
   PostSort,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userContentOverviewCache } from '~/server/redis/caches';
-import {
-  GetByIdInput,
-  UserPreferencesInput,
-  userPreferencesSchema,
-} from '~/server/schema/base.schema';
-import {
+import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { userPreferencesSchema } from '~/server/schema/base.schema';
+import type {
   AddCollectionItemInput,
   BulkSaveCollectionItemsInput,
   CollectionMetadataSchema,
@@ -37,30 +34,33 @@ import {
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { UserMeta } from '~/server/schema/user.schema';
+import type { UserMeta } from '~/server/schema/user.schema';
 import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import { getAllImages, ImagesInfiniteModel, ingestImage } from '~/server/services/image.service';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
+import { getAllImages, ingestImage } from '~/server/services/image.service';
+import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import {
   bustFeaturedModelsCache,
   getModelsWithImagesAndModelVersions,
-  GetModelsWithImagesAndModelVersions,
 } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
-import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
+import type { PostsInfiniteModel } from '~/server/services/post.service';
+import { getPostsInfinite } from '~/server/services/post.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getYoutubeRefreshToken } from '~/server/youtube/client';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,
@@ -70,7 +70,6 @@ import {
   CollectionWriteConfiguration,
   HomeBlockType,
   ImageIngestionStatus,
-  MediaType,
   MetricTimeframe,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
@@ -1996,7 +1995,6 @@ export const getCollectionCoverImages = async ({
         'postId', i."postId",
         'name', i."name",
         'url', i."url",
-        'nsfw', i."nsfw",
         'nsfwLevel', i."nsfwLevel",
         'width', i."width",
         'height', i."height",

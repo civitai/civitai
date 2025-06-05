@@ -16,7 +16,7 @@ import { useChatContext } from '~/components/Chat/ChatProvider';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ChatListMessage } from '~/types/router';
+import type { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';

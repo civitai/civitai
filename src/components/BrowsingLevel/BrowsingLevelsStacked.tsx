@@ -1,8 +1,8 @@
 import { Group, Text } from '@mantine/core';
 import { ToggleList } from '~/components/ToggleList/ToggleList';
 import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
+import type { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
-  BrowsingLevel,
   browsingLevelDescriptions,
   browsingLevelLabels,
   browsingLevels,
@@ -10,9 +10,10 @@ import {
 import { Flags } from '~/shared/utils';
 
 export function BrowsingLevelsStacked() {
+  const levels = browsingLevels;
   return (
     <ToggleList>
-      {browsingLevels.map((level) => (
+      {levels.map((level) => (
         <BrowsingLevelItem key={level} level={level} />
       ))}
     </ToggleList>

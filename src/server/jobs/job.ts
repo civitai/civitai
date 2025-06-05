@@ -1,9 +1,9 @@
-import { NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 
 export type Job = {
   name: string;
-  run: () => {
+  run: (opts?: { req?: NextApiRequest }) => {
     result: Promise<MixedObject | void>;
     cancel: () => Promise<void>;
   };
@@ -24,6 +24,7 @@ export type JobContext = {
   status: JobStatus;
   on: (event: 'cancel', listener: () => Promise<void>) => void;
   checkIfCanceled: () => void;
+  req?: NextApiRequest;
 };
 
 export function inJobContext(res: NextApiResponse, fn: (jobContext: JobContext) => Promise<void>) {
@@ -57,7 +58,9 @@ export function createJob(
   return {
     name,
     cron,
-    run: () => {
+    run: (props: { req?: NextApiRequest }) => {
+      const { req } = props ?? {};
+
       const onCancel: (() => Promise<void>)[] = [];
       const jobContext = {
         status: 'running' as JobStatus,
@@ -67,6 +70,7 @@ export function createJob(
         checkIfCanceled: () => {
           if (jobContext.status !== 'running') throw new Error('Job has ended');
         },
+        req,
       };
       const cancel = () => {
         if (jobContext.status !== 'running') return;

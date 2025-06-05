@@ -85,14 +85,15 @@ export enum TagSort {
 }
 
 export enum ImageScanType {
-  Moderation,
-  Label,
-  FaceDetection,
-  WD14,
-  Hash,
-  Hive,
-  MinorDetection,
-  HiveDemographics,
+  Moderation = 0,
+  Label = 1,
+  FaceDetection = 2,
+  WD14 = 3,
+  Hash = 4,
+  Hive = 5,
+  MinorDetection = 6,
+  HiveDemographics = 7,
+  Clavata = 8,
 }
 
 // export enum CommentV2Sort {
@@ -137,6 +138,8 @@ export enum SignalMessages {
   CashInvalidator = 'creators-program:cash-invalidator',
   AuctionBidChange = 'auction:bid-change',
   TopicUpdate = 'topic:connections',
+  NewOrderQueueUpdate = 'new-order:queue-update',
+  NewOrderPlayerUpdate = 'new-order:player-update',
 }
 
 export enum BountySort {
@@ -183,6 +186,7 @@ export enum BlockedReason {
   TOS = 'tos',
   Moderated = 'moderated',
   CSAM = 'CSAM',
+  AiNotVerified = 'AiNotVerified',
 }
 
 export enum ThreadSort {
@@ -218,6 +222,7 @@ export enum OnboardingSteps {
   Buzz = 8,
   CreatorProgram = 16,
   BannedCreatorProgram = 32,
+  RedTOS = 64,
 }
 
 export const OnboardingComplete =
@@ -288,6 +293,7 @@ export enum BanReasonCode {
   SexualPOI = 'SexualPOI',
   Bestiality = 'Bestiality',
   Scat = 'Scat',
+  Nudify = 'Nudify',
   Harassment = 'Harassment',
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
@@ -319,7 +325,7 @@ export enum OrchPriorityTypes {
 export enum OrchEngineTypes {
   Kohya = 'kohya',
   Rapid = 'flux-dev-fast',
-  'X-Flux' = 'x-flux',
+  Musubi = 'musubi',
 }
 
 export enum BlocklistType {
@@ -345,4 +351,30 @@ export enum SignalTopic {
   CreatorProgram = 'creators-program',
   Auction = 'auction', // with :auctionId
   ModelVersion = 'model-version', // with :modelVersionId
+  NewOrderPlayer = 'new-order-player', // with :playerId
+  NewOrderQueue = 'new-order-queue', // with :queueId
+}
+
+export enum NewOrderImageRatingStatus {
+  Correct = 'Correct',
+  Pending = 'Pending',
+  Failed = 'Failed',
+  AcolyteCorrect = 'AcolyteCorrect',
+  AcolyteFailed = 'AcolyteFailed',
+}
+
+export enum NewOrderDamnedReason {
+  InappropriateMinors = 'InappropriateMinors',
+  RealisticMinors = 'RealisticMinors',
+  DepictsRealPerson = 'DepictsRealPerson',
+  Bestiality = 'Bestiality',
+  GraphicViolence = 'GraphicViolence',
+}
+
+export enum NewOrderSignalActions {
+  UpdateStats = 'update-stats',
+  RankUp = 'rank-up',
+  Reset = 'reset',
+  AddImage = 'add-image',
+  RemoveImage = 'remove-image',
 }

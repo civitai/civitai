@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
@@ -12,6 +12,7 @@ const schema = z.object({
   userId: z.number().optional(),
 });
 
+// after an image has been deleted, it can be restored which should remove blocking properties and update the nsfwLevel
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });

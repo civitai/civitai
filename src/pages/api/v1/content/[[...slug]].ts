@@ -1,12 +1,12 @@
 import { TRPCError } from '@trpc/server';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { publicApiContext, publicApiContext2 } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   // const apiCaller = appRouter.createCaller(publicApiContext(req, res));
-  const apiCaller = publicApiContext2(req, res);
+  const apiCaller = await publicApiContext2(req, res);
 
   try {
     const result = await apiCaller.content.get({ slug: req.query.slug });

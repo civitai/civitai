@@ -1,3 +1,4 @@
+import type { MantineSize, SegmentedControlProps } from '@mantine/core';
 import {
   ActionIcon,
   Badge,
@@ -8,7 +9,6 @@ import {
   Drawer,
   Group,
   Loader,
-  MantineSize,
   NavLink,
   Popover,
   Stack,
@@ -16,7 +16,6 @@ import {
   Title,
   createStyles,
   SegmentedControl,
-  SegmentedControlProps,
   Alert,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -39,6 +38,8 @@ import { constants } from '~/server/common/constants';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+
+const excludeLegendsRegex = /Donors|Knights/i;
 
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
@@ -105,7 +106,7 @@ export default function Leaderboard() {
   const [selectedLeaderboard, setSelectedLeaderboard] = useState(
     leaderboards.find((x) => x.id === id)
   );
-  const hasLegends = !selectedLeaderboard?.title.includes('Donors');
+  const hasLegends = !!selectedLeaderboard && !excludeLegendsRegex.test(selectedLeaderboard.title);
   const [selectedPosition, setSelectedPosition] = useState<number | null>(null);
   const leaderboardResults = board === 'season' ? leaderboardSeason : leaderboardLegend;
   const loadingLeaderboardResults =

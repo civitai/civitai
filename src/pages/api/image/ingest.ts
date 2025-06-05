@@ -1,5 +1,5 @@
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
 import { ingestImage } from '~/server/services/image.service';

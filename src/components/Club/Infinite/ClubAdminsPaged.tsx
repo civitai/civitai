@@ -17,7 +17,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
 import { useMutateClubAdmin, useQueryClubAdmins } from '~/components/Club/club.utils';
-import { GetPagedClubAdminInviteSchema } from '~/server/schema/clubAdmin.schema';
+import type { GetPagedClubAdminInviteSchema } from '~/server/schema/clubAdmin.schema';
 import { IconTrash } from '@tabler/icons-react';
 import { formatDate } from '../../../utils/date-helpers';
 import { getDisplayName } from '../../../utils/string-helpers';
@@ -27,7 +27,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '../../../utils/notifications';
 import { UserAvatar } from '../../UserAvatar/UserAvatar';
 // import { ClubAdminUpdateModal } from '../ClubAdminUpsertForm';
-import { ClubAdmin } from '../../../types/router';
+import type { ClubAdmin } from '../../../types/router';
 
 export function ClubAdminsPaged({ clubId }: Props) {
   // TODO.clubs: Add some custom filters for admins

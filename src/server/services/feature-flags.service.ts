@@ -1,4 +1,4 @@
-import { IncomingHttpHeaders } from 'http';
+import type { IncomingHttpHeaders } from 'http';
 import { camelCase } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client';
@@ -25,6 +25,7 @@ const featureAvailability = [
   ...roleAvailablity,
 ] as const;
 const featureFlags = createFeatureFlags({
+  canWrite: ['mod'],
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
   ambientCard: ['public'],
@@ -36,6 +37,7 @@ const featureFlags = createFeatureFlags({
   civitaiLink: ['mod', 'member'],
   stripe: ['mod'],
   imageTraining: ['user'],
+  videoTraining: ['mod', 'bronze', 'silver', 'gold'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
@@ -68,6 +70,7 @@ const featureFlags = createFeatureFlags({
     description: `A helpful chat assistant that can answer questions about Stable Diffusion, Civitai, and more! We're still training it, so please report any issues you find!`,
     availability: ['user'],
   },
+  assistantPersonality: ['bronze', 'silver', 'gold'],
   bounties: ['public'],
   newsroom: ['public'],
   safety: ['public'],
@@ -96,14 +99,15 @@ const featureFlags = createFeatureFlags({
   experimentalGen: ['mod'],
   imageIndex: ['public'],
   imageIndexFeed: ['public'],
+  // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
-  canBuyBuzz: ['public', 'green'],
-  customPaymentProvider: ['public'],
-  // Temporarily disabled until we change ads provider -Manuel
+  canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
+  // #endregion
+  // Temporarily disabled until we change ads provider -Manuel
   paddleAdjustments: ['granted'],
   announcements: ['granted'],
   blocklists: ['granted'],
@@ -112,6 +116,13 @@ const featureFlags = createFeatureFlags({
   appTour: ['public'],
   privateModels: ['mod', 'granted'],
   auctions: ['public'],
+  newOrderGame: ['mod', 'member', 'granted'],
+  newOrderReset: ['granted'],
+  changelogEdit: ['granted'],
+  annualMemberships: ['public'],
+  disablePayments: ['public'],
+  coinbasePayments: ['public'],
+  nowpaymentPayments: [],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -147,8 +158,14 @@ const hasFeature = (
       ([key, domain]) => domain && availableServers.includes(key as ServerAvailability)
     );
 
-    serverMatch = domains.some(([key, domain]) => {
-      if (key === 'blue' && ['stage.civitai.com', 'dev.civitai.com'].includes(host)) return true;
+    serverMatch = domains.some(([color, domain]) => {
+      if (
+        color === 'blue' &&
+        ['stage.civitai.com', 'stage-0.civitai.com', 'dev.civitai.com'].includes(host) &&
+        // No reason to forcefully enable `isBlue` if we can avoid it. The app doesn't rely on it for the most part.
+        key !== 'isBlue'
+      )
+        return true;
       return host === domain;
     });
     // if server doesn't match, return false regardless of other availability flags
@@ -245,8 +262,8 @@ function getEnvOverrides() {
   const processFeatureAvailability: Partial<Record<FeatureFlagKey, FeatureAvailability[]>> = {};
   // Set flags from ENV
   for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith('NEXT_PUBLIC_FEATURE_FLAG_')) continue;
-    const featureKey = camelCase(key.replace('NEXT_PUBLIC_FEATURE_FLAG_', ''));
+    if (!key.startsWith('FEATURE_FLAG_')) continue;
+    const featureKey = camelCase(key.replace('FEATURE_FLAG_', ''));
     const availability: FeatureAvailability[] = [];
 
     for (const x of value?.split(',') ?? []) {

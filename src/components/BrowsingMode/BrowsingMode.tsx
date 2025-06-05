@@ -1,10 +1,23 @@
-import { Group, Text, Stack, Popover, ActionIcon, Checkbox, Button, Tooltip } from '@mantine/core';
+import {
+  Group,
+  Text,
+  Stack,
+  Popover,
+  ActionIcon,
+  Checkbox,
+  Button,
+  Tooltip,
+  Anchor,
+} from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconCaretRightFilled, IconEyeExclamation, IconProps } from '@tabler/icons-react';
+import type { IconProps } from '@tabler/icons-react';
+import { IconAlertTriangle, IconEyeExclamation, IconSword } from '@tabler/icons-react';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { constants } from '~/server/common/constants';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   return (
@@ -30,6 +43,8 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const disableHidden = useBrowsingSettings((x) => x.disableHidden);
   const setState = useBrowsingSettings((x) => x.setState);
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const features = useFeatureFlags();
 
   const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
   const toggleDisableHidden = () => setState((state) => ({ disableHidden: !state.disableHidden }));
@@ -43,20 +58,21 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
               <Stack spacing={0}>
                 <Group align="flex-start">
                   <Text sx={{ lineHeight: 1 }}>Browsing Level</Text>
-                  {showNsfw && (
+                  {showNsfw && features.newOrderGame && (
                     <Tooltip label="Help us improve by playing!" withArrow color="dark">
                       <Button
                         onClick={closeMenu}
                         component={Link}
-                        href="/research/rater"
-                        compact
+                        href="/games/knights-of-new-order"
                         size="xs"
                         ml="auto"
                         variant="outline"
+                        color="orange.5"
+                        compact
                       >
                         <Group spacing={4}>
-                          Rating Game
-                          <IconCaretRightFilled size={14} />
+                          Join the Knights Order
+                          <IconSword size={14} />
                         </Group>
                       </Button>
                     </Tooltip>
@@ -65,6 +81,15 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                 <Text color="dimmed">Select the levels of content you want to see</Text>
               </Stack>
               <BrowsingLevelsGrouped />
+              {browsingSettingsAddons.settings.disablePoi && (
+                <Group spacing="sm" mt={4}>
+                  <IconAlertTriangle size={16} />
+                  <Text color="dimmed" size="xs">
+                    With X or XXX enabled, some content may be hidden.{' '}
+                    <Anchor href="/articles/13632">Learn more</Anchor>
+                  </Text>
+                </Group>
+              )}
             </Stack>
             <Checkbox
               checked={blurNsfw}

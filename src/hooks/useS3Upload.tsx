@@ -1,6 +1,9 @@
-import React, { ChangeEvent, forwardRef, ReactElement, useRef, useState } from 'react';
-import { TrackedFile, useFileUploadContext } from '~/components/FileUpload/FileUploadProvider';
-import { UploadType, UploadTypeUnion } from '~/server/common/enums';
+import type { ChangeEvent, ReactElement } from 'react';
+import React, { forwardRef, useRef, useState } from 'react';
+import type { TrackedFile } from '~/components/FileUpload/FileUploadProvider';
+import { useFileUploadContext } from '~/components/FileUpload/FileUploadProvider';
+import type { UploadTypeUnion } from '~/server/common/enums';
+import { UploadType } from '~/server/common/enums';
 import { withRetries } from '~/utils/errorHandling';
 
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB

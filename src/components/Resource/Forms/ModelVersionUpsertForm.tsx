@@ -38,26 +38,26 @@ import {
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { activeBaseModels, constants } from '~/server/common/constants';
-import { ClubResourceSchema } from '~/server/schema/club.schema';
-import {
-  GenerationResourceSchema,
-  generationResourceSchema,
-} from '~/server/schema/generation.schema';
-import {
-  earlyAccessConfigInput,
+import type { ClubResourceSchema } from '~/server/schema/club.schema';
+import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
+import { generationResourceSchema } from '~/server/schema/generation.schema';
+import type {
   ModelVersionEarlyAccessConfig,
   ModelVersionUpsertInput,
-  modelVersionUpsertSchema2,
   RecommendedSettingsSchema,
+} from '~/server/schema/model-version.schema';
+import {
+  earlyAccessConfigInput,
+  modelVersionUpsertSchema2,
   recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
-import { ModelUpsertInput } from '~/server/schema/model.schema';
+import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import {
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
 import { Availability, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { MyRecentlyRecommended } from '~/types/router';
+import type { MyRecentlyRecommended } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -319,6 +319,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const isPublished = version?.status === 'Published';
   const isPrivateModel = model?.availability === Availability.Private;
   const showEarlyAccessInput =
+    !model?.poi && // POI models won't allow EA.
     !isPrivateModel &&
     (currentUser?.isModerator ||
       (maxEarlyAccessModels > 0 &&

@@ -15,11 +15,11 @@ import { CollectionContributorPermission } from '~/shared/utils/prisma/enums';
 import { IconPlaylistX, IconSearch } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CollectionGetAllUserModel } from '~/types/router';
+import type { CollectionGetAllUserModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 
-export function MyCollections({ children, onSelect }: MyCollectionsProps) {
+export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyCollectionsProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
@@ -42,9 +42,18 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
         : collections.filter((c) => c.name.toLowerCase().includes(debouncedQuery.toLowerCase())),
     [debouncedQuery, collections]
   );
-  const noCollections = !isLoading && filteredCollections.length === 0;
-  const ownedFilteredCollections = filteredCollections.filter((collection) => collection.isOwner);
-  const contributingFilteredCollections = filteredCollections.filter(
+
+  const sortedCollections = useMemo(() => {
+    if (!filteredCollections) return [];
+
+    return [...filteredCollections].sort((a, b) =>
+      sortOrder === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
+    );
+  }, [filteredCollections, sortOrder]);
+
+  const noCollections = !isLoading && sortedCollections.length === 0;
+  const ownedFilteredCollections = sortedCollections.filter((collection) => collection.isOwner);
+  const contributingFilteredCollections = sortedCollections.filter(
     (collection) => !collection.isOwner
   );
 
@@ -67,7 +76,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
           onClick={() => selectCollection(c.id)}
           active={router.query?.collectionId === c.id.toString()}
           label={<Text>{c.name}</Text>}
-        ></NavLink>
+        />
       ))}
       {contributingFilteredCollections.length > 0 && <Divider label="Following" mt="sm" />}
       {contributingFilteredCollections.map((c) => (
@@ -77,7 +86,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
           onClick={() => selectCollection(c.id)}
           active={router.query?.collectionId === c.id.toString()}
           label={<Text>{c.name}</Text>}
-        ></NavLink>
+        />
       ))}
       {noCollections && (
         <Group>
@@ -94,7 +103,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
     return children({
       FilterBox,
       Collections,
-      collections: filteredCollections,
+      collections: sortedCollections,
       isLoading,
       noCollections,
     });
@@ -108,6 +117,8 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   );
 }
 
+type SortOrder = 'asc' | 'desc';
+
 type MyCollectionsProps = {
   children?: (elements: {
     FilterBox: React.ReactNode;
@@ -118,6 +129,7 @@ type MyCollectionsProps = {
   }) => JSX.Element;
   onSelect?: (collection: CollectionGetAllUserModel) => void;
   pathnameOverride?: string;
+  sortOrder?: SortOrder; // <-- ADDED THIS
 };
 
 const useStyles = createStyles((theme) => ({

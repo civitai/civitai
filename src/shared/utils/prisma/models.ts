@@ -82,7 +82,7 @@ export type TagType = "UserGenerated" | "Label" | "Moderation" | "System";
 
 export type TagsOnTagsType = "Parent" | "Replace" | "Append";
 
-export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics";
+export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics" | "Clavata";
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
@@ -161,6 +161,10 @@ export type AppealStatus = "Pending" | "Approved" | "Rejected";
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
+
+export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incident";
+
+export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
 
 export type EntityMetric_EntityType_Type = "Image";
 
@@ -408,6 +412,7 @@ export interface User {
   bids?: Bid[];
   recurringBids?: BidRecurring[];
   moderationRules?: ModerationRule[];
+  playerInfo?: NewOrderPlayer | null;
 }
 
 export interface CustomerSubscription {
@@ -562,6 +567,7 @@ export interface Model {
   nsfwLevel: number;
   lockedProperties: string[];
   scannedAt: Date | null;
+  sfwOnly: boolean;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
@@ -595,6 +601,7 @@ export interface ModelFlag {
   model?: Model;
   poi: boolean;
   minor: boolean;
+  sfwOnly: boolean;
   nsfw: boolean;
   triggerWords: boolean;
   poiName: boolean;
@@ -780,6 +787,7 @@ export interface ModelMetric {
   generationCount: number;
   thumbsUpCount: number;
   thumbsDownCount: number;
+  earnedAmount: number;
   updatedAt: Date;
 }
 
@@ -799,6 +807,7 @@ export interface ModelVersionMetric {
   generationCount: number;
   thumbsUpCount: number;
   thumbsDownCount: number;
+  earnedAmount: number;
   updatedAt: Date;
 }
 
@@ -1075,6 +1084,8 @@ export interface Image {
   assignedUser?: User | null;
   sortAt: Date;
   minor: boolean;
+  poi: boolean;
+  acceptableMinor: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   thread?: Thread | null;
@@ -1279,6 +1290,12 @@ export interface TagsOnImageNew {
   image?: Image;
   tagId: number;
   attributes: number;
+}
+
+export interface ShadowTagsOnImage {
+  imageId: number;
+  tagId: number;
+  confidence: number;
 }
 
 export interface TagsOnImageVote {
@@ -2158,6 +2175,15 @@ export interface EntityCollaborator {
   lastMessageSentAt: Date | null;
 }
 
+export interface EcosystemCheckpoints {
+  id: number;
+  name: string;
+}
+
+export interface GenerationBaseModel {
+  baseModel: string;
+}
+
 export interface Club {
   id: number;
   userId: number;
@@ -2559,6 +2585,7 @@ export interface AuctionBase {
   active: boolean;
   runForDays: number;
   validForDays: number;
+  description: string | null;
   auctions?: Auction[];
   recurringBids?: BidRecurring[];
 }
@@ -2634,6 +2661,58 @@ export interface ModerationRule {
   reason: string | null;
   createdById: number;
   createdBy?: User;
+}
+
+export interface Changelog {
+  id: number;
+  title: string;
+  content: string;
+  link: string | null;
+  cta: string | null;
+  effectiveAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  type: ChangelogType;
+  tags: string[];
+  disabled: boolean;
+  titleColor: string | null;
+  sticky: boolean;
+}
+
+export interface NewOrderPlayer {
+  userId: number;
+  user?: User;
+  rankType: NewOrderRankType;
+  rank?: NewOrderRank;
+  startAt: Date;
+  exp: number;
+  fervor: number;
+  smiteReceived?: NewOrderSmite[];
+  smiteGiven?: NewOrderSmite[];
+}
+
+export interface NewOrderRank {
+  type: NewOrderRankType;
+  name: string;
+  minExp: number;
+  createdAt: Date;
+  updatedAt: Date;
+  iconUrl: string | null;
+  players?: NewOrderPlayer[];
+}
+
+export interface NewOrderSmite {
+  id: number;
+  targetPlayerId: number;
+  targetPlayer?: NewOrderPlayer;
+  givenById: number;
+  givenBy?: NewOrderPlayer;
+  size: number;
+  remaining: number;
+  reason: string | null;
+  createdAt: Date;
+  cleansedAt: Date | null;
+  cleansedReason: string | null;
 }
 
 export interface QuestionRank {

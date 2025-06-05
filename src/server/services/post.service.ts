@@ -1,23 +1,20 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
-import { PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { thumbnailCache, userContentOverviewCache } from '~/server/redis/caches';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { externalMetaSchema, ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import {
-  editPostImageSelect,
-  PostImageEditProps,
-  PostImageEditSelect,
-  postSelect,
-} from '~/server/selectors/post.selector';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import type { ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
+import { externalMetaSchema } from '~/server/schema/image.schema';
+import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
+import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
@@ -32,13 +29,14 @@ import {
   deleteImageById,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
+  ingestImage,
   purgeImageGenerationDataCache,
   purgeResizeCache,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueByName } from '~/server/services/technique.service';
-import { getToolByDomain, getToolByName, getToolByAlias } from '~/server/services/tool.service';
+import { getToolByAlias, getToolByDomain, getToolByName } from '~/server/services/tool.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
@@ -49,7 +47,6 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
 import {
   Availability,
   CollectionContributorPermission,
@@ -61,11 +58,12 @@ import {
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
-import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
+import { isValidAIGeneration } from '~/utils/image-utils';
+import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { CacheTTL } from '../common/constants';
-import {
+import type {
   AddPostTagInput,
   AddResourceToPostImageInput,
   GetPostTagsInput,
@@ -126,6 +124,11 @@ export const getPostsInfinite = async ({
   clubId,
   browsingLevel,
   pending,
+  excludedTagIds,
+  disablePoi,
+  disableMinor,
+  poiOnly,
+  minorOnly,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
@@ -214,9 +217,14 @@ export const getPostsInfinite = async ({
       );
     } else {
       const ageGroups = getPeriods(period);
-      AND.push(
-        Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
-      );
+      // TODO fix month and week to be better
+      if (ageGroups.length === 1) {
+        AND.push(Prisma.sql`pm."ageGroup" = ${ageGroups[0]}::"MetricTimeframe"`);
+      } else {
+        AND.push(
+          Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
+        );
+      }
     }
   }
 
@@ -374,6 +382,10 @@ export const getPostsInfinite = async ({
         user,
         browsingLevel,
         pending,
+        disablePoi,
+        disableMinor,
+        poiOnly,
+        minorOnly,
       })
     : [];
 
@@ -867,10 +879,11 @@ export const addPostImage = async ({
   }
 
   let techniqueId: number | undefined;
-  if (meta && 'workflow' in meta) {
-    const workflow = generationFormWorkflowConfigurations.find((x) => x.key === meta.workflow);
-    if (workflow) {
-      techniqueId = (await getTechniqueByName(workflow.subType))?.id;
+  if (meta && 'engine' in meta) {
+    // older meta has type: string, but the updated meta has process: string
+    const process = (meta.process ?? meta.type) as string | undefined;
+    if (process) {
+      techniqueId = (await getTechniqueByName(process))?.id;
     }
   }
 
@@ -944,19 +957,40 @@ export async function bustCachesForPost(postId: number) {
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
-  const currentImage = await dbWrite.image.findUnique({
+  const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
-    select: { hideMeta: true },
+    select: { hideMeta: true, ingestion: true, blockedFor: true, metadata: true, nsfwLevel: true },
   });
+
+  const blockedForVerification = currentImage.blockedFor === BlockedReason.AiNotVerified;
+  const updatedIsVerifiable = isValidAIGeneration({
+    id: image.id,
+    nsfwLevel: currentImage.nsfwLevel,
+    meta: image.meta,
+  });
+
+  const shouldIngest = blockedForVerification && updatedIsVerifiable;
 
   const result = await dbWrite.image.update({
     where: { id: image.id },
     data: {
       ...image,
       meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
+      // If this image was blocked due to missing metadata, we need to set it back to pending
+      ingestion: shouldIngest ? 'Pending' : undefined,
+      blockedFor: shouldIngest ? null : undefined,
+      metadata: {
+        ...((currentImage.metadata as MixedObject) ?? {}),
+        ...(shouldIngest ? { skipScannedAtReassignment: true } : {}),
+      } as Prisma.JsonObject,
     },
     select: { id: true, url: true, userId: true },
   });
+
+  if (shouldIngest) {
+    // Ensures a proper rescan of this image.
+    await ingestImage({ image: result });
+  }
 
   // If changing hide meta, purge the resize cache so that we strip metadata
   if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {

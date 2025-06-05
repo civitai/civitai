@@ -1,5 +1,6 @@
 import { Anchor, Divider, Text, Title } from '@mantine/core';
-import React, { Component, ErrorInfo, Fragment, ReactNode } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
+import React, { Component, Fragment } from 'react';
 import { filterHomeOptions } from '~/components/HomeContentToggle/HomeContentToggle';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -49,7 +50,7 @@ class UserErrorBoundary extends Component<Props, State> {
         <ul className="mt-1 flex flex-wrap gap-2">
           {this.options.map(({ key, url }, i) => (
             <Fragment key={key}>
-              <Anchor component={NextLink} href={url} className="capitalize leading-none">
+              <Anchor component="a" href={url} className="capitalize leading-none">
                 {key}
               </Anchor>
               {i !== this.options.length - 1 && <Divider orientation="vertical" />}

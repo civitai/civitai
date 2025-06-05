@@ -1,5 +1,5 @@
-import { PrismaClient } from '@prisma/client';
-import { BareNotification } from '~/server/notifications/base.notifications';
+import type { PrismaClient } from '@prisma/client';
+import type { BareNotification } from '~/server/notifications/base.notifications';
 
 export function createDetailFetcher(fetcher: {
   types: string[];

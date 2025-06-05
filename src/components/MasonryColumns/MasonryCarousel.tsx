@@ -1,8 +1,9 @@
 import OneKeyMap from '@essentials/one-key-map';
-import { Carousel } from '@mantine/carousel';
 import trieMemoize from 'trie-memoize';
-import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import clsx from 'clsx';
 
 type Props<TData> = {
   data: TData[];
@@ -30,14 +31,11 @@ export function MasonryCarousel<TData>({
   const { columnCount, columnWidth, maxSingleColumnWidth } = useMasonryContext();
 
   const totalItems = data.length + (extra ? 1 : 0);
-  // const key = id ?? (itemId ? data.map(itemId).join('_') : undefined);
 
   return data.length ? (
-    <Carousel
+    <Embla
       key={id}
-      classNames={{ viewport: viewportClassName }}
-      slideSize={columnCount > 1 ? '336px' : '100%'}
-      slideGap={16}
+      className={viewportClassName}
       align={totalItems <= columnCount ? 'start' : 'end'}
       withControls={totalItems > columnCount ? true : false}
       slidesToScroll={columnCount}
@@ -51,37 +49,37 @@ export function MasonryCarousel<TData>({
         minHeight: height,
       }}
     >
-      {data.map((item, index) => {
-        const key = itemId ? itemId(item) : index;
-        return (
-          <Carousel.Slide {...itemWrapperProps} key={key} id={key.toString()}>
-            {createRenderElement(RenderComponent, index, item, height)}
-          </Carousel.Slide>
-        );
-      })}
-      {extra && <Carousel.Slide>{extra}</Carousel.Slide>}
-    </Carousel>
+      <Embla.Viewport>
+        <Embla.Container className="-ml-4 flex">
+          {data.map((item, index) => {
+            const key = itemId ? itemId(item) : index;
+            return (
+              <Embla.Slide
+                {...itemWrapperProps}
+                key={key}
+                id={key.toString()}
+                index={index}
+                className={clsx('pl-4', columnCount > 1 ? 'flex-[0_0_336px]' : 'flex-[0_0_100%]')}
+              >
+                {createRenderElement(RenderComponent, index, item, height)}
+              </Embla.Slide>
+            );
+          })}
+          {extra && (
+            <Embla.Slide
+              index={data.length}
+              className={clsx('pl-4', columnCount > 1 ? 'flex-[0_0_336px]' : 'flex-[0_0_100%]')}
+            >
+              {extra}
+            </Embla.Slide>
+          )}
+        </Embla.Container>
+      </Embla.Viewport>
+    </Embla>
   ) : (
     <div style={{ height: columnWidth }}>{empty}</div>
   );
 }
-
-// const useStyles = createStyles(() => ({
-//   control: {
-//     svg: {
-//       width: 32,
-//       height: 32,
-//       [containerQuery.smallerThan('sm')]: {
-//         minWidth: 16,
-//         minHeight: 16,
-//       },
-//     },
-//     '&[data-inactive]': {
-//       opacity: 0,
-//       cursor: 'default',
-//     },
-//   },
-// }));
 
 // supposedly ~5.5x faster than createElement without the memo
 const createRenderElement = trieMemoize(

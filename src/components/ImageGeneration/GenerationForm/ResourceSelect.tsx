@@ -1,14 +1,15 @@
-import { Button, ButtonProps, GroupPosition, Input, InputWrapperProps } from '@mantine/core';
+import type { ButtonProps, GroupPosition, InputWrapperProps } from '@mantine/core';
+import { Button, Input } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
-import {
+import type {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
 
 export const ResourceSelect = ({
   value,
@@ -25,8 +26,8 @@ export const ResourceSelect = ({
   showAsCheckpoint,
   ...inputWrapperProps
 }: {
-  value?: GenerationResource;
-  onChange?: (value?: GenerationResource) => void;
+  value?: GenerationResource | null;
+  onChange?: (value: GenerationResource | null) => void;
   buttonLabel: React.ReactNode;
   modalTitle?: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
@@ -40,7 +41,7 @@ export const ResourceSelect = ({
   const types = options.resources?.map((x) => x.type);
   const _value = types && value && !types.includes(value.model.type) ? undefined : value;
 
-  function handleChange(resource?: GenerationResource) {
+  function handleChange(resource?: GenerationResource | null) {
     if (
       selectSource === 'generation' &&
       resource &&
@@ -49,7 +50,7 @@ export const ResourceSelect = ({
     ) {
       onChange?.({ ...resource, ...resource.substitute });
     } else {
-      onChange?.(resource);
+      onChange?.(resource ?? null);
     }
   }
 
@@ -68,7 +69,7 @@ export const ResourceSelect = ({
 
   // removes resources that have unsupported types
   useEffect(() => {
-    if (!_value && !!value) onChange?.(_value);
+    if (!_value && !!value) onChange?.(_value ?? null);
   }, [value]); //eslint-disable-line
 
   return (

@@ -1,14 +1,16 @@
-import {
-  Avatar,
+import type {
   AvatarProps,
   BadgeProps,
-  Group,
-  Indicator,
   IndicatorProps,
-  Loader,
   MantineNumberSize,
   MantineSize,
   MantineTheme,
+} from '@mantine/core';
+import {
+  Avatar,
+  Group,
+  Indicator,
+  Loader,
   Paper,
   Stack,
   Text,
@@ -18,11 +20,11 @@ import { IconUser } from '@tabler/icons-react';
 import { useGetEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -90,6 +92,7 @@ export function UserAvatar({
   badgeSize,
   withDecorations = true,
   withOverlay = false,
+  className,
 }: Props) {
   const theme = useMantineTheme();
   const { canViewNsfw } = useFeatureFlags();
@@ -138,6 +141,7 @@ export function UserAvatar({
 
   return (
     <Group
+      className={className}
       align="center"
       sx={
         withOverlay
@@ -279,6 +283,7 @@ type Props = {
   badgeSize?: number;
   withDecorations?: boolean;
   withOverlay?: boolean;
+  className?: string;
 };
 
 export const UserProfileLink = ({

@@ -1,4 +1,5 @@
 import { uniqBy } from 'lodash-es';
+import type { CardProps } from '@mantine/core';
 import {
   ActionIcon,
   BackgroundImage,
@@ -8,7 +9,6 @@ import {
   Stack,
   createStyles,
   Text,
-  CardProps,
   Image,
 } from '@mantine/core';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
@@ -18,13 +18,13 @@ import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
 import { constants, creatorCardStats, creatorCardStatsDefaults } from '~/server/common/constants';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 import { UserStatBadges, UserStatBadgesV2 } from '../UserStatBadges/UserStatBadges';
-import {
+import type {
   BadgeCosmetic,
   ProfileBackgroundCosmetic,
   SimpleCosmetic,
@@ -32,9 +32,9 @@ import {
 import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { BadgeDisplay, Username } from '../User/Username';
-import { UserPublicSettingsSchema } from '~/server/schema/user.schema';
+import type { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 
 const useStyles = createStyles((theme) => ({
   profileDetailsContainer: {
@@ -67,6 +67,7 @@ export function CreatorCard({
   tipBuzzEntityType,
   tipBuzzEntityId,
   withActions = true,
+  tipsEnabled = true,
   subText,
   ...cardProps
 }: Props) {
@@ -111,14 +112,16 @@ export function CreatorCard({
             />
             {withActions && (
               <Group spacing={8} noWrap>
-                <TipBuzzButton
-                  toUserId={creator.id}
-                  size="xs"
-                  entityId={tipBuzzEntityId}
-                  label=""
-                  entityType={tipBuzzEntityType}
-                  compact
-                />
+                {tipsEnabled && (
+                  <TipBuzzButton
+                    toUserId={creator.id}
+                    size="xs"
+                    entityId={tipBuzzEntityId}
+                    label=""
+                    entityType={tipBuzzEntityType}
+                    compact
+                  />
+                )}
                 <ChatUserButton user={creator} size="xs" label="" compact />
                 <FollowUserButton userId={creator.id} size="xs" compact />
               </Group>
@@ -171,6 +174,7 @@ export const CreatorCardV2 = ({
   tipBuzzEntityType,
   tipBuzzEntityId,
   withActions = true,
+  tipsEnabled = true,
   cosmeticOverwrites,
   useEquippedCosmetics = true,
   statDisplayOverwrite,
@@ -239,11 +243,12 @@ export const CreatorCardV2 = ({
     <Card p="md" withBorder {...cardProps}>
       <Card.Section style={{ position: 'relative' }}>
         {backgroundImage && backgroundImage.data.url ? (
-          <EdgeMedia
+          <EdgeMedia2
             src={backgroundImage.data.url}
             type={backgroundImage.data.type ?? 'image'}
-            transcode={isVideo}
+            // transcode={isVideo}
             anim={true}
+            width={450}
             wrapperProps={{
               style: {
                 position: 'absolute',
@@ -362,18 +367,20 @@ export const CreatorCardV2 = ({
                 </UserProfileLink>
                 {withActions && (
                   <Group spacing={8} noWrap>
-                    <TipBuzzButton
-                      toUserId={creator.id}
-                      size="xs"
-                      entityId={tipBuzzEntityId}
-                      label=""
-                      entityType={tipBuzzEntityType}
-                      radius="xl"
-                      color="gray"
-                      variant="filled"
-                      w={32}
-                      h={32}
-                    />
+                    {tipsEnabled && (
+                      <TipBuzzButton
+                        toUserId={creator.id}
+                        size="xs"
+                        entityId={tipBuzzEntityId}
+                        label=""
+                        entityType={tipBuzzEntityType}
+                        radius="xl"
+                        color="gray"
+                        variant="filled"
+                        w={32}
+                        h={32}
+                      />
+                    )}
                     <ChatUserButton
                       user={creator}
                       size="xs"
@@ -432,6 +439,7 @@ type Props = {
   tipBuzzEntityId?: number;
   tipBuzzEntityType?: string;
   withActions?: boolean;
+  tipsEnabled?: boolean;
   subText?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 

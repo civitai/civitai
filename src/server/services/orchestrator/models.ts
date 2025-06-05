@@ -1,7 +1,8 @@
 import { getResource, invalidateResource } from '@civitai/client';
 import { chunk } from 'lodash-es';
-import { z } from 'zod';
-import { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
+import type { z } from 'zod';
+import { getCurrentLSN } from '~/server/db/db-helpers';
+import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
 import { resourceDataCache } from '~/server/services/model-version.service';
 import {
   createOrchestratorClient,
@@ -23,6 +24,9 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
   const resources = await resourceDataCache.fetch(versionIds);
   if (!resources.length) return;
 
+  const currentLSN = await getCurrentLSN();
+  const queryData = { etag: currentLSN };
+
   const tasks = chunk(resources, 100).map((chunk) => async () => {
     await Promise.all(
       chunk.map(async (resource) => {
@@ -36,7 +40,7 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
         await invalidateResource({
           client: internalOrchestratorClient,
           path: { air },
-          query: userId ? { userId: [userId] } : undefined,
+          query: userId ? { ...queryData, userId: [userId] } : queryData,
         });
       })
     );

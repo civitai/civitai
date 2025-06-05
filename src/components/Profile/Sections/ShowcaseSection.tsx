@@ -1,13 +1,13 @@
+import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import {
   ProfileSection,
   ProfileSectionPreview,
-  ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from '~/hooks/useInView';
 import { IconHeart } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
-import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
+import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';

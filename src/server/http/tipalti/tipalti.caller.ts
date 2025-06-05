@@ -57,7 +57,6 @@ class TipaltiCaller extends HttpCaller {
     });
 
     const data = await response.json();
-    console.log(data, response.status);
 
     if (!data.access_token) throw new Error('Failed to get Tipalti access token');
 
@@ -76,7 +75,6 @@ class TipaltiCaller extends HttpCaller {
   }
 
   async getPayeeByRefCode(refCode: string) {
-    console.log('DOING SEARC');
     const response = await this.getRaw(`/payees`, {
       queryParams: { filter: `refCode=="${refCode}"` },
     });
@@ -97,11 +95,11 @@ class TipaltiCaller extends HttpCaller {
 
   async createPayee(payee: Tipalti.CreatePayeeInput) {
     try {
-      console.log(payee);
       // First, check if it exists:
       const existingPayee = await this.getPayeeByRefCode(payee.refCode);
 
-      console.log('May not exist???', existingPayee);
+      // console.log('I happened', existingPayee);
+
       if (existingPayee) {
         return existingPayee;
       }
@@ -132,7 +130,20 @@ class TipaltiCaller extends HttpCaller {
 
     const data = await response.json();
 
-    return Tipalti.createPayeeInvitationResponseSchema.parse(data);
+    const res = Tipalti.createPayeeInvitationResponseSchema.safeParse(data);
+
+    if (!res.success) {
+      console.log(data);
+      const { errors } = data as { errors: { code: string }[] };
+      if (errors.find((e) => ['PYEEIN-100001', 'PYEEIN-100002'].includes(e.code))) {
+        // Payee already has an invitation. This will error in the request but its fine.
+        return;
+      }
+
+      throw new Error('Failed to create payee invitation');
+    }
+
+    return res.data;
   }
 
   async getPaymentDashboardUrl(
@@ -155,7 +166,6 @@ class TipaltiCaller extends HttpCaller {
     };
 
     const qs = QS.stringify(params);
-    console.log(qs);
     const hashkey = createHmac('sha256', env.TIPALTI_IFRAME_KEY).update(qs).digest('hex');
     const url = `${baseUrl}${dashboard}?${qs}&hashkey=${hashkey}`;
     return url;

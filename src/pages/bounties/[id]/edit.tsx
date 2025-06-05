@@ -1,5 +1,5 @@
 import { Center, Container, Loader } from '@mantine/core';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BountyEditForm } from '~/components/Bounty/BountyEditForm';
@@ -7,7 +7,7 @@ import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 import { useQueryBounty } from '~/components/Bounty/bounty.utils';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { BountyGetById } from '~/types/router';
+import type { BountyGetById } from '~/types/router';
 
 const querySchema = z.object({ id: z.coerce.number() });
 

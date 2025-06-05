@@ -1,4 +1,4 @@
-import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
+import type { MenuItemProps } from '@mantine/core';
 import {
   ActionIcon,
   Center,
@@ -8,7 +8,6 @@ import {
   Modal,
   Text,
   Stack,
-  MenuItemProps,
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
@@ -31,6 +30,7 @@ import {
   IconDiamond,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { DragEvent } from 'react';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
@@ -47,8 +47,8 @@ import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQ
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { constants } from '~/server/common/constants';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import {
+import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import type {
   NormalizedGeneratedImage,
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
@@ -58,21 +58,25 @@ import {
   getIsSD3,
   getSourceImageFromUrl,
 } from '~/shared/constants/generation.constants';
-import {
-  generationStore,
-  useGenerationFormStore,
-  useVideoGenerationWorkflows,
-} from '~/store/generation.store';
+import { generationStore, useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
 import { UpscaleEnhancementModal } from '~/components/Orchestrator/components/UpscaleEnhancementModal';
+import { EnhanceVideoModal } from '~/components/Orchestrator/components/EnhanceVideoModal';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { WorkflowDefinitionKey } from '~/server/services/orchestrator/comfy/comfy.types';
 import { useGeneratedItemStore } from '~/components/Generation/stores/generated-item.store';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import type { EmblaCarouselType } from 'embla-carousel';
+import { getStepMeta } from './GenerationForm/generation.utils';
+import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
+import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
+import { capitalize } from '~/utils/string-helpers';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -91,11 +95,13 @@ export function GeneratedImage({
 }) {
   const { classes } = useStyles();
   const [ref, inView] = useInViewDynamic({ id: image.id });
+  const [loaded, setLoaded] = useState(false);
   const selected = orchestratorImageSelect.useIsSelected({
     workflowId: request.id,
     stepName: step.name,
     imageId: image.id,
   });
+  const isSelecting = orchestratorImageSelect.useIsSelecting();
 
   const [nsfwLevelError, setNsfwLevelError] = useState(false);
 
@@ -115,11 +121,15 @@ export function GeneratedImage({
   const handleImageClick = () => {
     if (!image || !available || isLightbox || nsfwLevelError) return;
 
-    dialogStore.trigger({
-      id: 'generated-image',
-      component: GeneratedImageLightbox,
-      props: { image, request },
-    });
+    if (isSelecting) {
+      handleToggleSelect();
+    } else {
+      dialogStore.trigger({
+        id: 'generated-image',
+        component: GeneratedImageLightbox,
+        props: { image, request },
+      });
+    }
   };
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
@@ -194,62 +204,99 @@ export function GeneratedImage({
 
   if (!available) return <></>;
 
+  function handleLoad() {
+    setLoaded(true);
+  }
+
+  function handleError() {
+    if (image.url.includes('nsfwLevel')) {
+      setNsfwLevelError(true);
+    }
+  }
+
+  function handleDataTransfer(e: DragEvent<HTMLVideoElement> | DragEvent<HTMLImageElement>) {
+    const url = e.currentTarget.currentSrc;
+    const meta = getStepMeta(step);
+    if (meta) mediaDropzoneData.setData(url, meta);
+    e.dataTransfer.setData('text/uri-list', url);
+  }
+
+  function handleDragVideo(e: DragEvent<HTMLVideoElement>) {
+    handleDataTransfer(e);
+  }
+
+  function handleDragImage(e: DragEvent<HTMLImageElement>) {
+    handleDataTransfer(e);
+  }
+
+  function handleToggleSelect(value = !selected) {
+    toggleSelect(value);
+    if (running && value) helpers?.next();
+  }
+
+  const blockedReason = getImageBlockedReason(image.blockedReason);
+  const isBlocked = !!nsfwLevelError || !!blockedReason;
+  const aspectRatio = isBlocked ? 1 : image.aspectRatio ?? image.width / image.height;
+
   return (
     <TwCard
       ref={ref}
       className={clsx('max-h-full max-w-full', classes.imageWrapper)}
-      style={{ aspectRatio: image.aspectRatio ?? image.width / image.height }}
+      style={{ aspectRatio }}
     >
-      {inView && (
+      {(isLightbox || inView) && (
         <>
-          <div
-            className={clsx('relative flex flex-1 flex-col items-center justify-center', {
-              ['cursor-pointer']: !isLightbox,
-              // ['pointer-events-none']: running,
-            })}
-            onClick={handleImageClick}
-            onMouseDown={(e) => {
-              if (e.button === 1) return handleAuxClick(image.url);
-            }}
-          >
-            {nsfwLevelError && (
-              <Center px="md">
-                <Stack spacing="xs">
-                  <Text color="red" weight="bold" align="center" size="sm">
-                    Blocked for Adult Content
-                  </Text>
-                  <Text align="center" size="sm">
-                    Private Generation is limited to PG, PG-13 only. Please adjust your prompt and
-                    try again.
-                  </Text>
-                </Stack>
-              </Center>
+          <div className={clsx('relative flex flex-1 flex-col items-center justify-center ')}>
+            {nsfwLevelError ? (
+              <BlockedBlock
+                title="Blocked for Adult Content"
+                message="Private generation is limited to PG, PG-13 only."
+              />
+            ) : blockedReason ? (
+              <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
+            ) : (
+              <EdgeMedia2
+                src={image.url}
+                type={image.type}
+                alt=""
+                className={clsx('max-h-full w-auto max-w-full', {
+                  ['cursor-pointer']: !isLightbox,
+                  // ['pointer-events-none']: running,
+                })}
+                onClick={handleImageClick}
+                onMouseDown={(e) => {
+                  if (e.button === 1) return handleAuxClick(image.url);
+                }}
+                wrapperProps={{
+                  onClick: handleImageClick,
+                  onMouseDown: (e) => {
+                    if (e.button === 1) return handleAuxClick(image.url);
+                  },
+                }}
+                disableWebm
+                disablePoster
+                onLoad={handleLoad}
+                onError={handleError}
+                imageProps={{
+                  onDragStart: handleDragImage,
+                }}
+                videoProps={{
+                  onLoadedData: handleLoad,
+                  onError: handleError,
+                  onDragStart: handleDragVideo,
+                  draggable: true,
+                  autoPlay: true,
+                }}
+              />
             )}
-            <EdgeMedia2
-              src={image.url}
-              type={image.type}
-              alt=""
-              className="max-h-full w-auto max-w-full"
-              disableWebm
-              disablePoster
-              onError={(e) => {
-                // TODO: We might need a better solution there.
-                if (image.url.includes('nsfwLevel')) {
-                  setNsfwLevelError(true);
-                }
-              }}
-            />
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
-          {!isLightbox && !nsfwLevelError && (
+          {!isLightbox && !isBlocked && (
             <label className="absolute left-3 top-3" data-tour="gen:select">
               <Checkbox
                 className={classes.checkbox}
                 checked={selected}
-                onChange={(e) => {
-                  toggleSelect(e.target.checked);
-                  if (running && e.target.checked) helpers?.next();
-                }}
+                onChange={(e) => handleToggleSelect(e.target.checked)}
               />
             </label>
           )}
@@ -266,11 +313,16 @@ export function GeneratedImage({
               </div>
             </Menu.Target>
             <Menu.Dropdown>
-              <GeneratedImageWorkflowMenuItems step={step} image={image} workflowId={request.id} />
+              <GeneratedImageWorkflowMenuItems
+                step={step}
+                image={image}
+                workflowId={request.id}
+                isBlocked={isBlocked}
+              />
             </Menu.Dropdown>
           </Menu>
 
-          {!nsfwLevelError && (
+          {!isBlocked && (
             <div
               className={clsx(
                 classes.actionsWrapper,
@@ -410,7 +462,28 @@ const useStyles = createStyles((theme, _params, getRef) => {
   };
 });
 
-const TRANSITION_DURATION = 200;
+function BlockedBlock({
+  title,
+  message,
+}: {
+  title: string;
+  message: string | (() => JSX.Element);
+}) {
+  return (
+    <Stack spacing="xs" className="p-2">
+      <Text color="red" weight="bold" align="center" size="sm">
+        {title}
+      </Text>
+      {typeof message === 'string' ? (
+        <Text align="center" size="sm">
+          {message}
+        </Text>
+      ) : (
+        message()
+      )}
+    </Stack>
+  );
+}
 
 export function GeneratedImageLightbox({
   image,
@@ -422,8 +495,8 @@ export function GeneratedImageLightbox({
   const dialog = useDialogContext();
   const { steps } = useGetTextToImageRequestsImages();
 
-  const [embla, setEmbla] = useState<Embla | null>(null);
-  useAnimationOffsetEffect(embla, TRANSITION_DURATION);
+  const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
+  // useAnimationOffsetEffect(embla, TRANSITION_DURATION);
 
   useHotkeys([
     ['ArrowLeft', () => embla?.scrollPrev()],
@@ -433,7 +506,7 @@ export function GeneratedImageLightbox({
   const images = steps.flatMap((step) =>
     step.images
       .filter((x) => x.status === 'succeeded')
-      .map((image) => ({ ...image, params: { ...step.params, seed: image.seed } }))
+      .map((image) => ({ ...image, params: { ...step.params, seed: image.seed }, step }))
   );
 
   const [slide, setSlide] = useState(() => {
@@ -444,41 +517,36 @@ export function GeneratedImageLightbox({
   return (
     <Modal {...dialog} closeButtonLabel="Close lightbox" fullScreen>
       <IntersectionObserverProvider id="generated-image-lightbox">
-        <Carousel
+        <Embla
           align="center"
-          slideGap="md"
-          slidesToScroll={1}
+          withControls
           controlSize={40}
-          initialSlide={slide}
-          getEmblaApi={setEmbla}
-          withKeyboardEvents={false}
-          onSlideChange={setSlide}
+          startIndex={slide}
           loop
+          onSlideChange={setSlide}
+          withKeyboardEvents={false}
+          setEmbla={setEmbla}
         >
-          {steps.flatMap((step) =>
-            step.images
-              .filter((x) => x.status === 'succeeded')
-              .map((image) => (
-                <Carousel.Slide
+          <Embla.Viewport>
+            <Embla.Container className="flex" style={{ height: 'calc(100vh - 84px)' }}>
+              {images.map((image, index) => (
+                <Embla.Slide
                   key={`${image.workflowId}_${image.id}`}
-                  style={{
-                    height: 'calc(100vh - 84px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
+                  index={index}
+                  className="flex flex-[0_0_100%] items-center justify-center"
                 >
                   {image.url && (
                     <GeneratedImage
-                      image={{ ...image, params: { ...step.params, seed: image.seed } } as any} // TODO - fix this
+                      image={image} // TODO - fix this
                       request={request}
-                      step={step}
+                      step={image.step}
                     />
                   )}
-                </Carousel.Slide>
-              ))
-          )}
-        </Carousel>
+                </Embla.Slide>
+              ))}
+            </Embla.Container>
+          </Embla.Viewport>
+        </Embla>
       </IntersectionObserverProvider>
       <div
         style={{
@@ -513,29 +581,34 @@ function GeneratedImageWorkflowMenuItems({
   step,
   workflowsOnly,
   workflowId,
+  isBlocked,
 }: {
   image: NormalizedGeneratedImage;
   step: NormalizedGeneratedImageStep;
   workflowId: string;
   workflowsOnly?: boolean;
+  isBlocked?: boolean;
 }) {
   const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions = [] } = trpc.generation.getWorkflowDefinitions.useQuery();
-  const { data: availableEngineConfigurations } = useVideoGenerationWorkflows();
+
+  const { data: engines } = useGenerationEngines();
 
   const { copied, copy } = useClipboard();
 
   const isVideo = step.$type === 'videoGen';
+  const isOpenAI = !isVideo && step.params.engine === 'openai';
   const isFlux = !isVideo && getIsFlux(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
-  const canImg2Img = !isFlux && !isSD3 && !isVideo;
+  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isOpenAI;
   const img2imgWorkflows = !isVideo
     ? workflowDefinitions.filter(
         (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)
       )
     : [];
+
   const img2vidConfigs = !isVideo
-    ? availableEngineConfigurations.filter((x) => !x.disabled && x.subType === 'img2vid')
+    ? engines.filter((x) => !x.disabled && x.processes.includes('img2vid'))
     : [];
 
   const notSelectableMap: Partial<Record<WorkflowDefinitionKey, VoidFunction>> = {
@@ -544,29 +617,57 @@ function GeneratedImageWorkflowMenuItems({
     'img2img-upscale-enhancement-realism': handleUpscaleEnhance,
   };
 
-  const canRemix = !!step.params.workflow && !(step.params.workflow in notSelectableMap);
+  const canRemix =
+    (!!step.params.workflow && !(step.params.workflow in notSelectableMap)) ||
+    !!(step.params as any).engine;
+
+  async function handleRemix(seed?: number) {
+    handleCloseImageLightbox();
+    generationStore.setData({
+      resources: step.resources as any,
+      params: { ...(step.params as any), seed: seed ?? null },
+      remixOfId: step.metadata?.remixOfId,
+      type: image.type,
+      workflow: step.params.workflow,
+      engine: (step.params as any).engine,
+    });
+  }
 
   async function handleGenerate(
-    { seed, ...rest }: Partial<TextToImageParams> = {},
+    { ...rest }: Partial<TextToImageParams> = {},
     {
       type,
       workflow: workflow,
-      sourceImage,
       engine,
-    }: { type: MediaType; workflow?: string; sourceImage?: string; engine?: string } = {
+    }: { type: MediaType; workflow?: string; engine?: string } = {
       type: image.type,
       workflow: step.params.workflow,
     }
   ) {
     handleCloseImageLightbox();
     generationStore.setData({
-      resources: step.resources,
-      params: { ...(step.params as any), seed, ...rest },
+      resources: step.resources as any,
+      params: {
+        ...(step.params as any),
+        ...rest,
+        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+      },
       remixOfId: step.metadata?.remixOfId,
       type,
       workflow: workflow ?? step.params.workflow,
-      sourceImage: sourceImage ?? (step.params as any).sourceImage,
       engine: engine ?? (step.params as any).engine,
+    });
+  }
+
+  async function handleImg2Vid() {
+    generationStore.setData({
+      resources: [],
+      params: {
+        ...(step.params as any),
+        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+      },
+      type: 'video',
+      engine: useGenerationFormStore.getState().engine,
     });
   }
 
@@ -580,6 +681,7 @@ function GeneratedImageWorkflowMenuItems({
       props: {
         workflow: 'img2img-background-removal',
         sourceImage: await getSourceImageFromUrl({ url: image.url }),
+        metadata: step.metadata,
       },
     });
   }
@@ -590,22 +692,34 @@ function GeneratedImageWorkflowMenuItems({
       props: {
         workflow: 'img2img-upscale-enhancement-realism',
         sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
+        metadata: step.metadata,
       },
     });
   }
 
+  async function handleEnhanceVideo() {
+    dialogStore.trigger({
+      component: EnhanceVideoModal,
+      props: {
+        sourceUrl: image.url,
+        params: step.params,
+      },
+    });
+  }
+
+  async function handleImg2ImgNoWorkflow() {
+    handleGenerate({ sourceImage: image.url as any });
+  }
+
   async function handleUpscale() {
     if (step.$type !== 'videoGen') {
+      const sourceImage = await getSourceImageFromUrl({ url: image.url, upscale: true });
       dialogStore.trigger({
         component: UpscaleImageModal,
         props: {
-          resources: step.resources,
-          params: {
-            ...step.params,
-            sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
-            seed: image.seed,
-            workflow: 'img2img-upscale',
-          },
+          workflow: 'img2img-upscale',
+          sourceImage,
+          metadata: step.metadata,
         },
       });
     }
@@ -642,17 +756,19 @@ function GeneratedImageWorkflowMenuItems({
       {canRemix && !workflowsOnly && (
         <>
           <Menu.Item
-            onClick={() => handleGenerate()}
+            onClick={() => handleRemix()}
             icon={<IconArrowsShuffle size={14} stroke={1.5} />}
           >
             Remix
           </Menu.Item>
-          <Menu.Item
-            onClick={() => handleGenerate({ seed: image.seed })}
-            icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
-          >
-            Remix (with seed)
-          </Menu.Item>
+          {!isBlocked && image.seed && (
+            <Menu.Item
+              onClick={() => handleRemix(image.seed)}
+              icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
+            >
+              Remix (with seed)
+            </Menu.Item>
+          )}
         </>
       )}
       {!workflowsOnly && (
@@ -664,36 +780,39 @@ function GeneratedImageWorkflowMenuItems({
           Delete
         </Menu.Item>
       )}
-      {!workflowsOnly && <Menu.Divider />}
-      {img2imgWorkflows.map((workflow) => {
-        const handleMappedClick = notSelectableMap[workflow.key];
-        const handleDefault = () => handleSelectWorkflow(workflow.key);
-        const onClick = handleMappedClick ?? handleDefault;
-        return (
-          <WithMemberMenuItem key={workflow.key} onClick={onClick} memberOnly={workflow.memberOnly}>
-            {workflow.name}
-          </WithMemberMenuItem>
-        );
-      })}
-      {!!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
-      {!!img2vidConfigs.length && (
+      {!isBlocked && !workflowsOnly && (!!img2vidConfigs.length || !!img2imgWorkflows.length) && (
+        <Menu.Divider />
+      )}
+
+      {!isBlocked &&
+        img2imgWorkflows.map((workflow) => {
+          const handleMappedClick = notSelectableMap[workflow.key];
+          const handleDefault = () => handleSelectWorkflow(workflow.key);
+          const onClick = handleMappedClick ?? handleDefault;
+          return (
+            <WithMemberMenuItem
+              key={workflow.key}
+              onClick={onClick}
+              memberOnly={workflow.memberOnly}
+            >
+              {workflow.name}
+            </WithMemberMenuItem>
+          );
+        })}
+      {!isBlocked && isOpenAI && (
+        <WithMemberMenuItem onClick={handleImg2ImgNoWorkflow}>Image To Image</WithMemberMenuItem>
+      )}
+      {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
+      {!isBlocked && !!img2vidConfigs.length && (
         <>
-          <Menu.Item
-            onClick={() =>
-              handleGenerate(
-                {},
-                {
-                  type: 'video',
-                  sourceImage: image.url,
-                  engine: useGenerationFormStore.getState().engine,
-                }
-              )
-            }
-          >
-            Image To Video
-          </Menu.Item>
+          <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
+      {/* {!isBlocked && image.type === 'video' && (
+        <>
+          <Menu.Item onClick={handleEnhanceVideo}>Upscale Video</Menu.Item>
+        </>
+      )} */}
       {!workflowsOnly && (
         <>
           <Menu.Divider />
@@ -710,12 +829,14 @@ function GeneratedImageWorkflowMenuItems({
           >
             Copy Job ID
           </Menu.Item>
-          <Menu.Item
-            icon={<IconExternalLink size={14} stroke={1.5} />}
-            onClick={() => handleAuxClick(image.url)}
-          >
-            Open in New Tab
-          </Menu.Item>
+          {!isBlocked && (
+            <Menu.Item
+              icon={<IconExternalLink size={14} stroke={1.5} />}
+              onClick={() => handleAuxClick(image.url)}
+            >
+              Open in New Tab
+            </Menu.Item>
+          )}
         </>
       )}
     </>
@@ -753,3 +874,44 @@ function handleCloseImageLightbox() {
 function handleAuxClick(url: string) {
   window.open(url, '_blank');
 }
+
+const imageBlockedReasonMap: Record<string, string | (() => JSX.Element)> = {
+  ChildReference: 'An inappropriate child reference was detected.',
+  Bestiality: 'Bestiality detected.',
+  'Child Sexual - Anime': 'Inappropriate minor content detected.',
+  'Child Sexual - Realistic': 'Inappropriate minor content detected.',
+  NSFWLevel: 'Mature content restriction.',
+  NSFWLevelSourceImageRestricted: () => (
+    <div className="flex flex-col gap-1">
+      <Text align="center" size="sm">
+        Mature content restriction.
+      </Text>
+      <Text align="center" size="sm">
+        If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs
+        only.
+      </Text>
+      <Text
+        align="center"
+        size="sm"
+        component={NextLink}
+        variant="link"
+        href="https://civitai.com/changelog?id=11"
+      >
+        More info.
+      </Text>
+    </div>
+  ),
+};
+
+function getImageBlockedReason(reason?: string | null) {
+  if (!reason || reason === 'none') return;
+  return imageBlockedReasonMap[reason] ?? reason;
+}
+
+// {
+//   "ChildReference": "An inappropriate child reference was detected.",
+//   "Bestiality": "Detected bestiality in the image.",
+//   "Child Sexual - Anime": "An inappropriate child reference was detected.",
+//   "Child Sexual - Realistic": "An inappropriate child reference was detected.",
+//   "NSFWLevel": "Mature content restriction"
+// }

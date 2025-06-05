@@ -1,21 +1,19 @@
+import type { ActionIconProps, MenuItemProps, MenuProps } from '@mantine/core';
 import {
   ActionIcon,
-  ActionIconProps,
   Box,
   Center,
   createStyles,
   Divider,
   Group,
   Menu,
-  MenuItemProps,
-  MenuProps,
   Paper,
   Stack,
   Text,
   Title,
 } from '@mantine/core';
 import React, { useMemo } from 'react';
-import { ClubPostGetAll, ClubPostResource } from '~/types/router';
+import type { ClubPostGetAll, ClubPostResource } from '~/types/router';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -43,7 +41,7 @@ import { trpc } from '~/utils/trpc';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
-import { SupportedClubPostEntities } from '~/server/schema/club.schema';
+import type { SupportedClubPostEntities } from '~/server/schema/club.schema';
 import { ImageCarousel } from '../../Bounty/ImageCarousel';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { triggerRoutedDialog } from '../../Dialog/RoutedDialogProvider';

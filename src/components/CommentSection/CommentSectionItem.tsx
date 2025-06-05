@@ -1,18 +1,17 @@
-import { Anchor, Badge, Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Button, Group, Menu, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import {
+  IconArrowBackUp,
   IconDotsVertical,
-  IconTrash,
   IconEdit,
   IconFlag,
-  IconArrowBackUp,
+  IconTrash,
 } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
-
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
@@ -20,8 +19,8 @@ import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { CommentGetCommentsById } from '~/types/router';
+import type { ReactionDetails } from '~/server/selectors/reaction.selector';
+import type { CommentGetCommentsById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

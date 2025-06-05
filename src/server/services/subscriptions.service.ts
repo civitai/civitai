@@ -1,7 +1,7 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
-import { dbRead } from '~/server/db/client';
-import {
+import { dbWrite } from '~/server/db/client';
+import type {
   GetUserSubscriptionInput,
   SubscriptionMetadata,
   SubscriptionProductMetadata,
@@ -16,16 +16,18 @@ export const getPlans = async ({
   paymentProvider = PaymentProvider.Stripe,
   includeFree = false,
   includeInactive = false,
+  interval = 'month',
 }: {
   paymentProvider?: PaymentProvider;
   includeFree?: boolean;
   includeInactive?: boolean;
+  interval?: 'month' | 'year';
 }) => {
-  const products = await dbRead.product.findMany({
+  const products = await dbWrite.product.findMany({
     where: {
       provider: paymentProvider,
       active: includeInactive ? undefined : true,
-      prices: { some: { type: 'recurring', active: true } },
+      prices: { some: { type: 'recurring', active: true, interval } },
     },
     select: {
       id: true,
@@ -46,6 +48,7 @@ export const getPlans = async ({
         },
         where: {
           active: true,
+          interval: interval,
         },
       },
     },
@@ -75,7 +78,7 @@ export const getPlans = async ({
 export type SubscriptionPlan = Awaited<ReturnType<typeof getPlans>>[number];
 
 export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) => {
-  const subscription = await dbRead.customerSubscription.findUnique({
+  const subscription = await dbWrite.customerSubscription.findUnique({
     where: { userId },
     select: {
       id: true,
@@ -95,6 +98,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
           description: true,
           metadata: true,
           provider: true,
+          active: true,
         },
       },
       price: {
@@ -122,7 +126,11 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
 
   return {
     ...subscription,
-    price: { ...subscription.price, unitAmount: subscription.price.unitAmount ?? 0 },
+    price: {
+      ...subscription.price,
+      unitAmount: subscription.price.unitAmount ?? 0,
+      interval: subscription.price.interval as 'month' | 'year',
+    },
     isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
       subscription.status
     ),
@@ -130,6 +138,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
     productMeta,
   };
 };
+
 export type UserSubscription = Awaited<ReturnType<typeof getUserSubscription>>;
 
 export const paddleTransactionContainsSubscriptionItem = async (data: TransactionNotification) => {
@@ -139,7 +148,7 @@ export const paddleTransactionContainsSubscriptionItem = async (data: Transactio
     return false;
   }
 
-  const products = await dbRead.product.findMany({
+  const products = await dbWrite.product.findMany({
     where: {
       provider: PaymentProvider.Paddle,
       prices: { some: { id: { in: priceIds } } },

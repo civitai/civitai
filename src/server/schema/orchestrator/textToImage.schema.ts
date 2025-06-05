@@ -20,12 +20,13 @@ export const textToImageParamsSchema = z.object({
     .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
       message: 'invalid sampler',
     }),
-  seed: z.coerce.number().min(1).max(generation.maxValues.seed).optional(),
+  seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish(),
   clipSkip: z.coerce.number().max(3).optional(),
   steps: z.coerce.number().min(1).max(100).optional(),
   quantity: z.coerce
     .number()
     .max(20)
+    .default(1)
     .transform((val) => (val <= 0 ? 1 : val)),
   nsfw: z.boolean().default(false),
   draft: z.boolean().default(false),
@@ -46,6 +47,9 @@ export const textToImageParamsSchema = z.object({
   engine: z.string().optional(),
   priority: z.nativeEnum(Priority).default('low'),
   sourceImage: sourceImageSchema.nullable().default(null).catch(null),
+  disablePoi: z.boolean().default(false),
+  openAIQuality: z.enum(['auto', 'high', 'medium', 'low']).optional(),
+  openAITransparentBackground: z.boolean().optional(),
 });
 
 // #endregion

@@ -1,16 +1,16 @@
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import {
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import {
   deleteHomeBlockById,
   getHomeBlockById,
   getHomeBlockData,
   getHomeBlocks,
   getSystemHomeBlocks,
-  HomeBlockWithData,
   setHomeBlocksOrder,
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
@@ -18,7 +18,7 @@ import {
   getCollectionById,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
-import {
+import type {
   CreateCollectionHomeBlockInputSchema,
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
@@ -27,7 +27,7 @@ import {
   SetHomeBlocksOrderInputSchema,
 } from '~/server/schema/home-block.schema';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { TRPCError } from '@trpc/server';
 import { isDefined } from '~/utils/type-guards';
 
@@ -38,19 +38,61 @@ export const getHomeBlocksHandler = async ({
   ctx: Context;
   input: GetHomeBlocksInputSchema;
 }): Promise<HomeBlockWithData[]> => {
-  const { ownedOnly } = input;
+  const { ownedOnly, excludedSystemHomeBlockIds, systemHomeBlockIds } = input;
+
   try {
-    const homeBlocks = await getHomeBlocks({
+    const _homeBlocks = await getHomeBlocks({
       select: {
         id: true,
         metadata: true,
         type: true,
         userId: true,
         sourceId: true,
+        source: {
+          select: {
+            userId: true,
+          },
+        },
       },
       userId: ctx.user?.id,
       ownedOnly,
     });
+
+    let homeBlocks = _homeBlocks.filter((homeBlock) => {
+      if ((excludedSystemHomeBlockIds ?? []).includes(homeBlock.id)) {
+        return false;
+      }
+
+      if ((systemHomeBlockIds ?? []).length === 0) {
+        return true; // Always allow.
+      }
+
+      // Now check if it's a system home block and the domain allows to show it:
+      if (homeBlock.userId === -1 || ('source' in homeBlock && homeBlock.source?.userId === -1)) {
+        return (systemHomeBlockIds ?? []).includes(homeBlock.id);
+      }
+
+      return true;
+    });
+
+    // User might be on a diff. domain that doesn't allow their blocks and we should be able to figure this one out on our end:
+    if (homeBlocks.length === 0 && systemHomeBlockIds) {
+      homeBlocks = await getHomeBlocks({
+        select: {
+          id: true,
+          metadata: true,
+          type: true,
+          userId: true,
+          sourceId: true,
+          source: {
+            select: {
+              userId: true,
+            },
+          },
+        },
+        ids: systemHomeBlockIds,
+      });
+    }
 
     if (input.withCoreData) {
       // Get the core data for each home block:
@@ -80,7 +122,21 @@ export const getSystemHomeBlocksHandler = async ({
   ctx: Context;
 }): Promise<HomeBlockWithData[]> => {
   try {
-    const homeBlocks = await getSystemHomeBlocks({ input });
+    const { excludedSystemHomeBlockIds, systemHomeBlockIds } = input;
+    const _homeBlocks = await getSystemHomeBlocks({ input });
+
+    const homeBlocks = _homeBlocks.filter((homeBlock) => {
+      if ((excludedSystemHomeBlockIds ?? []).includes(homeBlock.id)) {
+        return false;
+      }
+
+      if ((systemHomeBlockIds ?? []).length === 0) {
+        return true; // Always allow.
+      }
+
+      // Now check if it's a system home block and the domain allows to show it:
+      return (systemHomeBlockIds ?? []).includes(homeBlock.id);
+    });
     return homeBlocks;
   } catch (error) {
     throw throwDbError(error);
@@ -99,6 +155,7 @@ export const getHomeBlocksByIdHandler = async ({
       ...input,
       user: ctx.user,
     });
+
     if (homeBlock?.type === 'Announcement') ctx.cache.skip = true;
 
     if (!homeBlock) {

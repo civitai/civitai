@@ -1,5 +1,5 @@
 import { ReportStatus } from '~/shared/utils/prisma/enums';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -57,8 +57,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     const currentValue = compensationPool.size.current;
     let change = currentValue;
     const monthAccount = getMonthAccount();
-
-    200;
 
     if (userId) {
       // Get user's current balance

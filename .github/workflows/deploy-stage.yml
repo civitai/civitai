@@ -12,7 +12,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     if: |
-      contains(github.event.pull_request.labels.*.name, 'deploy-stage') && (
+      (
+        contains(github.event.pull_request.labels.*.name, 'deploy-stage') ||
+        contains(github.event.pull_request.labels.*.name, 'deploy-stage-0')
+        ) && (
         github.event.review.state == 'APPROVED' || (
           startsWith(github.event.pull_request.head.ref, 'feature/') ||
           startsWith(github.event.pull_request.head.ref, 'fix/')
@@ -23,8 +26,10 @@ jobs:
         shell: bash
         run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
         id: extract_branch
+
       - name: Trigger dev deploy
         uses: convictional/trigger-workflow-and-wait@v1.6.1
+        if: contains(github.event.pull_request.labels.*.name, 'deploy-stage')
         with:
           owner: civitai
           repo: civitai-deployment
@@ -32,5 +37,18 @@ jobs:
           github_token: ${{ secrets.GHA_WORKFLOW_TRIGGER }}
           ref: main
           client_payload: |
-            { "branch": "${{ steps.extract_branch.outputs.branch }}" }
+            { "branch": "${{ steps.extract_branch.outputs.branch }}" , "environment": "stage" }
+          wait_workflow: false
+
+      - name: Trigger dev deploy
+        uses: convictional/trigger-workflow-and-wait@v1.6.1
+        if: contains(github.event.pull_request.labels.*.name, 'deploy-stage-0')
+        with:
+          owner: civitai
+          repo: civitai-deployment
+          workflow_file_name: deploy-stage.yml
+          github_token: ${{ secrets.GHA_WORKFLOW_TRIGGER }}
+          ref: main
+          client_payload: |
+            { "branch": "${{ steps.extract_branch.outputs.branch }}" , "environment": "stage-0" }
           wait_workflow: false

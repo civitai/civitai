@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import { BaseModelType, constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { notifDbWrite } from '~/server/db/notifDb';
@@ -13,6 +13,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   ArticleEngagementType,
   Availability,
+  ChangelogType,
   CheckpointType,
   CollectionType,
   EntityMetric_MetricType_Type,
@@ -34,10 +35,12 @@ import {
   TrainingStatus,
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
-import { checkLocalDb, insertRows } from './utils';
+import { checkLocalDb, generateRandomName, insertRows } from './utils';
 // import { fetchBlob } from '~/utils/file-utils';
 
-const numRows = 500;
+// Usage: npx tsx ./scripts/local-dev/gen_seed.ts --rows=1000
+// OR make bootstrap-db ROWS=1000
+const numRows = Number(process.argv.find((arg) => arg.startsWith('--rows='))?.split('=')[1]) || 500;
 
 faker.seed(1337);
 const randw = faker.helpers.weightedArrayElement;
@@ -142,7 +145,7 @@ const insertClickhouseRows = async (table: string, data: any[][]) => {
 const truncateRows = async () => {
   console.log('Truncating tables');
   await pgDbWrite.query(
-    `TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew", "EntityMetric", "JobQueue", "KeyValue", "ImageRank", "ModelVersionRank", "UserRank", "TagRank", "ArticleRank", "CollectionRank" RESTART IDENTITY CASCADE`
+    `TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew", "EntityMetric", "JobQueue", "KeyValue", "ImageRank", "ModelVersionRank", "UserRank", "TagRank", "ArticleRank", "CollectionRank", "Changelog" RESTART IDENTITY CASCADE`
   );
 };
 
@@ -205,7 +208,7 @@ const genUsers = (num: number, includeCiv = false) => {
       1, // id
       false, // blurnsfw
       true, // shownsfw
-      'test-mod', // username
+      'test_mod', // username
       true, // isMod
       '2021-11-13 00:00:00.000',
       null, // deletedAt
@@ -239,7 +242,7 @@ const genUsers = (num: number, includeCiv = false) => {
       2, // id
       true, // blurnsfw
       false, // shownsfw
-      'test-newbie', // username
+      'test_newbie', // username
       false, // isMod
       '2024-11-13 00:00:00.000',
       null, // deletedAt
@@ -273,7 +276,7 @@ const genUsers = (num: number, includeCiv = false) => {
       3, // id
       false, // blurnsfw
       true, // shownsfw
-      'test-degen', // username
+      'test_degen', // username
       false, // isMod
       '2023-11-13 00:00:00.000',
       null, // deletedAt
@@ -307,7 +310,7 @@ const genUsers = (num: number, includeCiv = false) => {
       4, // id
       false, // blurnsfw
       true, // shownsfw
-      'test-banned', // username
+      'test_banned', // username
       false, // isMod
       '2023-11-13 00:00:00.000',
       null, // deletedAt
@@ -341,7 +344,7 @@ const genUsers = (num: number, includeCiv = false) => {
       5, // id
       false, // blurnsfw
       true, // shownsfw
-      'test-deleted', // username
+      'test_deleted', // username
       false, // isMod
       '2023-11-13 00:00:00.000',
       '2023-11-17 00:00:00.000', // deletedAt
@@ -375,7 +378,7 @@ const genUsers = (num: number, includeCiv = false) => {
       6, // id
       false, // blurnsfw
       true, // shownsfw
-      'test-muted', // username
+      'test_muted', // username
       false, // isMod
       '2023-11-13 00:00:00.000',
       null, // deletedAt
@@ -518,7 +521,7 @@ const genModels = (num: number, userIds: number[]) => {
     const isEa = fbool(0.05);
 
     const row = [
-      `${capitalize(faker.word.adjective())}${capitalize(faker.word.noun())}`, // name
+      generateRandomName(faker.number.int({ min: 1, max: 6 })), // name
       rand([null, `<p>${faker.lorem.paragraph({ min: 1, max: 8 })}</p>`]), // description
       isCheckpoint
         ? 'Checkpoint'
@@ -590,18 +593,21 @@ const genModels = (num: number, userIds: number[]) => {
 /**
  * ModelVersion
  */
-const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[]) => {
+const genMvs = (num: number, modelData: { id: number; uploadType: ModelUploadType }[]) => {
   const ret = [];
 
   for (let step = 1; step <= num; step++) {
     const model = rand(modelData);
-    const isTrain = model.type === 'Trained';
+    const isTrain = model.uploadType === 'Trained';
     const created = faker.date.past({ years: 3 }).toISOString();
     const isDeleted = fbool(0.05);
     const isPublished = fbool(0.4);
 
     const row = [
-      `V${faker.number.int(6)}`, //name
+      randw([
+        { value: `V${faker.number.int(6)}`, weight: 5 },
+        { value: generateRandomName(faker.number.int({ min: 1, max: 6 })), weight: 1 },
+      ]), // name
       rand([null, `<p>${faker.lorem.sentence()}</p>`]), // description
       isTrain ? faker.number.int({ min: 10, max: 10_000 }) : null, // steps
       isTrain ? faker.number.int({ min: 1, max: 200 }) : null, // epochs
@@ -624,11 +630,19 @@ const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[])
       isPublished ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // publishedAt
       rand([null, 1, 2]), // clipSkip
       null, // vaeId // TODO
-      rand([null, ...constants.baseModelTypes]), // baseModelType
+      randw([
+        {
+          value: null,
+          weight: 1,
+        },
+        { value: 'Standard', weight: 30 },
+        { value: rand(constants.baseModelTypes.filter((v) => v !== 'Standard')), weight: 2 },
+      ]), // baseModelType
       isTrain
         ? rand([
             '{}',
             '{"type": "Character"}',
+            '{"type": "Character", "mediaType": "video"}',
             '{"type": "Character", "params": {"engine": "kohya", "unetLR": 0.0005, "clipSkip": 1, "loraType": "lora", "keepTokens": 0, "networkDim": 32, "numRepeats": 14, "resolution": 512, "lrScheduler": "cosine_with_restarts", "minSnrGamma": 5, "noiseOffset": 0.1, "targetSteps": 1050, "enableBucket": true, "networkAlpha": 16, "optimizerType": "AdamW8Bit", "textEncoderLR": 0.00005, "maxTrainEpochs": 10, "shuffleCaption": false, "trainBatchSize": 2, "flipAugmentation": false, "lrSchedulerNumCycles": 3}, "staging": false, "baseModel": "realistic", "highPriority": false, "baseModelType": "sd15", "samplePrompts": ["", "", ""]}',
           ])
         : null, // trainingDetails
@@ -648,80 +662,88 @@ const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[])
       ]), // nsfwLevel
       null, // earlyAccessConfig // TODO
       null, // earlyAccessEndsAt // TODO
-      model.type, // uploadType
+      model.uploadType, // uploadType
     ];
     ret.push(row);
   }
   return ret;
 };
 
-/**
- * ModelFile
- */
-const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[]) => {
-  const ret = [];
+// TODO do these URLs work?
+const _modelFileTypeMap = {
+  Model: {
+    ext: 'safetensors',
+    url: 'https://civitai-delivery-worker-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/modelVersion/627691/Capitan_V2_Nyakumi_Neko_style.safetensors',
+    meta: '{"fp": "fp16", "size": "full", "format": "SafeTensor"}',
+    metaTrain:
+      '{"format": "SafeTensor", "selectedEpochUrl": "https://orchestration.civitai.com/v1/consumer/jobs/2604a7f9-fced-4279-bc4e-05fc3bd95e29/assets/Capitan_V2_Nyakumi_Neko_style.safetensors"}',
+  },
+  'Training Data': {
+    ext: 'zip',
+    url: 'https://civitai-delivery-worker-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/training-images/3625125/806329TrainingData.yqVq.zip',
+    meta: '{"fp": null, "size": null, "format": "Other"}',
+    metaTrain:
+      '{"format": "Other", "numImages": 26, "ownRights": false, "numCaptions": 26, "shareDataset": false, "trainingResults": {"jobId": "c5657331-beee-488d-97fa-8b9e6d6fd48f", "epochs": [{"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000001.safetensors", "epoch_number": 1, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_00_20240904200838.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_01_20240904200845.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_02_20240904200852.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000002.safetensors", "epoch_number": 2, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_00_20240904201044.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_01_20240904201051.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_02_20240904201058.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000003.safetensors", "epoch_number": 3, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_00_20240904201248.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_01_20240904201255.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_02_20240904201302.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000004.safetensors", "epoch_number": 4, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_00_20240904201452.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_01_20240904201459.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_02_20240904201505.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000005.safetensors", "epoch_number": 5, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_00_20240904201656.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_01_20240904201702.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_02_20240904201709.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000006.safetensors", "epoch_number": 6, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_00_20240904201900.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_01_20240904201907.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_02_20240904201913.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000007.safetensors", "epoch_number": 7, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_00_20240904202103.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_01_20240904202110.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_02_20240904202117.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000008.safetensors", "epoch_number": 8, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_00_20240904202306.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_01_20240904202313.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_02_20240904202320.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000009.safetensors", "epoch_number": 9, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_00_20240904202510.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_01_20240904202517.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_02_20240904202523.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo.safetensors", "epoch_number": 10, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_00_20240904202715.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_01_20240904202721.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_02_20240904202728.png"}]}], "history": [{"time": "2024-09-04T19:58:04.411Z", "jobId": "c5657331-beee-488d-97fa-8b9e6d6fd48f", "status": "Submitted"}, {"time": "2024-09-04T19:58:10.988Z", "status": "Processing", "message": ""}, {"time": "2024-09-04T20:29:37.747Z", "status": "InReview", "message": "Job complete"}], "attempts": 1, "end_time": "2024-09-04T20:29:35.087Z", "start_time": "2024-09-04T19:58:09.668Z", "submittedAt": "2024-09-04T19:58:04.411Z", "transactionId": "2ebb5147-5fd3-4dbb-a735-e206d218686b"}}',
+  },
+  Archive: {
+    ext: 'zip',
+    url: 'https://civitai-delivery-worker-prod-2023-05-01.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/91602/default/bingLogoRemoval.2ayv.zip',
+    meta: '{"fp": null, "size": null, "format": "Other"}',
+    metaTrain: '{"fp": null, "size": null, "format": "Other"}',
+  },
+  Config: {
+    ext: 'yaml',
+    url: 'https://civitai-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/14014/training-images/somnia140.cR9o.yaml',
+    meta: '{"format": "Other"}',
+    metaTrain: '{"format": "Other"}',
+  },
+  Negative: {
+    ext: 'pt',
+    url: 'https://civitai-delivery-worker-prod-2023-10-01.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/default/3336/aloeanticgi1500.sPBn.pt',
+    meta: '{"fp": null, "size": null, "format": "Other"}',
+    metaTrain: '{"fp": null, "size": null, "format": "Other"}',
+  },
+  'Pruned Model': {
+    ext: 'safetensors',
+    url: 'https://civitai-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/78515/training-images/mihaV3E100.cCux.safetensors',
+    meta: '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
+    metaTrain: '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
+  },
+};
 
-  // TODO do these URLs work?
-  const typeMap = {
-    Model: {
-      ext: 'safetensors',
-      url: 'https://civitai-delivery-worker-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/modelVersion/627691/Capitan_V2_Nyakumi_Neko_style.safetensors',
-      meta: '{"fp": "fp16", "size": "full", "format": "SafeTensor"}',
-      metaTrain:
-        '{"format": "SafeTensor", "selectedEpochUrl": "https://orchestration.civitai.com/v1/consumer/jobs/2604a7f9-fced-4279-bc4e-05fc3bd95e29/assets/Capitan_V2_Nyakumi_Neko_style.safetensors"}',
-    },
-    'Training Data': {
-      ext: 'zip',
-      url: 'https://civitai-delivery-worker-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/training-images/3625125/806329TrainingData.yqVq.zip',
-      meta: '{"fp": null, "size": null, "format": "Other"}',
-      metaTrain:
-        '{"format": "Other", "numImages": 26, "ownRights": false, "numCaptions": 26, "shareDataset": false, "trainingResults": {"jobId": "c5657331-beee-488d-97fa-8b9e6d6fd48f", "epochs": [{"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000001.safetensors", "epoch_number": 1, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_00_20240904200838.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_01_20240904200845.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000001_02_20240904200852.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000002.safetensors", "epoch_number": 2, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_00_20240904201044.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_01_20240904201051.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000002_02_20240904201058.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000003.safetensors", "epoch_number": 3, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_00_20240904201248.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_01_20240904201255.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000003_02_20240904201302.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000004.safetensors", "epoch_number": 4, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_00_20240904201452.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_01_20240904201459.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000004_02_20240904201505.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000005.safetensors", "epoch_number": 5, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_00_20240904201656.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_01_20240904201702.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000005_02_20240904201709.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000006.safetensors", "epoch_number": 6, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_00_20240904201900.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_01_20240904201907.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000006_02_20240904201913.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000007.safetensors", "epoch_number": 7, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_00_20240904202103.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_01_20240904202110.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000007_02_20240904202117.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000008.safetensors", "epoch_number": 8, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_00_20240904202306.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_01_20240904202313.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000008_02_20240904202320.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo-000009.safetensors", "epoch_number": 9, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_00_20240904202510.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_01_20240904202517.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000009_02_20240904202523.png"}]}, {"model_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo.safetensors", "epoch_number": 10, "sample_images": [{"prompt": "blademancy, furry", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_00_20240904202715.png"}, {"prompt": "light particles, dual wielding, brown hair, standing, holding, grey background, beard, gradient, no humans, necktie", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_01_20240904202721.png"}, {"prompt": "dagger, scar, weapon, english text, halberd, blue necktie, facial hair, artist name, green theme, formal", "image_url": "https://orchestration.civitai.com/v1/consumer/jobs/c5657331-beee-488d-97fa-8b9e6d6fd48f/assets/blademancer_2_stabby_boogaloo_e000010_02_20240904202728.png"}]}], "history": [{"time": "2024-09-04T19:58:04.411Z", "jobId": "c5657331-beee-488d-97fa-8b9e6d6fd48f", "status": "Submitted"}, {"time": "2024-09-04T19:58:10.988Z", "status": "Processing", "message": ""}, {"time": "2024-09-04T20:29:37.747Z", "status": "InReview", "message": "Job complete"}], "attempts": 1, "end_time": "2024-09-04T20:29:35.087Z", "start_time": "2024-09-04T19:58:09.668Z", "submittedAt": "2024-09-04T19:58:04.411Z", "transactionId": "2ebb5147-5fd3-4dbb-a735-e206d218686b"}}',
-    },
-    Archive: {
-      ext: 'zip',
-      url: 'https://civitai-delivery-worker-prod-2023-05-01.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/91602/default/bingLogoRemoval.2ayv.zip',
-      meta: '{"fp": null, "size": null, "format": "Other"}',
-      metaTrain: '{"fp": null, "size": null, "format": "Other"}',
-    },
-    Config: {
-      ext: 'yaml',
-      url: 'https://civitai-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/14014/training-images/somnia140.cR9o.yaml',
-      meta: '{"format": "Other"}',
-      metaTrain: '{"format": "Other"}',
-    },
-    Negative: {
-      ext: 'pt',
-      url: 'https://civitai-delivery-worker-prod-2023-10-01.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/default/3336/aloeanticgi1500.sPBn.pt',
-      meta: '{"fp": null, "size": null, "format": "Other"}',
-      metaTrain: '{"fp": null, "size": null, "format": "Other"}',
-    },
-    'Pruned Model': {
-      ext: 'safetensors',
-      url: 'https://civitai-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/78515/training-images/mihaV3E100.cCux.safetensors',
-      meta: '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
-      metaTrain: '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
-    },
-  };
+const _genMFileData = (
+  num: number,
+  step: number,
+  mv: { id: number; uploadType: ModelUploadType }
+) => {
+  const isTrain = mv.uploadType === 'Trained';
+  const created = faker.date.past({ years: 3 }).toISOString();
+  const passScan = fbool(0.98);
 
-  for (let step = 1; step <= num; step++) {
-    const mv = rand(mvData);
-    const isTrain = mv.type === 'Trained';
-    const created = faker.date.past({ years: 3 }).toISOString();
-    const passScan = fbool(0.98);
-    const type = randw([
-      { value: 'Model', weight: 8 },
-      { value: 'Training Data', weight: 5 },
-      { value: 'Archive', weight: 1 },
-      { value: 'Config', weight: 1 },
-      { value: 'Negative', weight: 1 },
-      { value: 'Pruned Model', weight: 1 },
-    ]);
+  const availTypes = [
+    { value: 'Model', weight: 20 },
+    { value: 'Training Data', weight: 5 },
+    { value: 'Archive', weight: 1 },
+    { value: 'Config', weight: 1 },
+    { value: 'Negative', weight: 1 },
+    { value: 'Pruned Model', weight: 1 },
+  ] as const;
+  const seenTypes: string[] = [];
+
+  const rows = [];
+  let currentId = step;
+
+  for (let i = 0; i < num; i++) {
+    currentId++;
+    const remainingTypes = availTypes.filter((type) => !seenTypes.includes(type.value));
+    const type = randw(remainingTypes);
+    seenTypes.push(type);
 
     const row = [
       (type === 'Training Data'
         ? `${mv.id}_training_data`
-        : `${faker.word.noun()}_${faker.number.int(100)}`) + `.${typeMap[type].ext}`, // name
-      typeMap[type].url, // url
+        : `${faker.word.noun()}_${faker.number.int(100)}`) + `.${_modelFileTypeMap[type].ext}`, // name
+      _modelFileTypeMap[type].url, // url
       faker.number.float(2_000_000), // sizeKB
       created, // createdAt
       mv.id, // modelVersionId
@@ -736,7 +758,7 @@ const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[])
       passScan ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // scannedAt
       passScan
         ? `{"url": "${
-            typeMap[type].url
+            _modelFileTypeMap[type].url
           }", "fixed": null, "hashes": {"CRC32": "${faker.string.hexadecimal({
             length: 8,
             casing: 'upper',
@@ -769,9 +791,9 @@ const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[])
         { value: true, weight: 3 },
         { value: false, weight: 1 },
       ]), // exists
-      step, // id
+      currentId, // id
       type, // type
-      isTrain ? typeMap[type].metaTrain : typeMap[type].meta, // metadata
+      isTrain ? _modelFileTypeMap[type].metaTrain : _modelFileTypeMap[type].meta, // metadata
       rand(Object.values(ModelFileVisibility)), // visibility
       fbool(0.1), // dataPurged
       type === 'Model'
@@ -782,6 +804,54 @@ const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[])
         { value: faker.word.noun(), weight: 1 },
       ]), // overrideName
     ];
+    rows.push(row);
+  }
+
+  return { rows, currentId };
+};
+
+/**
+ * ModelFile
+ */
+const genMFiles = (mvData: { id: number; uploadType: ModelUploadType }[]) => {
+  const ret: (string | number | boolean | null)[][] = [];
+
+  let step = 0;
+
+  mvData.forEach((mv) => {
+    const numFiles = randw([
+      { value: 0, weight: 1 },
+      { value: 1, weight: 16 },
+      { value: 2, weight: 2 },
+      { value: 3, weight: 1 },
+    ]);
+
+    if (numFiles > 0) {
+      const { rows, currentId } = _genMFileData(numFiles, step, mv);
+      ret.push(...rows);
+      step = currentId;
+    }
+  });
+  return ret;
+};
+
+/**
+ * CoveredCheckpoint
+ */
+const genCoveredCheckpoints = (num: number, mvData: { id: number; modelId: number }[]) => {
+  const ret = [];
+  const remainingMvs = [...mvData];
+
+  for (let step = 1; step <= num; step++) {
+    if (!remainingMvs.length) break;
+    const mvIndex = faker.number.int({ min: 0, max: remainingMvs.length - 1 });
+    const mv = remainingMvs.splice(mvIndex, 1)[0];
+
+    const row = [
+      mv.modelId, // model_id
+      mv.id, // version_id
+    ];
+
     ret.push(row);
   }
   return ret;
@@ -2696,6 +2766,7 @@ const genAuctionBases = () => {
       'featured-checkpoints', // slug
       7, // runForDays
       7, // validForDays
+      null, // description
     ],
     [
       2, // id
@@ -2708,6 +2779,7 @@ const genAuctionBases = () => {
       'featured-resources-pony', // slug
       1, // runForDays
       1, // validForDays
+      null, // description
     ],
     [
       3, // id
@@ -2720,6 +2792,7 @@ const genAuctionBases = () => {
       'featured-resources-illustrious', // slug
       1, // runForDays
       1, // validForDays
+      null, // description
     ],
     [
       4, // id
@@ -2732,6 +2805,7 @@ const genAuctionBases = () => {
       'featured-resources-flux', // slug
       1, // runForDays
       1, // validForDays
+      null, // description
     ],
     [
       5, // id
@@ -2744,6 +2818,7 @@ const genAuctionBases = () => {
       'featured-resources-sdxl', // slug
       1, // runForDays
       1, // validForDays
+      null, // description
     ],
     [
       6, // id
@@ -2756,6 +2831,20 @@ const genAuctionBases = () => {
       'featured-resources-sd1', // slug
       1, // runForDays
       1, // validForDays
+      null, // description
+    ],
+    [
+      7, // id
+      'Model', // type
+      'Misc', // ecosystem
+      'Featured Resources - Misc', // name
+      40, // quantity
+      500, // minPrice
+      true, // active
+      'featured-resources-misc', // slug
+      1, // runForDays
+      1, // validForDays
+      'For generic model types that do not have a defined ecosystem.', // description
     ],
   ];
 };
@@ -2902,6 +2991,50 @@ const genFeaturedModelVersions = (num: number, mvIds: number[]) => {
   return ret;
 };
 
+/**
+ * Changelog
+ */
+const genChangelogs = (num: number) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const created = faker.date.past({ years: 1 }).toISOString();
+
+    const row = [
+      step, // id
+      faker.lorem.sentence({ min: 2, max: 30 }), // title
+      `<p>${faker.lorem.paragraph({ min: 1, max: 50 })}</p>`, // content // TODO make this more html-y
+      randw([
+        { value: null, weight: 2 },
+        { value: `https://civitai.com/${faker.lorem.slug(5)}`, weight: 1 },
+      ]), // link
+      randw([
+        { value: null, weight: 3 },
+        { value: `https://civitai.com/${faker.lorem.slug(5)}`, weight: 1 },
+      ]), // cta
+      faker.date.past({ years: 1 }).toISOString(), // effectiveAt
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+      rand(Object.values(ChangelogType)), // type
+      rand(['{}', `{${faker.lorem.words({ min: 1, max: 10 }).split(' ').join(',')}}`]), // tags
+      randw([
+        { value: false, weight: 15 },
+        { value: true, weight: 1 },
+      ]), // disabled
+      rand(['blue', 'purple', 'red', 'orange', 'yellow', 'green', 'junk', null]), // titleColor
+      randw([
+        { value: false, weight: 15 },
+        { value: true, weight: 1 },
+      ]), // sticky
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+// ---
+// Data end
 // ---
 
 const genRows = async (truncate = true) => {
@@ -2913,7 +3046,14 @@ const genRows = async (truncate = true) => {
   const models = genModels(numRows, userIds);
   const modelIds = await insertRows('Model', models);
   const modelData = models
-    .map((m) => ({ id: m[6] as number, userId: m[7] as number, type: m[25] as ModelUploadType }))
+    .map((m) => ({
+      id: m[6] as number,
+      userId: m[7] as number,
+      uploadType: m[25] as ModelUploadType,
+      type: m[2] as ModelType,
+      status: m[9] as ModelStatus,
+      availability: m[28] as Availability,
+    }))
     .filter((m) => modelIds.includes(m.id));
 
   const mvs = genMvs(Math.ceil(numRows * 3), modelData);
@@ -2926,13 +3066,29 @@ const genRows = async (truncate = true) => {
         id: mv[6] as number,
         modelId: modelId,
         userId: matchModel?.userId,
-        type: mv[mv.length - 1] as ModelUploadType,
+        uploadType: mv[28] as ModelUploadType,
+        type: matchModel?.type,
+        status: matchModel?.status,
+        availability: matchModel?.availability,
+        baseModelType: mv[19] as BaseModelType, // scannedAt
       };
     })
     .filter((mv) => mvIds.includes(mv.id));
 
-  const mFiles = genMFiles(Math.ceil(numRows * 4), mvData);
+  const mFiles = genMFiles(mvData);
   await insertRows('ModelFile', mFiles);
+
+  const coveredCheckpoints = genCoveredCheckpoints(
+    Math.ceil(numRows / 2),
+    mvData.filter(
+      (mv) =>
+        mv.type === 'Checkpoint' &&
+        mv.status === 'Published' &&
+        mv.availability === 'Public' &&
+        mv.baseModelType === 'Standard'
+    )
+  );
+  await insertRows('CoveredCheckpoint', coveredCheckpoints, false);
 
   const reviews = genReviews(Math.ceil(numRows * 5), userIds, mvData);
   const reviewIds = await insertRows('ResourceReview', reviews);
@@ -3107,6 +3263,9 @@ const genRows = async (truncate = true) => {
 
   const featuredModelVersions = genFeaturedModelVersions(auctions.length * 10, mvIds);
   await insertRows('FeaturedModelVersion', featuredModelVersions);
+
+  const changelogs = genChangelogs(Math.round(numRows / 4));
+  await insertRows('Changelog', changelogs);
 };
 
 /**
@@ -3202,14 +3361,108 @@ const genClickhouseRows = async () => {
 };
 
 const genRedisSystemFeatures = async () => {
-  // TODO set more system vars here
+  console.log(`Inserting system data into redis`);
 
-  const keys = [[REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS]];
+  // Generation status
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    REDIS_SYS_KEYS.GENERATION.STATUS,
+    JSON.stringify({
+      available: true,
+      message: null,
+      charge: true,
+      checkResourceAvailability: true,
+      limits: {
+        free: {
+          steps: 50,
+          quantity: 4,
+          queue: 4,
+          resources: 9,
+        },
+        founder: {
+          quantity: 10,
+          queue: 10,
+          steps: 60,
+          resources: 12,
+        },
+      },
+      membershipPriority: false,
+    })
+  );
 
-  for (const keySet of keys) {
-    const [baseKey, subKey] = keySet;
-    await sysRedis.hSet(baseKey, subKey, JSON.stringify({}));
-  }
+  // Training status
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    REDIS_SYS_KEYS.TRAINING.STATUS,
+    JSON.stringify({
+      available: true,
+      message: null,
+      blockedModels: [],
+    })
+  );
+
+  // Generation workflows
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.GENERATION.WORKFLOWS,
+    'txt2img',
+    JSON.stringify({
+      type: 'txt2img',
+      key: 'txt2img',
+      name: '',
+      features: ['draft'],
+      template:
+        '{"3": { "inputs": { "seed": {{seed}}, "steps": {{steps}}, "cfg": {{cfgScale}}, "sampler_name": "{{sampler}}", "scheduler": "{{scheduler}}", "denoise": 1.0, "model": [ "4", 0 ], "positive": [ "6", 0 ], "negative": [ "7", 0 ], "latent_image": [ "5", 0 ]}, "class_type": "KSampler" }, "4": { "inputs": { "ckpt_name": "placeholder.safetensors" }, "class_type": "CheckpointLoaderSimple" }, "5": { "inputs": { "width": {{width}}, "height": {{height}}, "batch_size": 1 }, "class_type": "EmptyLatentImage" }, "6": { "inputs": { "parser": "A1111", "mean_normalization": true, "multi_conditioning": true, "use_old_emphasis_implementation": false, "with_SDXL": false, "ascore": 6.0, "width": 0, "height": 0, "crop_w": 0, "crop_h": 0, "target_width": 0, "target_height": 0, "text_g": "", "text_l": "", "text": "{{prompt}}", "clip": [ "10", 0 ]}, "class_type": "smZ CLIPTextEncode" }, "7": { "inputs": { "parser": "A1111", "mean_normalization": true, "multi_conditioning": true, "use_old_emphasis_implementation": false, "with_SDXL": false, "ascore": 2.5, "width": 0, "height": 0, "crop_w": 0, "crop_h": 0, "target_width": 0, "target_height": 0, "text_g": "", "text_l": "", "text": "{{negativePrompt}}", "clip": [ "10", 0 ]}, "class_type": "smZ CLIPTextEncode" }, "8": { "inputs": { "samples": [ "3", 0 ], "vae": [ "4", 2 ]}, "class_type": "VAEDecode" }, "9": { "inputs": { "filename_prefix": "ComfyUI", "images": [ "8", 0 ]}, "class_type": "SaveImage" }, "10": { "inputs": { "stop_at_clip_layer": 0, "clip": [ "4", 1 ]}, "class_type": "CLIPSetLastLayer" }}',
+    })
+  );
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.GENERATION.WORKFLOWS,
+    'txt2img-hires',
+    JSON.stringify({
+      type: 'txt2img',
+      key: 'txt2img-hires',
+      name: 'Hi-res fix',
+      description: 'Generate an image then upscale it and regenerate it',
+      features: ['denoise', 'upscale'],
+      template:
+        '{"6":{"inputs":{"text":"{{prompt}}","parser":"A1111","mean_normalization":true,"multi_conditioning":true,"use_old_emphasis_implementation":false,"with_SDXL":false,"ascore":2.5,"width":0,"height":0,"crop_w":0,"crop_h":0,"target_width":0,"target_height":0,"text_g":"","text_l":"","smZ_steps":1,"clip":["101",1]},"class_type":"smZ CLIPTextEncode","_meta":{"title":"Positive"}},"7":{"inputs":{"text":"{{negativePrompt}}","parser":"A1111","mean_normalization":true,"multi_conditioning":true,"use_old_emphasis_implementation":false,"with_SDXL":false,"ascore":2.5,"width":0,"height":0,"crop_w":0,"crop_h":0,"target_width":0,"target_height":0,"text_g":"","text_l":"","smZ_steps":1,"clip":["101",1]},"class_type":"smZ CLIPTextEncode","_meta":{"title":"Negative"}},"11":{"inputs":{"seed":"{{{seed}}}","steps":"{{{steps}}}","cfg":"{{{cfgScale}}}","sampler_name":"{{sampler}}","scheduler":"{{scheduler}}","denoise":1,"model":["101",0],"positive":["6",0],"negative":["7",0],"latent_image":["26",0]},"class_type":"KSampler","_meta":{"title":"KSampler"}},"12":{"inputs":{"filename_prefix":"ComfyUI","images":["25",0]},"class_type":"SaveImage","_meta":{"title":"Save Image"}},"19":{"inputs":{"upscale_model":["20",0],"image":["27",0]},"class_type":"ImageUpscaleWithModel","_meta":{"title":"Upscale Image (using Model)"}},"20":{"inputs":{"model_name":"urn:air:other:upscaler:civitai:147759@164821"},"class_type":"UpscaleModelLoader","_meta":{"title":"Load Upscale Model"}},"21":{"inputs":{"pixels":["23",0],"vae":["101",2]},"class_type":"VAEEncode","_meta":{"title":"VAE Encode"}},"23":{"inputs":{"upscale_method":"nearest-exact","width":"{{{upscaleWidth}}}","height":"{{{upscaleHeight}}}","crop":"disabled","image":["19",0]},"class_type":"ImageScale","_meta":{"title":"Upscale Image"}},"24":{"inputs":{"seed":"{{{seed}}}","steps":"{{{steps}}}","cfg":"{{{cfgScale}}}","sampler_name":"{{sampler}}","scheduler":"{{scheduler}}","denoise":"{{{denoise}}}","model":["101",0],"positive":["6",0],"negative":["7",0],"latent_image":["21",0]},"class_type":"KSampler","_meta":{"title":"KSampler"}},"25":{"inputs":{"samples":["24",0],"vae":["101",2]},"class_type":"VAEDecode","_meta":{"title":"VAE Decode"}},"26":{"inputs":{"width":"{{{width}}}","height":"{{{height}}}","batch_size":1},"class_type":"EmptyLatentImage","_meta":{"title":"Empty Latent Image"}},"27":{"inputs":{"samples":["11",0],"vae":["101",2]},"class_type":"VAEDecode","_meta":{"title":"VAE Decode"}},"28":{"inputs":{"filename_prefix":"ComfyUI","images":["27",0]},"class_type":"SaveImage","_meta":{"title":"Save Image"}},"101":{"inputs":{"ckpt_name":"placeholder.safetensors"},"class_type":"CheckpointLoaderSimple","_meta":{"title":"Load Checkpoint"}}}',
+    })
+  );
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.GENERATION.WORKFLOWS,
+    'img2img',
+    JSON.stringify({
+      type: 'img2img',
+      key: 'img2img',
+      name: 'Variations (img2img)',
+      description: 'Generate a similar image',
+      features: ['denoise', 'image'],
+      template:
+        '{ "6": { "inputs": { "text": "{{prompt}}", "parser": "A1111", "mean_normalization": true, "multi_conditioning": true, "use_old_emphasis_implementation": false, "with_SDXL": false, "ascore": 2.5, "width": 0, "height": 0, "crop_w": 0, "crop_h": 0, "target_width": 0, "target_height": 0, "text_g": "", "text_l": "", "smZ_steps": 1, "clip": [ "101", 1 ] }, "class_type": "smZ CLIPTextEncode", "_meta": { "title": "Positive" } }, "7": { "inputs": { "text": "{{negativePrompt}}", "parser": "A1111", "mean_normalization": true, "multi_conditioning": true, "use_old_emphasis_implementation": false, "with_SDXL": false, "ascore": 2.5, "width": 0, "height": 0, "crop_w": 0, "crop_h": 0, "target_width": 0, "target_height": 0, "text_g": "", "text_l": "", "smZ_steps": 1, "clip": [ "101", 1 ] }, "class_type": "smZ CLIPTextEncode", "_meta": { "title": "Negative" } }, "11": { "inputs": { "seed": "{{{seed}}}", "steps": "{{{steps}}}", "cfg": "{{{cfgScale}}}", "sampler_name": "{{sampler}}", "scheduler": "{{scheduler}}", "denoise": "{{{denoise}}}", "model": [ "101", 0 ], "positive": [ "6", 0 ], "negative": [ "7", 0 ], "latent_image": [ "18", 0 ] }, "class_type": "KSampler", "_meta": { "title": "KSampler" } }, "12": { "inputs": { "filename_prefix": "ComfyUI", "images": [ "13", 0 ] }, "class_type": "SaveImage", "_meta": { "title": "Save Image" } }, "13": { "inputs": { "samples": [ "11", 0 ], "vae": [ "101", 2 ] }, "class_type": "VAEDecode", "_meta": { "title": "VAE Decode" } }, "17": { "inputs": { "image": "{{image}}", "upload": "image" }, "class_type": "LoadImage", "_meta": { "title": "Image Load" } }, "18": { "inputs": { "pixels": [ "17", 0 ], "vae": [ "101", 2 ] }, "class_type": "VAEEncode", "_meta": { "title": "VAE Encode" } }, "101": { "inputs": { "ckpt_name": "placeholder.safetensors" }, "class_type": "CheckpointLoaderSimple", "_meta": { "title": "Load Checkpoint" } } }',
+    })
+  );
+
+  // Generation engines
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.GENERATION.ENGINES,
+    'hunyuan',
+    JSON.stringify({
+      engine: 'hunyuan',
+      disabled: false,
+      message: '',
+      status: 'published',
+    })
+  );
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.GENERATION.ENGINES,
+    'civitai',
+    JSON.stringify({
+      engine: 'civitai',
+      disabled: true,
+      status: 'disabled',
+    })
+  );
+
+  console.log(`\t-> ✔️ Inserted redis data`);
 };
 
 const main = async () => {

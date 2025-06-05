@@ -1,14 +1,5 @@
-import {
-  Alert,
-  Anchor,
-  Badge,
-  Button,
-  Text,
-  ThemeIcon,
-  Title,
-  Tooltip,
-  TooltipProps,
-} from '@mantine/core';
+import type { TooltipProps } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
 import { IconClock, IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
@@ -26,13 +17,17 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 // import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { PostDetailEditable } from '~/server/services/post.service';
+import type { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { removeEmpty } from '~/utils/object-helpers';
+import { Flags } from '~/shared/utils';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { isValidAIGeneration } from '~/utils/image-utils';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
@@ -55,8 +50,20 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       state.images,
     ]);
   const todayRef = useRef(new Date());
+  const isAiVerified = !images.some(
+    (image) =>
+      image.type === 'added' &&
+      !isValidAIGeneration({
+        id: image.data.id,
+        nsfwLevel: image.data.nsfwLevel,
+        resources: image.data.resourceHelper,
+        tools: image.data.tools,
+        meta: image.data.meta as ImageMetaProps,
+        tags: image.data.tags,
+      })
+  );
+  const canPublish = hasImages && !isReordering && isAiVerified && features.canWrite;
 
-  const canPublish = hasImages && !isReordering;
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
   const { returnUrl, afterPublish } = params;
 
@@ -210,7 +217,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         <Tooltip
           disabled={canPublish}
           label={
-            isReordering
+            !isAiVerified
+              ? 'We could not verify some of your NSFW images were AI generated. Please add proper metadata before publishing this post.'
+              : isReordering
               ? 'Finish rearranging your images before you publish'
               : 'At least one image is required in order to publish this post to the community'
           }
@@ -310,6 +319,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             loading={isLoading}
             variant="outline"
             leftIcon={<IconTrash size={20} />}
+            disabled={!features.canWrite}
           >
             Delete Post
           </Button>

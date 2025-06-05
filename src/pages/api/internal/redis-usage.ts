@@ -1,5 +1,6 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { redis, RedisKeyTemplateCache } from '~/server/redis/client';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { formatBytes } from '~/utils/number-helpers';
 

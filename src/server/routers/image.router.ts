@@ -5,10 +5,10 @@ import {
   moderateImageHandler,
   setTosViolationHandler,
   setVideoThumbnailController,
-  updateImageMinorHandler,
+  updateImageAcceptableMinorHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
-import { getByIdSchema, infiniteQuerySchema } from '~/server/schema/base.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addImageTechniques,
   addImageTools,
@@ -27,6 +27,7 @@ import {
   removeImageTechniques,
   removeImageTools,
   reportCsamImages,
+  toggleImageFlag,
   updateImageNsfwLevel,
   updateImageTechniques,
   updateImageTools,
@@ -56,16 +57,18 @@ import {
   getEntitiesCoverImage,
   getImageSchema,
   getInfiniteImagesSchema,
+  getMyImagesInput,
   imageModerationSchema,
   imageRatingReviewInput,
   imageReviewQueueInputSchema,
+  removeImageResourceSchema,
   reportCsamImagesSchema,
   setVideoThumbnailSchema,
-  updateImageMinorSchema,
+  toggleImageFlagSchema,
+  updateImageAcceptableMinorSchema,
   updateImageNsfwLevelSchema,
   updateImageTechniqueSchema,
   updateImageToolsSchema,
-  removeImageResourceSchema,
 } from './../schema/image.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -142,7 +145,9 @@ export const imageRouter = router({
     .mutation(({ input, ctx }) => reportCsamImages({ ...input, user: ctx.user, ip: ctx.ip })),
   updateImageNsfwLevel: protectedProcedure
     .input(updateImageNsfwLevelSchema)
-    .mutation(({ input, ctx }) => updateImageNsfwLevel({ ...input, user: ctx.user })),
+    .mutation(({ input, ctx }) =>
+      updateImageNsfwLevel({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
@@ -201,8 +206,13 @@ export const imageRouter = router({
     .mutation(setVideoThumbnailController),
   // #endregion
 
-  updateMinor: protectedProcedure.input(updateImageMinorSchema).mutation(updateImageMinorHandler),
+  updateAccetableMinor: protectedProcedure
+    .input(updateImageAcceptableMinorSchema)
+    .mutation(updateImageAcceptableMinorHandler),
   getMyImages: protectedProcedure
-    .input(infiniteQuerySchema)
+    .input(getMyImagesInput)
     .query(({ input, ctx }) => getMyImages({ ...input, userId: ctx.user.id })),
+  toggleImageFlag: moderatorProcedure
+    .input(toggleImageFlagSchema)
+    .mutation(({ input, ctx }) => toggleImageFlag({ ...input })),
 });

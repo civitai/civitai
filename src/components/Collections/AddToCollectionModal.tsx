@@ -9,6 +9,7 @@ import {
   Stack,
   Text,
   createStyles,
+  Modal,
 } from '@mantine/core';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {
@@ -20,8 +21,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { IconArrowLeft, IconCalendar, IconPlus } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
-import { z } from 'zod';
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
+import type { z } from 'zod';
 import {
   Form,
   InputCheckbox,
@@ -31,46 +31,43 @@ import {
   useForm,
   InputDatePicker,
 } from '~/libs/form';
-import { AddCollectionItemInput, upsertCollectionInput } from '~/server/schema/collection.schema';
+import type { AddCollectionItemInput } from '~/server/schema/collection.schema';
+import { upsertCollectionInput } from '~/server/schema/collection.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import {
-  PrivacyData,
-  collectionReadPrivacyData,
-  collectionWritePrivacyData,
-} from './collection.utils';
+import type { PrivacyData } from './collection.utils';
+import { collectionReadPrivacyData, collectionWritePrivacyData } from './collection.utils';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
 import { closeAllModals, openModal } from '@mantine/modals';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
-const { openModal: openAddToCollectionModal, Modal } = createContextModal<Props>({
-  name: 'addToCollection',
-  title: 'Add to Collection',
-  size: 'sm',
-  Element: ({ context, props }) => {
-    const [creating, setCreating] = useState(props.createNew ?? false);
-
-    return creating ? (
-      <NewCollectionForm
-        {...props}
-        onBack={() => setCreating(false)}
-        onSubmit={() => context.close()}
-      />
-    ) : (
-      <CollectionListForm
-        {...props}
-        onNewClick={() => setCreating(true)}
-        onSubmit={() => context.close()}
-      />
-    );
-  },
-});
-
-export { openAddToCollectionModal };
-export default Modal;
+export default function AddToCollectionModal(props: Props) {
+  const dialog = useDialogContext();
+  const [creating, setCreating] = useState(props.createNew ?? false);
+  return (
+    <Modal {...dialog} title="Add to Collection" size="sm">
+      {creating ? (
+        <NewCollectionForm
+          {...props}
+          onBack={() => setCreating(false)}
+          onSubmit={() => dialog.onClose()}
+        />
+      ) : (
+        <CollectionListForm
+          {...props}
+          onNewClick={() => setCreating(true)}
+          onSubmit={() => dialog.onClose()}
+        />
+      )}
+    </Modal>
+  );
+}
 
 const useCollectionListStyles = createStyles((theme) => ({
   body: { alignItems: 'center' },
@@ -115,6 +112,7 @@ function CollectionListForm({
   const isLoading = loadingStatus || loadingCollections;
   const ownedCollections = collections.filter((collection) => collection.isOwner);
   const contributingCollections = collections.filter((collection) => !collection.isOwner);
+  const features = useFeatureFlags();
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = () => {
@@ -199,6 +197,7 @@ function CollectionListForm({
 
   return (
     <Stack>
+      <ReadOnlyAlert />
       <Stack spacing="xl">
         <Stack spacing={4}>
           <Group spacing="xs" position="apart" noWrap>
@@ -398,7 +397,11 @@ function CollectionListForm({
         </Stack>
 
         <Group position="right">
-          <Button loading={addCollectionItemMutation.isLoading} onClick={handleSubmit}>
+          <Button
+            disabled={!features.canWrite}
+            loading={addCollectionItemMutation.isLoading}
+            onClick={handleSubmit}
+          >
             Save
           </Button>
         </Group>

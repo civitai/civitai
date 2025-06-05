@@ -1,7 +1,7 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
-import { reviewTypeToBlockedReasonKeys } from '~/server/controllers/image.controller';
+import { reviewTypeToBlockedReasonKeys } from '~/server/services/image.service';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -9,7 +9,7 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from '~/server/services/image.service';
-import { WebhookEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 
 const schema = z.object({

@@ -5,7 +5,7 @@ import { env } from '~/env/server';
 import { BlockedReason } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
-import { IngestImageInput } from '~/server/schema/image.schema';
+import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImageById, ingestImage, ingestImageBulk } from '~/server/services/image.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -79,9 +79,12 @@ async function sendImagesForScanBulk(images: IngestImageInput[]) {
   console.log('Failed sends:', failedSends.length);
 }
 
+const delayedBlockCutoff = new Date('2025-05-31');
 export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * *', async () => {
-  if (!isProd) return;
+  // During the delayed block period, we want to keep the images for 30 days
+  if (!isProd || delayedBlockCutoff > new Date()) return;
   const cutoff = decreaseDate(new Date(), 7, 'days');
+
   const images = await dbRead.image.findMany({
     where: {
       ingestion: ImageIngestionStatus.Blocked,

@@ -1,4 +1,5 @@
-import { Button, Center, Loader, MantineColor, Progress, Select, Title } from '@mantine/core';
+import type { MantineColor } from '@mantine/core';
+import { Button, Center, Loader, Progress, Select, Title } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
 import React, { useMemo, useState } from 'react';
@@ -6,7 +7,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { getImageRatingRequests } from '~/server/services/image.service';
+import type { getImageRatingRequests } from '~/server/services/image.service';
 import { browsingLevels, getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

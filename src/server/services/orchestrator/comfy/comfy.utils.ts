@@ -1,6 +1,7 @@
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { WorkflowDefinition, workflowDefinitionLabel } from '~/server/services/orchestrator/types';
-import { ComfyNode } from '~/shared/types/generation.types';
+import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import { workflowDefinitionLabel } from '~/server/services/orchestrator/types';
+import type { ComfyNode } from '~/shared/types/generation.types';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 import { workflowDefinitions } from '~/server/services/orchestrator/comfy/comfy.types';
@@ -100,6 +101,15 @@ export function applyResources(
       continue;
     }
 
+    if (parsedAir.type === 'vae') {
+      workflow['vae'] = {
+        inputs: {
+          vae_name: resource.air,
+        },
+        class_type: 'VAELoader',
+      };
+    }
+
     let node: ComfyNode | undefined;
     if (LORA_TYPES.includes(parsedAir.type)) {
       node = {
@@ -171,7 +181,12 @@ export function applyResources(
 
           if (inputKey === 'vae') {
             // We only need to reference the checkpoint for the vae
-            value[0] = stackKeys[0];
+            if (workflow['vae']) {
+              value[0] = 'vae';
+              value[1] = 0;
+            } else {
+              value[0] = stackKeys[0];
+            }
           } else {
             // otherwise, reference tail node
             value[0] = stackKeys[stackKeys.length - 1];

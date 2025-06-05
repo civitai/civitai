@@ -8,7 +8,7 @@ import type {
 import { Environment, Paddle } from '@paddle/paddle-node-sdk';
 import { isDev } from '~/env/other';
 import { env } from '~/env/server';
-import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
+import type { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 const paddle = env.PADDLE_SECRET_KEY
@@ -231,4 +231,30 @@ export const updatePaddleCustomerEmail = async ({
   return paddle.customers.update(customerId, {
     email,
   });
+};
+
+export const createAnnualSubscriptionDiscount = async ({
+  amount,
+  currency,
+  userId,
+}: {
+  amount: string;
+  currency?: string;
+  userId: number | string;
+}) => {
+  const paddle = getPaddle();
+  try {
+    return paddle.discounts.create({
+      amount,
+      type: 'flat',
+      currencyCode: (currency as CurrencyCode) ?? 'USD',
+      recur: true,
+      maximumRecurringIntervals: 1,
+      usageLimit: 1,
+      description: 'Discount for Annual subscription upgrade UserId: ' + userId,
+    });
+  } catch (e) {
+    console.error('Error creating discount', e);
+    throw e;
+  }
 };

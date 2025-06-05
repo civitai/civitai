@@ -1,4 +1,5 @@
-import { Box, Tooltip, TooltipProps } from '@mantine/core';
+import type { TooltipProps } from '@mantine/core';
+import { Box, Tooltip } from '@mantine/core';
 import { forwardRef } from 'react';
 
 export const ButtonTooltip = forwardRef<HTMLDivElement, TooltipProps>(

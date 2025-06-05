@@ -2,15 +2,11 @@ import { Divider, Text, ActionIcon, Button, Badge } from '@mantine/core';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { trpc } from '~/utils/trpc';
-import React from 'react';
-import { isDefined } from '~/utils/type-guards';
-import {
-  generationFormWorkflowConfigurations,
-  getBaseModelFromResources,
-} from '~/shared/constants/generation.constants';
-import { BaseModelSetType } from '~/server/common/constants';
+import React, { useMemo } from 'react';
+import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
+import type { BaseModelSetType } from '~/server/common/constants';
+import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 
-type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
 const simpleMetaProps = {
   comfy: 'Workflow',
   cfgScale: 'Guidance',
@@ -22,71 +18,73 @@ const simpleMetaProps = {
 
 export function ImageMeta({ imageId }: { imageId: number }) {
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
-  const { meta, resources = [], onSite, process } = data ?? {};
-  const baseModel = getBaseModelFromResources(resources);
+  const { meta, onSite, process } = data ?? {};
+  // const baseModel = getBaseModelFromResources(resources);
 
-  if (!meta) return null;
-  const { comfy } = meta;
+  const simpleMeta = useMemo(() => {
+    if (!data) return null;
+
+    const meta: Record<string, any> = data.meta ?? {};
+    const resources = data.resources ?? [];
+
+    if (!meta) return null;
+    const { prompt, negativePrompt, ...restMeta } = meta;
+    const baseModel = getBaseModelFromResources(resources);
+
+    const keys: string[] = [];
+    if (data.type === 'image') {
+      const metaRemoved = baseModel ? removeUnrelated(baseModel, restMeta) : restMeta;
+
+      for (const key of Object.keys(simpleMetaProps).filter((key) => metaRemoved[key])) {
+        if (meta[key]) keys.push(key);
+      }
+    } else if (data.type === 'video') {
+      const config = getVideoGenerationConfig((meta as any).engine);
+      if (config) {
+        for (const key of config.metadataDisplayProps) {
+          if (meta[key]) keys.push(key);
+        }
+      }
+    }
+
+    function getSimpleMetaContent(key: string) {
+      if (!meta) return null;
+      switch (key) {
+        case 'comfy':
+          const comfy = meta['comfy'];
+          return comfy ? (
+            <CopyButton value={() => JSON.stringify(comfy.workflow)}>
+              {({ copy, copied, Icon, color }) => (
+                <Button
+                  color={color}
+                  size="xs"
+                  compact
+                  className="rounded-lg"
+                  classNames={{ label: 'flex items-center gap-1' }}
+                  onClick={copy}
+                >
+                  {!copied ? 'Nodes' : 'Copied'}
+                  <Icon size={16} />
+                </Button>
+              )}
+            </CopyButton>
+          ) : null;
+        default: {
+          const content = meta[key];
+          if (!content || typeof content === 'object') return null;
+          return <span>{content}</span>;
+        }
+      }
+    }
+
+    return keys.map((key) => ({ label: key, content: getSimpleMetaContent(key) }));
+  }, [data]);
+
+  if (!meta || !simpleMeta) return null;
 
   const software = meta.software ?? (onSite ? 'Civitai Generator' : 'External Generator');
 
-  function getSimpleMetaContent(key: SimpleMetaPropsKey) {
-    if (!meta) return null;
-    switch (key) {
-      case 'comfy':
-        return comfy ? (
-          <CopyButton value={() => JSON.stringify(comfy.workflow)}>
-            {({ copy, copied, Icon, color }) => (
-              <Button
-                color={color}
-                size="xs"
-                compact
-                className="rounded-lg"
-                classNames={{ label: 'flex items-center gap-1' }}
-                onClick={copy}
-              >
-                {!copied ? 'Nodes' : 'Copied'}
-                <Icon size={16} />
-              </Button>
-            )}
-          </CopyButton>
-        ) : null;
-      default:
-        return <span>{meta[key]}</span>;
-    }
-  }
-
-  const { prompt, negativePrompt, ...restMeta } = meta;
-
-  function getSimpleMeta() {
-    if (!data) return [];
-    if (data.type === 'image') {
-      const metaRemoved = removeUnrelated(baseModel, restMeta);
-      return Object.entries(simpleMetaProps)
-        .filter(([key]) => metaRemoved[key as SimpleMetaPropsKey])
-        .map(([key, label]) => {
-          const content = getSimpleMetaContent(key as SimpleMetaPropsKey);
-          if (!content) return null;
-          return { label, content };
-        })
-        .filter(isDefined);
-    } else if (data.type === 'video') {
-      const workflow = generationFormWorkflowConfigurations.find(
-        (x) => x.key === (meta as any).workflow
-      );
-      if (!workflow) return [];
-      return (
-        workflow.metadataDisplayProps?.map((key) => ({
-          label: key,
-          content: getSimpleMetaContent(key as SimpleMetaPropsKey),
-        })) ?? []
-      );
-    } else {
-      return [];
-    }
-  }
-
-  const simpleMeta = getSimpleMeta();
+  const { prompt, negativePrompt } = meta;
 
   const hasSimpleMeta = !!simpleMeta.length;
 

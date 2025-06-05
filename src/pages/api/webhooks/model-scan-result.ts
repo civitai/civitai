@@ -1,10 +1,10 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { modelScanResultSchema } from '~/server/schema/model-flag.schema';
-import { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { upsertModelFlag } from '~/server/services/model-flag.service';
 import { getModelModRules, unpublishModelById } from '~/server/services/model.service';
@@ -156,6 +156,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
         poi: data.flags.POI_flag,
         nsfw: data.flags.NSFW_flag,
         minor: data.flags.minor_flag,
+        sfwOnly: data.flags.POI_flag || data.flags.minor_flag || !!data.flags.sfwOnly_flag,
         triggerWords: data.flags.triggerwords_flag,
         poiName: !!data.llm_interrogation.POIName?.length,
       },

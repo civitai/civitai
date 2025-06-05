@@ -1,4 +1,5 @@
-import { CloseButton, NumberInput, NumberInputProps, Text } from '@mantine/core';
+import type { NumberInputProps } from '@mantine/core';
+import { CloseButton, NumberInput, Text } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { forwardRef, useEffect, useMemo, useRef } from 'react';
 import { numberWithCommas } from '~/utils/number-helpers';

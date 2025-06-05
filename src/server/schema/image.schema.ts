@@ -1,8 +1,15 @@
 import dayjs from 'dayjs';
 import { z } from 'zod';
+import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
-import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
+import {
+  baseQuerySchema,
+  infiniteQuerySchema,
+  paginationSchema,
+  periodModeSchema,
+} from '~/server/schema/base.schema';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   ImageGenerationProcess,
   MediaType,
@@ -90,11 +97,20 @@ export const imageGenerationSchema = z.object({
   'Clip skip': z.coerce.number().optional(),
   comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
   external: externalMetaSchema.optional(),
+  effects: z.record(z.any()).optional(),
   extra: z
     .object({
       remixOfId: z.number().optional(),
     })
-    .optional(),
+    .optional()
+    .catch(undefined),
+});
+
+export type CivitaiResource = z.infer<typeof civitaiResourceSchema>;
+export const civitaiResourceSchema = z.object({
+  type: z.string().optional(),
+  weight: z.number().optional(),
+  modelVersionId: z.number(),
 });
 
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
@@ -112,7 +128,9 @@ export const imageMetaOutput = imageGenerationSchema
     }, comfyMetaSchema.optional()),
     controlNets: z.string().array().optional(),
     software: z.coerce.string().optional(),
-    civitaiResources: z.any().optional(),
+    civitaiResources: civitaiResourceSchema.array().optional(),
+    process: z.string().optional(),
+    type: z.string().optional(),
   })
   .passthrough();
 
@@ -295,6 +313,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     username: zc.usernameValidationSchema.optional(),
     // view: z.enum(['categories', 'feed']),
     withMeta: z.boolean().optional(),
+    requiringMeta: z.boolean().optional(),
 
     // - additional
     cursor: z
@@ -321,6 +340,11 @@ export const getInfiniteImagesSchema = baseQuerySchema
     remixOfId: z.number().optional(),
     remixesOnly: z.boolean().optional(),
     nonRemixesOnly: z.boolean().optional(),
+    disablePoi: z.boolean().optional(),
+    disableMinor: z.boolean().optional(),
+    // Mod only:
+    poiOnly: z.boolean().optional(),
+    minorOnly: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
@@ -366,6 +390,7 @@ export const imageReviewQueueInputSchema = z.object({
   tagReview: z.boolean().optional(),
   reportReview: z.boolean().optional(),
   tagIds: z.array(z.number()).optional(),
+  browsingLevel: z.number().default(allBrowsingLevelsFlag),
 });
 
 export type ScanJobsOutput = z.output<typeof scanJobsSchema>;
@@ -437,9 +462,18 @@ export const setVideoThumbnailSchema = z.object({
   postId: z.number().optional(),
 });
 
-export type UpdateImageMinorInput = z.infer<typeof updateImageMinorSchema>;
-export const updateImageMinorSchema = z.object({
+export type UpdateImageAcceptableMinorInput = z.infer<typeof updateImageAcceptableMinorSchema>;
+export const updateImageAcceptableMinorSchema = z.object({
   id: z.number(),
   collectionId: z.number(),
-  minor: z.boolean(),
+  acceptableMinor: z.boolean(),
 });
+
+export type ToggleImageFlagInput = z.infer<typeof toggleImageFlagSchema>;
+export const toggleImageFlagSchema = z.object({
+  id: z.number(),
+  flag: z.enum(['minor', 'poi']),
+});
+
+export type GetMyImagesInput = z.infer<typeof getMyImagesInput>;
+export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema);

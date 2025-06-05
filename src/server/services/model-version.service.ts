@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, constants } from '~/server/common/constants';
@@ -37,7 +37,7 @@ import type {
   RecommendedSettingsSchema,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
-import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
+import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import {
   imagesMetricsSearchIndex,
   imagesSearchIndex,
@@ -59,13 +59,8 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
-import {
-  Availability,
-  CommercialUse,
-  ModelStatus,
-  ModelType,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
+import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
+import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 
@@ -211,7 +206,7 @@ export const upsertModelVersion = async ({
   }
 
   if (!id || templateId) {
-    const existingVersions = await dbRead.modelVersion.findMany({
+    const existingVersions = await dbWrite.modelVersion.findMany({
       where: { modelId: data.modelId },
       select: {
         id: true,
@@ -284,7 +279,7 @@ export const upsertModelVersion = async ({
 
     return version;
   } else {
-    const existingVersion = await dbRead.modelVersion.findUniqueOrThrow({
+    const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
       where: { id },
       select: {
         id: true,
@@ -1397,9 +1392,14 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
 }
 
 export const bustMvCache = async (ids: number | number[], userId?: number) => {
-  await resourceDataCache.bust(ids);
-  await bustOrchestratorModelCache(ids, userId);
-  await modelVersionAccessCache.bust(ids);
+  const versionIds = Array.isArray(ids) ? ids : [ids];
+  await resourceDataCache.bust(versionIds);
+  await bustOrchestratorModelCache(versionIds, userId);
+  await modelVersionAccessCache.bust(versionIds);
+  // TODO shouldnt this be the model IDs?
+  await modelsSearchIndex.queueUpdate(
+    versionIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 };
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
@@ -1429,7 +1429,7 @@ export const resourceDataCache = createCachedArray({
   cacheNotFound: false,
   lookupFn: async (ids) => {
     if (!ids.length) return {};
-    const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`
+    const dbResults = await dbWrite.$queryRaw<GenerationResourceDataModel[]>`
       SELECT
         mv."id",
         mv."name",
@@ -1439,9 +1439,10 @@ export const resourceDataCache = createCachedArray({
         mv."availability",
         mv."clipSkip",
         mv."vaeId",
-        mv."earlyAccessEndsAt",
-        (CASE WHEN mv."availability" = 'EarlyAccess' THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        mv."status",
+        (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
         gc."covered",
+        FALSE AS "hasAccess",
         (
           SELECT to_json(obj)
           FROM (
@@ -1452,7 +1453,8 @@ export const resourceDataCache = createCachedArray({
               m."nsfw",
               m."poi",
               m."minor",
-              m."userId"
+              m."userId",
+              m."sfwOnly"
             FROM "Model" m
             WHERE m.id = mv."modelId"
           ) as obj
@@ -1462,16 +1464,17 @@ export const resourceDataCache = createCachedArray({
       WHERE mv.id IN (${Prisma.join(ids)})
     `;
 
-    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>(
-      (acc, result) => ({ ...acc, [result.id]: result }),
-      {}
-    );
+    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>((acc, item) => {
+      if (['Public', 'Unsearchable'].includes(item.availability) && item.status === 'Published')
+        item.hasAccess = true;
+
+      return { ...acc, [item.id]: item };
+    }, {});
     return results;
   },
   idKey: 'id',
   dontCacheFn: (data) => {
-    const cacheable = ['Public', 'Unsearchable'].includes(data.availability);
-    return !cacheable || !data.covered;
+    return !data.hasAccess || !data.covered;
   },
   ttl: CacheTTL.hour,
 });
@@ -1485,9 +1488,10 @@ export type GenerationResourceDataModel = {
   baseModel: string;
   settings: RecommendedSettingsSchema | null;
   availability: Availability;
-  earlyAccessEndsAt: Date | null;
   earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
   covered: boolean | null;
+  status: ModelStatus;
+  hasAccess: boolean;
   model: {
     id: number;
     name: string;
@@ -1496,6 +1500,7 @@ export type GenerationResourceDataModel = {
     poi: boolean;
     minor: boolean;
     userId: number;
+    sfwOnly: boolean;
   };
 };
 
@@ -1562,7 +1567,7 @@ export const createModelVersionPostFromTraining = async ({
   await Promise.all(
     uploadedImages.map((image) =>
       addPostImage({
-        type: 'image',
+        type: image.type,
         postId: post.id,
         modelVersionId,
         width: image.metadata?.width,

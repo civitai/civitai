@@ -13,6 +13,7 @@ import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
 import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
+import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
@@ -31,10 +32,11 @@ import {
 } from '~/server/jobs/event-engine-work';
 import { fullImageExistence } from '~/server/jobs/full-image-existence';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
+import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
-import { Job } from '~/server/jobs/job';
+import type { Job } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -70,6 +72,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
+import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -135,6 +138,9 @@ export const jobs: Job[] = [
   retroactiveHashBlocking,
   ...creatorProgramJobs,
   handleAuctions,
+  ...newOrderJobs,
+  updateModelVersionNsfwLevelsJob,
+  deliverAnnualSubscriptionBuzz,
 ];
 
 const log = createLogger('jobs', 'green');
@@ -167,7 +173,7 @@ export default WebhookEndpoint(async (req, res) => {
     axiom.info(`starting`);
     await lock(name, options.lockExpiration, noCheck);
 
-    const jobRunner = run();
+    const jobRunner = run({ req });
 
     async function cancelHandler() {
       await jobRunner.cancel();

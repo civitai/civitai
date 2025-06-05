@@ -1,8 +1,9 @@
-import { InstantSearchRoutingParser, searchParamsSchema } from '~/components/Search/parsers/base';
+import type { InstantSearchRoutingParser } from '~/components/Search/parsers/base';
+import { searchParamsSchema } from '~/components/Search/parsers/base';
 import { z } from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
-import { IndexUiState, UiState } from 'instantsearch.js';
+import type { IndexUiState, UiState } from 'instantsearch.js';
 import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 
 export const ModelSearchIndexSortBy = [

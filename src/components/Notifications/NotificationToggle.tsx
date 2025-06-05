@@ -1,9 +1,7 @@
 import { useMemo } from 'react';
 import { useNotificationSettings } from '~/components/Notifications/notifications.utils';
-import {
-  notificationCategoryTypes,
-  notificationTypes,
-} from '~/server/notifications/utils.notifications';
+import type { notificationTypes } from '~/server/notifications/utils.notifications';
+import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
 import { showSuccessNotification } from '~/utils/notifications';
 
 import { trpc } from '~/utils/trpc';

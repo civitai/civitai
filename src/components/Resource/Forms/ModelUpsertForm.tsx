@@ -1,10 +1,10 @@
+import type { ChipProps } from '@mantine/core';
 import {
   Alert,
   Anchor,
   Button,
   Checkbox,
   Chip,
-  ChipProps,
   Divider,
   Group,
   Input,
@@ -18,8 +18,9 @@ import {
 import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { z } from 'zod';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -40,8 +41,10 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TagSort } from '~/server/common/enums';
-import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
+import type { ModelUpsertInput } from '~/server/schema/model.schema';
+import { modelUpsertSchema } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   Availability,
@@ -52,14 +55,13 @@ import {
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = modelUpsertSchema
   .extend({
@@ -77,9 +79,13 @@ const schema = modelUpsertSchema
   .refine((data) => !(data.nsfw && data.poi === 'true'), {
     message: 'Mature content depicting actual people is not permitted.',
   })
-  .refine((data) => !(data.nsfw && data.minor), {
+  .refine((data) => !(data.nsfw && data.sfwOnly), {
     message:
       'This resource is intended to produce mature themes and cannot be used for NSFW generation',
+  })
+  .refine((data) => !(data.nsfw && data.minor), {
+    message:
+      'Minor resources cannot be used for NSFW generation. Please revise the content of this listing.',
   });
 
 type ModelUpsertSchema = z.infer<typeof schema>;
@@ -97,7 +103,7 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Sell, label: 'Sell this model or merges' },
 ];
 
-const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
+const lockableProperties = ['nsfw', 'poi', 'minor', 'sfwOnly', 'category', 'tags'];
 
 const availabilityDetails = {
   [Availability.Public]: {
@@ -149,10 +155,10 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
   const queryUtils = trpc.useUtils();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
-  const [nsfw, poi, minor] = form.watch(['nsfw', 'poi', 'minor']);
+  const [nsfw, poi, sfwOnly, minor] = form.watch(['nsfw', 'poi', 'sfwOnly', 'minor']);
   const allowCommercialUse = form.watch('allowCommercialUse');
   const hasPoiInNsfw = nsfw && poi === 'true';
-  const hasMinorInNsfw = nsfw && minor;
+  const hasSfwOnlyNsfw = nsfw && sfwOnly;
   const { isDirty, errors } = form.formState;
   const features = useFeatureFlags();
 
@@ -482,33 +488,58 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 </Text>
                 <InputRadioGroup
                   name="poi"
-                  label="Depicts an actual person (Resource cannot be used on Civitai on-site Generator)"
+                  label="Depicts an actual person"
                   description={isLockedDescription(
                     'category',
                     'This model was trained on real imagery of a living, or deceased, person, or depicts a character portrayed by a real-life actor or actress. E.g. Tom Cruise or Tom Cruise as Maverick.'
                   )}
                   onChange={(value) => {
                     form.setValue('nsfw', value === 'true' ? false : undefined);
-                    form.setValue('minor', value === 'true');
+                    form.setValue('sfwOnly', minor ? true : value === 'true');
                   }}
                 >
                   <Radio value="true" label="Yes" disabled={isLocked('poi')} />
                   <Radio value="false" label="No" disabled={isLocked('poi')} />
                 </InputRadioGroup>
+                {/* TODO more clarification here. disable? */}
+                {poi === 'true' && (
+                  <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
+                    <Text>
+                      The upload of models and images intended to depict a real person is
+                      prohibited.
+                    </Text>
+                  </AlertWithIcon>
+                )}
                 <InputCheckbox
                   name="nsfw"
                   label="Is intended to produce mature themes"
-                  disabled={isLocked('nsfw') || poi === 'true'}
+                  disabled={isLocked('nsfw') || poi === 'true' || minor}
                   description={isLockedDescription('category')}
-                  onChange={(event) =>
-                    event.target.checked ? form.setValue('minor', false) : null
-                  }
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      form.setValue('poi', 'false');
+                      form.setValue('sfwOnly', false);
+                    }
+                  }}
+                  className="mt-2"
                 />
                 <InputCheckbox
                   name="minor"
-                  label="Cannot be used for NSFW generation"
+                  label="Intended to depict a minor character"
                   disabled={isLocked('minor') || nsfw}
                   description={isLockedDescription('minor')}
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      form.setValue('nsfw', false);
+                      form.setValue('sfwOnly', true);
+                    }
+                  }}
+                />
+                <InputCheckbox
+                  name="sfwOnly"
+                  label="Cannot be used for NSFW generation"
+                  disabled={isLocked('sfwOnly') || nsfw || minor || poi === 'true'}
+                  description={isLockedDescription('sfwOnly')}
                 />
               </Stack>
             </Paper>
@@ -539,7 +570,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 </Text>
               </>
             )}
-            {hasMinorInNsfw && (
+            {hasSfwOnlyNsfw && (
               <>
                 <Alert color="red" pl={10}>
                   <Group noWrap spacing={10}>
@@ -662,7 +693,6 @@ export const PrivateModelAutomaticSetup = ({
 }: ModelUpsertSchema & { modelVersionId?: number }) => {
   const dialog = useDialogContext();
   const utils = trpc.useContext();
-  const currentUser = useCurrentUser();
   const handleClose = dialog.onClose;
   const router = useRouter();
   const privateModelFromTrainingMutation = trpc.model.privateModelFromTraining.useMutation();

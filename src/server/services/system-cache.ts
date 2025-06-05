@@ -2,11 +2,14 @@ import { tagsNeedingReview } from '~/libs/tags';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { FeatureFlagKey } from '~/server/services/feature-flags.service';
-import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
+import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
+import { TagType } from '~/shared/utils/prisma/enums';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
+import type { BrowsingSettingsAddon, LiveFeatureFlags } from '../common/constants';
+import { DEFAULT_BROWSING_SETTINGS_ADDONS, DEFAULT_LIVE_FEATURE_FLAGS } from '../common/constants';
 
 const log = createLogger('system-cache', 'green');
 
@@ -42,8 +45,6 @@ export async function getModeratedTags(): Promise<SystemModerationTag[]> {
       return { ...toTag, nsfwLevel: parentTag.nsfwLevel, parentId: fromTagId };
     })
     .filter(isDefined);
-
-  console.log(tagsOnTags);
 
   const combined: SystemModerationTag[] = [...tags, ...normalizedTagsOnTags];
 
@@ -231,7 +232,28 @@ export async function getHomeExcludedTags() {
 export async function setLiveNow(isLive: boolean) {
   await redis.set(REDIS_KEYS.LIVE_NOW, isLive ? 'true' : 'false');
 }
+
 export async function getLiveNow() {
   const cachedLiveNow = await redis.get(REDIS_KEYS.LIVE_NOW);
   return cachedLiveNow === 'true';
+}
+
+export async function getBrowsingSettingAddons() {
+  const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
+  if (cached) {
+    const data = JSON.parse(cached) as BrowsingSettingsAddon[];
+    return data;
+  }
+
+  return DEFAULT_BROWSING_SETTINGS_ADDONS;
+}
+
+export async function getLiveFeatureFlags() {
+  const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
+  if (cached) {
+    const data = JSON.parse(cached) as LiveFeatureFlags;
+    return data;
+  }
+
+  return DEFAULT_LIVE_FEATURE_FLAGS;
 }

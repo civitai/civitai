@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { Pool, QueryResult, QueryResultRow } from 'pg';
+import type { QueryResult, QueryResultRow } from 'pg';
+import { Pool } from 'pg';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -53,9 +54,12 @@ export function getClient(
     connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
     min: 0,
     max: env.DATABASE_POOL_MAX,
-    idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
+    // trying this for leaderboard job
+    idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
-      instance === 'primaryRead' || instance === 'notificationRead'
+      instance === 'notificationRead'
+        ? undefined // standby seems to not support this
+        : instance === 'primaryRead'
         ? env.DATABASE_READ_TIMEOUT
         : env.DATABASE_WRITE_TIMEOUT,
     application_name: `${appBaseName}${env.PODNAME ? '-' + env.PODNAME : ''}`,
@@ -142,6 +146,37 @@ export async function preventReplicationLag(type: LaggingType, id?: number) {
   await redis.set(`${REDIS_KEYS.LAG_HELPER}:${type}:${id}`, 'true', {
     EX: env.REPLICATION_LAG_DELAY,
   });
+}
+
+function lsnGTE(lsn1: string, lsn2: string): boolean {
+  const [a1, b1] = lsn1.split('/').map((part) => parseInt(part, 16));
+  const [a2, b2] = lsn2.split('/').map((part) => parseInt(part, 16));
+  return a1 > a2 || (a1 === a2 && b1 >= b2);
+}
+
+export async function getCurrentLSN() {
+  try {
+    const currentRes = await dbWrite.$queryRaw<
+      {
+        lsn: string;
+      }[]
+    >`SELECT pg_current_wal_lsn()::text AS lsn`;
+    return currentRes[0]?.lsn ?? '';
+  } catch (e) {
+    // TODO what to return here
+    return '';
+  }
+}
+
+export async function checkNotUpToDate(lsn: string) {
+  try {
+    const roRes = await dbWrite.$queryRaw<
+      { replay_lsn: string }[]
+    >`SELECT replay_lsn::text FROM get_replication_status() where application_name like 'ro-c16-%'`;
+    return roRes.some((row) => !lsnGTE(row.replay_lsn, lsn));
+  } catch (e) {
+    return true;
+  }
 }
 
 export type RunContext = {
@@ -283,6 +318,14 @@ export function combineSqlWithParams(sql: string, params: readonly unknown[]) {
     query = query.replace(re, parameters[i]);
   }
   return query;
+}
+
+export function getExplainSql(value: typeof Prisma.sql) {
+  const obj = Prisma.sql`
+    EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON)
+    ${value}
+  `;
+  return combineSqlWithParams(obj.text, obj.values);
 }
 
 export const dbKV = {

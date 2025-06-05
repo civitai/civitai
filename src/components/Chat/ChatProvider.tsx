@@ -1,12 +1,7 @@
+import clsx from 'clsx';
 import dynamic from 'next/dynamic';
-import {
-  createContext,
-  type Dispatch,
-  ReactNode,
-  type SetStateAction,
-  useContext,
-  useState,
-} from 'react';
+import type { ReactNode } from 'react';
+import { createContext, type Dispatch, type SetStateAction, useContext, useState } from 'react';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useIsClient } from '~/providers/IsClientProvider';
@@ -66,7 +61,10 @@ export function ChatPortal({ showFooter }: { showFooter: boolean }) {
 
   return (
     <div
-      className="absolute bottom-[var(--footer-height)] left-0 z-10 mb-2 ml-2 h-dvh w-[calc(100%-1rem)] @sm:h-[800px] @sm:w-[70%] @sm:max-w-[700px]"
+      className={clsx(
+        'absolute left-0 z-10 mb-2 ml-2 h-dvh w-[calc(100%-1rem)] @sm:h-[800px] @sm:w-[70%] @sm:max-w-[700px]',
+        showFooter ? 'bottom-[var(--footer-height)]' : 'bottom-0'
+      )}
       style={{
         maxHeight: `calc(100dvh - var(--header-height)${
           showFooter ? ' - var(--footer-height)' : ''

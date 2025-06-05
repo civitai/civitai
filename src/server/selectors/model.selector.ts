@@ -4,13 +4,9 @@ import {
   getModelVersionsForSearchIndex,
 } from '~/server/selectors/modelVersion.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import {
-  Availability,
-  MetricTimeframe,
-  ModelHashType,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
-import { ModelFileType } from '../common/constants';
+import type { ModelHashType } from '~/shared/utils/prisma/enums';
+import { Availability, MetricTimeframe, ModelStatus } from '~/shared/utils/prisma/enums';
+import type { ModelFileType } from '../common/constants';
 import { profileImageSelect } from './image.selector';
 import { modelFileSelect } from './modelFile.selector';
 import { modelHashSelect } from './modelHash.selector';
@@ -46,6 +42,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   description: true,
   poi: true,
   minor: true,
+  sfwOnly: true,
   nsfwLevel: true,
   nsfw: true,
   type: true,
@@ -139,6 +136,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           rating: true,
           thumbsUpCount: true,
           thumbsDownCount: true,
+          earnedAmount: true,
         },
       },
       files: {
@@ -201,6 +199,7 @@ export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   nsfwLevel: true,
   meta: true,
   minor: true,
+  sfwOnly: true,
   status: true,
   createdAt: true,
   lastVersionAt: true,
@@ -214,6 +213,7 @@ export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   allowCommercialUse: true,
   allowDerivatives: true,
   allowDifferentLicense: true,
+  poi: true,
   // Joins:
   user: {
     select: userWithCosmeticsSelect,

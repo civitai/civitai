@@ -9,8 +9,9 @@ import {
 } from '~/components/CommentsV2/CommentsProvider';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { Form, InputRTE, useForm } from '~/libs/form';
-import { UpsertCommentV2Input, upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
-import { SimpleUser } from '~/server/selectors/user.selector';
+import type { UpsertCommentV2Input } from '~/server/schema/commentv2.schema';
+import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
+import type { SimpleUser } from '~/server/selectors/user.selector';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -162,7 +163,6 @@ export const CommentForm = ({
           disabled={isLoading}
           includeControls={['formatting', 'link', 'mentions']}
           defaultSuggestions={suggestedMentions}
-          hideToolbar
           placeholder={
             !data?.length ? 'Be the first to leave a comment...' : 'Type your comment...'
           }
@@ -174,6 +174,8 @@ export const CommentForm = ({
             content: cx(classes.content, 'rounded-3xl'),
           }}
           data-testid="comment-form"
+          inputClasses="break-all"
+          hideToolbar
         />
         {focused && (
           <Group position="right">

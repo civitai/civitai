@@ -10,9 +10,9 @@ import {
   Title,
   Box,
 } from '@mantine/core';
-import { AnnouncementDTO } from '~/server/services/announcement.service';
+import type { AnnouncementDTO } from '~/server/services/announcement.service';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
+import type { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
 import { IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';

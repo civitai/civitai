@@ -1,7 +1,7 @@
+import type { ButtonProps } from '@mantine/core';
 import {
   ActionIcon,
   Button,
-  ButtonProps,
   Chip,
   Divider,
   Drawer,
@@ -10,6 +10,7 @@ import {
   ScrollArea,
   Stack,
   useMantineTheme,
+  Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
@@ -23,10 +24,11 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { activeBaseModels, BaseModel } from '~/server/common/constants'; // Add this import
-import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import type { BaseModel } from '~/server/common/constants';
+import { activeBaseModels } from '~/server/common/constants'; // Add this import
+import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, titleCase } from '~/utils/string-helpers';
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -80,6 +82,7 @@ export function MediaFiltersDropdown({
   const filterLength =
     ('types' in mergedFilters && !hideMediaTypes ? mergedFilters.types?.length ?? 0 : 0) +
     (mergedFilters.withMeta ? 1 : 0) +
+    (mergedFilters.requiringMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.hideManualResources ? 1 : 0) +
@@ -90,12 +93,15 @@ export function MediaFiltersDropdown({
     (!!mergedFilters.techniques?.length ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
     (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0) +
-    (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0);
+    (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0) +
+    (mergedFilters.poiOnly ? 1 : 0) +
+    (mergedFilters.minorOnly ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
       types: undefined,
       withMeta: false,
+      requiringMeta: false,
       hidden: false,
       fromPlatform: false,
       notPublished: false,
@@ -193,7 +199,7 @@ export function MediaFiltersDropdown({
             >
               {availableMediaTypes.map((type, index) => (
                 <FilterChip key={index} value={type}>
-                  <span>{getDisplayName(type)}</span>
+                  <span>{titleCase(getDisplayName(type))}</span>
                 </FilterChip>
               ))}
             </Chip.Group>
@@ -207,6 +213,32 @@ export function MediaFiltersDropdown({
           >
             <span>Metadata only</span>
           </FilterChip>
+          {currentUser && isModerator && (
+            <>
+              <FilterChip
+                checked={mergedFilters.poiOnly}
+                onChange={(checked) => handleChange({ poiOnly: checked })}
+              >
+                <span>POI</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.minorOnly}
+                onChange={(checked) => handleChange({ minorOnly: checked })}
+              >
+                <span>Minor</span>
+              </FilterChip>
+            </>
+          )}
+          {currentUser && (
+            <FilterChip
+              checked={mergedFilters.requiringMeta}
+              onChange={(checked) => handleChange({ requiringMeta: checked })}
+            >
+              <Tooltip label="Only shows your images that are missing metadata">
+                <span>Requiring Metadata</span>
+              </Tooltip>
+            </FilterChip>
+          )}
           {isFeed && currentUser && (
             <>
               <FilterChip

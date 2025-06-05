@@ -3,12 +3,12 @@ import { z } from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
-import { MediaType } from '~/shared/utils/prisma/enums';
-import { SimpleUser } from '~/server/selectors/user.selector';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import type { SimpleUser } from '~/server/selectors/user.selector';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';
-import { NsfwLevel } from '~/server/common/enums';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { NsfwLevel } from '~/server/common/enums';
+import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type ImageGuardConnect = {
@@ -48,6 +48,8 @@ export interface ImageProps {
   metadata?: MixedObject | null;
   publishedAt?: Date | null;
   thumbnailUrl?: string | null;
+  minor?: boolean;
+  poi?: boolean;
 }
 
 type ImageViewerState = {

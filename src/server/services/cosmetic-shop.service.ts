@@ -2,9 +2,9 @@ import { Prisma } from '@prisma/client';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import {
+import type {
   CosmeticShopItemMeta,
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
@@ -16,7 +16,7 @@ import {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { createBuzzTransaction } from '~/server/services/buzz.service';

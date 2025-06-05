@@ -1,12 +1,5 @@
-import {
-  closestCenter,
-  DndContext,
-  DragEndEvent,
-  PointerSensor,
-  UniqueIdentifier,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
+import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
+import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Button, Card, Center, Group, Loader, Modal, Stack, Text, Title } from '@mantine/core';
 import { IconGripVertical } from '@tabler/icons-react';
@@ -14,7 +7,7 @@ import { isEqual } from 'lodash-es';
 import { useState } from 'react';
 
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
-import { ModelGetVersions } from '~/types/router';
+import type { ModelGetVersions } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

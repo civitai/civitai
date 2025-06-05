@@ -1,7 +1,7 @@
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { publicApiContext } from '~/server/createContext';
 
 import { appRouter } from '~/server/routers';
@@ -9,7 +9,7 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const apiCaller = appRouter.createCaller(publicApiContext(req, res));
+  const apiCaller = appRouter.createCaller(await publicApiContext(req, res));
   try {
     const { items, ...metadata } = await apiCaller.tag.getAll({
       ...req.query,

@@ -1,4 +1,4 @@
-import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import produce from 'immer';
 import { trpc } from '~/utils/trpc';
 

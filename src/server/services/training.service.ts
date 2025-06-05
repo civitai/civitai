@@ -1,18 +1,18 @@
 import { dbWrite } from '~/server/db/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import {
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import type {
   AutoCaptionInput,
   AutoTagInput,
   MoveAssetInput,
   TrainingServiceStatus,
-  trainingServiceStatusSchema,
 } from '~/server/schema/training.schema';
+import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
 import { throwBadRequestError, throwRateLimitError } from '~/server/utils/errorHandling';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { deleteObject, getGetUrl, getPutUrl, parseKey } from '~/utils/s3-utils';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
-import { Orchestrator } from '../http/orchestrator/orchestrator.types';
+import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
 export type TrainingRequest = {
   trainingDetails: TrainingDetailsObj;
@@ -182,10 +182,12 @@ export const autoTagHandler = async ({
   const { key, bucket } = parseKey(url);
   if (!bucket) throw throwBadRequestError('Invalid URL');
 
+  // todo check if this property comes through
+
   const payload: Orchestrator.Training.ImageAutoTagJobPayload = {
     mediaUrl: getUrl,
     modelId,
-    properties: { userId, modelId },
+    properties: { userId, modelId, mediaType: 'video' },
     retries: 0,
   };
 
@@ -224,7 +226,7 @@ export const autoCaptionHandler = async ({
   const payload: Orchestrator.Training.ImageAutoCaptionJobPayload = {
     mediaUrl: getUrl,
     modelId,
-    properties: { userId, modelId },
+    properties: { userId, modelId, mediaType: 'video' },
     retries: 0,
     model: 'joy-caption-pre-alpha',
     temperature,

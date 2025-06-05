@@ -5,11 +5,10 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
-import { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
+import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { removeEmpty } from '../../../utils/object-helpers';
-import { EdgeVideoSettingsProvider } from '~/components/EdgeMedia/EdgeVideoSettingsProvider';
 
 export default function ImageDetailModal({
   imageId,
@@ -51,9 +50,7 @@ export default function ImageDetailModal({
         hideReactionCount={hideReactionCount}
         collectionId={collectionId}
       >
-        <EdgeVideoSettingsProvider skipManualPlay>
-          <ImageDetail2 />
-        </EdgeVideoSettingsProvider>
+        <ImageDetail2 />
       </ImageDetailProvider>
     </PageModal>
   );

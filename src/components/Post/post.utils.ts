@@ -6,12 +6,15 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PostSort } from '~/server/common/enums';
-import { PostsQueryInput, UpdatePostCollectionTagIdInput } from '~/server/schema/post.schema';
+import type { PostsQueryInput, UpdatePostCollectionTagIdInput } from '~/server/schema/post.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { isDefined } from '~/utils/type-guards';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const usePostQueryParams = () => useZodRouteParams(postQueryParamSchema);
 
@@ -42,9 +45,24 @@ export const useQueryPosts = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
+  const currentUser = useCurrentUser();
   const browsingLevel = useBrowsingLevelDebounced();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const excludedTagIds = [
+    ...(filters.excludedTagIds ?? []),
+    ...(filters.username && filters.username.toLowerCase() === currentUser?.username?.toLowerCase()
+      ? []
+      : browsingSettingsAddons.settings.excludedTagIds ?? []),
+  ].filter(isDefined);
   const { data, isLoading, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
-    { ...filters, include: ['cosmetics'], browsingLevel },
+    {
+      ...filters,
+      include: ['cosmetics'],
+      browsingLevel,
+      excludedTagIds,
+      disablePoi: browsingSettingsAddons.settings.disablePoi,
+      disableMinor: browsingSettingsAddons.settings.disableMinor,
+    },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),

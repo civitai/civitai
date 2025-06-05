@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Badge,
   Box,
   createStyles,
@@ -30,12 +31,14 @@ import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrap
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
+import { BlockedReason } from '~/server/common/enums';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes, cx } = useStyles();
@@ -43,13 +46,15 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const { images, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
+  const currentUser = useCurrentUser();
 
   const image = useImageStore(data);
   const { ref, inView } = useInView({ key: image.cosmetic ? 1 : 0 });
 
-  const isBlocked = image.ingestion === ImageIngestionStatus.Blocked;
+  const isBlocked = image.ingestion === ImageIngestionStatus.Blocked || !!image.blockedFor;
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
   const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
+  const isModerator = currentUser?.isModerator;
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
@@ -62,6 +67,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const isRemix = !!image.remixOfId;
   const notPublished = !image.publishedAt;
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
+  const isBlockedForAiVerification = image.blockedFor === BlockedReason.AiNotVerified;
 
   const handleRemixClick = useCallback(
     (e: React.MouseEvent) => {
@@ -151,6 +157,16 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         'duration' in image.metadata && (
                           <DurationBadge duration={image.metadata.duration ?? 0} />
                         )}
+                      {isModerator && image.minor && (
+                        <Badge variant="filled" radius="xl" h={26} color="pink.3">
+                          Minor
+                        </Badge>
+                      )}
+                      {isModerator && image.poi && (
+                        <Badge variant="filled" radius="xl" h={26} color="pink.3">
+                          POI
+                        </Badge>
+                      )}
                     </div>
                   </div>
                   {safe && (
@@ -221,6 +237,32 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         )}
                       </div>
                     )
+                  ) : isBlockedForAiVerification ? (
+                    <Alert
+                      color="yellow"
+                      // variant="filled"
+                      radius={0}
+                      className="absolute bottom-0 left-0 w-full p-2"
+                      title={
+                        <Group spacing={4}>
+                          <IconInfoCircle />
+                          <Text inline>Unable to verify AI generation</Text>
+                        </Group>
+                      }
+                    >
+                      <div className="flex flex-col items-end">
+                        <Text size="sm" inline>
+                          This image has been blocked because it is has received a NSFW rating and
+                          we could not verify that it was generated using AI. To restore the image,
+                          please{' '}
+                          <Anchor color="yellow.8" href={`/posts/${image.postId}/edit`}>
+                            update your post
+                          </Anchor>{' '}
+                          with metadata detailing the generation process &ndash; minimally the
+                          prompt used.
+                        </Text>
+                      </div>
+                    </Alert>
                   ) : (
                     <Alert
                       color="red"
@@ -254,6 +296,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     readonly={!safe || (isScanned && isBlocked)}
                     className={cx('justify-between p-2')}
                     invisibleEmpty
+                    disableBuzzTip={image.poi}
                   />
                 </div>
               </>

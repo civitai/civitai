@@ -1,4 +1,5 @@
-import { Alert, Badge, BadgeProps, Button, Text } from '@mantine/core';
+import type { BadgeProps } from '@mantine/core';
+import { Alert, Badge, Button, Text } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Router from 'next/router';
@@ -271,7 +272,7 @@ function BlurToggle({
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
 
-  if (safe) {
+  if (safe || alwaysVisible) {
     const isOwnerOrModerator = currentUser?.isModerator || (userId && currentUser?.id === userId);
     return isOwnerOrModerator || alwaysVisible ? (
       <Badge

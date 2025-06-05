@@ -4,12 +4,12 @@ import { v4 as uuid } from 'uuid';
 import { isDev } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, specialCosmeticRewards } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userMultipliersCache } from '~/server/redis/caches';
 import { REDIS_KEYS } from '~/server/redis/client';
-import {
+import type {
   BuzzAccountType,
   ClaimWatchedAdRewardInput,
   CompleteStripeBuzzPurchaseTransactionInput,
@@ -23,12 +23,11 @@ import {
   GetTransactionsReportSchema,
   GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
-  getUserBuzzTransactionsResponse,
   GetUserBuzzTransactionsResponse,
   GetUserBuzzTransactionsSchema,
-  TransactionType,
 } from '~/server/schema/buzz.schema';
-import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { getUserBuzzTransactionsResponse, TransactionType } from '~/server/schema/buzz.schema';
+import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
@@ -40,6 +39,9 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { formatDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { grantCosmetics } from '~/server/services/cosmetic.service';
+import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 // import { adWatchedReward } from '~/server/rewards';
 
 type AccountType = 'User';
@@ -173,7 +175,7 @@ export async function createBuzzTransaction({
   if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
 
   if (entityType && entityId && toAccountId === undefined) {
-    const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
+    const [{ userId } = { userId: undefined }] = await dbWrite.$queryRawUnsafe<
       [{ userId?: number }]
     >(`
         SELECT i."userId"
@@ -267,7 +269,7 @@ export async function upsertBuzzTip({
   fromAccountId: number;
 }) {
   // Store this action in the DB:
-  const existingRecord = await dbRead.buzzTip.findUnique({
+  const existingRecord = await dbWrite.buzzTip.findUnique({
     where: {
       entityType_entityId_fromUserId: {
         entityId,
@@ -307,7 +309,7 @@ export async function upsertBuzzTip({
   }
 
   if (toAccountId !== 0) {
-    const fromUser = await dbRead.user.findUnique({
+    const fromUser = await dbWrite.user.findUnique({
       where: { id: fromAccountId },
       select: { username: true },
     });
@@ -337,13 +339,17 @@ export async function createBuzzTransactionMany(
   transactions: (CreateBuzzTransactionInput & {
     fromAccountId: number;
     externalTransactionId: string;
+    fromAccountType?: BuzzAccountType;
   })[]
 ) {
   if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
   const validTransactions = transactions.filter(
-    (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId && t.amount > 0
+    (t) =>
+      t.toAccountId !== undefined &&
+      (t.fromAccountId !== t.toAccountId || t.fromAccountType === 'cashpending') &&
+      t.amount > 0
   );
   const body = JSON.stringify(validTransactions);
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions`, {
@@ -658,7 +664,7 @@ export type BuzzClaimResult =
   | { status: 'claimed'; details: BuzzClaimDetails; claimedAt: Date };
 
 export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
-  const claimable = await dbRead.buzzClaim.findUnique({
+  const claimable = await dbWrite.buzzClaim.findUnique({
     where: { key: id },
   });
 
@@ -689,7 +695,7 @@ export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
   const query = claimable.transactionIdQuery.replace('${userId}', userId.toString());
   let transactionId: string | undefined;
   try {
-    const transactionIdRows = await dbRead.$queryRawUnsafe<{ transactionId: string }[]>(query);
+    const transactionIdRows = await dbWrite.$queryRawUnsafe<{ transactionId: string }[]>(query);
     if (transactionIdRows.length === 0) return unavailable('You are not eligible for this reward');
     transactionId = transactionIdRows[0].transactionId;
     if (transactionId === undefined) throw new Error('No transaction id');
@@ -1108,3 +1114,72 @@ export async function getCounterPartyBuzzTransactions({
     1500
   );
 }
+
+export const grantBuzzPurchase = async ({
+  amount,
+  userId,
+  externalTransactionId,
+  description,
+  ...data
+}: {
+  amount: number;
+  userId: number;
+  externalTransactionId: string;
+  description?: string;
+} & MixedObject) => {
+  const { purchasesMultiplier } = await getMultipliersForUser(userId);
+  const { blueBuzzAdded, totalYellowBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
+    buzzAmount: amount,
+    purchasesMultiplier,
+  });
+
+  // Give user the buzz assuming it hasn't been given
+  const { transactionId } = await createBuzzTransaction({
+    fromAccountId: 0,
+    toAccountId: userId,
+    amount: totalYellowBuzz,
+    type: TransactionType.Purchase,
+    externalTransactionId,
+    description:
+      description ??
+      `Purchase of ${amount} Buzz. ${
+        purchasesMultiplier && purchasesMultiplier > 1
+          ? 'Multiplier applied due to membership. '
+          : ''
+      }A total of ${numberWithCommas(totalYellowBuzz)} Buzz was added to your account.`,
+    details: {
+      ...data,
+    },
+  });
+
+  if (!transactionId) {
+    throw new Error('Failed to create Buzz transaction');
+  }
+
+  if (blueBuzzAdded > 0) {
+    await createBuzzTransaction({
+      amount: blueBuzzAdded,
+      fromAccountId: 0,
+      toAccountId: userId,
+      toAccountType: 'generation',
+      externalTransactionId: `${transactionId}-bulk-reward`,
+      type: TransactionType.Purchase,
+      description: `A total of ${numberWithCommas(
+        blueBuzzAdded
+      )} Blue Buzz was added to your account for Bulk purchase.`,
+      details: {
+        ...data,
+      },
+    });
+  }
+
+  if (bulkBuzzMultiplier > 1) {
+    const cosmeticIds = specialCosmeticRewards.bulkBuzzRewards;
+    await grantCosmetics({
+      userId,
+      cosmeticIds,
+    });
+  }
+
+  return transactionId;
+};

@@ -1,13 +1,17 @@
-import { Partner } from '~/shared/utils/prisma/models';
+import type { Logger } from '@civitai/next-axiom';
+import { withAxiom } from '@civitai/next-axiom';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import { NextApiRequest, NextApiResponse } from 'next';
-import { Session, SessionUser } from 'next-auth';
-import { withAxiom, Logger } from '@civitai/next-axiom';
+import dayjs from 'dayjs';
+import { isArray } from 'lodash-es';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Session, SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
+import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
+import type { Partner } from '~/shared/utils/prisma/models';
 import { isDefined } from '~/utils/type-guards';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -131,6 +135,15 @@ export function MixedAuthEndpoint(
     const session = await getServerAuthSession({ req, res });
     if (!session) addPublicCacheHeaders(req, res);
     if (shouldStop) return;
+
+    if (!!req.query?.etag && req.query.etag !== '') {
+      const isNotUpToDate = await checkNotUpToDate(
+        isArray(req.query.etag) ? req.query.etag[0] : req.query.etag
+      );
+      if (isNotUpToDate) {
+        res.setHeader('Expires', dayjs().add(1, 'minute').toISOString());
+      }
+    }
 
     await handler(req, res, session?.user);
   });

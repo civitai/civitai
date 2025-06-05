@@ -1,5 +1,7 @@
-import { Alert, AlertProps, createStyles, Group, MantineColor, Stack, Text } from '@mantine/core';
-import { StorageType, useStorage } from '~/hooks/useStorage';
+import type { AlertProps, MantineColor } from '@mantine/core';
+import { Alert, createStyles, Group, Stack, Text } from '@mantine/core';
+import type { StorageType } from '~/hooks/useStorage';
+import { useStorage } from '~/hooks/useStorage';
 import { useIsClient } from '~/providers/IsClientProvider';
 
 export const DismissibleAlert = (props: DismissibleAlertProps) => {

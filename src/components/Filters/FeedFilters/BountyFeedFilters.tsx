@@ -1,4 +1,5 @@
-import { Group, GroupProps } from '@mantine/core';
+import type { GroupProps } from '@mantine/core';
+import { Group } from '@mantine/core';
 import { BountyFiltersDropdown } from '~/components/Bounty/Infinite/BountyFiltersDropdown';
 import { SortFilter } from '../SortFilter';
 import { useFeedFiltersStyles } from './FeedFilters.styles';

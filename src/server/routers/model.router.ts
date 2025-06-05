@@ -39,13 +39,13 @@ import {
 import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
+import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import {
   changeModelModifierSchema,
   copyGallerySettingsSchema,
   declineReviewSchema,
   deleteModelSchema,
   findResourcesToAssociateSchema,
-  GetAllModelsOutput,
   getAllModelsSchema,
   getAssociatedResourcesSchema,
   getDownloadSchema,
@@ -82,6 +82,7 @@ import {
   setAssociatedResources,
   setModelsCategory,
   toggleCannotPromote,
+  toggleLockComments,
 } from '~/server/services/model.service';
 import {
   guardedProcedure,
@@ -186,6 +187,10 @@ export const modelRouter = router({
     .input(toggleModelLockSchema)
     .use(isOwnerOrModerator)
     .mutation(toggleModelLockHandler),
+  toggleLockComments: protectedProcedure
+    .input(toggleModelLockSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input }) => toggleLockComments(input)),
   getSimple: publicProcedure
     .input(getByIdSchema)
     .query(({ input, ctx }) => getSimpleModelWithVersions({ id: input.id, ctx })),

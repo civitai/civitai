@@ -1,30 +1,42 @@
-import React, { useCallback, useMemo } from 'react';
+import type React from 'react';
+import { useCallback, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
+import type { WorkflowStepFormatted } from '~/server/services/orchestrator/common';
 import { showErrorNotification } from '~/utils/notifications';
+import { removeEmpty } from '~/utils/object-helpers';
+import { parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
+import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type {
+  ResourceSelectOptions,
+  ResourceSelectSource,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 
 // export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
 //   persist(() => ({}), { name: 'generation-form-2', version: 0 })
 // );
 
 const defaultServiceStatus = generationStatusSchema.parse({});
-export const useGenerationStatus = () => {
-  const currentUser = useCurrentUser();
-  const { data, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
+export function useGetGenerationStatus() {
+  return trpc.generation.getStatus.useQuery(undefined, {
     cacheTime: 60,
+    placeholderData: defaultServiceStatus,
     trpc: { context: { skipBatch: true } },
   });
+}
+export const useGenerationStatus = () => {
+  const currentUser = useCurrentUser();
+  const { data = defaultServiceStatus, isLoading } = useGetGenerationStatus();
 
   return useMemo(() => {
-    const status = data ?? defaultServiceStatus;
-    if (currentUser?.isModerator) status.available = true; // Always have generation available for mods
+    if (currentUser?.isModerator) data.available = true; // Always have generation available for mods
     const tier = currentUser?.tier ?? 'free';
-    const limits = status.limits[tier];
-
-    return { ...status, tier, limits, isLoading };
+    const limits = data.limits[tier];
+    return { ...data, tier, limits, isLoading };
   }, [data, currentUser, isLoading]);
 };
 
@@ -246,11 +258,88 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
 
 export const isMadeOnSite = (meta: ImageMetaProps | null) => {
   if (!meta) return false;
-  return (
-    'civitaiResources' in meta ||
-    (!!meta.workflow &&
-      generationFormWorkflowConfigurations
-        .map((x) => x.key)
-        .some((v) => v === (meta.workflow as string)))
-  );
+  if ('civitaiResources' in meta) return true;
+  if (meta.engine && Object.keys(videoGenerationConfig2).includes(meta.engine as string))
+    return true;
+  return false;
 };
+
+export function getStepMeta(step?: WorkflowStepFormatted) {
+  if (!step) return;
+  const civitaiResources = step.resources?.map((args): CivitaiResource => {
+    if ('air' in args && typeof args.air === 'string') {
+      const { version, type } = parseAIR(args.air);
+      return { modelVersionId: version, type, weight: args.strength };
+    } else {
+      return { modelVersionId: args.id, type: args.model.type, weight: args.strength };
+    }
+  });
+  return removeEmpty({ ...step?.params, civitaiResources });
+}
+
+export function ResourceSelectHandler(options?: ResourceSelectOptions) {
+  const types = [...(options?.resources ?? [])?.map((x) => x.type)];
+  const baseModels = [
+    ...new Set(
+      (options?.resources ?? [])?.flatMap((x) => [
+        ...(x.baseModels ?? []),
+        ...(x.partialSupport ?? []),
+      ])
+    ),
+  ];
+
+  async function select({
+    title,
+    selectSource = 'generation',
+    excludedIds = [],
+  }: {
+    title?: React.ReactNode;
+    selectSource?: ResourceSelectSource;
+    excludedIds?: number[];
+  }) {
+    return new Promise<GenerationResource | void>((res, rej) => {
+      openResourceSelectModal({
+        title,
+        options: { ...options, excludeIds: [...(options?.excludeIds ?? []), ...excludedIds] },
+        selectSource,
+        onClose: () => res(),
+        onSelect: (resource) => {
+          if (
+            selectSource === 'generation' &&
+            !resource.canGenerate &&
+            resource.substitute?.canGenerate
+          ) {
+            res({ ...resource, ...resource.substitute });
+          } else {
+            res(resource);
+          }
+        },
+      });
+    });
+  }
+
+  function hasMatch(data: GenerationResource) {
+    let match = true;
+    if (types.length && !types.includes(data.model.type)) match = false;
+    else if (baseModels.length && !baseModels.includes(data.baseModel)) match = false;
+    return match;
+  }
+
+  function getValues(data: GenerationResource[] | null) {
+    if (!data) return null;
+    return types ? data.filter(hasMatch) : data;
+  }
+
+  function getValue(data: GenerationResource | null) {
+    if (!data) return null;
+    return hasMatch(data) ? data : null;
+  }
+
+  return {
+    types,
+    baseModels,
+    select,
+    getValues,
+    getValue,
+  };
+}

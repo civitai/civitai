@@ -1,5 +1,5 @@
 import type { SessionUser } from 'next-auth';
-import { NextRequest, NextResponse } from 'next/server';
+import type { NextRequest, NextResponse } from 'next/server';
 
 export type Middleware = {
   matcher: string[];

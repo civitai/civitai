@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { chunk } from 'lodash-es';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createNotification } from '~/server/services/notification.service';

@@ -1,7 +1,12 @@
+import { faker } from '@faker-js/faker';
+import { capitalize } from 'lodash-es';
 import process from 'node:process';
 import format from 'pg-format';
+import { getCleanedNSFWWords } from '~/components/Auction/auction.utils';
 import { env } from '~/env/server';
 import { pgDbWrite } from '~/server/db/pgDb';
+
+const cleanWords = getCleanedNSFWWords();
 
 export const checkLocalDb = () => {
   console.log(env.DATABASE_URL);
@@ -69,4 +74,20 @@ export const insertRows = async (table: string, data: any[][], hasId = true) => 
     if (e.where) console.log(`\t-> where: ${e.where}`);
     return [];
   }
+};
+
+export const generateRandomName = (count: number) => {
+  const randomNames = [];
+
+  for (let i = 0; i < count; i++) {
+    const adjective = capitalize(faker.word.adjective());
+    const noun = faker.helpers.weightedArrayElement([
+      { value: capitalize(faker.word.noun()), weight: 5 },
+      { value: capitalize(faker.helpers.arrayElement(cleanWords)), weight: 1 },
+    ]);
+
+    randomNames.push(`${adjective} ${noun}`);
+  }
+
+  return randomNames.join(' ');
 };

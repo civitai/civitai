@@ -1,4 +1,5 @@
-import { Group, MantineColor, Text, Tooltip } from '@mantine/core';
+import type { MantineColor } from '@mantine/core';
+import { Group, Text, Tooltip } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { numberWithCommas } from '~/utils/number-helpers';
 

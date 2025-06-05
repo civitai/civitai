@@ -49,7 +49,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
-import { InferGetServerSidePropsType } from 'next';
+import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -65,8 +65,11 @@ import {
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
 import {
+  openAddToCollectionModal,
   openMigrateModelToCollectionModal,
+  openBlockModelTagsModal,
   openReportModal,
+  openUnpublishModal,
 } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
@@ -84,6 +87,7 @@ import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchabl
 import { Meta } from '~/components/Meta/Meta';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
+import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
@@ -103,12 +107,12 @@ import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
-import { openContext } from '~/providers/CustomModalsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
-import { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
@@ -119,8 +123,9 @@ import {
   CollectionType,
   ModelModifier,
   ModelStatus,
+  ModelType,
 } from '~/shared/utils/prisma/enums';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -283,6 +288,7 @@ export default function ModelDetailsV2({
       },
     }
   );
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
@@ -310,6 +316,13 @@ export default function ModelDetailsV2({
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
+  const buzzEarned =
+    tippedAmount +
+    (model?.rank?.tippedAmountCountAllTime ?? 0) +
+    (model?.modelVersions?.reduce(
+      (acc, version) => acc + (version.rank?.earnedAmountAllTime ?? 0),
+      0
+    ) ?? 0);
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
     useModelVersionPermission({ modelVersionId: selectedVersion?.id });
@@ -398,9 +411,11 @@ export default function ModelDetailsV2({
   });
 
   const handleCollect = () => {
-    openContext('addToCollection', {
-      modelId: id,
-      type: CollectionType.Model,
+    openAddToCollectionModal({
+      props: {
+        modelId: id,
+        type: CollectionType.Model,
+      },
     });
   };
 
@@ -542,6 +557,18 @@ export default function ModelDetailsV2({
     return <NotFound />;
   }
 
+  if (
+    model.poi &&
+    browsingSettingsAddons.settings.disablePoi &&
+    model.user.id !== currentUser?.id
+  ) {
+    return <NotFound />;
+  }
+
+  if (model.minor && browsingSettingsAddons.settings.disableMinor) {
+    return <NotFound />;
+  }
+
   const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;
   const metaSchema = {
@@ -566,6 +593,7 @@ export default function ModelDetailsV2({
   const isMuted = currentUser?.muted ?? false;
   const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
   const canDiscuss =
+    features.canWrite &&
     !isMuted &&
     (!onlyEarlyAccess ||
       hasDownloadPermissions ||
@@ -687,29 +715,32 @@ export default function ModelDetailsV2({
                         </IconBadge>
                       </LoginRedirect>
                     )}
-                    <InteractiveTipBuzzButton
-                      toUserId={model.user.id}
-                      entityId={model.id}
-                      entityType="Model"
-                    >
-                      <IconBadge
-                        radius="sm"
-                        size="lg"
-                        icon={
-                          <IconBolt
-                            size={18}
-                            color="yellow.7"
-                            style={{ fill: theme.colors.yellow[7] }}
-                          />
-                        }
+                    {!model.poi && (
+                      <InteractiveTipBuzzButton
+                        toUserId={model.user.id}
+                        entityId={model.id}
+                        entityType="Model"
                       >
-                        <Text className={classes.modelBadgeText}>
-                          {abbreviateNumber(
-                            (model.rank?.tippedAmountCountAllTime ?? 0) + tippedAmount
-                          )}
-                        </Text>
-                      </IconBadge>
-                    </InteractiveTipBuzzButton>
+                        <IconBadge
+                          radius="sm"
+                          size="lg"
+                          icon={
+                            <IconBolt
+                              size={18}
+                              color="yellow.7"
+                              style={{ fill: theme.colors.yellow[7] }}
+                            />
+                          }
+                        >
+                          <Text
+                            className={classes.modelBadgeText}
+                            title={buzzEarned.toLocaleString()}
+                          >
+                            {abbreviateNumber(buzzEarned)}
+                          </Text>
+                        </IconBadge>
+                      </InteractiveTipBuzzButton>
+                    )}
                     {inEarlyAccess && (
                       <Tooltip
                         label={
@@ -816,7 +847,7 @@ export default function ModelDetailsV2({
                               <Menu.Item
                                 color="yellow"
                                 icon={<IconBan size={14} stroke={1.5} />}
-                                onClick={() => openContext('unpublishModel', { modelId: model.id })}
+                                onClick={() => openUnpublishModal({ props: { modelId: model.id } })}
                               >
                                 Unpublish as Violation
                               </Menu.Item>
@@ -858,9 +889,11 @@ export default function ModelDetailsV2({
                         {features.collections && (
                           <AddToCollectionMenuItem
                             onClick={() =>
-                              openContext('addToCollection', {
-                                modelId: model.id,
-                                type: CollectionType.Model,
+                              openAddToCollectionModal({
+                                props: {
+                                  modelId: model.id,
+                                  type: CollectionType.Model,
+                                },
                               })
                             }
                           />
@@ -908,7 +941,9 @@ export default function ModelDetailsV2({
                             <HideModelButton as="menu-item" modelId={model.id} />
                             <Menu.Item
                               icon={<IconTagOff size={14} stroke={1.5} />}
-                              onClick={() => openContext('blockModelTags', { modelId: model.id })}
+                              onClick={() =>
+                                openBlockModelTagsModal({ props: { modelId: model.id } })
+                              }
                             >
                               Hide content with these tags
                             </Menu.Item>
@@ -930,6 +965,26 @@ export default function ModelDetailsV2({
                                     </Menu.Item>
                                   )}
                                 </ToggleLockModel>
+                                <ToggleLockModelComments
+                                  modelId={model.id}
+                                  locked={model.meta?.commentsLocked}
+                                >
+                                  {({ onClick }) => (
+                                    <Menu.Item
+                                      icon={
+                                        model.meta?.commentsLocked ? (
+                                          <IconLockOff size={14} stroke={1.5} />
+                                        ) : (
+                                          <IconLock size={14} stroke={1.5} />
+                                        )
+                                      }
+                                      onClick={onClick}
+                                    >
+                                      {model.meta?.commentsLocked ? 'Unlock' : 'Lock'} model
+                                      comments
+                                    </Menu.Item>
+                                  )}
+                                </ToggleLockModelComments>
                                 <ToggleSearchableMenuItem
                                   entityType="Model"
                                   entityId={model.id}
@@ -1121,7 +1176,7 @@ export default function ModelDetailsV2({
                   }
                 }}
                 showExtraIcons={isOwner || isModerator}
-                // showToggleCoverage={model.type === ModelType.Checkpoint}
+                showToggleCoverage={model.type === ModelType.Checkpoint}
               />
             </Group>
             {!!selectedVersion && (
@@ -1160,7 +1215,7 @@ export default function ModelDetailsV2({
           />
         )}
         {canLoadBelowTheFold &&
-          (!model.locked ? (
+          (!model.locked && !model.meta?.commentsLocked ? (
             <Container size="xl" my="xl">
               <Stack spacing="md">
                 <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>

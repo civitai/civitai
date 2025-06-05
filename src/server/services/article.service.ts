@@ -1,30 +1,27 @@
 import { Prisma } from '@prisma/client';
+import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import {
   ArticleEngagementType,
   ArticleStatus,
   Availability,
-  CosmeticSource,
-  CosmeticType,
   MetricTimeframe,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
-import { ManipulateType } from 'dayjs';
+import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import { ArticleSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
+import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import {
-  articleWhereSchema,
-  GetInfiniteArticlesSchema,
-  UpsertArticleInput,
-} from '~/server/schema/article.schema';
-import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import type { GetInfiniteArticlesSchema, UpsertArticleInput } from '~/server/schema/article.schema';
+import { articleWhereSchema } from '~/server/schema/article.schema';
+import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -49,7 +46,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { ImageMetadata } from '~/server/schema/media.schema';
+import type { ImageMetadata } from '~/server/schema/media.schema';
 
 type ArticleRaw = {
   id: number;
@@ -731,7 +728,8 @@ export const upsertArticle = async ({
     if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
 
     const republishing =
-      article.status === ArticleStatus.Unpublished && data.status === ArticleStatus.Published;
+      (article.status === ArticleStatus.Unpublished && data.status === ArticleStatus.Published) ||
+      !!article.publishedAt;
 
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({

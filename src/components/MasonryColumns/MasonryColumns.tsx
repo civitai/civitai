@@ -3,7 +3,7 @@ import trieMemoize from 'trie-memoize';
 import React from 'react';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
-import {
+import type {
   MasonryRenderItemProps,
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,

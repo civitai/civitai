@@ -1,21 +1,25 @@
 import {
   Alert,
   Anchor,
+  Badge,
+  Box,
   Button,
   Card,
   Center,
   Container,
+  createStyles,
   Group,
   Loader,
+  SegmentedControl,
   Stack,
   Text,
   ThemeIcon,
   Title,
-  createStyles,
 } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconInfoTriangleFilled } from '@tabler/icons-react';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
+import { useEffect, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -29,17 +33,20 @@ import {
 } from '~/components/Stripe/memberships.util';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
-import { PlanCard, getPlanDetails } from '~/components/Subscriptions/PlanCard';
+import { PlanCard } from '~/components/Subscriptions/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { env } from '~/env/client';
 import { isDev } from '~/env/other';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
-import { JoinRedirectReason, joinRedirectReasons } from '~/utils/join-helpers';
+import type { JoinRedirectReason } from '~/utils/join-helpers';
+import { joinRedirectReasons } from '~/utils/join-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
+import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 
 export default function Pricing() {
   const router = useRouter();
@@ -49,26 +56,29 @@ export default function Pricing() {
     reason: JoinRedirectReason;
   };
   const features = useFeatureFlags();
+  const liveFeatures = useLiveFeatureFlags();
   const redirectReason = joinRedirectReasons[reason];
   const paymentProvider = usePaymentProvider();
 
-  const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({});
+  const [interval, setInterval] = useState<'month' | 'year'>('month');
   const { subscription, subscriptionLoading, subscriptionPaymentProvider, isFreeTier } =
     useActiveSubscription({
       checkWhenInBadState: true,
     });
+  const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
+    interval,
+  });
 
-  const refreshingSubscription = usePaddleSubscriptionRefresh();
-
-  const isLoading = productsLoading || subscriptionLoading || refreshingSubscription;
+  const isLoading = productsLoading;
 
   const currentMembershipUnavailable =
-    !!subscription &&
-    !productsLoading &&
-    !isFreeTier &&
-    !(products ?? []).find((p) => p.id === subscription.product.id) &&
-    // Ensures we have products from the current provider.
-    (products ?? []).some((p) => p.provider === subscription.product.provider);
+    (subscription && !subscription?.product?.active) ||
+    (!!subscription &&
+      !productsLoading &&
+      !isFreeTier &&
+      !(products ?? []).find((p) => p.id === subscription.product.id) &&
+      // Ensures we have products from the current provider.
+      !(products ?? []).some((p) => p.provider === subscription.product.provider));
 
   const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
   const metadata = (subscription?.product?.metadata ?? {
@@ -79,6 +89,10 @@ export default function Pricing() {
     subscription && subscriptionPaymentProvider !== paymentProvider;
 
   const isHolidays = isHolidaysTime();
+
+  useEffect(() => {
+    setInterval(subscription?.price?.interval ?? 'month');
+  }, [subscription?.price?.interval]);
 
   return (
     <>
@@ -124,6 +138,7 @@ export default function Pricing() {
               </div>
             </Alert>
           )}
+
           <Title align="center" className={classes.title}>
             Memberships
           </Title>
@@ -131,14 +146,70 @@ export default function Pricing() {
             As the leading generative AI community, we&rsquo;re adding new features every week. Help
             us keep the community thriving by becoming a Supporter and get exclusive perks.
           </Text>
-          <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
-            Your Membership provides full access across all Civitai domains, ensuring the same great
-            benefits and features wherever you explore
-          </Text>
         </Stack>
       </Container>
       <Container size="xl">
         <Stack>
+          {features.disablePayments && (
+            <Center>
+              <AlertWithIcon
+                color="red"
+                iconColor="red"
+                icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
+                iconSize={28}
+                py={11}
+                maw="calc(50% - 8px)"
+              >
+                <Stack spacing={0}>
+                  <Text lh={1.2}>
+                    Purchasing or updating memberships is currently disabled. We are working hard to
+                    resolve this and will notify you when it is back up. You can still manage your
+                    active membership, and your benefits will be active until your
+                    membership&rsquo;s expiration date.{' '}
+                    <Anchor href="https://civitai.com/articles/14945" color="red.3">
+                      Learn more
+                    </Anchor>
+                  </Text>
+                </Stack>
+              </AlertWithIcon>
+            </Center>
+          )}
+          {(features.nowpaymentPayments ||
+            features.coinbasePayments ||
+            liveFeatures.buzzGiftCards) &&
+            features.disablePayments && (
+              <Center>
+                <AlertWithIcon
+                  color="yellow"
+                  iconColor="yellow"
+                  icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+                  iconSize={28}
+                  py={11}
+                  maw="calc(50% - 8px)"
+                >
+                  <Stack spacing={0}>
+                    <Text lh={1.2}>You can still purchase Buzz: </Text>
+                    <Group>
+                      {(features.nowpaymentPayments || features.coinbasePayments) && (
+                        <Anchor href="/purchase/buzz" color="yellow.7">
+                          Buy with Crypto
+                        </Anchor>
+                      )}
+                      {liveFeatures.buzzGiftCards && (
+                        <Anchor
+                          href="https://buybuzz.io/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          color="yellow.7"
+                        >
+                          Buy a Gift Card
+                        </Anchor>
+                      )}
+                    </Group>
+                  </Stack>
+                </AlertWithIcon>
+              </Center>
+            )}
           {subscription?.isBadState && (
             <AlertWithIcon
               color="red"
@@ -152,7 +223,7 @@ export default function Pricing() {
                   Uh oh! It looks like there was an issue with your membership. You can update your
                   payment method or renew your membership now by clicking{' '}
                   <SubscribeButton priceId={subscription.price.id}>
-                    <Anchor component="button" type="button">
+                    <Anchor component="button" type="button" disabled={features.disablePayments}>
                       here
                     </Anchor>
                   </SubscribeButton>
@@ -190,7 +261,7 @@ export default function Pricing() {
             </AlertWithIcon>
           )}
           <Group>
-            {currentMembershipUnavailable && (
+            {/* {currentMembershipUnavailable && (
               <AlertWithIcon
                 color="yellow"
                 iconColor="yellow"
@@ -208,7 +279,7 @@ export default function Pricing() {
                   or level up your support here.
                 </Text>
               </AlertWithIcon>
-            )}
+            )} */}
             {appliesForDiscount && (
               <Alert maw={650} mx="auto" py={4} miw="calc(50% - 8px)" pl="sm">
                 <Group spacing="xs">
@@ -227,7 +298,51 @@ export default function Pricing() {
               </Alert>
             )}
           </Group>
+          {(features.annualMemberships || interval === 'year') && (
+            <Center>
+              <SegmentedControl
+                radius="md"
+                value={interval}
+                onChange={(value) => setInterval(value as 'month' | 'year')}
+                size="md"
+                data={[
+                  { value: 'month', label: 'Monthly Plans' },
+                  {
+                    value: 'year',
+                    label: (
+                      <Center>
+                        <Box mr={6}>Annual Plans</Box>
+                        <Badge p={5} color="green" variant="filled" radius="xl">
+                          1 month for free!
+                        </Badge>
+                      </Center>
+                    ),
+                  },
+                ]}
+              />
+            </Center>
+          )}
 
+          {subscription?.price?.interval === 'year' && interval === 'month' && (
+            <AlertWithIcon
+              color="yellow"
+              iconColor="yellow"
+              icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+              iconSize={28}
+              py={11}
+              maw="calc(50% - 8px)"
+              mx="auto"
+            >
+              <Group spacing="xs" noWrap align="flex-start">
+                <Text size="md">
+                  You&rsquo;re currently on an annual plan. You can upgrade to a different annual
+                  plan or cancel your current one at any time. However, switching to a monthly plan
+                  requires canceling your membership first and waiting for it to expire before
+                  signing up again.
+                </Text>
+              </Group>
+            </AlertWithIcon>
+          )}
           {isLoading ? (
             <Center p="xl">
               <Loader />
@@ -280,10 +395,26 @@ export default function Pricing() {
               </ContainerGrid.Col>
               {products.map((product) => (
                 <ContainerGrid.Col key={product.id} md={3} sm={6} xs={12}>
-                  <PlanCard product={product} subscription={subscription} />
+                  <PlanCard
+                    key={`${interval}-${product.id}`}
+                    product={product}
+                    subscription={subscription}
+                  />
                 </ContainerGrid.Col>
               ))}
             </ContainerGrid>
+          )}
+
+          {!isLoading && (
+            <Stack spacing={0}>
+              <p className="mb-0 text-xs opacity-50">
+                By purchasing a membership, you agree to our{' '}
+                <Anchor href="/content/tos">Terms of Service</Anchor>
+              </p>
+              <p className="text-xs opacity-50">
+                Transactions will appear as CIVIT AI INC on your billing statement
+              </p>
+            </Stack>
           )}
         </Stack>
       </Container>
@@ -330,7 +461,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, features }) => {
     await ssg?.subscriptions.getPlans.prefetch({});
     await ssg?.subscriptions.getUserSubscription.prefetch();
-    if (!isDev && (!features?.isGreen || !features?.canBuyBuzz))
+    if (!isDev && !features?.canBuyBuzz)
       return {
         redirect: {
           destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?sync-account=blue`,

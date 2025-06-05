@@ -1,7 +1,7 @@
+import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import {
   ProfileSection,
   ProfileSectionPreview,
-  ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { useInView } from '~/hooks/useInView';

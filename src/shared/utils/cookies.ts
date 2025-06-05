@@ -1,4 +1,4 @@
-import { TmpCookiesObj } from 'cookies-next/lib/types';
+import type { TmpCookiesObj } from 'cookies-next/lib/types';
 import { z } from 'zod';
 import { booleanString } from '~/utils/zod-helpers';
 

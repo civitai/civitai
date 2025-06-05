@@ -1,15 +1,8 @@
-import {
-  Group,
-  Input,
-  InputWrapperProps,
-  NumberInput,
-  NumberInputProps,
-  Slider,
-  SliderProps,
-  createStyles,
-} from '@mantine/core';
+import type { InputWrapperProps, NumberInputProps, SliderProps } from '@mantine/core';
+import { Group, Input, NumberInput, Slider, createStyles } from '@mantine/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { PresetOptions, Props as PresetOptionsProps } from './PresetOptions';
+import type { Props as PresetOptionsProps } from './PresetOptions';
+import { PresetOptions } from './PresetOptions';
 import clsx from 'clsx';
 
 export type NumberSliderProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {

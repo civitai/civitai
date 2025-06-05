@@ -1,19 +1,19 @@
+import type { ButtonProps, PopoverProps } from '@mantine/core';
 import {
   Button,
-  ButtonProps,
   Chip,
   Divider,
   Drawer,
   Group,
   Indicator,
   Popover,
-  PopoverProps,
   ScrollArea,
   Stack,
   useMantineTheme,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
-import { CSSProperties, useCallback, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { useCallback, useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { PeriodFilter } from '~/components/Filters';
 import { FilterChip } from '~/components/Filters/FilterChip';
@@ -22,8 +22,10 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
-import { activeBaseModels, BaseModel, constants } from '~/server/common/constants';
+import type { ModelFilterSchema } from '~/providers/FiltersProvider';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import type { BaseModel } from '~/server/common/constants';
+import { activeBaseModels, constants } from '~/server/common/constants';
 import {
   Availability,
   CheckpointType,
@@ -97,7 +99,9 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fileFormats?.length ?? 0) +
     (!!mergedFilters.availability ? 1 : 0) +
-    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
+    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
+    (mergedFilters.poiOnly ? 1 : 0) +
+    (mergedFilters.minorOnly ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -328,6 +332,23 @@ export function DumbModelFiltersDropdown({
                 onChange={(checked) => handleChange({ hidden: checked })}
               >
                 <span>Hidden</span>
+              </FilterChip>
+            </>
+          )}
+
+          {currentUser && currentUser?.isModerator && (
+            <>
+              <FilterChip
+                checked={mergedFilters.poiOnly}
+                onChange={(checked) => handleChange({ poiOnly: checked })}
+              >
+                <span>POI</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.minorOnly}
+                onChange={(checked) => handleChange({ minorOnly: checked })}
+              >
+                <span>Minor</span>
               </FilterChip>
             </>
           )}

@@ -21,19 +21,24 @@ export const optimizerArgMap: { [key in OptimizerTypes]: string } = {
 export const optimizerArgMapFlux: { [key in OptimizerTypes]: { [key in EngineTypes]: string } } = {
   Adafactor: {
     kohya: optimizerArgMap.Adafactor,
-    'x-flux': '(empty)',
+    musubi: '(empty)',
     rapid: '(empty)',
   },
   AdamW8Bit: {
     kohya: 'weight_decay=0.01, eps=0.00000001, betas=(0.9, 0.999)',
-    'x-flux': 'weight_decay=0.01, eps=0.00000001, betas=(0.9, 0.999)',
+    musubi: '(empty)',
     rapid: '(empty)',
   },
   Prodigy: {
     kohya: optimizerArgMap.Prodigy,
-    'x-flux': '(empty)',
+    musubi: '(empty)',
     rapid: '(empty)',
   },
+};
+export const optimizerArgMapVideo: { [key in OptimizerTypes]: string } = {
+  Adafactor: '',
+  AdamW8Bit: '',
+  Prodigy: '',
 };
 
 type BaseTrainingSettingsType = {
@@ -43,12 +48,15 @@ type BaseTrainingSettingsType = {
   disabled?: boolean;
 };
 
+// nb: could allow the other for either allowing custom or being strict
+type TypeTrainingBaseModel = TrainingDetailsBaseModel; // TrainingDetailsBaseModelList
+
 type SelectTrainingSettingsType = {
   type: 'select';
   options: readonly string[];
   default: string;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: {
+    [key in TypeTrainingBaseModel]?: {
       [key in EngineTypes | 'all']?: Partial<
         Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
           Omit<SelectTrainingSettingsType, 'type' | 'overrides' | 'options'> // could allow options override
@@ -60,7 +68,7 @@ type BoolTrainingSettingsType = {
   type: 'bool';
   default: boolean;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: {
+    [key in TypeTrainingBaseModel]?: {
       [key in EngineTypes | 'all']?: Partial<
         Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
           Omit<BoolTrainingSettingsType, 'type' | 'overrides'>
@@ -75,7 +83,7 @@ export type NumberTrainingSettingsType = {
   step: number;
   default: number | undefined;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: {
+    [key in TypeTrainingBaseModel]?: {
       [key in EngineTypes | 'all']?: Partial<
         Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
           Omit<NumberTrainingSettingsType, 'type' | 'overrides' | 'step'> // could allow step override
@@ -87,7 +95,7 @@ type StringTrainingSettingsType = {
   type: 'string';
   default: string;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: {
+    [key in TypeTrainingBaseModel]?: {
       [key in EngineTypes | 'all']?: Partial<
         Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
           Omit<StringTrainingSettingsType, 'type' | 'overrides'>
@@ -113,7 +121,12 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 'kohya',
     options: engineTypes,
     disabled: true,
-    overrides: { flux_dev: { all: { disabled: false } } },
+    overrides: {
+      flux_dev: { all: { disabled: false } },
+      hy_720_fp8: { all: { default: 'musubi' } },
+      wan_2_1_i2v_14b_720p: { all: { default: 'musubi' } },
+      wan_2_1_t2v_14b: { all: { default: 'musubi' } },
+    },
   },
   {
     name: 'maxTrainEpochs',
@@ -130,11 +143,13 @@ export const trainingSettings: TrainingSettingsType[] = [
       illustrious: { all: { min: 1 } },
       flux_dev: {
         kohya: { default: 5 },
-        'x-flux': { default: 5, max: 5, min: 2 },
         rapid: { default: 1, min: 1, max: 1 },
       },
       sd3_medium: { all: { default: 5 } },
       sd3_large: { all: { default: 5 } },
+      hy_720_fp8: { all: { min: 1, max: 20 } },
+      wan_2_1_i2v_14b_720p: { all: { min: 1, max: 20 } },
+      wan_2_1_t2v_14b: { all: { min: 1, max: 20 } },
     },
   },
   {
@@ -146,11 +161,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 5000,
     step: 1,
-    overrides: {
-      flux_dev: {
-        'x-flux': { disabled: true },
-      },
-    },
   },
   {
     name: 'trainBatchSize',
@@ -168,11 +178,13 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { default: 5, max: 5 } },
       illustrious: { all: { default: 4, max: 4 } },
       flux_dev: {
-        'x-flux': { default: 1, max: 1, disabled: true },
         kohya: { default: 4, max: 4 },
       },
       sd3_medium: { all: { default: 4, max: 4 } },
       sd3_large: { all: { default: 4, max: 4 } },
+      hy_720_fp8: { all: { default: 2, min: 1, max: 4 } },
+      wan_2_1_i2v_14b_720p: { all: { default: 2, min: 1, max: 4 } },
+      wan_2_1_t2v_14b: { all: { default: 2, min: 1, max: 4 } },
     },
   },
   {
@@ -192,16 +204,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 10000,
     step: 1,
     disabled: true,
-    overrides: {
-      flux_dev: {
-        'x-flux': {
-          disabled: false,
-          default: 2500,
-          min: 1000,
-          hint: 'The number of target training steps.',
-        },
-      },
-    },
+    // overrides: {
+    //   hy_720_fp8: { all: { max: 5000 } },
+    //   wan_2_1_i2v_14b_720p: { all: { max: 5000 } },
+    //   wan_2_1_t2v_14b: { all: { max: 5000 } },
+    // },
   },
   {
     name: 'resolution',
@@ -216,6 +223,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       sdxl: { all: { min: 1024, max: 2048, default: 1024 } },
       pony: { all: { min: 1024, max: 2048, default: 1024 } },
       illustrious: { all: { min: 1024, max: 2048, default: 1024 } },
+      hy_720_fp8: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
+      wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
+      wan_2_1_t2v_14b: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
     },
   },
   {
@@ -233,11 +243,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     hint: 'Sorts images into buckets by size for the purposes of training. If your training images are all the same size, you can turn this option off, but leaving it on has no effect.',
     type: 'bool',
     default: true,
-    overrides: {
-      flux_dev: {
-        'x-flux': { default: false, disabled: true },
-      },
-    },
   },
   {
     name: 'shuffleCaption',
@@ -246,15 +251,12 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'bool',
     default: false,
     overrides: {
-      flux_dev: {
-        all: { disabled: true },
-      },
-      sd3_medium: {
-        all: { disabled: true },
-      },
-      sd3_large: {
-        all: { disabled: true },
-      },
+      flux_dev: { all: { disabled: true } },
+      sd3_medium: { all: { disabled: true } },
+      sd3_large: { all: { disabled: true } },
+      hy_720_fp8: { all: { disabled: true } },
+      wan_2_1_i2v_14b_720p: { all: { disabled: true } },
+      wan_2_1_t2v_14b: { all: { disabled: true } },
     },
   },
   {
@@ -275,15 +277,12 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 3,
     step: 1,
     overrides: {
-      flux_dev: {
-        all: { disabled: true },
-      },
-      sd3_medium: {
-        all: { disabled: true },
-      },
-      sd3_large: {
-        all: { disabled: true },
-      },
+      flux_dev: { all: { disabled: true } },
+      sd3_medium: { all: { disabled: true } },
+      sd3_large: { all: { disabled: true } },
+      hy_720_fp8: { all: { disabled: true } },
+      wan_2_1_i2v_14b_720p: { all: { disabled: true } },
+      wan_2_1_t2v_14b: { all: { disabled: true } },
     },
   },
   {
@@ -297,7 +296,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       anime: { all: { default: 2 } },
-      flux_dev: { 'x-flux': { disabled: true, default: 0, min: 0, max: 0 } },
+      hy_720_fp8: { all: { disabled: true, default: 0, min: 0, max: 0 } },
+      wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, min: 0, max: 0 } },
+      wan_2_1_t2v_14b: { all: { disabled: true, default: 0, min: 0, max: 0 } },
     },
   },
   {
@@ -307,9 +308,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'bool',
     default: false,
     overrides: {
-      flux_dev: {
-        'x-flux': { disabled: true },
-      },
+      hy_720_fp8: { all: { disabled: true } },
+      wan_2_1_i2v_14b_720p: { all: { disabled: true } },
+      wan_2_1_t2v_14b: { all: { disabled: true } },
     },
   },
   {
@@ -322,11 +323,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 1,
     step: 1e-5,
     overrides: {
-      flux_dev: {
-        'x-flux': { default: 5e-5 },
-      },
       sd3_medium: { all: { default: 1e-5 } },
       sd3_large: { all: { default: 1e-5 } },
+      hy_720_fp8: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
+      wan_2_1_i2v_14b_720p: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
+      wan_2_1_t2v_14b: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
     },
   },
   {
@@ -343,6 +344,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: { all: { disabled: true, default: 0, max: 0 } },
       sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
       sd3_large: { all: { disabled: true, default: 0, max: 0 } },
+      hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
+      wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, max: 0 } },
+      wan_2_1_t2v_14b: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -354,7 +358,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     options: lrSchedulerTypes,
     overrides: {
       pony: { all: { default: 'cosine' } },
-      flux_dev: { 'x-flux': { default: 'cosine', disabled: true } },
+      hy_720_fp8: { all: { default: 'constant' } },
+      wan_2_1_i2v_14b_720p: { all: { default: 'constant' } },
+      wan_2_1_t2v_14b: { all: { default: 'constant' } },
     },
   },
   {
@@ -368,9 +374,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 4,
     step: 1,
     overrides: {
-      flux_dev: {
-        'x-flux': { disabled: true, default: 0, min: 0, max: 0 },
-      },
+      hy_720_fp8: { all: { default: 1 } },
+      wan_2_1_i2v_14b_720p: { all: { default: 1 } },
+      wan_2_1_t2v_14b: { all: { default: 1 } },
     },
   },
   {
@@ -393,7 +399,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       pony: { all: { default: 0 } },
-      flux_dev: { 'x-flux': { disabled: true, default: 0, max: 0 } },
+      hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
+      wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, max: 0 } },
+      wan_2_1_t2v_14b: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -410,7 +418,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { max: 256 } },
       illustrious: { all: { max: 256 } },
       anime: { all: { default: 16 } },
-      flux_dev: { 'x-flux': { default: 16 }, kohya: { default: 2 } },
+      flux_dev: { kohya: { default: 2 } },
       sd3_medium: { all: { default: 2 } },
       sd3_large: { all: { default: 2 } },
     },
@@ -438,7 +446,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { max: 256, default: 32 } },
       illustrious: { all: { max: 256 } },
       anime: { all: { default: 8 } },
-      flux_dev: { 'x-flux': { disabled: true, default: 1, min: 1, max: 1 } },
+      hy_720_fp8: { all: { default: 1 } },
+      wan_2_1_i2v_14b_720p: { all: { default: 1 } },
+      wan_2_1_t2v_14b: { all: { default: 1 } },
     },
   },
   {
@@ -452,7 +462,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 0.01,
     overrides: {
       pony: { all: { default: 0.03 } },
-      flux_dev: { 'x-flux': { disabled: true, default: 0, min: 0, max: 0 } },
+      hy_720_fp8: { all: { disabled: true, default: 0, min: 0, max: 0 } },
+      wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, min: 0, max: 0 } },
+      wan_2_1_t2v_14b: { all: { disabled: true, default: 0, min: 0, max: 0 } },
     },
   },
   {
@@ -474,7 +486,6 @@ export const trainingSettings: TrainingSettingsType[] = [
       sdxl: { all: { default: 'Adafactor' } },
       pony: { all: { default: 'Prodigy' } },
       illustrious: { all: { default: 'Adafactor' } },
-      flux_dev: { 'x-flux': { disabled: true } },
     },
   },
   {
@@ -491,8 +502,10 @@ export const trainingSettings: TrainingSettingsType[] = [
       illustrious: { all: { default: optimizerArgMap.Adafactor } },
       flux_dev: {
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
-        'x-flux': { default: optimizerArgMapFlux.AdamW8Bit['x-flux'] },
       },
+      hy_720_fp8: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
+      wan_2_1_i2v_14b_720p: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
+      wan_2_1_t2v_14b: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
     },
   },
 ];

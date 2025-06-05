@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { env } from '~/env/client';
-import { SignalTopic } from '~/server/common/enums';
+import { env } from '~/env/server';
+import type { SignalTopic } from '~/server/common/enums';
 
 class SignalClient {
   private _endpoint: string;
@@ -30,7 +30,15 @@ class SignalClient {
     });
 
     if (!response.ok) {
-      throw new Error(`failed to send signal: ${target}`);
+      // Fallback to text if json fails
+      const errorData = await response
+        .json()
+        .catch(() => response.text())
+        .catch(() => null);
+
+      throw new Error(`failed to send signal: ${target}. Expected 200, got ${response.status}`, {
+        cause: errorData,
+      });
     }
   };
 
@@ -39,7 +47,7 @@ class SignalClient {
     target,
     data,
   }: {
-    topic: `${SignalTopic}${'' | `:${number}`}`;
+    topic: `${SignalTopic}${'' | `:${number}` | `:${string}`}`;
     target: string;
     data: Record<string, unknown>;
   }) => {
@@ -64,4 +72,4 @@ class SignalClient {
   }
 }
 
-export const signalClient = new SignalClient({ endpoint: env.NEXT_PUBLIC_SIGNALS_ENDPOINT ?? '' });
+export const signalClient = new SignalClient({ endpoint: env.SIGNALS_ENDPOINT ?? '' });

@@ -1,10 +1,11 @@
 import { LoadingOverlay, SegmentedControl } from '@mantine/core';
 import { useEffect } from 'react';
 import GenerationErrorBoundary from '~/components/Generation/Error/ErrorBoundary';
+import { VideoGenerationFormWrapper } from '~/components/Generation/Video/VideoGenerationFormWrapper';
+import { VideoGenerationProvider } from '~/components/Generation/Video/VideoGenerationProvider';
 import { GenerationFormContent } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 import { GenerationFormProvider } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { TextToImageWhatIfProvider } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
-import { VideoGenerationForm } from '~/components/ImageGeneration/GenerationForm/VideoGenerationForm';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
@@ -58,6 +59,7 @@ export function GenerationForm() {
                   { label: 'Image', value: 'image' },
                   { label: 'Video', value: 'video' },
                 ]}
+                suppressHydrationWarning
               />
             </div>
             {type === 'image' && (
@@ -67,7 +69,12 @@ export function GenerationForm() {
                 </TextToImageWhatIfProvider>
               </GenerationFormProvider>
             )}
-            {type === 'video' && <VideoGenerationForm key={counter} />}
+            {/* {type === 'video' && <VideoGenerationForm key={counter} />} */}
+            {type === 'video' && (
+              <VideoGenerationProvider>
+                <VideoGenerationFormWrapper />
+              </VideoGenerationProvider>
+            )}
           </ScrollArea>
         </div>
       </GenerationProvider>

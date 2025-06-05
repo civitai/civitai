@@ -3,8 +3,8 @@ import { useMemo, useState } from 'react';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
-import { BankBuzzInput, WithdrawCashInput } from '~/server/schema/creator-program.schema';
-import { CompensationPool } from '~/types/router';
+import type { BankBuzzInput, WithdrawCashInput } from '~/server/schema/creator-program.schema';
+import type { CompensationPool } from '~/types/router';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
 export const useCreatorProgramRequirements = () => {
@@ -18,6 +18,7 @@ export const useCreatorProgramRequirements = () => {
     isLoading,
   };
 };
+
 export const useCompensationPool = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.creatorProgram.getCompensationPool.useQuery(
@@ -29,6 +30,15 @@ export const useCompensationPool = () => {
 
   return {
     compensationPool: data,
+    isLoading,
+  };
+};
+
+export const usePrevMonthStats = () => {
+  const { data, isLoading } = trpc.creatorProgram.getPrevMonthStats.useQuery();
+
+  return {
+    prevMonthStats: data,
     isLoading,
   };
 };

@@ -9,28 +9,30 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  Modal,
 } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { IconLock, IconLockOpen, IconStar } from '@tabler/icons-react';
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { trpc } from '~/utils/trpc';
-import { BountyGetEntries } from '~/types/router';
+import type { BountyGetEntries } from '~/types/router';
 import { formatKBytes } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
 type Props = { bountyEntry: Omit<BountyGetEntries[number], 'files' | 'stats' | 'reactions'> };
 
-const { openModal: openBountyEntryFilesModal, Modal } = createContextModal<Props>({
-  name: 'bountyEntryFiles',
-  title: 'Files',
-  size: 'md',
-  Element: ({ props }) => {
-    return <BountyEntryFiles {...props} />;
-  },
-});
+export default function BountyEntryFilesModal(props: Props) {
+  const dialog = useDialogContext();
 
-export { openBountyEntryFilesModal };
-export default Modal;
+  return (
+    <Modal {...dialog} title="Files" size="md">
+      <BountyEntryFiles {...props} />
+    </Modal>
+  );
+}
+
+// export { openBountyEntryFilesModal };
+// export default Modal;
 
 function BountyEntryFiles({ bountyEntry }: Props) {
   const { data: files, isLoading } = trpc.bountyEntry.getFiles.useQuery({ id: bountyEntry.id });

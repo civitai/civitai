@@ -1,11 +1,14 @@
 import { Prisma } from '@prisma/client';
-import { CosmeticEntity } from '~/shared/utils/prisma/enums';
+import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { cosmeticEntityCaches } from '~/server/redis/caches';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
+  EquipCosmeticInput,
+  GetPaginatedCosmeticsInput,
+} from '~/server/schema/cosmetic.schema';
 import {
   articlesSearchIndex,
   imagesMetricsSearchIndex,
@@ -14,6 +17,7 @@ import {
 } from '~/server/search-index';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { number } from 'zod';
 
 export async function getCosmeticDetail({ id }: GetByIdInput) {
   const cosmetic = await dbRead.cosmetic.findUnique({
@@ -178,3 +182,24 @@ export async function getCosmeticsForEntity({
   if (ids.length === 0) return {};
   return await cosmeticEntityCaches[entity].fetch(ids);
 }
+
+export const grantCosmetics = async ({
+  userId,
+  cosmeticIds,
+}: {
+  userId: number;
+  cosmeticIds: number[];
+}) => {
+  if (cosmeticIds.length === 0) return;
+
+  await dbWrite.$executeRaw`
+    INSERT INTO "UserCosmetic"("userId", "cosmeticId", "claimKey")
+    SELECT
+      ${userId} "userId",
+      c.id as "cosmeticId",
+      'claimed'
+    FROM "Cosmetic" c 
+    WHERE c.id IN (${Prisma.join(cosmeticIds)})
+    ON CONFLICT DO NOTHING;
+  `;
+};

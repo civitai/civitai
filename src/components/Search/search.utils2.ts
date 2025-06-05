@@ -1,17 +1,18 @@
 import { flagifyBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { Hit, TransformItemsMetadata } from 'instantsearch.js';
 import { useHits, useInfiniteHits } from 'react-instantsearch';
-import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
-import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
-import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
-import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
-import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
+import type { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
+import type { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
+import type { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
+import type { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
+import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
+import type { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { ReverseSearchIndexKey, reverseSearchIndexMap } from '~/components/Search/search.types';
-import { ToolSearchIndexRecord } from '~/server/search-index/tools.search-index';
-import { ImageMetadata } from '~/server/schema/media.schema';
+import type { ReverseSearchIndexKey } from '~/components/Search/search.types';
+import { reverseSearchIndexMap } from '~/components/Search/search.types';
+import type { ToolSearchIndexRecord } from '~/server/search-index/tools.search-index';
+import type { ImageMetadata } from '~/server/schema/media.schema';
 
 // #region [transformers]
 function handleOldImageTags(tags?: number[] | { id: number }[]) {

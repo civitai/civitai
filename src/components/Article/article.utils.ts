@@ -7,10 +7,12 @@ import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ArticleSort } from '~/server/common/enums';
-import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
+import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { isDefined } from '~/utils/type-guards';
 
 export const useArticleFilters = () => {
   const storeFilters = useFiltersContext((state) => state.articles);
@@ -55,9 +57,14 @@ export const useQueryArticles = (
 ) => {
   filters ??= {};
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const excludedTagIds = [
+    ...(filters.excludedTagIds ?? []),
+    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+  ].filter(isDefined);
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.article.getInfinite.useInfiniteQuery(
-    { ...filters, browsingLevel },
+    { ...filters, browsingLevel, excludedTagIds },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

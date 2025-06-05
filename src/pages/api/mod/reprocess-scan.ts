@@ -1,8 +1,8 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { ModelHashType } from '~/shared/utils/prisma/enums';
 
 const stringToNumberArraySchema = z

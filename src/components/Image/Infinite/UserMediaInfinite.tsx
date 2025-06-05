@@ -1,3 +1,4 @@
+import type { SegmentedControlProps } from '@mantine/core';
 import {
   Box,
   Center,
@@ -6,16 +7,17 @@ import {
   Group,
   Loader,
   SegmentedControl,
-  SegmentedControlProps,
   Stack,
 } from '@mantine/core';
-import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
-import { ImageSections, useImageQueryParams } from '~/components/Image/image.utils';
+import type { ImageSections } from '~/components/Image/image.utils';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -94,6 +96,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
       baseModels = undefined,
       tools = [],
       techniques = [],
+      requiringMeta = false,
       ...query
     },
   } = useImageQueryParams();
@@ -174,6 +177,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                     baseModels,
                     tools,
                     techniques,
+                    requiringMeta,
                   }}
                   filterType={isVideo ? 'videos' : 'images'}
                   onChange={(filters) => replace(filters)}
@@ -208,6 +212,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   baseModels,
                   tools,
                   techniques,
+                  requiringMeta,
                   // pending: true,
                 }}
                 showEmptyCta={isSameUser}

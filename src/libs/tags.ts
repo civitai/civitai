@@ -1,7 +1,7 @@
-import { TagSource, TagType } from '~/shared/utils/prisma/enums';
+import type { TagSource, TagType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { moderationDisplayNames } from '~/libs/moderation';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 
 export const taggableEntitySchema = z.enum(['model', 'image', 'tag', 'article']);
 export type TaggableEntityType = z.infer<typeof taggableEntitySchema>;
@@ -48,7 +48,15 @@ export function getTagDisplayName(name: string) {
   return tagNameOverrides[name] || name;
 }
 
-export const tagsNeedingReview = ['child', 'teen', 'baby', 'girl', 'boy'];
+export const tagsNeedingReview = [
+  'child',
+  'teen',
+  'baby',
+  'girl',
+  'boy',
+  'female child',
+  'male child',
+];
 export const tagsToIgnore: Partial<Record<TagSource, string[]>> = {
   Rekognition: [
     'baby',

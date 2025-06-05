@@ -1,9 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
+import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '../logging/client';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import type { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
@@ -166,12 +166,13 @@ export function throwConflictError(message: string | null = null, error?: unknow
   });
 }
 
-export function handleLogError(e: Error) {
+export function handleLogError(e: Error, name?: string) {
   const error = new Error(e.message ?? 'Unexpected error occurred', { cause: e });
   if (isProd)
     logToAxiom(
       {
-        name: error.name,
+        type: 'error',
+        name: name ?? error.name,
         message: error.message,
         stack: error.stack,
         cause: error.cause,

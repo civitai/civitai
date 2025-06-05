@@ -1,4 +1,4 @@
-import { Button, Menu, useMantineTheme } from '@mantine/core';
+import { Button, Loader, Menu, useMantineTheme } from '@mantine/core';
 import {
   IconBan,
   IconDotsVertical,
@@ -8,16 +8,20 @@ import {
   IconTrash,
   IconFileSettings,
   IconCloudX,
+  IconAi,
+  IconShieldHalf,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { useRouter } from 'next/router';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { openUnpublishModal } from '~/components/Dialog/dialog-registry';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -26,6 +30,8 @@ export function ModelVersionMenu({
   canDelete,
   active,
   published,
+  canGenerate,
+  showToggleCoverage,
 }: {
   modelVersionId: number;
   modelId: number;
@@ -33,28 +39,40 @@ export function ModelVersionMenu({
   canDelete: boolean;
   active: boolean;
   published: boolean;
+  canGenerate: boolean;
+  showToggleCoverage: boolean;
 }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
+  const features = useFeatureFlags();
 
-  const bustModelVersionCacheMutation = trpc.modelVersion.bustCache.useMutation();
+  const bustModelVersionCacheMutation = trpc.modelVersion.bustCache.useMutation({
+    onSuccess: () => showSuccessNotification({ message: 'Cache busted' }),
+  });
   function handleBustCache() {
     bustModelVersionCacheMutation.mutate({ id: modelVersionId });
   }
 
-  // const { toggle, isLoading } = useToggleCheckpointCoverageMutation();
-  // const handleToggleCoverage = async ({
-  //   modelId,
-  //   versionId,
-  // }: {
-  //   modelId: number;
-  //   versionId: number;
-  // }) => {
-  //   // Error is handled at the hook level
-  //   await toggle({ id: modelId, versionId }).catch(() => null);
-  // };
+  const enqueuNsfwLevelUpdateMutation = trpc.modelVersion.enqueueNsfwLevelUpdate.useMutation({
+    onSuccess: () => showSuccessNotification({ message: 'Nsfw level update queued' }),
+  });
+  function handleEnqueueNsfwLevelUpdate() {
+    enqueuNsfwLevelUpdateMutation.mutate({ id: modelVersionId });
+  }
+
+  const { toggle, isLoading } = useToggleCheckpointCoverageMutation();
+  const handleToggleCoverage = async ({
+    modelId,
+    versionId,
+  }: {
+    modelId: number;
+    versionId: number;
+  }) => {
+    // Error is handled at the hook level
+    await toggle({ id: modelId, versionId }).catch(() => null);
+  };
 
   const deleteVersionMutation = trpc.modelVersion.delete.useMutation({
     async onMutate(payload) {
@@ -120,7 +138,21 @@ export function ModelVersionMenu({
           <IconDotsVertical size={14} />
         </Button>
       </Menu.Target>
+
       <Menu.Dropdown>
+        {currentUser?.isModerator && (
+          <Menu.Item
+            icon={<IconShieldHalf size={14} stroke={1.5} />}
+            color="yellow"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              handleEnqueueNsfwLevelUpdate();
+            }}
+          >
+            Enqueue NsfwLevel Update
+          </Menu.Item>
+        )}
         {canDelete && (
           <Menu.Item
             color="red"
@@ -139,9 +171,11 @@ export function ModelVersionMenu({
             color="yellow"
             icon={<IconBan size={14} stroke={1.5} />}
             onClick={() =>
-              openContext('unpublishModel', {
-                modelId: modelId,
-                versionId: modelVersionId,
+              openUnpublishModal({
+                props: {
+                  modelId: modelId,
+                  versionId: modelVersionId,
+                },
               })
             }
           >
@@ -162,30 +196,30 @@ export function ModelVersionMenu({
           </Menu.Item>
         )}
 
-        {/* {currentUser?.isModerator && showToggleCoverage && (
+        {currentUser?.isModerator && showToggleCoverage && features.impersonation && (
           <>
-            <Menu.Divider />
-            <Menu.Label>Moderation zone</Menu.Label>
             <Menu.Item
               disabled={isLoading}
-              icon={isLoading ? <Loader size="xs" /> : undefined}
+              icon={isLoading ? <Loader size="xs" /> : <IconAi size={14} stroke={1.5} />}
+              color="yellow"
               onClick={() =>
                 handleToggleCoverage({
-                  modelId: version.modelId,
-                  versionId: version.id,
+                  modelId: modelId,
+                  versionId: modelVersionId,
                 })
               }
               closeMenuOnClick={false}
             >
-              {version.canGenerate ? 'Remove from generation' : 'Add to generation'}
+              {canGenerate ? 'Remove from generation' : 'Add to generation'}
             </Menu.Item>
           </>
-        )} */}
+        )}
 
         <Menu.Item
           component={Link}
           href={`/models/${modelId}/model-versions/${modelVersionId}/edit`}
           icon={<IconEdit size={14} stroke={1.5} />}
+          className={!features.canWrite ? 'pointer-events-none' : undefined}
         >
           Edit details
         </Menu.Item>
@@ -209,6 +243,7 @@ export function ModelVersionMenu({
             icon={<IconPhotoEdit size={14} stroke={1.5} />}
             onClick={(e) => e.stopPropagation()}
             href={`/posts/${postId}/edit`}
+            className={!features.canWrite ? 'pointer-events-none' : undefined}
           >
             Manage images
           </Menu.Item>

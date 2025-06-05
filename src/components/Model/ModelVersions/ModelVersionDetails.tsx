@@ -1,3 +1,4 @@
+import type { MantineTheme } from '@mantine/core';
 import {
   Accordion,
   Anchor,
@@ -9,7 +10,6 @@ import {
   createStyles,
   Group,
   Loader,
-  MantineTheme,
   Menu,
   Modal,
   Stack,
@@ -19,6 +19,7 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
+  IconBolt,
   IconBrush,
   IconClock,
   IconCloudCheck,
@@ -32,8 +33,8 @@ import {
   IconPhotoPlus,
   IconShare3,
 } from '@tabler/icons-react';
-import { TRPCClientErrorBase } from '@trpc/client';
-import { DefaultErrorShape } from '@trpc/server';
+import type { TRPCClientErrorBase } from '@trpc/client';
+import type { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -42,6 +43,7 @@ import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
@@ -99,12 +101,8 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  baseModelLicenses,
-  CAROUSEL_LIMIT,
-  constants,
-  ModelFileType,
-} from '~/server/common/constants';
+import type { ModelFileType } from '~/server/common/constants';
+import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -118,11 +116,11 @@ import {
   ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { formatKBytes } from '~/utils/number-helpers';
+import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -370,7 +368,7 @@ export function ModelVersionDetails({
       value: (
         <Group spacing={4}>
           {!downloadsDisabled && (
-            <IconBadge radius="xs" icon={<IconDownload size={14} />}>
+            <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Downloads">
               <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
             </IconBadge>
           )}
@@ -392,13 +390,20 @@ export function ModelVersionDetails({
               }
               onPurchase={() => onPurchase('generation')}
             >
-              <IconBadge radius="xs" icon={<IconBrush size={14} />}>
+              <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
                 <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
               </IconBadge>
             </GenerateButton>
           ) : (
-            <IconBadge radius="xs" icon={<IconBrush size={14} />}>
+            <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
               <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
+            </IconBadge>
+          )}
+          {version.rank?.earnedAmountAllTime && (
+            <IconBadge radius="xs" icon={<IconBolt size={14} />} tooltip="Buzz Earned">
+              <Text title={(version.rank?.earnedAmountAllTime).toLocaleString()}>
+                {abbreviateNumber(version.rank?.earnedAmountAllTime)}
+              </Text>
             </IconBadge>
           )}
         </Group>
@@ -677,7 +682,6 @@ export function ModelVersionDetails({
               modelVersionId={version.id}
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
-              mobile
             />
           )}
           {showRequestReview ? (
@@ -951,7 +955,7 @@ export function ModelVersionDetails({
               <Text>
                 If you adjust your model to comply with our guidelines, you can request a review
                 from one of our moderators. If you believe this was done in error, you can{' '}
-                <Text component="a" variant="link" href="/appeal" target="_blank">
+                <Text component="a" variant="link" href="/content/content-appeal" target="_blank">
                   submit an appeal
                 </Text>
                 .
@@ -1002,6 +1006,7 @@ export function ModelVersionDetails({
                     variant="link"
                     td="underline"
                     href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
+                    className={!features.canWrite ? 'pointer-events-none' : undefined}
                   >
                     here
                   </Text>{' '}
@@ -1134,7 +1139,7 @@ export function ModelVersionDetails({
                           : ''}
                       </Text>
                     </div>
-                    {isOwnerOrMod && (
+                    {isOwnerOrMod ? (
                       <Anchor
                         size="sm"
                         className={cx(
@@ -1155,6 +1160,8 @@ export function ModelVersionDetails({
                       >
                         Edit
                       </Anchor>
+                    ) : (
+                      <CollectionFollowAction collectionId={collection.id} />
                     )}
                   </div>
                 </Accordion.Control>
@@ -1179,6 +1186,7 @@ export function ModelVersionDetails({
                           component={Link}
                           onClick={(e) => e.stopPropagation()}
                           href={`/models/${version.modelId}/edit`}
+                          className={!features.canWrite ? 'pointer-events-none' : undefined}
                         >
                           Edit Model Details
                         </Menu.Item>
@@ -1186,6 +1194,7 @@ export function ModelVersionDetails({
                           component={Link}
                           onClick={(e) => e.stopPropagation()}
                           href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
+                          className={!features.canWrite ? 'pointer-events-none' : undefined}
                         >
                           Edit Version Details
                         </Menu.Item>
@@ -1328,6 +1337,7 @@ export function ModelVersionDetails({
             user={model.user}
             tipBuzzEntityType="Model"
             tipBuzzEntityId={model.id}
+            tipsEnabled={!model.poi}
           />
           {onSite && (
             <Group
@@ -1423,7 +1433,7 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          {!model.nsfw && <AdUnitSide_2 />}
+          {!model.nsfw && !model.poi && <AdUnitSide_2 />}
         </Stack>
       </ContainerGrid.Col>
 
@@ -1446,7 +1456,6 @@ export function ModelVersionDetails({
               modelVersionId={version.id}
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
-              onBrowseClick={onBrowseClick}
             />
           )}
           {model.description ? (

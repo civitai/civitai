@@ -1,8 +1,5 @@
-import {
-  createStyles,
-  TypographyStylesProvider,
-  TypographyStylesProviderProps,
-} from '@mantine/core';
+import type { TypographyStylesProviderProps } from '@mantine/core';
+import { createStyles, TypographyStylesProvider } from '@mantine/core';
 import { useMemo } from 'react';
 
 import { DEFAULT_ALLOWED_ATTRIBUTES, needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
@@ -83,22 +80,27 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function RenderHtml({ html, withMentions = false, ...props }: Props) {
+export function RenderHtml({
+  html,
+  withMentions = false,
+  allowCustomStyles = true,
+  ...props
+}: Props) {
   const { classes, theme } = useStyles();
 
   html = useMemo(
     () =>
       sanitizeHtml(html, {
-        parseStyleAttributes: true,
+        parseStyleAttributes: allowCustomStyles,
         allowedAttributes: {
           ...DEFAULT_ALLOWED_ATTRIBUTES,
           div: ['data-youtube-video', 'data-type', 'style'],
         },
-        allowedStyles: {
-          div: {
-            height: [/^\d+px$/],
-          },
-        },
+        allowedStyles: allowCustomStyles
+          ? {
+              div: { height: [/^\d+px$/] },
+            }
+          : undefined,
         transformTags: {
           div: function (tagName, attribs) {
             if (attribs['data-type'] !== 'strawPoll') delete attribs.style;
@@ -176,4 +178,5 @@ export function RenderHtml({ html, withMentions = false, ...props }: Props) {
 type Props = Omit<TypographyStylesProviderProps, 'children'> & {
   html: string;
   withMentions?: boolean;
+  allowCustomStyles?: boolean;
 };

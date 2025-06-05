@@ -1,10 +1,11 @@
+import type { GroupProps, HighlightProps } from '@mantine/core';
 import {
   ActionIcon,
   Badge,
   Button,
   Divider,
   Group,
-  GroupProps,
+  Highlight,
   Skeleton,
   Stack,
   Text,
@@ -28,9 +29,11 @@ import {
 import clsx from 'clsx';
 import produce from 'immer';
 import React, { useEffect, useRef, useState } from 'react';
+import { useInView } from 'react-intersection-observer';
+import { hasNSFWWords } from '~/components/Auction/auction.utils';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { usePurchaseBid } from '~/components/Auction/AuctionUtils';
-import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
@@ -40,9 +43,11 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import type {
   GetAuctionBySlugReturn,
   GetMyBidsReturn,
@@ -50,7 +55,7 @@ import type {
 } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
-import { Flags } from '~/shared/utils';
+import { getHasExplicitBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -199,9 +204,55 @@ const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefine
   );
 };
 
-const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] }) => {
-  const { blurLevels } = useBrowsingLevelContext();
-  const blurNsfw = !!entityData ? Flags.intersects(blurLevels, entityData.nsfwLevel) : false;
+const useHideNsfwText = () => {
+  const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
+  const browsingLevel = useBrowsingLevelDebounced();
+  const hasExplicit = getHasExplicitBrowsingLevel(browsingLevel);
+  return !hasExplicit || blurNsfw;
+};
+
+const OverflowTooltip = ({
+  label,
+  searchText,
+  ...highlightProps
+}: { label: string; searchText: string } & Omit<HighlightProps, 'highlight' | 'children'>) => {
+  const textElementRef = useRef<HTMLDivElement>(null);
+  const [isOverflown, setIsOverflown] = useState(false);
+
+  // TODO this doesnt appear to listen for changes when resizing
+  useEffect(() => {
+    const element = textElementRef.current;
+    const compare = element
+      ? element.offsetWidth < element.scrollWidth || element.offsetHeight < element.scrollHeight
+      : false;
+    setIsOverflown(compare);
+  }, []);
+
+  return (
+    <Tooltip label={label} disabled={!isOverflown} withinPortal multiline>
+      <Highlight
+        ref={textElementRef}
+        className="min-w-0 max-w-[min(400px,80vw)] truncate"
+        highlight={searchText}
+        {...highlightProps}
+      >
+        {label}
+      </Highlight>
+    </Tooltip>
+  );
+};
+
+const SectionModelInfo = ({
+  entityData,
+  searchText,
+}: {
+  entityData: ModelData['entityData'];
+  searchText: string;
+}) => {
+  const isMobile = useIsMobile();
+  const shouldHide = useHideNsfwText();
+  const blurNsfw =
+    shouldHide && (hasNSFWWords(entityData?.name) || hasNSFWWords(entityData?.model?.name));
   const [hideText, setHideText] = useState(blurNsfw);
 
   // state isn't being updated if entityData is initially undefined or the blurLevels change
@@ -214,32 +265,19 @@ const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] 
       <Stack spacing={0}>
         {!hideText ? (
           <>
-            <Text
+            <OverflowTooltip
+              label={entityData?.model?.name ?? '(Unknown Model)'}
+              searchText={searchText}
               size="lg"
               fw={500}
-              sx={{
-                textOverflow: 'ellipsis',
-                maxWidth: 'min(400px, 80vw)',
-                overflow: 'hidden',
-                whiteSpace: 'nowrap',
-                minWidth: 0,
-              }}
-            >
-              {entityData?.model?.name ?? '(Unknown Model)'}
-            </Text>
-            <Text
+              fz={isMobile ? 'sm' : undefined}
+            />
+            <OverflowTooltip
+              label={entityData?.name ?? '(Unknown Version)'}
+              searchText={searchText}
               size="sm"
               color="dimmed"
-              sx={{
-                textOverflow: 'ellipsis',
-                maxWidth: 'min(400px, 80vw)',
-                overflow: 'hidden',
-                whiteSpace: 'nowrap',
-                minWidth: 0,
-              }}
-            >
-              {entityData?.name ?? '(Unknown Version)'}
-            </Text>
+            />
           </>
         ) : (
           <div className="flex">
@@ -254,6 +292,7 @@ const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] 
           </div>
         )}
       </Stack>
+      {/* TODO highlight username */}
       {!!entityData?.model?.user && (
         <UserAvatar
           withUsername
@@ -349,7 +388,13 @@ const SectionBidInfo = ({
   );
 };
 
-export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
+export const ModelMyBidCard = ({
+  data,
+  searchText,
+}: {
+  data: ModelMyBidData;
+  searchText: string;
+}) => {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const { handleBuy, createLoading } = usePurchaseBid();
   const queryUtils = trpc.useUtils();
@@ -417,7 +462,7 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
           )}
           <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
             <SectionModelImage image={data.entityData?.image} />
-            <SectionModelInfo entityData={data.entityData} />
+            <SectionModelInfo entityData={data.entityData} searchText={searchText} />
           </Group>
 
           {!mobile && <Divider orientation="vertical" />}
@@ -501,7 +546,13 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
   );
 };
 
-export const ModelMyRecurringBidCard = ({ data }: { data: ModelMyRecurringBidData }) => {
+export const ModelMyRecurringBidCard = ({
+  data,
+  searchText,
+}: {
+  data: ModelMyRecurringBidData;
+  searchText: string;
+}) => {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const queryUtils = trpc.useUtils();
 
@@ -582,7 +633,7 @@ export const ModelMyRecurringBidCard = ({ data }: { data: ModelMyRecurringBidDat
         <Group className="gap-y-2 max-md:flex-col">
           <Group className="flex gap-y-2 p-2 max-md:w-full md:flex-[10]">
             <SectionModelImage image={data.entityData?.image} />
-            <SectionModelInfo entityData={data.entityData} />
+            <SectionModelInfo entityData={data.entityData} searchText={searchText} />
           </Group>
 
           {!mobile && <Divider orientation="vertical" />}
@@ -648,15 +699,21 @@ export const ModelPlacementCard = ({
   data,
   aboveThreshold,
   addBidFn,
+  searchText,
+  canBid,
 }: {
   data: ModelData;
   aboveThreshold: boolean;
   addBidFn: (r: GenerationResource) => void;
+  searchText: string;
+  canBid: boolean;
 }) => {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const currentUser = useCurrentUser();
   const { selectedAuction, justBid, setJustBid } = useAuctionContext();
   const animatedRef = useRef<HTMLDivElement>(null);
+  const node = useScrollAreaRef();
+  const { ref: viewRef, inView } = useInView({ root: node?.current, rootMargin: '1800px 0px' });
   const { classes: cardClasses } = useCardStyles({ aspectRatio: 1 });
 
   const { data: myBidData = [] } = trpc.auction.getMyBids.useQuery(undefined, {
@@ -698,18 +755,29 @@ export const ModelPlacementCard = ({
         [cardClasses.winnerThird]: aboveThreshold && data.position === 3,
         'before:blur-sm': aboveThreshold && !!data.position && data.position <= 3,
       })}
+      ref={viewRef}
     >
       <CosmeticCard
-        className={clsx('group hover:bg-gray-2 dark:hover:bg-dark-5', {
-          'animate-glowPulse': isRecentlyBid,
-        })}
+        className={clsx(
+          'group transition-opacity duration-300 ease-in-out hover:bg-gray-2 dark:hover:bg-dark-5 ',
+          {
+            'animate-glowPulse': isRecentlyBid,
+            'invisible opacity-0': !inView,
+          }
+        )}
         ref={animatedRef}
       >
         <Group className="gap-y-2 max-md:flex-col">
           {!mobile && <SectionPosition position={data.position} aboveThreshold={aboveThreshold} />}
           <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
-            <SectionModelImage image={data.entityData?.image} />
-            <SectionModelInfo entityData={data.entityData} />
+            <div className="flex w-full min-w-0 gap-4">
+              <div className="shrink-0">
+                <SectionModelImage image={data.entityData?.image} />
+              </div>
+              <div className="min-w-0 grow">
+                <SectionModelInfo entityData={data.entityData} searchText={searchText} />
+              </div>
+            </div>
           </Group>
 
           {!mobile && <Divider orientation="vertical" />}
@@ -719,7 +787,7 @@ export const ModelPlacementCard = ({
             position={data.position}
             aboveThreshold={aboveThreshold}
             right={
-              !!data.entityData ? (
+              !!data.entityData && canBid ? (
                 <Tooltip label="Support this model" position="top" withinPortal>
                   <ActionIcon
                     size="lg"
@@ -736,7 +804,6 @@ export const ModelPlacementCard = ({
                             trainedWords: [],
                             canGenerate: true,
                             hasAccess: true,
-                            covered: true,
                           })
                         : undefined
                     }
@@ -765,3 +832,5 @@ export const ModelPlacementCard = ({
     </div>
   );
 };
+
+// export const ModelPlacementCardMemo = memo(ModelPlacementCard);

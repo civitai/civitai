@@ -4,7 +4,6 @@ import {
   Box,
   Card,
   Checkbox,
-  Code,
   Group,
   Stack,
   Switch,
@@ -17,7 +16,6 @@ import {
 import { usePrevious } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronDown, IconConfetti } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -25,63 +23,72 @@ import { getPrecision } from '~/components/Training/Form/TrainingCommon';
 import {
   optimizerArgMap,
   optimizerArgMapFlux,
+  optimizerArgMapVideo,
   trainingSettings,
 } from '~/components/Training/Form/TrainingParams';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
-import { TrainingDetailsParams } from '~/server/schema/model-version.schema';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
   defaultTrainingState,
-  TrainingRun,
-  TrainingRunUpdate,
+  defaultTrainingStateVideo,
+  getDefaultTrainingParams,
+  type TrainingRun,
+  type TrainingRunUpdate,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
 import { showInfoNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { discountInfo, isValidRapid, rapidEta } from '~/utils/training';
+import {
+  discountInfo,
+  isValidRapid,
+  rapidEta,
+  trainingBaseModelTypesVideo,
+} from '~/utils/training';
 
 export const AdvancedSettings = ({
   selectedRun,
   modelId,
+  mediaType,
   maxSteps,
   numImages,
 }: {
   selectedRun: TrainingRun;
   modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
   maxSteps: number;
   numImages: number | undefined;
 }) => {
   const { updateRun } = trainingStore;
   const { triggerWord } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
   const theme = useMantineTheme();
   const previous = usePrevious(selectedRun);
   const [openedSections, setOpenedSections] = useState<string[]>([]);
 
   const doUpdate = (data: TrainingRunUpdate) => {
-    updateRun(modelId, selectedRun.id, data);
+    updateRun(modelId, mediaType, selectedRun.id, data);
   };
+
+  const runBase = selectedRun.base;
+  const isVideo = (trainingBaseModelTypesVideo as unknown as string[]).includes(
+    selectedRun.baseType
+  );
 
   useEffect(() => {
     if (previous?.id !== selectedRun.id) return;
-    const defaultParams = trainingSettings.reduce(
-      (a, v) => ({
-        ...a,
-        [v.name]:
-          v.overrides?.[selectedRun.base]?.all?.default ??
-          v.overrides?.[selectedRun.base]?.[selectedRun.params.engine]?.default ??
-          v.default,
-      }),
-      {} as TrainingDetailsParams
-    );
+    const defaultParams = getDefaultTrainingParams(runBase, selectedRun.params.engine);
 
     defaultParams.engine = selectedRun.params.engine;
     defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
 
-    if (selectedRun.params.engine === 'kohya') {
+    if (selectedRun.params.engine !== 'rapid') {
       defaultParams.targetSteps = Math.ceil(
         ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
           defaultParams.trainBatchSize
@@ -103,7 +110,6 @@ export const AdvancedSettings = ({
   // Set targetSteps automatically on value changes
   useEffect(() => {
     const { maxTrainEpochs, numRepeats, trainBatchSize, engine } = selectedRun.params;
-    if (engine === 'x-flux') return;
 
     const newSteps = Math.ceil(
       ((numImages || 1) * (numRepeats ?? 200) * maxTrainEpochs) / trainBatchSize
@@ -135,6 +141,8 @@ export const AdvancedSettings = ({
     if (selectedRun.baseType === 'flux') {
       newOptimizerArgs =
         optimizerArgMapFlux[selectedRun.params.optimizerType][selectedRun.params.engine];
+    } else if (isVideo) {
+      newOptimizerArgs = optimizerArgMapVideo[selectedRun.params.optimizerType] ?? '';
     } else {
       newOptimizerArgs = optimizerArgMap[selectedRun.params.optimizerType] ?? '';
     }
@@ -191,7 +199,7 @@ export const AdvancedSettings = ({
             labelPosition="left"
             checked={selectedRun.params.engine === 'rapid'}
             onChange={(event) =>
-              updateRun(modelId, selectedRun.id, {
+              updateRun(modelId, mediaType, selectedRun.id, {
                 params: { engine: event.currentTarget.checked ? 'rapid' : 'kohya' }, // TODO ideally this would revert to the previous engine, but we only have 1 now
               })
             }
@@ -235,60 +243,51 @@ export const AdvancedSettings = ({
           },
         })}
       >
-        {selectedRun.params.engine === 'x-flux' ? (
-          <AlertWithIcon icon={<IconAlertTriangle />} color="yellow" iconColor="yellow" mb="md">
-            <Text>
-              Heads up: you&apos;re using <Code color="green">x-flux</Code>!
-              <br />
-              We currently do not provide sample images for LoRAs trained this way.
-              <br />
-              We are also working on expanding the list of supported training parameters.
-            </Text>
-          </AlertWithIcon>
-        ) : (
-          <Accordion.Item value="custom-prompts">
-            <Accordion.Control>
-              <Stack spacing={4}>
-                <Text>Sample Image Prompts</Text>
-                {openedSections.includes('custom-prompts') && (
-                  <Text size="xs" color="dimmed">
-                    Set your own prompts for any of the 3 sample images we generate for each epoch.
-                  </Text>
-                )}
-              </Stack>
-            </Accordion.Control>
-            <Accordion.Panel>
-              <Stack p="sm">
+        <Accordion.Item value="custom-prompts">
+          <Accordion.Control>
+            <Stack spacing={4}>
+              <Text>Sample Media Prompts</Text>
+              {openedSections.includes('custom-prompts') && (
+                <Text size="xs" color="dimmed">
+                  Set your own prompts for any of the {isVideo ? '2' : '3'} sample{' '}
+                  {isVideo ? 'videos' : 'images'} we generate for each epoch.
+                </Text>
+              )}
+            </Stack>
+          </Accordion.Control>
+          <Accordion.Panel>
+            <Stack p="sm">
+              <TextInputWrapper
+                label={`${isVideo ? 'Video' : 'Image'} #1`}
+                placeholder="Automatically set"
+                value={selectedRun.samplePrompts[0]}
+                onChange={(event) => {
+                  doUpdate({
+                    samplePrompts: [
+                      event.currentTarget.value,
+                      selectedRun.samplePrompts[1],
+                      selectedRun.samplePrompts[2],
+                    ],
+                  });
+                }}
+              />
+              <TextInputWrapper
+                label={`${isVideo ? 'Video' : 'Image'} #2`}
+                placeholder="Automatically set"
+                value={selectedRun.samplePrompts[1]}
+                onChange={(event) => {
+                  doUpdate({
+                    samplePrompts: [
+                      selectedRun.samplePrompts[0],
+                      event.currentTarget.value,
+                      selectedRun.samplePrompts[2],
+                    ],
+                  });
+                }}
+              />
+              {!isVideo && (
                 <TextInputWrapper
-                  label="Image #1"
-                  placeholder="Automatically set"
-                  value={selectedRun.samplePrompts[0]}
-                  onChange={(event) => {
-                    doUpdate({
-                      samplePrompts: [
-                        event.currentTarget.value,
-                        selectedRun.samplePrompts[1],
-                        selectedRun.samplePrompts[2],
-                      ],
-                    });
-                  }}
-                />
-                <TextInputWrapper
-                  label="Image #2"
-                  placeholder="Automatically set"
-                  value={selectedRun.samplePrompts[1]}
-                  onChange={(event) => {
-                    doUpdate({
-                      samplePrompts: [
-                        selectedRun.samplePrompts[0],
-                        event.currentTarget.value,
-                        selectedRun.samplePrompts[2],
-                      ],
-                    });
-                  }}
-                />
-                <TextInputWrapper
-                  label="Image #3"
+                  label={`${isVideo ? 'Video' : 'Image'} #3`}
                   placeholder="Automatically set"
                   value={selectedRun.samplePrompts[2]}
                   onChange={(event) => {
@@ -301,10 +300,10 @@ export const AdvancedSettings = ({
                     });
                   }}
                 />
-              </Stack>
-            </Accordion.Panel>
-          </Accordion.Item>
-        )}
+              )}
+            </Stack>
+          </Accordion.Panel>
+        </Accordion.Item>
         {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
           <Card withBorder mt="md" p="sm">
             <Card.Section inheritPadding withBorder py="sm">
@@ -382,7 +381,7 @@ export const AdvancedSettings = ({
                 items={trainingSettings.map((ts) => {
                   let inp: React.ReactNode;
 
-                  const baseOverride = ts.overrides?.[selectedRun.base];
+                  const baseOverride = ts.overrides?.[runBase];
                   const override = baseOverride?.all ?? baseOverride?.[selectedRun.params.engine];
 
                   const disabledOverride = override?.disabled;
@@ -395,8 +394,8 @@ export const AdvancedSettings = ({
                   if (ts.type === 'int' || ts.type === 'number') {
                     // repeating for dumb ts
                     const tOverride =
-                      ts.overrides?.[selectedRun.base]?.all ??
-                      ts.overrides?.[selectedRun.base]?.[selectedRun.params.engine];
+                      ts.overrides?.[runBase]?.all ??
+                      ts.overrides?.[runBase]?.[selectedRun.params.engine];
 
                     inp = (
                       <NumberInputWrapper
@@ -420,15 +419,24 @@ export const AdvancedSettings = ({
                   } else if (ts.type === 'select') {
                     let options = ts.options as string[];
 
+                    // Options overrides (eventually move this to normal override)
                     if (
                       ts.name === 'lrScheduler' &&
                       selectedRun.params.optimizerType === 'Prodigy'
                     ) {
                       options = options.filter((o) => o !== 'cosine_with_restarts');
                     }
-                    // TODO re-enable x-flux
+
+                    if (ts.name === 'optimizerType' && isVideo) {
+                      options = options.filter((o) => o !== 'Prodigy');
+                    }
+
                     if (ts.name === 'engine') {
-                      options = options.filter((o) => o !== 'x-flux');
+                      if (isVideo) {
+                        options = options.filter((o) => o !== 'kohya' && o !== 'rapid');
+                      } else {
+                        options = options.filter((o) => o !== 'musubi');
+                      }
                     }
 
                     inp = (
@@ -501,7 +509,7 @@ export const AdvancedSettings = ({
                                 </Tooltip>
                               )}
                           </Group>
-                          {/*TODO re-enable when x-flux is back*/}
+                          {/* use this for new parameters */}
                           {/*{ts.name === 'engine' && selectedRun.baseType === 'flux' && (*/}
                           {/*  <Badge color="green">NEW</Badge>*/}
                           {/*)}*/}
@@ -511,7 +519,7 @@ export const AdvancedSettings = ({
                       ts.label
                     ),
                     value: inp,
-                    visible: !(ts.name === 'engine' && selectedRun.baseType !== 'flux'),
+                    visible: !(ts.name === 'engine' && selectedRun.baseType !== 'flux' && !isVideo),
                   };
                 })}
               />

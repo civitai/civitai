@@ -1,5 +1,6 @@
 import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Text, Title } from '@mantine/core';
-import { NextRouter, useRouter } from 'next/router';
+import type { NextRouter } from 'next/router';
+import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -15,11 +16,12 @@ import { useIsChangingLocation } from '~/components/RouterTransition/RouterTrans
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
@@ -387,6 +389,11 @@ export function ModelWizard() {
   return (
     <FilesProvider model={modelFlatTags} version={modelVersion}>
       <div className="container flex max-w-sm flex-col gap-3">
+        <ReadOnlyAlert
+          message={
+            "Civitai is currently in read-only mode and you won't be able to edit your model. Please try again later."
+          }
+        />
         {modelLoading ? (
           <PageLoader text="Loading model..." />
         ) : modelError ? (

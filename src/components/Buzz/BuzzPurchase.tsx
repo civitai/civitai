@@ -1,5 +1,7 @@
 import {
   Accordion,
+  Alert,
+  Anchor,
   Button,
   Center,
   Chip,
@@ -8,28 +10,33 @@ import {
   Input,
   Loader,
   Stack,
+  Table,
   Text,
   ThemeIcon,
 } from '@mantine/core';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
 import { useBuzzButtonStyles } from '~/components/Buzz/styles';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
-import { useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
 import { BuzzPurchaseMultiplierFeature } from '~/components/Subscriptions/SubscriptionFeature';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
-import { constants } from '~/server/common/constants';
-import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { buzzBulkBonusMultipliers, constants } from '~/server/common/constants';
+import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { Price } from '~/shared/utils/prisma/models';
-import { formatCurrencyForDisplay, formatPriceForDisplay } from '~/utils/number-helpers';
+import type { Price } from '~/shared/utils/prisma/models';
+import {
+  formatCurrencyForDisplay,
+  formatPriceForDisplay,
+  numberWithCommas,
+} from '~/utils/number-helpers';
 
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
@@ -37,10 +44,12 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
+import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
+import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
-type Props = {
+export type BuzzPurchaseProps = {
   message?: string;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   onPurchaseSuccess?: () => void;
@@ -56,13 +65,14 @@ const BuzzPurchasePaymentButton = ({
   onPurchaseSuccess,
   purchaseSuccessMessage,
   disabled,
-}: Pick<Props, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
+}: Pick<BuzzPurchaseProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
   priceId?: string;
   onValidate: () => boolean;
 }) => {
+  const features = useFeatureFlags();
   const paymentProvider = usePaymentProvider();
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
@@ -105,32 +115,32 @@ const BuzzPurchasePaymentButton = ({
       priceId,
     };
 
-    openStripeTransactionModal(
-      {
-        unitAmount,
-        message: (
-          <Stack>
-            <Text>
-              You are about to purchase{' '}
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
-            </Text>
-            <Text>Please fill in your data and complete your purchase.</Text>
-          </Stack>
-        ),
-        successMessage,
-        onSuccess: async (stripePaymentIntentId) => {
-          // We do it here just in case, but the webhook should also do it
-          await completeStripeBuzzPurchaseMutation({
-            amount: buzzAmount,
-            details: metadata,
-            stripePaymentIntentId,
-          });
-        },
-        metadata: metadata,
-        // paymentMethodTypes: ['card'],
-      },
-      { fullScreen: isMobile }
-    );
+    // openStripeTransactionModal(
+    //   {
+    //     unitAmount,
+    //     message: (
+    //       <Stack>
+    //         <Text>
+    //           You are about to purchase{' '}
+    //           <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
+    //         </Text>
+    //         <Text>Please fill in your data and complete your purchase.</Text>
+    //       </Stack>
+    //     ),
+    //     successMessage,
+    //     onSuccess: async (stripePaymentIntentId) => {
+    //       // We do it here just in case, but the webhook should also do it
+    //       await completeStripeBuzzPurchaseMutation({
+    //         amount: buzzAmount,
+    //         details: metadata,
+    //         stripePaymentIntentId,
+    //       });
+    //     },
+    //     metadata: metadata,
+    //     // paymentMethodTypes: ['card'],
+    //   },
+    //   { fullScreen: isMobile }
+    // );
   };
 
   const handlePaddleSubmit = async () => {
@@ -165,13 +175,9 @@ const BuzzPurchasePaymentButton = ({
     });
   };
 
-  if (!paymentProvider) {
-    return null;
-  }
-
   return (
     <Button
-      disabled={disabled}
+      disabled={disabled || features.disablePayments}
       onClick={
         paymentProvider === 'Paddle'
           ? handlePaddleSubmit
@@ -182,10 +188,16 @@ const BuzzPurchasePaymentButton = ({
       radius="xl"
       fullWidth
     >
-      Pay Now{' '}
-      {!!unitAmount
-        ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
-        : ''}
+      {features.disablePayments ? (
+        <Text>Credit Cards are currently disabled</Text>
+      ) : (
+        <>
+          Pay Now{' '}
+          {!!unitAmount
+            ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
+            : ''}
+        </>
+      )}
     </Button>
   );
 };
@@ -197,9 +209,10 @@ export const BuzzPurchase = ({
   onCancel,
   purchaseSuccessMessage,
   ...props
-}: Props) => {
+}: BuzzPurchaseProps) => {
+  const features = useFeatureFlags();
   const { classes, cx, theme } = useBuzzButtonStyles();
-  const canUpgradeMembership = useCanUpgrade();
+  const canUpgradeMembership = false; // useCanUpgrade();
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
@@ -211,6 +224,7 @@ export const BuzzPurchase = ({
 
   const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
   const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
+  const liveFeatures = useLiveFeatureFlags();
 
   const onValidate = () => {
     if (!selectedPrice && !customAmount) {
@@ -299,7 +313,36 @@ export const BuzzPurchase = ({
             </Center>
           ) : (
             <Input.Wrapper error={error}>
-              <Stack spacing="xl" mb={error ? 5 : undefined}>
+              <Stack spacing="md" mb={error ? 5 : undefined}>
+                {liveFeatures.buzzGiftCards && (
+                  <Alert>
+                    <Stack spacing={0}>
+                      <Text size="sm" weight={500}>
+                        Now selling Buzz Gift Cards
+                      </Text>
+                      <Group>
+                        <Anchor
+                          href="https://education.civitai.com/civitais-guide-to-buybuzz-io/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          size="xs"
+                          color="blue.3"
+                        >
+                          Learn More
+                        </Anchor>
+                        <Anchor
+                          href="https://buybuzz.io/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          size="xs"
+                          color="blue.3"
+                        >
+                          Buy Now
+                        </Anchor>
+                      </Group>
+                    </Stack>
+                  </Alert>
+                )}
                 <Chip.Group
                   className={classes.chipGroup}
                   value={selectedPrice?.id ?? ''}
@@ -425,6 +468,7 @@ export const BuzzPurchase = ({
                             setCustomAmount(value ?? 0);
                           }}
                           w="80%"
+                          mt={-24}
                         />
                       </Group>
                       <Text size="xs" color="dimmed" mt="xs">
@@ -440,9 +484,96 @@ export const BuzzPurchase = ({
               </Stack>
             </Input.Wrapper>
           )}
-          <Stack spacing="md" mt="md">
+          <Stack spacing="md">
+            <Accordion
+              variant="contained"
+              classNames={{ item: classes.accordionItem }}
+              // defaultValue="buyBulk"
+            >
+              <Accordion.Item value="buyBulk">
+                <Accordion.Control px="md" py={8}>
+                  <Group spacing={8}>
+                    <Text>Buy In Bulk!</Text>
+                  </Group>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <Stack>
+                    <Table>
+                      <thead>
+                        <tr>
+                          <th>Purchase</th>
+                          <th>Get</th>
+                          <th>Bonus %</th>
+                          <th>Buzz / $</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {buzzBulkBonusMultipliers.map(([min, multiplier]) => {
+                          return (
+                            <tr key={min}>
+                              <td>
+                                <Group noWrap spacing={0}>
+                                  <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                  <Text size="sm" color="dimmed">
+                                    {numberWithCommas(min)}
+                                  </Text>
+                                </Group>
+                              </td>
+                              <td>
+                                <Group noWrap spacing={0}>
+                                  <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                  <Text size="sm" color="dimmed">
+                                    {numberWithCommas(min * multiplier)}
+                                  </Text>
+                                </Group>
+                              </td>
+                              <td>
+                                <Text size="sm" color="dimmed">
+                                  {Math.round((multiplier - 1) * 100)}%
+                                </Text>
+                              </td>
+                              <td>
+                                <Group noWrap spacing={0}>
+                                  <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                  <Text size="sm" color="dimmed">
+                                    {numberWithCommas(Math.floor(1000 * multiplier))}
+                                  </Text>
+                                </Group>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </Table>
+                    <Text size="xs" color="dimmed">
+                      * Bulk bonus is Blue Buzz. It is not transferable to other users.
+                    </Text>
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
-            <Group spacing="xs" mt="md" noWrap>
+
+            <Stack spacing="xs" mt="md">
+              {features.coinbasePayments && (
+                <BuzzCoinbaseButton
+                  unitAmount={unitAmount}
+                  buzzAmount={buzzAmount}
+                  onPurchaseSuccess={onPurchaseSuccess}
+                  disabled={!ctaEnabled}
+                  purchaseSuccessMessage={purchaseSuccessMessage}
+                />
+              )}
+              {features.nowpaymentPayments && (
+                <BuzzNowPaymentsButton
+                  unitAmount={unitAmount}
+                  buzzAmount={buzzAmount}
+                  onPurchaseSuccess={onPurchaseSuccess}
+                  disabled={!ctaEnabled}
+                  purchaseSuccessMessage={purchaseSuccessMessage}
+                />
+              )}
+
               <BuzzPurchasePaymentButton
                 unitAmount={unitAmount}
                 buzzAmount={buzzAmount}
@@ -452,6 +583,32 @@ export const BuzzPurchase = ({
                 disabled={!ctaEnabled}
                 purchaseSuccessMessage={purchaseSuccessMessage}
               />
+
+              {(features.nowpaymentPayments || features.coinbasePayments) && (
+                <Stack align="center">
+                  <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
+                    Never purchased with Crypto before?{' '}
+                    <Anchor
+                      href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Learn how
+                    </Anchor>
+                  </AlertWithIcon>
+                </Stack>
+              )}
+
+              <Stack spacing={0} align="center" my={4}>
+                <p className="mb-0 text-xs opacity-50">
+                  By clicking Pay Now, you agree to our{' '}
+                  <Anchor href="/content/tos">Terms of Service</Anchor>
+                </p>
+                <p className="text-xs opacity-50">
+                  Transactions will appear as CIVIT AI INC on your billing statement
+                </p>
+              </Stack>
+
               {/* {env.NEXT_PUBLIC_PAYPAL_CLIENT_ID && (
                 <BuzzPaypalButton
                   onError={(error) => setError(error.message)}
@@ -461,12 +618,13 @@ export const BuzzPurchase = ({
                   onValidate={onValidate}
                 />
               )} */}
+
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">
                   Cancel
                 </Button>
               )}
-            </Group>
+            </Stack>
           </Stack>
         </Stack>
       </Grid.Col>

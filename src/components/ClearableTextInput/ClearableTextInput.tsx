@@ -1,4 +1,5 @@
-import { CloseButton, Group, TextInput, TextInputProps } from '@mantine/core';
+import type { TextInputProps } from '@mantine/core';
+import { CloseButton, Group, TextInput } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { forwardRef, useRef } from 'react';
 
@@ -12,7 +13,7 @@ export const ClearableTextInput = forwardRef<HTMLInputElement, ClearableTextInpu
     const inputRef = useRef<HTMLInputElement>(null);
     const mergedRef = useMergedRef(ref, inputRef);
 
-    const closeButton = props.value && (
+    const closeButton = inputRef.current?.value && (
       <CloseButton
         variant="transparent"
         onClick={() => {

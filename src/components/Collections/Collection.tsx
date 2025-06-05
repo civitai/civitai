@@ -1,10 +1,10 @@
+import type { ContainerProps } from '@mantine/core';
 import {
   ActionIcon,
   AspectRatio,
   Box,
   Button,
   Center,
-  ContainerProps,
   createStyles,
   Divider,
   Group,
@@ -18,7 +18,6 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { CollectionItemStatus } from '@prisma/client';
 import {
   IconAlertCircle,
   IconCirclePlus,
@@ -30,7 +29,8 @@ import {
 import { capitalize, truncate } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { CSSProperties, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { useState } from 'react';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -79,14 +79,15 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
-import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
+import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import {
   Availability,
+  CollectionItemStatus,
   CollectionMode,
   CollectionType,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
-import { CollectionByIdModel } from '~/types/router';
+import type { CollectionByIdModel } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -95,6 +96,7 @@ import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { Meta } from '../Meta/Meta';
+import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
@@ -553,328 +555,330 @@ export function Collection({
 
   return (
     <BrowsingLevelProvider browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}>
-      {collection && (
-        <Meta
-          title={`${collection.name} - collection posted by ${collection.user.username}`}
-          description={
-            collection.description
-              ? truncate(removeTags(collection.description), { length: 150 })
-              : ''
-          }
-          images={collection.image}
-          deIndex={
-            collection.read !== 'Public' || collection.availability === Availability.Unsearchable
-          }
-        />
-      )}
-      <SensitiveShield
-        contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
-      >
-        <MasonryProvider
-          columnWidth={constants.cardSizes.model}
-          maxColumnCount={7}
-          maxSingleColumnWidth={450}
+      <BrowsingSettingsAddonsProvider>
+        {collection && (
+          <Meta
+            title={`${collection.name} - collection posted by ${collection.user.username}`}
+            description={
+              collection.description
+                ? truncate(removeTags(collection.description), { length: 150 })
+                : ''
+            }
+            images={collection.image}
+            deIndex={
+              collection.read !== 'Public' || collection.availability === Availability.Unsearchable
+            }
+          />
+        )}
+        <SensitiveShield
+          contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
         >
-          <MasonryContainer {...containerProps} p={0}>
-            <Stack spacing="xl" w="100%">
-              <Group spacing="xl">
-                {collection?.image && (
-                  <Box
-                    w={220}
-                    sx={(theme) => ({
-                      overflow: 'hidden',
-                      borderRadius: '8px',
-                      boxShadow: theme.shadows.md,
-                      [containerQuery.smallerThan('sm')]: {
-                        width: '100%',
-                        marginBottom: theme.spacing.xs,
-                      },
-                    })}
-                  >
-                    <AspectRatio ratio={3 / 2}>
-                      <EdgeMedia
-                        className={classes.coverImage}
-                        src={collection.image.url}
-                        type={collection.image.type}
-                        name={collection.image.name ?? collection.image.url}
-                        alt={
-                          collection.image.meta
-                            ? truncate(collection.image.meta.prompt, {
-                                length: constants.altTruncateLength,
-                              })
-                            : collection.image.name ?? undefined
-                        }
-                        width={collection.image.width ?? 1200}
-                        loading="lazy"
-                      />
-                    </AspectRatio>
-                  </Box>
-                )}
-                <Stack spacing={8} sx={{ flex: 1 }}>
-                  <Stack spacing={0}>
-                    <Group>
-                      <Title
-                        order={1}
-                        lineClamp={1}
-                        sx={() => ({
-                          [containerQuery.smallerThan('sm')]: {
-                            fontSize: '28px',
-                          },
-                        })}
-                      >
-                        {collection?.name ?? 'Loading...'}
-                      </Title>
-                      {submissionPeriod}
-                    </Group>
-                    {collection?.description && (
-                      <Text size="xs" color="dimmed">
-                        <CustomMarkdown
-                          rehypePlugins={[rehypeRaw, remarkGfm]}
-                          allowedElements={['a', 'p', 'strong', 'em', 'code', 'u']}
-                          unwrapDisallowed
+          <MasonryProvider
+            columnWidth={constants.cardSizes.model}
+            maxColumnCount={7}
+            maxSingleColumnWidth={450}
+          >
+            <MasonryContainer {...containerProps} p={0}>
+              <Stack spacing="xl" w="100%">
+                <Group spacing="xl">
+                  {collection?.image && (
+                    <Box
+                      w={220}
+                      sx={(theme) => ({
+                        overflow: 'hidden',
+                        borderRadius: '8px',
+                        boxShadow: theme.shadows.md,
+                        [containerQuery.smallerThan('sm')]: {
+                          width: '100%',
+                          marginBottom: theme.spacing.xs,
+                        },
+                      })}
+                    >
+                      <AspectRatio ratio={3 / 2}>
+                        <EdgeMedia
+                          className={classes.coverImage}
+                          src={collection.image.url}
+                          type={collection.image.type}
+                          name={collection.image.name ?? collection.image.url}
+                          alt={
+                            collection.image.meta
+                              ? truncate(collection.image.meta.prompt, {
+                                  length: constants.altTruncateLength,
+                                })
+                              : collection.image.name ?? undefined
+                          }
+                          width={collection.image.width ?? 1200}
+                          loading="lazy"
+                        />
+                      </AspectRatio>
+                    </Box>
+                  )}
+                  <Stack spacing={8} sx={{ flex: 1 }}>
+                    <Stack spacing={0}>
+                      <Group>
+                        <Title
+                          order={1}
+                          lineClamp={1}
+                          sx={() => ({
+                            [containerQuery.smallerThan('sm')]: {
+                              fontSize: '28px',
+                            },
+                          })}
                         >
-                          {collection.description}
-                        </CustomMarkdown>
-                      </Text>
-                    )}
-                  </Stack>
-                  {collection && (
-                    <Group spacing={4} noWrap>
-                      {collection.user.id !== -1 && (
-                        <UserAvatar user={collection.user} withUsername linkToProfile />
+                          {collection?.name ?? 'Loading...'}
+                        </Title>
+                        {submissionPeriod}
+                      </Group>
+                      {collection?.description && (
+                        <Text size="xs" color="dimmed">
+                          <CustomMarkdown
+                            rehypePlugins={[rehypeRaw, remarkGfm]}
+                            allowedElements={['a', 'p', 'strong', 'em', 'code', 'u']}
+                            unwrapDisallowed
+                          >
+                            {collection.description}
+                          </CustomMarkdown>
+                        </Text>
                       )}
-                      {/* TODO.collections: We need some metrics to actually display these badges */}
-                      {/* <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
+                    </Stack>
+                    {collection && (
+                      <Group spacing={4} noWrap>
+                        {collection.user.id !== -1 && (
+                          <UserAvatar user={collection.user} withUsername linkToProfile />
+                        )}
+                        {/* TODO.collections: We need some metrics to actually display these badges */}
+                        {/* <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
                       <Text size="xs">{abbreviateNumber(data._count.items)}</Text>
                     </IconBadge>
                     <IconBadge className={classes.iconBadge} icon={<IconUser size={14} />}>
                       <Text size="xs">{abbreviateNumber(data._count.contributors)}</Text>
                     </IconBadge> */}
-                    </Group>
-                  )}
-                </Stack>
-                {collection && permissions && (
-                  <Stack>
-                    <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
-                      {collection.mode === CollectionMode.Contest &&
-                      // Respect the submission period:
-                      (!metadata.submissionEndDate ||
-                        new Date(metadata.submissionEndDate) > new Date()) &&
-                      (!metadata.submissionStartDate ||
-                        new Date(metadata.submissionStartDate) < new Date()) &&
-                      [CollectionType.Image, CollectionType.Post].some(
-                        (x) => x === collection.type
-                      ) ? (
-                        <HoverCard
-                          width={300}
-                          disabled={!currentUser?.meta?.contestBanDetails}
-                          withArrow
-                          withinPortal
-                        >
-                          <HoverCard.Target>
-                            {/* Required div to display hovercard even when button is disabled */}
-                            <div>
-                              <Button
-                                color="blue"
-                                radius="xl"
-                                disabled={!!currentUser?.meta?.contestBanDetails}
-                                onClick={() => {
-                                  if (currentUser?.meta?.contestBanDetails) {
-                                    return;
-                                  }
-
-                                  if (
-                                    !!metadata.existingEntriesDisabled ||
-                                    collection.type === CollectionType.Post
-                                  ) {
-                                    router.push(`/posts/create?collectionId=${collection.id}`);
-                                  } else {
-                                    dialogStore.trigger({
-                                      component: AddUserContentModal,
-                                      props: {
-                                        collectionId: collection.id,
-                                      },
-                                    });
-                                  }
-                                }}
-                              >
-                                Submit an entry
-                              </Button>
-                            </div>
-                          </HoverCard.Target>
-                          <HoverCard.Dropdown px="md" py={8}>
-                            {currentUser?.meta?.contestBanDetails && (
-                              <Text>
-                                Due to breaking the rules in the past, you are ineligible for
-                                participation in this event.
-                              </Text>
-                            )}
-                          </HoverCard.Dropdown>
-                        </HoverCard>
-                      ) : (
-                        <>
-                          <CollectionFollowAction
-                            collectionId={collection.id}
-                            permissions={permissions}
-                          />
-                          {canAddContent && (
-                            <Tooltip label="Add from your library." position="bottom" withArrow>
-                              <ActionIcon
-                                color="blue"
-                                variant="subtle"
-                                radius="xl"
-                                onClick={() => {
-                                  if (!!metadata.existingEntriesDisabled) {
-                                    router.push(`/posts/create?collectionId=${collection.id}`);
-                                  } else {
-                                    dialogStore.trigger({
-                                      component: AddUserContentModal,
-                                      props: {
-                                        collectionId: collection.id,
-                                      },
-                                    });
-                                  }
-                                }}
-                              >
-                                <IconCirclePlus />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                        </>
-                      )}
-                      <CollectionContextMenu
-                        collectionId={collection.id}
-                        ownerId={collection.user.id}
-                        permissions={permissions}
-                        mode={collection.mode}
-                      >
-                        <ActionIcon variant="subtle">
-                          <IconDotsVertical size={16} />
-                        </ActionIcon>
-                      </CollectionContextMenu>
-                    </Group>
-                    {entryCountDetails?.max &&
-                      (() => {
-                        const statuses = [
-                          CollectionItemStatus.REJECTED,
-                          CollectionItemStatus.REVIEW,
-                          CollectionItemStatus.ACCEPTED,
-                        ];
-                        const totalEntries =
-                          (entryCountDetails[CollectionItemStatus.REJECTED] ?? 0) +
-                          entryCountDetails.max;
-                        const remainingEntries =
-                          entryCountDetails.max -
-                          // We only count review/accepted
-                          [CollectionItemStatus.ACCEPTED, CollectionItemStatus.REVIEW].reduce(
-                            // Sum all statuses
-                            (acc, status) => acc + (entryCountDetails[status] ?? 0),
-                            0
-                          );
-
-                        return (
-                          <Stack spacing={0}>
-                            <Progress
-                              size="xl"
-                              sections={[
-                                ...statuses.map((status) => {
-                                  const color =
-                                    status === CollectionItemStatus.REVIEW
-                                      ? 'blue'
-                                      : status === CollectionItemStatus.ACCEPTED
-                                      ? 'green'
-                                      : 'red';
-
-                                  const label = capitalize(status.toLowerCase());
-                                  const entryCount = entryCountDetails[status];
-
-                                  return entryCount
-                                    ? {
-                                        value: (entryCount / totalEntries) * 100,
-                                        color,
-                                        // label,
-                                        tooltip: `${label}: ${entryCountDetails[status]}`,
-                                      }
-                                    : undefined;
-                                }),
-                                remainingEntries > 0
-                                  ? {
-                                      value: (remainingEntries / totalEntries) * 100,
-                                      color: 'gray',
-                                      // label: 'Remaining',
-                                      tooltip: `Remaining: ${remainingEntries}`,
-                                    }
-                                  : undefined,
-                              ].filter(isDefined)}
-                            />
-                            <Tooltip label="Rejected entries do not count toward the allowed count.">
-                              <Text size="xs" weight="bold">
-                                Max entries per participant: {entryCountDetails.max}
-                              </Text>
-                            </Tooltip>
-                          </Stack>
-                        );
-                      })()}
+                      </Group>
+                    )}
                   </Stack>
-                )}
-              </Group>
-              {metadata.submissionStartDate &&
-              new Date(metadata.submissionStartDate) > new Date() ? (
-                <AlertWithIcon icon={<IconAlertCircle />}>
-                  <Text>
-                    This collection is not accepting entries just yet. Please come back after{' '}
-                    {formatDate(metadata.submissionStartDate)}
-                  </Text>
-                </AlertWithIcon>
-              ) : (
-                <>
-                  {isCollectionSubsmissionPeriod(collection) && (
-                    <AlertWithIcon icon={<IconAlertCircle />}>
-                      <Text>
-                        This collection is accepting entries until{' '}
-                        {formatDate(metadata.submissionEndDate)}.{' '}
-                        {metadata.submissionsHiddenUntilEndDate ? (
-                          <>
-                            You will only be able to see your own entries until the submission
-                            period is over.
-                          </>
+                  {collection && permissions && (
+                    <Stack>
+                      <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
+                        {collection.mode === CollectionMode.Contest &&
+                        // Respect the submission period:
+                        (!metadata.submissionEndDate ||
+                          new Date(metadata.submissionEndDate) > new Date()) &&
+                        (!metadata.submissionStartDate ||
+                          new Date(metadata.submissionStartDate) < new Date()) &&
+                        [CollectionType.Image, CollectionType.Post].some(
+                          (x) => x === collection.type
+                        ) ? (
+                          <HoverCard
+                            width={300}
+                            disabled={!currentUser?.meta?.contestBanDetails}
+                            withArrow
+                            withinPortal
+                          >
+                            <HoverCard.Target>
+                              {/* Required div to display hovercard even when button is disabled */}
+                              <div>
+                                <Button
+                                  color="blue"
+                                  radius="xl"
+                                  disabled={!!currentUser?.meta?.contestBanDetails}
+                                  onClick={() => {
+                                    if (currentUser?.meta?.contestBanDetails) {
+                                      return;
+                                    }
+
+                                    if (
+                                      !!metadata.existingEntriesDisabled ||
+                                      collection.type === CollectionType.Post
+                                    ) {
+                                      router.push(`/posts/create?collectionId=${collection.id}`);
+                                    } else {
+                                      dialogStore.trigger({
+                                        component: AddUserContentModal,
+                                        props: {
+                                          collectionId: collection.id,
+                                        },
+                                      });
+                                    }
+                                  }}
+                                >
+                                  Submit an entry
+                                </Button>
+                              </div>
+                            </HoverCard.Target>
+                            <HoverCard.Dropdown px="md" py={8}>
+                              {currentUser?.meta?.contestBanDetails && (
+                                <Text>
+                                  Due to breaking the rules in the past, you are ineligible for
+                                  participation in this event.
+                                </Text>
+                              )}
+                            </HoverCard.Dropdown>
+                          </HoverCard>
                         ) : (
                           <>
-                            Entries that have been approved will be visible to the public. Entries
-                            under review are only visible to the owner.
+                            <CollectionFollowAction
+                              collectionId={collection.id}
+                              permissions={permissions}
+                            />
+                            {canAddContent && (
+                              <Tooltip label="Add from your library." position="bottom" withArrow>
+                                <ActionIcon
+                                  color="blue"
+                                  variant="subtle"
+                                  radius="xl"
+                                  onClick={() => {
+                                    if (!!metadata.existingEntriesDisabled) {
+                                      router.push(`/posts/create?collectionId=${collection.id}`);
+                                    } else {
+                                      dialogStore.trigger({
+                                        component: AddUserContentModal,
+                                        props: {
+                                          collectionId: collection.id,
+                                        },
+                                      });
+                                    }
+                                  }}
+                                >
+                                  <IconCirclePlus />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
                           </>
                         )}
-                      </Text>
-                    </AlertWithIcon>
+                        <CollectionContextMenu
+                          collectionId={collection.id}
+                          ownerId={collection.user.id}
+                          permissions={permissions}
+                          mode={collection.mode}
+                        >
+                          <ActionIcon variant="subtle">
+                            <IconDotsVertical size={16} />
+                          </ActionIcon>
+                        </CollectionContextMenu>
+                      </Group>
+                      {entryCountDetails?.max &&
+                        (() => {
+                          const statuses = [
+                            CollectionItemStatus.REJECTED,
+                            CollectionItemStatus.REVIEW,
+                            CollectionItemStatus.ACCEPTED,
+                          ];
+                          const totalEntries =
+                            (entryCountDetails[CollectionItemStatus.REJECTED] ?? 0) +
+                            entryCountDetails.max;
+                          const remainingEntries =
+                            entryCountDetails.max -
+                            // We only count review/accepted
+                            [CollectionItemStatus.ACCEPTED, CollectionItemStatus.REVIEW].reduce(
+                              // Sum all statuses
+                              (acc, status) => acc + (entryCountDetails[status] ?? 0),
+                              0
+                            );
+
+                          return (
+                            <Stack spacing={0}>
+                              <Progress
+                                size="xl"
+                                sections={[
+                                  ...statuses.map((status) => {
+                                    const color =
+                                      status === CollectionItemStatus.REVIEW
+                                        ? 'blue'
+                                        : status === CollectionItemStatus.ACCEPTED
+                                        ? 'green'
+                                        : 'red';
+
+                                    const label = capitalize(status.toLowerCase());
+                                    const entryCount = entryCountDetails[status];
+
+                                    return entryCount
+                                      ? {
+                                          value: (entryCount / totalEntries) * 100,
+                                          color,
+                                          // label,
+                                          tooltip: `${label}: ${entryCountDetails[status]}`,
+                                        }
+                                      : undefined;
+                                  }),
+                                  remainingEntries > 0
+                                    ? {
+                                        value: (remainingEntries / totalEntries) * 100,
+                                        color: 'gray',
+                                        // label: 'Remaining',
+                                        tooltip: `Remaining: ${remainingEntries}`,
+                                      }
+                                    : undefined,
+                                ].filter(isDefined)}
+                              />
+                              <Tooltip label="Rejected entries do not count toward the allowed count.">
+                                <Text size="xs" weight="bold">
+                                  Max entries per participant: {entryCountDetails.max}
+                                </Text>
+                              </Tooltip>
+                            </Stack>
+                          );
+                        })()}
+                    </Stack>
                   )}
-                  {collection && collectionType === CollectionType.Model && (
-                    <ModelCollection collection={collection} />
-                  )}
-                  {collection && collectionType === CollectionType.Image && (
-                    <ImageCollection collection={collection} permissions={permissions} />
-                  )}
-                  {collection && collectionType === CollectionType.Post && (
-                    <PostCollection collection={collection} />
-                  )}
-                  {collection && collectionType === CollectionType.Article && (
-                    <ArticleCollection collection={collection} />
-                  )}
-                </>
-              )}
-              {!collectionType && !isLoading && (
-                <Center py="xl">
-                  <Stack spacing="xs">
-                    <Text size="lg" weight="700" align="center">
-                      Whoops!
+                </Group>
+                {metadata.submissionStartDate &&
+                new Date(metadata.submissionStartDate) > new Date() ? (
+                  <AlertWithIcon icon={<IconAlertCircle />}>
+                    <Text>
+                      This collection is not accepting entries just yet. Please come back after{' '}
+                      {formatDate(metadata.submissionStartDate)}
                     </Text>
-                    <Text align="center">This collection type is not supported</Text>
-                  </Stack>
-                </Center>
-              )}
-            </Stack>
-          </MasonryContainer>
-        </MasonryProvider>
-      </SensitiveShield>
+                  </AlertWithIcon>
+                ) : (
+                  <>
+                    {isCollectionSubsmissionPeriod(collection) && (
+                      <AlertWithIcon icon={<IconAlertCircle />}>
+                        <Text>
+                          This collection is accepting entries until{' '}
+                          {formatDate(metadata.submissionEndDate)}.{' '}
+                          {metadata.submissionsHiddenUntilEndDate ? (
+                            <>
+                              You will only be able to see your own entries until the submission
+                              period is over.
+                            </>
+                          ) : (
+                            <>
+                              Entries that have been approved will be visible to the public. Entries
+                              under review are only visible to the owner.
+                            </>
+                          )}
+                        </Text>
+                      </AlertWithIcon>
+                    )}
+                    {collection && collectionType === CollectionType.Model && (
+                      <ModelCollection collection={collection} />
+                    )}
+                    {collection && collectionType === CollectionType.Image && (
+                      <ImageCollection collection={collection} permissions={permissions} />
+                    )}
+                    {collection && collectionType === CollectionType.Post && (
+                      <PostCollection collection={collection} />
+                    )}
+                    {collection && collectionType === CollectionType.Article && (
+                      <ArticleCollection collection={collection} />
+                    )}
+                  </>
+                )}
+                {!collectionType && !isLoading && (
+                  <Center py="xl">
+                    <Stack spacing="xs">
+                      <Text size="lg" weight="700" align="center">
+                        Whoops!
+                      </Text>
+                      <Text align="center">This collection type is not supported</Text>
+                    </Stack>
+                  </Center>
+                )}
+              </Stack>
+            </MasonryContainer>
+          </MasonryProvider>
+        </SensitiveShield>
+      </BrowsingSettingsAddonsProvider>
     </BrowsingLevelProvider>
   );
 }

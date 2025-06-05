@@ -3,12 +3,13 @@ import { useEffect } from 'react';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
-import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
+import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { addPostImageSchema } from '~/server/schema/post.schema';
-import { PostDetailEditable } from '~/server/services/post.service';
+import type { PostDetailEditable } from '~/server/services/post.service';
 import {
   orchestratorMediaTransmitter,
   useExternalMetaStore,
@@ -121,8 +122,8 @@ export function PostImageDropzone({
     }
   }
 
-  const handleDrop = (files: File[]) => {
-    handleUpload(files.map((file) => ({ file })));
+  const handleDrop = (args: { file: File; meta?: Record<string, unknown> }[]) => {
+    handleUpload(args);
   };
   // #endregion
 
@@ -151,13 +152,7 @@ export function PostImageDropzone({
       </div>
       {!!files.length && showProgress && <Progress value={progress} animate size="lg" />}
       {!files.length && (
-        <Text size="xs" align="center">
-          By uploading images to our site you agree to our{' '}
-          <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
-            Terms of service
-          </Anchor>
-          . Be sure to read our <ContentPolicyLink /> before uploading any images.
-        </Text>
+        <UploadNotice />
       )}
     </div>
   );

@@ -1,15 +1,15 @@
+import { Container, Title, TypographyStylesProvider } from '@mantine/core';
 import fs from 'fs';
 import matter from 'gray-matter';
-import { InferGetServerSidePropsType } from 'next';
-import { Container, Title, TypographyStylesProvider } from '@mantine/core';
+import { truncate } from 'lodash-es';
+import type { InferGetServerSidePropsType } from 'next';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
-import { Meta } from '~/components/Meta/Meta';
-import { removeTags } from '~/utils/string-helpers';
-import { truncate } from 'lodash-es';
-import { env } from '~/env/client';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { Meta } from '~/components/Meta/Meta';
+import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { removeTags } from '~/utils/string-helpers';
 
 const contentRoot = 'src/static-content';
 // export const getStaticPaths: GetStaticPaths = async () => {
@@ -83,8 +83,10 @@ export default function ContentPage({
         description={description ?? truncate(removeTags(content), { length: 150 })}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/content/${title}`, rel: 'canonical' }]}
       />
-      <Container size="md">
-        <Title order={1}>{title}</Title>
+      <Container size="md" pt="sm">
+        <Title order={1} mb="sm">
+          {title}
+        </Title>
         <TypographyStylesProvider>
           <CustomMarkdown rehypePlugins={[rehypeRaw, remarkGfm]}>{content}</CustomMarkdown>
         </TypographyStylesProvider>

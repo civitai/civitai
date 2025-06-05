@@ -1,18 +1,16 @@
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
-import { Context } from '~/server/createContext';
-import { GetPlansSchema } from '~/server/schema/subscriptions.schema';
+import type { Context } from '~/server/createContext';
+import type { GetPlansSchema } from '~/server/schema/subscriptions.schema';
 import { getPlans, getUserSubscription } from '~/server/services/subscriptions.service';
 
 export const getPlansHandler = async ({ input, ctx }: { input: GetPlansSchema; ctx: Context }) => {
-  const features = ctx.features;
-
   const paddleSupported =
     env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === PaymentProvider.Paddle &&
     !!env.NEXT_PUBLIC_PADDLE_TOKEN &&
     !!env.PADDLE_SECRET_KEY;
 
-  const fallbackToStripe = !features.customPaymentProvider || !paddleSupported;
+  const fallbackToStripe = !paddleSupported;
 
   const defaultPaymentProvider = fallbackToStripe
     ? PaymentProvider.Stripe
@@ -20,6 +18,7 @@ export const getPlansHandler = async ({ input, ctx }: { input: GetPlansSchema; c
 
   return await getPlans({
     paymentProvider: input.paymentProvider ?? defaultPaymentProvider,
+    interval: input.interval,
   });
 };
 

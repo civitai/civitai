@@ -1,15 +1,12 @@
 import { Stack, Group, Text, Loader, Center, Divider, Title, Button, Modal } from '@mantine/core';
-import {
-  RootThreadProvider,
-  CreateComment,
-  Comment,
-  useCommentStyles,
-} from '~/components/CommentsV2';
+import { Comment, useCommentStyles } from '~/components/CommentsV2/Comment/Comment';
+import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
+import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
 import { IconAlertCircle, IconMessageCancel } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useState } from 'react';
 import { SortFilter } from '../../Filters';
-import { ThreadSort } from '../../../server/common/enums';
+import type { ThreadSort } from '../../../server/common/enums';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
 
 type ArticleDetailCommentsProps = {

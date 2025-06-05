@@ -1,6 +1,5 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-
 import { isProd } from '~/env/other';
 import { prepareModelVersionResponse } from '~/pages/api/v1/model-versions/[id]';
 import { dbRead } from '~/server/db/client';

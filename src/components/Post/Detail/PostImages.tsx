@@ -16,7 +16,7 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
-import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -25,11 +25,11 @@ import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostCon
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
-import { VideoMetadata } from '~/server/schema/media.schema';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
+import type { VideoMetadata } from '~/server/schema/media.schema';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
-import { PostContestCollectionItem } from '~/types/router';
+import type { PostContestCollectionItem } from '~/types/router';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
@@ -189,6 +189,7 @@ export function PostImages({
                       }}
                       targetUserId={image.user.id}
                       readonly={!safe}
+                      disableBuzzTip={image.poi}
                     />
                     {image.hasMeta && (
                       <div className="absolute bottom-2 right-2">

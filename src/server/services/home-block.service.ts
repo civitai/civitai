@@ -2,8 +2,8 @@ import type { Prisma } from '@prisma/client';
 import type { SessionUser } from 'next-auth';
 import { ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
   GetSystemHomeBlocksInputSchema,
@@ -11,7 +11,7 @@ import {
   SetHomeBlocksOrderInputSchema,
   UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
-import { getCurrentAnnouncements } from '~/server/services/announcement.service';
+import type { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import {
   getCollectionById,
   getCollectionItemsByCollectionId,
@@ -19,9 +19,9 @@ import {
 import { getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
 import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
+import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import {
   getFeaturedModels,
-  GetModelsWithImagesAndModelVersions,
   getModelsWithImagesAndModelVersions,
 } from '~/server/services/model.service';
 import {
@@ -285,25 +285,27 @@ export const getHomeBlockData = async ({
         (m) => hasSafeBrowsingLevel(m.nsfwLevel) && !m.nsfw && !m.poi
       );
 
-      const filteredModelData: typeof validModelData = [];
-      const creatorsSeen = new Set<number>();
+      const validModelDataSorted = validModelData.sort((a, b) => {
+        const matchA = featured.find((f) => f.modelId === a.id);
+        const matchB = featured.find((f) => f.modelId === b.id);
+        if (!matchA || !matchA.position) return 1;
+        if (!matchB || !matchB.position) return -1;
+        return matchA.position - matchB.position;
+      });
 
-      validModelData.forEach((md) => {
-        if (!creatorsSeen.has(md.user.id)) {
+      const filteredModelData: typeof validModelDataSorted = [];
+      const creatorsSeen: Record<number, number> = {};
+      const maxEntries = 3;
+
+      validModelDataSorted.forEach((md) => {
+        const creatorSeen = creatorsSeen[md.user.id] ?? 0;
+        if (creatorSeen < maxEntries) {
           filteredModelData.push(md);
-          creatorsSeen.add(md.user.id);
+          creatorsSeen[md.user.id] = creatorSeen + 1;
         }
       });
 
-      const limitedData = filteredModelData
-        .sort((a, b) => {
-          const matchA = featured.find((f) => f.modelId === a.id);
-          const matchB = featured.find((f) => f.modelId === b.id);
-          if (!matchA || !matchA.position) return 1;
-          if (!matchB || !matchB.position) return -1;
-          return matchA.position - matchB.position;
-        })
-        .slice(0, input.limit);
+      const limitedData = filteredModelData.slice(0, input.limit);
       // TODO optionally limit position to <= modelsToAddToCollection
 
       return {

@@ -1,8 +1,8 @@
 import { chunk } from 'lodash-es';
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbReadLong } from '~/server/db/pgDb';
@@ -137,7 +137,8 @@ const updateBaseModel = async () => {
           SELECT
             ir."imageId" as id,
             string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
-            array_agg(mv."id") as "modelVersionIds"
+            array_agg(mv."id") as "modelVersionIds",
+            SUM(IIF(m.poi, 1, 0)) > 0 "poi"
           FROM "ImageResourceNew" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
           JOIN "Model" m ON mv."modelId" = m."id"

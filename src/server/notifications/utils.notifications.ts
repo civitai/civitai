@@ -1,6 +1,6 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
-import { BareNotification } from '~/server/notifications/base.notifications';
+import type { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
@@ -14,6 +14,7 @@ import { followNotifications } from '~/server/notifications/follow.notifications
 import { imageNotifications } from '~/server/notifications/image.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
+import { knightsNewOrderNotifications } from '~/server/notifications/new-order.notifications';
 import { reactionNotifications } from '~/server/notifications/reaction.notifications';
 import { reportNotifications } from '~/server/notifications/report.notifications';
 import { reviewNotifications } from '~/server/notifications/review.notifications';
@@ -43,6 +44,7 @@ export const notificationProcessors = {
   ...cosmeticShopNotifications,
   ...challengeNotifications,
   ...auctionNotifications,
+  ...knightsNewOrderNotifications,
 };
 
 // Sort notifications by priority and group them by priority

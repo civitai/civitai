@@ -1,11 +1,10 @@
+import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import {
   ProfileSection,
   ProfileSectionPreview,
-  ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
-import { useInView } from '~/hooks/useInView';
-import { IconArrowRight, IconPencilMinus, IconTrendingUp } from '@tabler/icons-react';
+import { IconArrowRight, IconPencilMinus } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { ArticleSort } from '~/server/common/enums';
 import { useQueryArticles } from '~/components/Article/article.utils';

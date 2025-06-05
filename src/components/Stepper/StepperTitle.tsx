@@ -1,4 +1,5 @@
-import { Stack, Title, Text, StackProps } from '@mantine/core';
+import type { StackProps } from '@mantine/core';
+import { Stack, Title, Text } from '@mantine/core';
 
 export function StepperTitle({
   title,

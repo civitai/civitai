@@ -1,13 +1,12 @@
 import { BlockImageReason, CsamReportType } from '~/shared/utils/prisma/enums';
-import { CsamReport } from '~/shared/utils/prisma/models';
+import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
+import type {
   CreateCsamReportSchema,
   GetImageResourcesOutput,
-  csamCapabilitiesDictionary,
-  csamContentsDictionary,
   CsamReportFormOutput,
 } from '~/server/schema/csam.schema';
+import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/schema/csam.schema';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isDefined } from '~/utils/type-guards';
@@ -23,8 +22,8 @@ import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import { z } from 'zod';
 import plimit from 'p-limit';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { PaginationInput } from '~/server/schema/base.schema';
-import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
+import type { PaginationInput } from '~/server/schema/base.schema';
+import type { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { isProd } from '~/env/other';
 import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';

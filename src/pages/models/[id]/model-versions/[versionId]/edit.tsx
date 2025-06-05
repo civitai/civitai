@@ -8,6 +8,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
 export default function ModelVersionEditPage() {
   const router = useRouter();
@@ -35,6 +36,11 @@ export default function ModelVersionEditPage() {
   return (
     <Container size="sm">
       <Stack spacing="xl">
+        <ReadOnlyAlert
+          message={
+            "Civitai is currently in read-only mode and you won't be able to edit your model version. Please try again later."
+          }
+        />
         <Link legacyBehavior href={`/models/${modelVersion?.model.id}`} passHref shallow>
           <Anchor size="xs">
             <Group spacing={4}>

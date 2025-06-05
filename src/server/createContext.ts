@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { Tracker } from './clickhouse/client';
@@ -62,8 +62,8 @@ export const createContext = async ({
 };
 
 const createCaller = createCallerFactory()(appRouter);
-export const publicApiContext2 = (req: NextApiRequest, res: NextApiResponse) =>
-  createCaller({
+export const publicApiContext2 = async (req: NextApiRequest, res: NextApiResponse) => {
+  return createCaller({
     user: undefined,
     acceptableOrigin: true,
     features: getFeatureFlagsLazy({ req }),
@@ -80,23 +80,26 @@ export const publicApiContext2 = (req: NextApiRequest, res: NextApiResponse) =>
     res,
     req,
   });
+};
 
-export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => ({
-  user: undefined,
-  acceptableOrigin: true,
-  features: getFeatureFlagsLazy({ req }),
-  track: new Tracker(req, res),
-  ip: requestIp.getClientIp(req) ?? '',
-  cache: {
-    browserCacheTTL: 3 * 60,
-    edgeCacheTTL: 3 * 60,
-    staleWhileRevalidate: 60,
-    canCache: true,
-    skip: false,
-  },
-  fingerprint: new Fingerprint((req.headers['x-fingerprint'] as string) ?? ''),
-  res,
-  req,
-});
+export const publicApiContext = async (req: NextApiRequest, res: NextApiResponse) => {
+  return {
+    user: undefined,
+    acceptableOrigin: true,
+    features: getFeatureFlagsLazy({ req }),
+    track: new Tracker(req, res),
+    ip: requestIp.getClientIp(req) ?? '',
+    cache: {
+      browserCacheTTL: 3 * 60,
+      edgeCacheTTL: 3 * 60,
+      staleWhileRevalidate: 60,
+      canCache: true,
+      skip: false,
+    },
+    fingerprint: new Fingerprint((req.headers['x-fingerprint'] as string) ?? ''),
+    res,
+    req,
+  };
+};
 
 export type Context = AsyncReturnType<typeof createContext>;

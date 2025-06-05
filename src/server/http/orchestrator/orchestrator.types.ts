@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
 import { autoCaptionSchema } from '~/store/training.store';
 
 export namespace Orchestrator {
@@ -41,6 +42,7 @@ export namespace Orchestrator {
       properties: z.object({
         userId: z.number(),
         modelId: z.number().positive(),
+        mediaType: z.enum(constants.trainingMediaTypes),
       }),
     });
     export type ImageAutoTagJobPayload = z.infer<typeof imageAutoTagInputSchema>;

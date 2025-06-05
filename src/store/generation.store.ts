@@ -3,22 +3,19 @@ import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
-import { GetGenerationDataInput } from '~/server/schema/generation.schema';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import {
+import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
+import type {
   GenerationData,
   GenerationResource,
   RemixOfProps,
 } from '~/server/services/generation/generation.service';
-import {
-  engineDefinitions,
-  generationFormWorkflowConfigurations,
-  getSourceImageFromUrl,
-} from '~/shared/constants/generation.constants';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import { getSourceImageFromUrl } from '~/shared/constants/generation.constants';
+import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { isMobileDevice } from '~/hooks/useIsMobile';
 
 export type RunType = 'run' | 'remix' | 'replay';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
@@ -40,7 +37,6 @@ type GenerationState = {
     args: GenerationData & {
       type: MediaType;
       workflow?: string;
-      sourceImage?: SourceImageProps;
       engine?: string;
     }
   ) => void;
@@ -66,13 +62,18 @@ export const useGenerationStore = create<GenerationState>()(
 
         if (input) {
           const isMedia = ['audio', 'image', 'video'].includes(input.type);
-          if (isMedia) {
-            generationFormStore.setType(input.type as MediaType);
-          }
+          // if (isMedia) {
+          //   generationFormStore.setType(input.type as MediaType);
+          // }
           try {
             const result = await fetchGenerationData(input);
             const { remixOf, ...data } = result;
             const { params } = await transformParams(data.params, remixOf);
+            if (params.engine) {
+              useGenerationFormStore.setState({ engine: params.engine, type: data.type });
+            } else if (data.type) {
+              useGenerationFormStore.setState({ type: data.type });
+            }
 
             if (isMedia) {
               useRemixStore.setState({
@@ -113,16 +114,27 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: async ({ type, remixOf, workflow, sourceImage, engine, ...data }) => {
+      setData: async ({ type, remixOf, workflow, engine, ...data }) => {
         // TODO.Briant - cleanup at a later point in time
         useGenerationFormStore.setState({ type, workflow });
-        if (sourceImage) generationFormStore.setsourceImage(sourceImage);
+        // if (sourceImage) generationFormStore.setsourceImage(sourceImage);
         if (engine) useGenerationFormStore.setState({ engine });
         const { params } = await transformParams(data.params);
+        if (type === 'video') {
+          params.process = params.sourceImage ? 'img2vid' : 'txt2vid';
+        } else if (type === 'image') {
+          params.process = params.sourceImage ? 'img2img' : 'txt2img';
+        }
+
         set((state) => {
+          if (isMobileDevice()) {
+            state.view = 'generate';
+          }
+
           state.remixOf = remixOf;
           state.data = {
             ...data,
+            type,
             params,
             resources: withSubstitute(data.resources),
             runType: 'replay',
@@ -165,7 +177,7 @@ function withSubstitute(resources: GenerationResource[]) {
   });
 }
 
-const stripWeightDate = new Date('03-14-2025');
+// const stripWeightDate = new Date('03-14-2025');
 async function transformParams(
   data: Record<string, any>,
   remixOf?: RemixOfProps
@@ -195,12 +207,10 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
   let key = 'default';
   switch (input.type) {
     case 'modelVersions':
-      key = `${input.type}_${Array.isArray(input.ids) ? input.ids.join('_') : input.ids}_${(
-        (input.epochNumbers as string[]) ?? []
-      )?.join('_')}`;
+      key = `${input.type}_${Array.isArray(input.ids) ? input.ids.join('_') : input.ids}`;
       break;
     case 'modelVersion':
-      key = `${input.type}_${input.id}_${((input.epochNumbers as string[]) ?? [])?.join('_')}`;
+      key = `${input.type}_${input.id}${input.epoch ? `_${input.epoch}` : ''}`;
       break;
     default:
       key = `${input.type}_${input.id}`;
@@ -221,36 +231,25 @@ export const useGenerationFormStore = create<{
   type: MediaType;
   engine?: string;
   workflow?: string; // is this needed?
-  sourceImage?: SourceImageProps | null;
-  width?: number;
-  height?: number;
-  originalPrompt?: string;
-}>()(persist((set) => ({ type: 'image' }), { name: 'generation-form', version: 1.2 }));
+  // originalPrompt?: string;
+}>()(
+  persist((set) => ({ type: 'image' }), {
+    name: 'generation-form',
+    version: 1.2,
+  })
+);
 
 export const generationFormStore = {
   setType: (type: MediaType) => useGenerationFormStore.setState({ type }),
-  setWorkflow: (workflow?: string) => {
-    let updatedWorkflow = workflow;
-    let engine: string | undefined;
-    if (workflow) {
-      const configuration = generationFormWorkflowConfigurations.find((x) => x.key === workflow);
-      if (!configuration) updatedWorkflow = undefined;
-      else {
-        if ('engine' in configuration) engine = configuration.engine;
-      }
-    }
-
-    useGenerationFormStore.setState({ workflow: updatedWorkflow, engine });
-  },
   setEngine: (engine: string) => useGenerationFormStore.setState({ engine }),
-  setsourceImage: async (sourceImage?: SourceImageProps | string | null) => {
-    useGenerationFormStore.setState({
-      sourceImage:
-        typeof sourceImage === 'string'
-          ? await getSourceImageFromUrl({ url: sourceImage })
-          : sourceImage,
-    });
-  },
+  // setsourceImage: async (sourceImage?: SourceImageProps | string | null) => {
+  //   useGenerationFormStore.setState({
+  //     sourceImage:
+  //       typeof sourceImage === 'string'
+  //         ? await getSourceImageFromUrl({ url: sourceImage })
+  //         : sourceImage,
+  //   });
+  // },
   reset: () => useGenerationFormStore.setState((state) => ({ type: state.type }), true),
 };
 
@@ -261,39 +260,46 @@ export const useRemixStore = create<{
   remixOfId?: number;
 }>()(persist(() => ({}), { name: 'remixOf' }));
 
-export function useVideoGenerationWorkflows() {
-  const currentUser = useCurrentUser();
-  const isMember = (currentUser?.isPaidMember || currentUser?.isModerator) ?? false;
-  const { data, isLoading } = trpc.generation.getGenerationEngines.useQuery();
-  const workflows = generationFormWorkflowConfigurations
-    .map((config) => {
-      const engine = data?.find((x) => x.engine === config.engine);
-      if (!engine) return null;
-      return { ...config, ...engine };
-    })
-    .filter(isDefined);
+// export function useVideoGenerationWorkflows() {
+//   const currentUser = useCurrentUser();
+//   // TODO - handle member only
+//   const isMember = currentUser?.isPaidMember ?? false;
+//   const { data, isLoading } = trpc.generation.getGenerationEngines.useQuery();
+//   const workflows = generationFormWorkflowConfigurations
+//     .map((config) => {
+//       const engine = data?.find((x) => x.engine === config.engine);
+//       if (
+//         !engine ||
+//         (engine.status === 'mod-only' && !currentUser?.isModerator) ||
+//         engine.status === 'disabled'
+//       )
+//         return null;
+//       return { ...config, ...engine, memberOnly: engine.memberOnly };
+//     })
+//     .filter(isDefined);
 
-  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
-  const availableEngines = Object.keys(engineDefinitions)
-    .filter((key) =>
-      workflows
-        ?.filter((x) => {
-          return sourceImage ? x.subType === 'img2vid' : x.subType === 'txt2vid';
-        })
-        .some((x) => x.engine === key && !x.disabled)
-    )
-    .map((key) => ({ key, ...engineDefinitions[key] }))
-    .filter((x) => (x.memberOnly ? isMember : true));
+//   const availableEngines = Object.keys(engineDefinitions)
+//     .filter((key) => workflows?.some((x) => x.engine === key))
+//     .map((key) => ({ key, ...engineDefinitions[key] }));
 
-  return { data: workflows, availableEngines, isLoading };
-}
+//   return { data: workflows, availableEngines, isLoading };
+// }
 
-export function useSelectedVideoWorkflow() {
-  const { data } = useVideoGenerationWorkflows();
-  const selectedEngine = useGenerationFormStore((state) => state.engine);
-  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
-  const workflows = data.filter(({ subType, type }) =>
-    type === 'video' && sourceImage ? subType.startsWith('img') : subType.startsWith('txt')
-  );
-  return workflows.find((x) => x.engine === selectedEngine) ?? workflows[0];
-}
+// export function useSelectedVideoWorkflow() {
+//   const { data, availableEngines } = useVideoGenerationWorkflows();
+//   const selectedEngine = useGenerationFormStore((state) => state.engine);
+//   const sourceImage = useGenerationFormStore((state) => state.sourceImage);
+//   let workflowsByEngine = data.filter((x) => x.engine === selectedEngine);
+//   if (!workflowsByEngine.length)
+//     workflowsByEngine = data.filter((x) => x.engine === availableEngines[0].key);
+
+//   return (
+//     workflowsByEngine.find(({ subType, type }) =>
+//       type === 'video' && sourceImage ? subType.startsWith('img') : subType.startsWith('txt')
+//     ) ?? workflowsByEngine[0]
+//   );
+// }
+
+// export const generationStore2 = create<{ type: MediaType; engine?: string }>()(
+//   persist((set) => ({ type: 'image' }), { name: 'generation', version: 1 })
+// );

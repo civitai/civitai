@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { getPaymentIntentsForBuzz } from '~/server/services/stripe.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaymentIntentsForBuzzSchema } from '~/server/schema/stripe.schema';

@@ -1,23 +1,19 @@
 import { Tooltip, ActionIcon, CloseButton, SegmentedControl } from '@mantine/core';
+import type { Icon, IconProps } from '@tabler/icons-react';
 import {
-  Icon,
   IconArrowsDiagonal,
   IconBrush,
   IconGridDots,
-  IconProps,
   IconClockHour9,
   IconWifiOff,
 } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
-import {
-  GenerationPanelView,
-  generationPanel,
-  useGenerationStore,
-  useRemixStore,
-} from '~/store/generation.store';
+import type { GenerationPanelView } from '~/store/generation.store';
+import { generationPanel, useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import React, { ForwardRefExoticComponent, RefAttributes } from 'react';
+import type { ForwardRefExoticComponent, RefAttributes } from 'react';
+import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
@@ -41,7 +37,9 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
   const remixOfId = useRemixStore((state) => state.remixOfId);
-  if (isImageFeedSeparate && view === 'generate') setView('queue');
+  useEffect(() => {
+    if (isImageFeedSeparate && view === 'generate') setView('queue');
+  }, [isImageFeedSeparate, view]);
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>

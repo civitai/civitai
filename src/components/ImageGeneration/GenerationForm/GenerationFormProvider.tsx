@@ -1,25 +1,31 @@
-import { DeepPartial } from 'react-hook-form';
+import type { DeepPartial } from 'react-hook-form';
 import { showNotification } from '@mantine/notifications';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
-import { TypeOf, z } from 'zod';
+import type { TypeOf } from 'zod';
+import { z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { UsePersistFormReturn, usePersistForm } from '~/libs/form/hooks/usePersistForm';
+import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
+import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
+import type { BaseModelSetType } from '~/server/common/constants';
 import {
-  BaseModelSetType,
   constants,
   generation,
+  generationConfig,
   getGenerationConfig,
 } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
-import { GenerationData } from '~/server/services/generation/generation.service';
+import type {
+  GenerationData,
+  GenerationResource,
+} from '~/server/services/generation/generation.service';
+import type { SupportedBaseModel } from '~/shared/constants/generation.constants';
 import {
-  SupportedBaseModel,
   fluxModeOptions,
   fluxModelId,
   fluxStandardAir,
-  getBaseModelFromResources,
+  getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getBaseModelSetTypes,
   getIsFluxUltra,
@@ -35,7 +41,7 @@ import {
 } from '~/store/generation.store';
 import { useDebouncer } from '~/utils/debouncer';
 import { auditPrompt } from '~/utils/metadata/audit';
-import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
+import type { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
@@ -49,28 +55,26 @@ const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
     model: generationResourceSchema,
-    resources: generationResourceSchema.array().min(0).default([]),
-    vae: generationResourceSchema.optional(),
+    resources: generationResourceSchema.array().min(0).nullable().default(null),
+    vae: generationResourceSchema.nullable().default(null),
     prompt: z.string().default(''),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
     remixPrompt: z.string().optional(),
     remixNegativePrompt: z.string().optional(),
     aspectRatio: z.string(),
-    fluxUltraAspectRatio: z.string(),
+    fluxUltraAspectRatio: z.string().optional(),
     fluxUltraRaw: z.boolean().optional(),
   });
 const partialSchema = baseSchema.partial();
 const formSchema = baseSchema
-  .transform(({ fluxUltraRaw, ...data }) => {
+  .transform(({ ...data }) => {
     const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
     const { height, width } = isFluxUltra
       ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
       : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
     if (data.model.id === fluxModelId && data.fluxMode !== fluxStandardAir) data.priority = 'low';
-    if (fluxUltraRaw) data.engine = 'flux-pro-raw';
-    else data.engine = undefined;
 
     return removeEmpty({
       ...data,
@@ -98,7 +102,7 @@ const formSchema = baseSchema
     }
 
     if (data.prompt.length > 0) {
-      const { blockedFor, success } = auditPrompt(data.prompt);
+      const { blockedFor, success } = auditPrompt(data.prompt, data.negativePrompt);
       if (!success) {
         let message = `Blocked for: ${blockedFor.join(', ')}`;
         const count = blockedRequest.increment();
@@ -160,14 +164,14 @@ export const blockedRequest = (() => {
 
 // #region [data formatter]
 const defaultValues = generation.defaultValues;
-function formatGenerationData(data: GenerationData): PartialFormData {
+function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormData {
   const { quantity, ...params } = data.params;
   // check for new model in resources, otherwise use stored model
   let checkpoint = data.resources.find((x) => x.model.type === 'Checkpoint');
   let vae = data.resources.find((x) => x.model.type === 'VAE');
   const baseModel =
     params.baseModel ??
-    getBaseModelFromResources(
+    getBaseModelFromResourcesWithDefault(
       data.resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
     );
 
@@ -237,10 +241,10 @@ export function useGenerationForm() {
 
 export function GenerationFormProvider({ children }: { children: React.ReactNode }) {
   const storeData = useGenerationStore((state) => state.data);
-
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const type = useGenerationFormStore((state) => state.type);
+  // const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const getValues = useCallback(
     (storageValues: any): any => {
@@ -263,20 +267,30 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     version: 1.3,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
-    values: getValues,
+    defaultValues: getValues,
+    // values: getValues,
     exclude: ['remixSimilarity', 'remixPrompt', 'remixNegativePrompt'],
     storage: localStorage,
   });
 
   function checkSimilarity(id: number, prompt?: string) {
     fetchGenerationData({ type: 'image', id }).then((data) => {
-      if (data.params.prompt && prompt !== undefined) {
-        const similarity = calculateAdjustedCosineSimilarities(data.params.prompt, prompt);
-        form.setValue('remixSimilarity', similarity);
-      }
-
+      form.setValue(
+        'remixSimilarity',
+        !!data.params.prompt && !!prompt
+          ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
+          : undefined
+      );
       form.setValue('remixPrompt', data.params.prompt);
       form.setValue('remixNegativePrompt', data.params.negativePrompt);
+      // setValues({
+      //   remixSimilarity:
+      //     !!data.params.prompt && !!prompt
+      //       ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
+      //       : undefined,
+      //   remixPrompt: data.params.prompt,
+      //   remixNegativePrompt: data.params.negativePrompt,
+      // });
     });
   }
 
@@ -295,7 +309,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           const formData = form.getValues();
           const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
           const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
-          const formResources = [
+          const formResources: GenerationResource[] = [
             formData.model,
             ...(formData.resources ?? []),
             formData.vae,
@@ -332,7 +346,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
       // handle model change to update baseModel value
-
       if (name !== 'baseModel') {
         if (
           watchedValues.model &&
@@ -342,7 +355,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         }
       }
 
-      if (name === 'baseModel') {
+      if (!name || name === 'baseModel') {
         if (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') {
           form.setValue('workflow', 'txt2img');
         }
@@ -356,7 +369,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         prevBaseModelRef.current = watchedValues.baseModel;
       }
 
-      if (name === 'prompt') {
+      if (!name || name === 'prompt') {
         const { remixOfId, prompt } = watchedValues;
         if (remixOfId) {
           debouncer(() => {
@@ -366,16 +379,38 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       }
 
       // handle setting flux mode to standard when flux loras are added
-      if (name === 'resources') {
-        if (watchedValues.baseModel === 'Flux1' && !!watchedValues.resources?.length) {
-          form.setValue('fluxMode', 'urn:air:flux1:checkpoint:civitai:618692@691639');
-        }
+      if (
+        watchedValues.baseModel === 'Flux1' &&
+        !!watchedValues.resources?.length &&
+        watchedValues.fluxMode !== fluxStandardAir
+      ) {
+        form.setValue('fluxMode', fluxStandardAir);
+      }
+
+      if (watchedValues.model?.id === generationConfig.OpenAI.checkpoint.id) {
+        if (watchedValues.sourceImage && watchedValues.workflow !== 'img2img')
+          form.setValue('workflow', 'img2img');
+        else if (!watchedValues.sourceImage && watchedValues.workflow !== 'txt2img')
+          form.setValue('workflow', 'txt2img');
       }
     });
     return () => {
       subscription.unsubscribe();
     };
   }, []);
+
+  // useEffect(() => {
+  //   if (browsingSettingsAddons.settings.generationDefaultValues) {
+  //     const { generationDefaultValues } = browsingSettingsAddons.settings;
+  //     Object.keys(generationDefaultValues ?? {}).forEach((key) => {
+  //       // @ts-ignore
+  //       const value = generationDefaultValues[key as keyof generationDefaultValues];
+  //       if (value !== undefined) {
+  //         form.setValue(key as keyof PartialFormData, value);
+  //       }
+  //     });
+  //   }
+  // }, [browsingSettingsAddons, form]);
   // #endregion
 
   // #region [handlers]
@@ -383,9 +418,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     // don't overwrite quantity
     const { quantity, ...params } = data;
     const limited = sanitizeTextToImageParams(params, status.limits);
-    for (const [key, value] of Object.entries(limited)) {
-      form.setValue(key as keyof PartialFormData, value);
-    }
+    const formData = form.getValues();
+    form.reset({ ...formData, ...limited }, { keepDefaultValues: true });
+    // for (const [key, value] of Object.entries(limited)) {
+    //   form.setValue(key as keyof PartialFormData, value);
+    // }
   }
 
   function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
@@ -393,6 +430,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     return sanitizeTextToImageParams(
       {
         ...defaultValues,
+        // ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
         fluxMode: fluxModeOptions[1].value,
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
@@ -404,7 +442,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }
 
   function reset() {
-    form.reset(getDefaultValues(form.getValues()));
+    form.reset(getDefaultValues(form.getValues()), { keepDefaultValues: false });
   }
   // #endregion
 

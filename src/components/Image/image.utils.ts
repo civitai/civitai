@@ -4,17 +4,21 @@ import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
-import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import type { FilterKeys } from '~/providers/FiltersProvider';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 
 const imageSections = ['images', 'reactions'] as const;
@@ -62,6 +66,7 @@ export const imagesQueryParamSchema = z
     username: z.coerce.string().transform(postgresSlugify),
     view: z.enum(['categories', 'feed']),
     withMeta: booleanString(),
+    requiringMeta: booleanString(),
     remixOfId: numericString(),
   })
   .partial();
@@ -91,10 +96,26 @@ export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
   options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
 ) => {
+  const currentUser = useCurrentUser();
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const excludedTagIds = [
+    ...(filters.excludedTagIds ?? []),
+    ...((filters.username &&
+      filters.username.toLowerCase() === currentUser?.username?.toLowerCase()) ||
+    filters.userId === currentUser?.id
+      ? []
+      : browsingSettingsAddons.settings.excludedTagIds ?? []),
+  ].filter(isDefined);
+
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
-    { ...filters },
+    {
+      ...filters,
+      excludedTagIds,
+      disablePoi: browsingSettingsAddons.settings.disablePoi,
+      disableMinor: browsingSettingsAddons.settings.disableMinor,
+    },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

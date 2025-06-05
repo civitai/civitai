@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
-import { Context } from '~/server/createContext';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import type { Context } from '~/server/createContext';
+import type { GetByIdInput } from '~/server/schema/base.schema';
 import { deleteAccount, getUserAccounts } from '~/server/services/account.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 

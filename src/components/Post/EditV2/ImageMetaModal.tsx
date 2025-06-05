@@ -1,10 +1,10 @@
 import { Button, Modal, Text } from '@mantine/core';
 import { useState } from 'react';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Form, InputNumber, InputSelect, InputTextArea, useForm } from '~/libs/form';
 import { constants } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { baseImageMetaSchema } from '~/server/schema/image.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { auditImageMeta } from '~/utils/media-preprocessors';
@@ -57,7 +57,11 @@ export function ImageMetaModal({
             name="prompt"
             label="Prompt"
             autosize
-            error={!!blockedFor?.length ? `blocked for: ${blockedFor}` : undefined}
+            error={
+              !!blockedFor?.length && blockedFor !== BlockedReason.AiNotVerified
+                ? `blocked for: ${blockedFor}`
+                : undefined
+            }
           />
           <InputTextArea name="negativePrompt" label="Negative prompt" autosize />
           <div className="grid grid-cols-2 gap-3">
@@ -73,7 +77,7 @@ export function ImageMetaModal({
           />
           <InputNumber name="seed" label="Seed" format="default" />
         </div>
-        <div className="flex justify-end mt-4">
+        <div className="mt-4 flex justify-end">
           <Button type="submit" loading={isLoading}>
             Save
           </Button>

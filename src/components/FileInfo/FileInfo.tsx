@@ -4,7 +4,7 @@ import { startCase } from 'lodash-es';
 
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
-import { ModelById } from '~/types/router';
+import type { ModelById } from '~/types/router';
 import { formatKBytes } from '~/utils/number-helpers';
 
 export function FileInfo({ file }: Props) {

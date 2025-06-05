@@ -4,7 +4,7 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -51,6 +51,7 @@ export function ImageCard({ data }: Props) {
                 tippedAmountCount: data.stats?.tippedAmountCountAllTime,
               }}
               targetUserId={data.user.id}
+              disableBuzzTip={data.poi}
             />
             {data.hasMeta && (
               <ImageMetaPopover2 imageId={data.id} type={data.type}>

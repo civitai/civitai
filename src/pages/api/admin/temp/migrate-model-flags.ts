@@ -50,8 +50,9 @@ export default WebhookEndpoint(async (req, res) => {
           poi: boolean;
           nsfw: boolean;
           minor: boolean;
+          sfwOnly: boolean;
         }>(Prisma.sql`
-          SELECT id, name, description, poi, nsfw, minor
+          SELECT id, name, description, poi, nsfw, minor, sfwOnly
           FROM "Model"
           WHERE id BETWEEN ${start} AND ${end}
             AND (status = 'Published'::"ModelStatus" OR status = 'Scheduled'::"ModelStatus")

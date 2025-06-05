@@ -34,12 +34,12 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { Form, InputCheckbox, InputMultiFileUpload, InputRTE, useForm } from '~/libs/form';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
+import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import {
-  BountyEntryFileMeta,
   bountyEntryFileSchema,
   upsertBountyEntryInputSchema,
 } from '~/server/schema/bounty-entry.schema';
-import { BountyEntryGetById, BountyGetById } from '~/types/router';
+import type { BountyEntryGetById, BountyGetById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -48,6 +48,8 @@ import { getFilesHash } from '~/client-utils/file-hashing';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureIntroduction';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -89,6 +91,7 @@ const formSchema = z
 export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
+  const features = useFeatureFlags();
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
   const queryUtils = trpc.useUtils();
   const [bountyEntryImages, setBountyEntryImages] = useState<BountyEntryGetById['images']>(
@@ -187,6 +190,11 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
+      <ReadOnlyAlert
+        message={
+          "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this entry."
+        }
+      />
       <Stack spacing="xl">
         <Group spacing="md">
           <BackButton url={`/bounties/${bounty.id}`} />
@@ -621,7 +629,9 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
           <Button
             loading={bountyEntryUpsertMutation.isLoading && !creating}
             disabled={
-              bountyEntryUpsertMutation.isLoading || (!bountyEntry && !ownershipAcknowledgement)
+              bountyEntryUpsertMutation.isLoading ||
+              (!bountyEntry && !ownershipAcknowledgement) ||
+              !features.canWrite
             }
             onClick={() => setCreating(false)}
             type="submit"

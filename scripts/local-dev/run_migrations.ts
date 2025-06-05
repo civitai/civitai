@@ -429,6 +429,12 @@ const initialMigrations = [
 async function main() {
   checkLocalDb();
 
+  await pgDbWrite.query('REASSIGN OWNED BY doadmin, civitai, "civitai-jobs" TO postgres');
+  await pgDbWrite.query(
+    'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "postgres"'
+  );
+  await pgDbWrite.query('GRANT ALL ON ALL TABLES IN schema public TO "postgres"');
+
   const alreadyRunQuery = await pgDbWrite.query<{ migration_name: string }>(
     `SELECT migration_name FROM "_prisma_migrations" where finished_at is not null`
   );

@@ -1,4 +1,4 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 

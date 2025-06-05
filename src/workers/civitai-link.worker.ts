@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client';
-import {
+import type {
   SocketClient,
   CommandTypes,
   Command,
@@ -10,14 +10,14 @@ import {
 } from '~/components/CivitaiLink/shared-types';
 import { env } from '~/env/client';
 import { v4 as uuid } from 'uuid';
+import type { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
 import {
-  CivitaiLinkInstance,
   createLinkInstance,
   deleteLinkInstance,
   getLinkInstances,
   updateLinkInstance,
 } from '~/components/CivitaiLink/civitai-link-api';
-import {
+import type {
   WorkerIncomingMessage,
   Instance,
   WorkerOutgoingMessage,

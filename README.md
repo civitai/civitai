@@ -90,11 +90,15 @@ First, make sure that you have the following installed on your machine:
             - Runs the server
         - If you see an error about an app not being found, make sure `node_modules/.bin` is added to your path:
             - `export PATH="$PATH:$(realpath node_modules/.bin)"`
+        - If you are an internal member, you can use the buzz and signals service
+            - Set this up once by creating a personal access token in github (with read package permissions)
+            - Set that to `CR_PAT` env
+            - Run `echo $CR_PAT | docker login ghcr.io -u USERNAME --password-stdin`
     - Please report any issues with these commands to us on [discord][discord-url]
 4. Edit the `.env.development` file
     - Most default values are configured to work out of the box, except the S3 upload key and secret. To generate those, navigate to
       the minio web interface at [http://localhost:9000](http://localhost:9000) with the default username and password `minioadmin`, and then navigate
-      to the "Access Keys" tab. Click "Create Access Key" and copy the generated key and secret into the `.env` file.
+      to the "Access Keys" tab. Click "Create Access Key" and copy the generated key and secret into the `.env` file (`S3_UPLOAD_KEY` and `S3_UPLOAD_SECRET`).
     - Set `WEBHOOK_TOKEN` to a random string of your choice. This will be used to authenticate requests to the webhook endpoint.
     - Add a random string of your choice to the email properties to allow user registration
         - `EMAIL_USER`
@@ -126,8 +130,7 @@ Services that require external input will currently not work locally. These incl
 
 Any contributions you make are **greatly appreciated**.
 
-If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "
-enhancement".
+If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "enhancement".
 Don't forget to give the project a star! Thanks again!
 
 1. Fork the repository to your own GitHub account.
@@ -148,7 +151,7 @@ Over the course of development, you may need to change the structure of the data
 3. In this folder, create a file called `migration.sql`
 4. In that file, put your sql changes
     - These are usually simple sql commands like `ALTER TABLE ...`
-5. Run `make run-migrations`
+5. Run `make run-migrations` and `make gen-prisma`
 6. If you are adding/changing a column or table, please try to keep the `gen_seed.ts` file up to date with these changes
 
 ## Sponsors

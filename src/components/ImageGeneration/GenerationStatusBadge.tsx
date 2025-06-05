@@ -1,5 +1,6 @@
-import { WorkflowStatus } from '@civitai/client';
-import { Badge, BadgeProps, Progress, Text, Tooltip } from '@mantine/core';
+import type { WorkflowStatus } from '@civitai/client';
+import type { BadgeProps } from '@mantine/core';
+import { Badge, Progress, Text, Tooltip } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
 import { useState } from 'react';
 import { generationStatusColors } from '~/shared/constants/generation.constants';

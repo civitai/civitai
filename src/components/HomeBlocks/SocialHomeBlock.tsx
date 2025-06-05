@@ -3,14 +3,15 @@ import { useDebouncedState } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight, IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo, useRef } from 'react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { SocialBlock, SocialBlockProps } from '~/components/HomeBlocks/components/SocialBlock';
+import type { SocialBlockProps } from '~/components/HomeBlocks/components/SocialBlock';
+import { SocialBlock } from '~/components/HomeBlocks/components/SocialBlock';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsLive } from '~/hooks/useIsLive';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles<string, { columnWidth?: number; columnGap?: number }>(

@@ -1,4 +1,5 @@
-import { Button, ButtonProps, Tooltip } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
+import { Button, Tooltip } from '@mantine/core';
 import React from 'react';
 
 export function ReactionBadge({

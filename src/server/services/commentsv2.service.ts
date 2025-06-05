@@ -1,9 +1,10 @@
-import { GetByIdInput } from './../schema/base.schema';
-import { CommentV2Model, commentV2Select } from '~/server/selectors/commentv2.selector';
+import type { GetByIdInput } from './../schema/base.schema';
+import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
+import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { UpsertCommentV2Input, CommentConnectorInput } from './../schema/commentv2.schema';
+import type { UpsertCommentV2Input, CommentConnectorInput } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { constants } from '~/server/common/constants';
 
@@ -166,7 +167,7 @@ export async function getCommentsThreadDetails2({
     depth?: number;
   }): CommentThread {
     const allComments = comments.filter(
-      (comment) => comment.threadId === thread.id && !excludedUserIds?.includes(comment.user.id)
+      (comment) => comment.threadId === thread.id // && !excludedUserIds?.includes(comment.user.id)
     );
     const filtered = allComments.filter((comment) => comment.hidden === hidden);
     const hiddenCount = !hidden ? allComments.length - filtered.length : 0;
@@ -184,6 +185,8 @@ export async function getCommentsThreadDetails2({
     ...combineThreadWithComments(mainThread),
     children: childThreads.map(combineThreadWithComments),
   };
+
+  // console.log(result);
 
   return result;
 }

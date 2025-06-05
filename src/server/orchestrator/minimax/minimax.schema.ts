@@ -1,42 +1,50 @@
+import type { MiniMaxVideoGenInput } from '@civitai/client';
 import { MiniMaxVideoGenModel } from '@civitai/client';
 import z from 'zod';
-import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
-  imageEnhancementSchema,
+  baseVideoGenerationSchema,
   promptSchema,
-  textEnhancementSchema,
+  sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 
-const baseMinimaxSchema = z.object({
-  engine: z.literal('minimax'),
-  workflow: z.string(),
-  model: z
-    .nativeEnum(MiniMaxVideoGenModel)
-    .default(MiniMaxVideoGenModel.HAILOU)
-    .catch(MiniMaxVideoGenModel.HAILOU),
+const schema = baseVideoGenerationSchema.extend({
+  engine: z.literal('minimax').catch('minimax'),
+  sourceImage: sourceImageSchema.nullish(),
+  prompt: promptSchema,
+  enablePromptEnhancer: z.boolean().default(true),
 });
 
-const minRatio = 2 / 5;
-const maxRatio = 5 / 2;
-const minSize = 300;
-
-const minimaxTxt2VidSchema = textEnhancementSchema.merge(baseMinimaxSchema);
-const minimaxImg2VidSchema = imageEnhancementSchema
-  .merge(baseMinimaxSchema)
-  .extend({ prompt: promptSchema });
-
-const minimaxTxt2ImgConfig = new VideoGenerationConfig({
-  subType: 'txt2vid',
-  engine: 'minimax',
-  schema: minimaxTxt2VidSchema,
-  metadataDisplayProps: [],
+export const minimaxGenerationConfig = VideoGenerationConfig2({
+  label: 'Hailuo by MiniMax',
+  whatIfProps: ['process'],
+  metadataDisplayProps: ['process'],
+  schema,
+  processes: ['txt2vid', 'img2vid'],
+  transformFn: (data) => {
+    delete data.priority;
+    if (!data.sourceImage) {
+      data.process = 'txt2vid';
+    }
+    if (data.process === 'txt2vid') {
+      delete data.sourceImage;
+    }
+    return data;
+  },
+  superRefine: (data, ctx) => {
+    if (!data.sourceImage && !data.prompt?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt is required',
+        path: ['prompt'],
+      });
+    }
+  },
+  inputFn: ({ sourceImage, ...args }): MiniMaxVideoGenInput => {
+    return {
+      ...args,
+      sourceImage: sourceImage?.url,
+      model: MiniMaxVideoGenModel.HAILOU,
+    };
+  },
 });
-
-const minimaxImg2VidConfig = new VideoGenerationConfig({
-  subType: 'img2vid',
-  engine: 'minimax',
-  schema: minimaxImg2VidSchema,
-  metadataDisplayProps: [],
-});
-
-export const minimaxVideoGenerationConfig = [minimaxTxt2ImgConfig, minimaxImg2VidConfig];

@@ -101,10 +101,17 @@ export function getRandomInt(min: number, max: number) {
   return Math.floor(Math.random() * (intMax - intMin + 1)) + intMin;
 }
 
-export function numberWithCommas(value: number | string | undefined) {
-  return value != null && !Number.isNaN(typeof value === 'string' ? parseFloat(value) : value)
-    ? `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-    : '';
+export function numberWithCommas(value: number | string | undefined, opts?: { decimals?: number }) {
+  if (value == null || Number.isNaN(typeof value === 'string' ? parseFloat(value) : value)) {
+    return '';
+  }
+
+  const numericValue = typeof value === 'string' ? parseFloat(value) : value;
+
+  const formattedValue =
+    opts?.decimals != null ? numericValue.toFixed(opts.decimals) : numericValue.toString();
+
+  return formattedValue.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
 export function formatPriceForDisplay(
@@ -207,4 +214,16 @@ export function roundDownToPowerOfTwo(value: number) {
   }
 
   return result >> 1; // Divide by 2 to get the largest power of 2 less than or equal to the value
+}
+
+/** greatest common denominator */
+const gcd = (a: number, b: number): number => (a ? gcd(b % a, a) : b);
+
+/** lowest common multiple */
+const lcm = (a: number, b: number): number => (a * b) / gcd(a, b);
+
+/** get the ration of two numbers using their greatest common denominator */
+export function getRatio(a: number, b: number) {
+  const c = gcd(a, b);
+  return [a / c, b / c].join(':');
 }

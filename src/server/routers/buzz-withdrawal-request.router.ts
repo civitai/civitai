@@ -7,8 +7,8 @@ import {
   getPaginatedOwnedBuzzWithdrawalRequestsHandler,
   updateBuzzWithdrawalRequestHandler,
 } from '../controllers/buzz-withdrawal-request.controller';
+import type { BuzzWithdrawalRequestServiceStatus } from '../schema/buzz-withdrawal-request.schema';
 import {
-  BuzzWithdrawalRequestServiceStatus,
   buzzWithdrawalRequestServiceStatusSchema,
   createBuzzWithdrawalRequestSchema,
   getPaginatedBuzzWithdrawalRequestSchema,

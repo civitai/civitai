@@ -3,8 +3,8 @@ import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import {
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type {
   ModelFileCreateInput,
   ModelFileUpdateInput,
   RecentTrainingDataInput,
@@ -15,25 +15,30 @@ import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { ModelUploadType } from '~/shared/utils/prisma/enums';
 import { prepareFile } from '~/utils/file-helpers';
 
+export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
+async function fetchModelFilesForCache(ids: number[]) {
+  return await dbRead.modelFile
+    .findMany({
+      where: { modelVersionId: { in: ids } },
+      select: modelFileSelect,
+    })
+    .then((data) =>
+      data.map(({ metadata, ...file }) => {
+        return {
+          ...file,
+          // TODO: Confirm with Briant whether this can be removed or not. -> reduceToBasicFileMetadata(metadata),
+          metadata: metadata as FileMetadata,
+        };
+      })
+    );
+}
+
 export const filesForModelVersionCache = createCachedObject({
   key: REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
   ttl: CacheTTL.sm,
   async lookupFn(ids) {
-    const files = await dbRead.modelFile
-      .findMany({
-        where: { modelVersionId: { in: ids } },
-        select: modelFileSelect,
-      })
-      .then((data) =>
-        data.map(({ metadata, ...file }) => {
-          return {
-            ...file,
-            // TODO: Confirm with Briant whether this can be removed or not. -> reduceToBasicFileMetadata(metadata),
-            metadata: metadata as FileMetadata,
-          };
-        })
-      );
+    const files = await fetchModelFilesForCache(ids);
 
     const records: Record<number, { modelVersionId: number; files: typeof files }> = {};
     for (const file of files) {
@@ -162,6 +167,16 @@ export const getRecentTrainingData = async ({
   if (filters.statuses?.length) {
     where.push({ modelVersion: { trainingStatus: { in: filters.statuses } } });
   }
+  if (filters.mediaTypes?.length) {
+    where.push({
+      OR: [
+        ...filters.mediaTypes.map((type) => ({
+          modelVersion: { trainingDetails: { path: ['mediaType'], equals: type } },
+        })),
+        // { modelVersion: { trainingDetails: { path: ['mediaType'], equals: undefined } } },
+      ],
+    });
+  }
   if (filters.types?.length) {
     where.push({
       OR: filters.types.map((type) => ({
@@ -174,7 +189,7 @@ export const getRecentTrainingData = async ({
   }
 
   try {
-    const data = await dbRead.modelFile.findMany({
+    const data = await dbWrite.modelFile.findMany({
       where: { AND: where },
       select: {
         id: true,

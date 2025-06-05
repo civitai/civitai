@@ -1,21 +1,15 @@
-import { Card, Group, Input, InputWrapperProps, Paper, Stack, Switch, Text } from '@mantine/core';
+import type { InputWrapperProps } from '@mantine/core';
+import { Card, Group, Input, Paper, Stack, Switch, Text } from '@mantine/core';
 import React, { useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
-import { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
+import type { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
 import { IconArrowsMove, IconGripVertical } from '@tabler/icons-react';
 import {
   getAllAvailableProfileSections,
   profileSectionLabels,
 } from '~/components/Profile/profile.utils';
-import {
-  rectIntersection,
-  DndContext,
-  DragEndEvent,
-  PointerSensor,
-  UniqueIdentifier,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
+import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
+import { rectIntersection, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { isEqual } from 'lodash-es';

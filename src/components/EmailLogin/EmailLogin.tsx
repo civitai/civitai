@@ -1,9 +1,16 @@
-import { Alert, Group, Stack, Text, ThemeIcon, MantineSize, Button } from '@mantine/core';
+import type { MantineSize } from '@mantine/core';
+import { Alert, Button, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconMail } from '@tabler/icons-react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { z } from 'zod';
+import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
+import {
+  TurnstilePrivacyNotice,
+  TurnstileWidget,
+} from '~/components/TurnstileWidget/TurnstileWidget';
+import { env } from '~/env/client';
 import { Form, InputText, useForm } from '~/libs/form';
 import { showErrorNotification } from '~/utils/notifications';
 
@@ -24,7 +31,27 @@ export const EmailLogin = ({
 }) => {
   const router = useRouter();
   const form = useForm({ schema });
+
+  const [captchaState, setCaptchaState] = useState<CaptchaState>({
+    status: null,
+    token: null,
+    error: null,
+  });
+  const email = form.watch('email');
+
   const handleEmailLogin = async ({ email }: z.infer<typeof schema>) => {
+    if (captchaState.status !== 'success')
+      return showErrorNotification({
+        title: 'Cannot send login email',
+        error: new Error(captchaState.error ?? 'Captcha token expired. Please try again.'),
+      });
+
+    if (!captchaState.token)
+      return showErrorNotification({
+        title: 'Cannot send login email',
+        error: new Error('Captcha token is missing'),
+      });
+
     onStatusChange('loading');
     try {
       const result = await signIn('email', { email, redirect: false, callbackUrl: returnUrl });
@@ -49,36 +76,73 @@ export const EmailLogin = ({
 
   if (status === 'submitted')
     return (
-      <Alert pl={15}>
-        <Group noWrap>
-          <ThemeIcon size="lg">
-            <IconMail size={20} />
+      <Alert
+        icon={
+          <ThemeIcon>
+            <IconMail size={18} />
           </ThemeIcon>
-          <Stack spacing={0}>
-            <Text
-              size="md"
-              sx={{ lineHeight: 1.1 }}
-            >{`Check your email for a special login link`}</Text>
-            <Text size="xs" color="dimmed">
-              Be sure to check your spam...
-            </Text>
-          </Stack>
-        </Group>
+        }
+        classNames={{
+          wrapper: 'items-center',
+        }}
+      >
+        <Stack spacing={0}>
+          <Text
+            size="md"
+            // sx={{ lineHeight: 1.1 }}
+          >{`Check your email for a special login link`}</Text>
+          <Text size="xs" color="dimmed">
+            Be sure to check your spam...
+          </Text>
+        </Stack>
       </Alert>
     );
 
   return (
-    <Form form={form} onSubmit={handleEmailLogin} className="flex flex-col gap-3">
-      <InputText
-        name="email"
-        type="email"
-        placeholder="coolperson@email.com"
-        withAsterisk
-        size={size}
-      />
-      <Button type="submit" loading={status === 'loading'} size={size}>
-        Continue
-      </Button>
-    </Form>
+    <Stack spacing="sm">
+      <Form form={form} onSubmit={handleEmailLogin} className="flex flex-col gap-3">
+        <InputText
+          name="email"
+          type="email"
+          placeholder="coolperson@email.com"
+          withAsterisk
+          size={size}
+        />
+        <Button
+          type="submit"
+          size={size}
+          loading={status === 'loading'}
+          disabled={!email || !email.length || captchaState.status !== 'success'}
+        >
+          Send login link
+        </Button>
+      </Form>
+      {!!email && email.length > 0 && (
+        <>
+          <TurnstileWidget
+            options={{ size: 'normal' }}
+            className="!w-full justify-items-center"
+            onSuccess={(token) => setCaptchaState({ status: 'success', token, error: null })}
+            onError={(error) =>
+              setCaptchaState({
+                status: 'error',
+                token: null,
+                error: `There was an error generating the captcha: ${error}`,
+              })
+            }
+            siteKey={env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY}
+            onExpire={(token) =>
+              setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' })
+            }
+          />
+          {captchaState.status === 'error' && (
+            <Text size="xs" color="red">
+              {captchaState.error}
+            </Text>
+          )}
+          <TurnstilePrivacyNotice />
+        </>
+      )}
+    </Stack>
   );
 };

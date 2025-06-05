@@ -1,55 +1,65 @@
 import { HaiperVideoGenModel } from '@civitai/client';
 import {
+  baseVideoGenerationSchema,
   negativePromptSchema,
   seedSchema,
-  textEnhancementSchema,
+  sourceImageSchema,
 } from './../infrastructure/base.schema';
 import z from 'zod';
-import {
-  imageEnhancementSchema,
-  promptSchema,
-} from '~/server/orchestrator/infrastructure/base.schema';
+import { promptSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
-import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 
 export const haiperAspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'] as const;
 export const haiperDuration = [2, 4, 8] as const;
 export const haiperResolution = [720, 1080, 2160] as const;
 
-const baseHaiperSchema = z.object({
-  engine: z.literal('haiper'),
-  workflow: z.string(),
-  model: z
-    .nativeEnum(HaiperVideoGenModel)
-    .default(HaiperVideoGenModel.V2)
-    .catch(HaiperVideoGenModel.V2),
+const schema = baseVideoGenerationSchema.extend({
+  engine: z.literal('haiper').catch('haiper'),
+  negativePrompt: negativePromptSchema,
+  aspectRatio: z.enum(haiperAspectRatios).optional().catch('1:1'),
+  sourceImage: sourceImageSchema.nullish(),
+  prompt: promptSchema,
   enablePromptEnhancer: z.boolean().default(true),
   duration: numberEnum(haiperDuration).default(4).catch(4),
   seed: seedSchema,
   resolution: numberEnum(haiperResolution).default(720),
 });
 
-const haiperTxt2VidSchema = textEnhancementSchema.merge(baseHaiperSchema).extend({
-  negativePrompt: negativePromptSchema,
-  aspectRatio: z.enum(haiperAspectRatios).default('1:1').catch('1:1'),
+export const haiperGenerationConfig = VideoGenerationConfig2({
+  label: 'Haiper',
+  description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
+  whatIfProps: ['duration'],
+  metadataDisplayProps: ['process', 'aspectRatio', 'duration', 'seed', 'resolution'],
+  schema,
+  defaultValues: { aspectRatio: '1:1' },
+  processes: ['txt2vid', 'img2vid'],
+  transformFn: (data) => {
+    delete data.priority;
+    if (!data.sourceImage) {
+      data.process = 'txt2vid';
+    }
+    if (data.process === 'txt2vid') {
+      delete data.sourceImage;
+    } else if (data.process === 'img2vid') {
+      delete data.aspectRatio;
+    }
+    return data;
+  },
+  superRefine: (data, ctx) => {
+    if (!data.sourceImage && !data.prompt?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt is required',
+        path: ['prompt'],
+      });
+    }
+  },
+  inputFn: ({ sourceImage, ...args }) => {
+    return {
+      ...args,
+      sourceImage: sourceImage?.url,
+      model: HaiperVideoGenModel.V2,
+    };
+  },
 });
-
-const haiperImg2VidSchema = imageEnhancementSchema
-  .merge(baseHaiperSchema)
-  .extend({ prompt: promptSchema });
-
-const haiperTxt2ImgConfig = new VideoGenerationConfig({
-  subType: 'txt2vid',
-  engine: 'haiper',
-  schema: haiperTxt2VidSchema,
-  metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
-});
-
-const haiperImg2VidConfig = new VideoGenerationConfig({
-  subType: 'img2vid',
-  engine: 'haiper',
-  schema: haiperImg2VidSchema,
-  metadataDisplayProps: ['duration', 'seed', 'resolution'],
-});
-
-export const haiperVideoGenerationConfig = [haiperTxt2ImgConfig, haiperImg2VidConfig];

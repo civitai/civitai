@@ -1,7 +1,7 @@
 import { Button, Loader, Popover, Text, ActionIcon } from '@mantine/core';
 import { IconInfoSquareRounded, IconExternalLink } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Page } from '~/components/AppLayout/Page';
 import { CsamDetailsForm } from '~/components/Csam/CsamDetailsForm';
 import {
@@ -15,13 +15,18 @@ import { getJSZip } from '~/utils/lazy';
 import { unzipTrainingData } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { useInView } from '~/hooks/useInView';
+import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
+import { EdgeVideoBase } from '~/components/EdgeMedia/EdgeVideoBase';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
 function ReviewTrainingData() {
   const router = useRouter();
   const versionId = Number(router.query.versionId);
   const requestedRef = useRef(false);
   const [loading, setLoading] = useState(false);
-  const [urls, setUrls] = useState<string[]>([]);
+  const [urls, setUrls] = useState<{ url: string; ext: string }[]>([]);
   const [error, setError] = useState<Error>();
   const [currentStep, actions] = useStepper(2);
   const utils = trpc.useUtils();
@@ -42,9 +47,12 @@ function ReviewTrainingData() {
         if (zip) {
           const zipReader = await getJSZip();
           const zData = await zipReader.loadAsync(zip);
-          const urls = await unzipTrainingData(zData, ({ imgBlob }) =>
-            URL.createObjectURL(imgBlob)
-          );
+          const urls = await unzipTrainingData(zData, ({ imgBlob, fileExt }) => {
+            return {
+              url: URL.createObjectURL(imgBlob),
+              ext: fileExt,
+            };
+          });
           setUrls(urls);
         }
         setLoading(false);
@@ -87,8 +95,6 @@ function ReviewTrainingData() {
       value: data?.trainingResults?.completedAt ?? 'N/A',
     },
   ];
-
-  useEffect(() => console.log({ currentStep }), [currentStep]);
 
   return loading || isLoading ? (
     <div className="p-3">
@@ -161,7 +167,7 @@ function ReviewImages({
   onModerate: onSuccess,
 }: {
   onNext: () => void;
-  urls: string[];
+  urls: { url: string; ext: string }[];
   versionId: number;
   onModerate: () => void;
 }) {
@@ -182,7 +188,7 @@ function ReviewImages({
   }
 
   return (
-    <div className="flex size-full flex-col">
+    <div className="flex flex-1 flex-col overflow-hidden">
       <div className="container flex max-w-lg justify-end gap-3 p-3">
         <Button disabled={disabled} onClick={handleApprove}>
           Approve
@@ -196,11 +202,20 @@ function ReviewImages({
       </div>
       <ScrollArea className="size-auto pt-0">
         <div className="container max-w-lg">
-          <div className="grid grid-cols-4 gap-4">
-            {urls.map((url, index) => (
+          <div className="grid grid-cols-3 gap-4">
+            {urls.map(({ url, ext }, index) => (
               <div key={index} className="flex items-center justify-center card">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={url} alt="" className="max-w-full" loading="lazy" />
+                {IMAGE_MIME_TYPE.includes(`image/${ext}` as any) && (
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={url} alt="" className="max-w-full" loading="lazy" />
+                  </>
+                )}
+                {VIDEO_MIME_TYPE.includes(`video/${ext}` as any) && (
+                  <video disablePictureInPicture playsInline controls muted loop preload="metadata">
+                    <source src={url} type={`video/${ext}`} />
+                  </video>
+                )}
               </div>
             ))}
           </div>
@@ -209,3 +224,54 @@ function ReviewImages({
     </div>
   );
 }
+
+// type VideoProps = React.DetailedHTMLProps<
+//   React.VideoHTMLAttributes<HTMLVideoElement>,
+//   HTMLVideoElement
+// > & { threshold?: number | null };
+
+// export const Video = forwardRef<HTMLVideoElement, VideoProps>(
+//   ({ src = '', threshold = 0.25, autoPlay, ...props }, forwardedRef) => {
+//     const ref = useRef<HTMLVideoElement>(null);
+//     const node = useScrollAreaRef();
+//     const observerRef = useRef<IntersectionObserver>();
+
+//     useImperativeHandle(forwardedRef, () => ref.current as HTMLVideoElement);
+
+//     useEffect(() => {
+//       const videoElem = ref.current;
+//       if (!videoElem) return;
+
+//       const canObserve = threshold !== null && autoPlay;
+//       if (!observerRef.current && canObserve) {
+//         observerRef.current = new IntersectionObserver(
+//           ([{ isIntersecting, intersectionRatio, target }]) => {
+//             const elem = target as HTMLVideoElement;
+//             if (isIntersecting && intersectionRatio >= threshold) {
+//               elem.play();
+//             } else if (!isIntersecting || (isIntersecting && intersectionRatio < threshold)) {
+//               elem.pause();
+//             }
+//           },
+//           { root: node?.current, threshold: [threshold, 1 - threshold] }
+//         );
+//       }
+
+//       if (canObserve) {
+//         observerRef.current?.observe(videoElem);
+//       }
+//       return () => {
+//         observerRef.current?.unobserve(videoElem);
+//       };
+//     }, [threshold, autoPlay]);
+
+//     return (
+//       <video ref={ref} {...props}>
+//         <source src={src.replace('.mp4', '.webm')} type="video/webm" />
+//         <source src={src} type="video/mp4" />
+//       </video>
+//     );
+//   }
+// );
+
+// Video.displayName = 'Video';

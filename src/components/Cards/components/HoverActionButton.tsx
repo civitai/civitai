@@ -1,12 +1,6 @@
 import React from 'react';
-import {
-  Badge,
-  createStyles,
-  MantineColor,
-  ThemeIcon,
-  ThemeIconProps,
-  UnstyledButtonProps,
-} from '@mantine/core';
+import type { MantineColor, ThemeIconProps, UnstyledButtonProps } from '@mantine/core';
+import { Badge, createStyles, ThemeIcon } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 
 const CUSTOM_VARIANTS = ['white'] as const;

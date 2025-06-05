@@ -1,11 +1,5 @@
-import {
-  createStyles,
-  Grid,
-  GridProps,
-  Stack,
-  Title,
-  TypographyStylesProvider,
-} from '@mantine/core';
+import type { GridProps } from '@mantine/core';
+import { createStyles, Grid, Stack, Title, TypographyStylesProvider } from '@mantine/core';
 import React from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -83,14 +77,21 @@ const useStyles = createStyles((theme, _params, getRef) => {
   };
 });
 
-export function ShopSection({ title, description, imageUrl, hideTitle, children }: Props) {
+export function ShopSection({
+  title,
+  description,
+  imageUrl,
+  hideTitle,
+  className,
+  children,
+}: Props) {
   const { classes, cx } = useStyles();
   const backgroundImageUrl = imageUrl
     ? getEdgeUrl(imageUrl, { width: IMAGE_SECTION_WIDTH, optimized: true })
     : undefined;
 
   return (
-    <section className={cx(classes.section, 'flex flex-col gap-4 m-3')}>
+    <section className={cx(classes.section, 'flex flex-col gap-4 m-3', className)}>
       <div
         className={cx(classes.sectionHeaderContainer, {
           [classes.sectionHeaderContainerWithBackground]: !!backgroundImageUrl,
@@ -151,4 +152,5 @@ type Props = {
   description?: string | null;
   imageUrl?: string | null;
   hideTitle?: boolean;
+  className?: string;
 };

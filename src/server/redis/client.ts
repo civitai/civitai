@@ -355,6 +355,7 @@ export const REDIS_SYS_KEYS = {
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
     TOKENS: 'generation:tokens',
+    EXPERIMENTAL: 'generation:experimental',
   },
   TRAINING: {
     STATUS: 'training:status',
@@ -367,6 +368,8 @@ export const REDIS_SYS_KEYS = {
     NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
     DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
     FEATURE_STATUS: 'system:feature-status',
+    BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
+    LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -401,6 +404,20 @@ export const REDIS_SYS_KEYS = {
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
   },
+  NEW_ORDER: {
+    EXP: 'new-order:exp',
+    FERVOR: 'new-order:fervor',
+    BUZZ: 'new-order:blessed-buzz',
+    SMITE: 'new-order:smite-progress',
+    QUEUES: 'new-order:queues',
+    RATINGS: 'new-order:ratings',
+    MATCHES: 'new-order:matches',
+    JUDGEMENTS: {
+      ALL: 'new-order:judgments:all',
+      CORRECT: 'new-order:judgments:correct',
+      ACOLYTE_FAILED: 'new-order:judgments:acolyte-failed',
+    },
+  },
 } as const;
 
 // Cached data
@@ -419,7 +436,7 @@ export const REDIS_KEYS = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data',
+    RESOURCE_DATA: 'packed:generation:resource-data-3',
     TOKENS: 'generation:tokens',
     COUNT: 'generation:count',
   },
@@ -435,7 +452,7 @@ export const REDIS_KEYS = {
     CATEGORIES: 'system:categories',
   },
   CACHES: {
-    FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',
+    FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
@@ -468,6 +485,10 @@ export const REDIS_KEYS = {
       IMAGES: 'packed:caches:mod-rules:images',
     },
     RESOURCE_OVERRIDES: 'packed:caches:resource-overrides',
+    NEW_ORDER: {
+      RANKS: 'new-order:ranks',
+    },
+    TOP_EARNERS: 'packed:caches:top-earners',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
@@ -528,9 +549,13 @@ export const REDIS_KEYS = {
     CAPS: 'packed:caches:creator-program:caps',
     CASH: 'packed:caches:creator-program:cash',
     BANKED: 'packed:caches:creator-program:banked',
+    PREV_MONTH_STATS: 'packed:caches:creator-program:prev-month-stats',
     POOL_VALUE: 'packed:caches:creator-program:pool-value',
     POOL_SIZE: 'packed:caches:creator-program:pool-size',
     POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
+  },
+  NEW_ORDER: {
+    RATED: 'new-order:rated',
   },
 } as const;
 

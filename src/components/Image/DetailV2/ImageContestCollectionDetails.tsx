@@ -1,6 +1,6 @@
 import { Anchor, Button, Card, Checkbox, Divider, Text } from '@mantine/core';
 import { IconBan, IconCheck, IconTournament } from '@tabler/icons-react';
-import { InfiniteData } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useState } from 'react';
@@ -12,7 +12,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { CollectionItemStatus, CollectionType } from '~/shared/utils/prisma/enums';
-import { CollectionGetAllItems } from '~/types/router';
+import type { CollectionGetAllItems } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
@@ -285,18 +285,18 @@ function ReviewActions({
 }) {
   const queryUtils = trpc.useUtils();
 
-  const [minor, setMinor] = useState(false);
+  const [acceptableMinor, setAcceptableMinor] = useState(false);
 
-  const updateImageMinorMutation = trpc.image.updateMinor.useMutation({
-    onMutate: ({ minor }) => {
-      setMinor(minor);
+  const updateImageAcceptableMinorMutation = trpc.image.updateAccetableMinor.useMutation({
+    onMutate: ({ acceptableMinor }) => {
+      setAcceptableMinor(acceptableMinor);
       const prevData = queryUtils.image.get.getData({ id: imageId });
 
       queryUtils.image.get.setData(
         { id: imageId },
         produce((old) => {
           if (!old) return;
-          old.minor = minor;
+          old.acceptableMinor = acceptableMinor;
           return old;
         })
       );
@@ -305,15 +305,15 @@ function ReviewActions({
     },
     onError: (error, _, context) => {
       showErrorNotification({
-        title: 'Failed to update image minor status',
+        title: 'Failed to update image acceptable minor status',
         error: new Error(error.message),
       });
-      setMinor((curr) => !curr);
+      setAcceptableMinor((curr) => !curr);
       if (context?.prevData) queryUtils.image.get.setData({ id: imageId }, context.prevData);
     },
   });
-  const handleMinorChange = (minor: boolean) => {
-    updateImageMinorMutation.mutate({ minor, id: imageId, collectionId });
+  const handleMinorChange = (acceptableMinor: boolean) => {
+    updateImageAcceptableMinorMutation.mutate({ acceptableMinor, id: imageId, collectionId });
   };
 
   const updateCollectionItemsStatusMutation =
@@ -362,8 +362,8 @@ function ReviewActions({
       <div className="flex items-center gap-2">
         <Checkbox
           label="Realistic depiction of a minor"
-          checked={minor}
-          disabled={updateImageMinorMutation.isLoading}
+          checked={acceptableMinor}
+          disabled={updateImageAcceptableMinorMutation.isLoading}
           onChange={(e) => handleMinorChange(e.currentTarget.checked)}
         />
         <InfoPopover>

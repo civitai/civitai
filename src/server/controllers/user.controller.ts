@@ -4,21 +4,21 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
+import type { NotificationCategory } from '~/server/common/enums';
 import {
-  NotificationCategory,
   OnboardingComplete,
   OnboardingSteps,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
-import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
-import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
-import {
+import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import type { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
+import type {
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
@@ -40,7 +40,7 @@ import {
   UserUpdateInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
-import {
+import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
   NamePlateCosmetic,
@@ -108,18 +108,16 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { Flags } from '~/shared/utils';
-import {
-  CosmeticType,
-  ModelEngagementType,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
+import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
+import { CosmeticType, ModelEngagementType } from '~/shared/utils/prisma/enums';
 import { isUUID } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getUserBuzzBonusAmount } from '../common/user-helpers';
 import { verifyCaptchaToken } from '../recaptcha/client';
 import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
-import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
+import type { FeatureAccess } from '../services/feature-flags.service';
+import { toggleableFeatures } from '../services/feature-flags.service';
 import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
 
 export const getAllUsersHandler = async ({
@@ -282,7 +280,8 @@ export const completeOnboardingHandler = async ({
     const changed = onboarding !== ctx.user.onboarding;
 
     switch (input.step) {
-      case OnboardingSteps.TOS: {
+      case OnboardingSteps.TOS:
+      case OnboardingSteps.RedTOS: {
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         break;
       }
@@ -1355,6 +1354,11 @@ export const setUserSettingHandler = async ({
   try {
     const { id } = ctx.user;
     const { tourSettings: tour, ...restInput } = input;
+
+    if (restInput.assistantPersonality && !ctx.features.assistantPersonality) {
+      throw throwAuthorizationError('You do not have permission to perform this action');
+    }
+
     const { tourSettings, ...restSettings } = await getUserSettings(id);
     const newSettings = {
       ...restSettings,
