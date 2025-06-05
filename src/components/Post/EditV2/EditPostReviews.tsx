@@ -140,7 +140,6 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
                   component="a"
                   href="https://github.com/civitai/sd_civitai_extension"
                   target="_blank"
-                  variant="link"
                   rel="nofollow"
                 >
                   Civitai Extension for Automatic 1111 Stable Diffusion Web UI

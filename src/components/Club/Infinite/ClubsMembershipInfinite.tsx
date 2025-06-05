@@ -246,7 +246,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
               <Center>
                 <Stack gap={0} align="center">
                   <Text
-                    variant="link"
+                    c="blue.4"
                     size="sm"
                     onClick={() => {
                       window.scrollTo({ top: 0, behavior: 'smooth' });

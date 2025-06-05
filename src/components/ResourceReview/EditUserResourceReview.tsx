@@ -118,7 +118,7 @@ export function EditUserResourceReview({
             </Card.Section>
             <Stack>
               {!editDetail ? (
-                <Text variant="link" onClick={toggleEditDetail} size="sm">
+                <Text c="blue.4" onClick={toggleEditDetail} size="sm">
                   <Group gap={4} style={{ cursor: 'pointer' }}>
                     <IconChevronDown size={16} />{' '}
                     <span>{!resourceReview.details ? 'Add' : 'Edit'} Review Comments</span>
@@ -255,7 +255,7 @@ export function EditUserResourceReviewV2({
   return (
     <Stack gap="sm" pos="relative">
       <Group gap={8} justify="space-between">
-        <Text variant="link" size="sm" style={{ cursor: 'pointer' }} onClick={handleToggleOpen}>
+        <Text c="blue.4" size="sm" style={{ cursor: 'pointer' }} onClick={handleToggleOpen}>
           <Group gap={4}>
             <IconChevronDown className={clsx({ [classes.opened]: opened })} size={20} />
             <span>{hasComment ? 'Edit' : 'Add'} Review Comments</span>

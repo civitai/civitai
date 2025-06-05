@@ -160,13 +160,7 @@ export const getPlanDetails: (
                 {(metadata.vaultSizeKb ?? 0) === 0
                   ? 'No '
                   : formatKBytes(metadata.vaultSizeKb ?? 0)}{' '}
-                <Text
-                  variant="link"
-                  td="underline"
-                  component="a"
-                  href="/product/vault"
-                  target="_blank"
-                >
+                <Text td="underline" component="a" href="/product/vault" target="_blank">
                   Civitai Vault storage
                 </Text>
               </Text>
@@ -218,26 +212,14 @@ export const getPlanDetails: (
         content:
           !!metadata.badgeType && !!isAnnual ? (
             <Text lh={1}>
-              <Text
-                variant="link"
-                td="underline"
-                component="a"
-                href="/articles/14950"
-                target="_blank"
-              >
+              <Text td="underline" component="a" href="/articles/14950" target="_blank">
                 Exclusive cosmetics
               </Text>
             </Text>
           ) : (
             <Text lh={1}>
               No{' '}
-              <Text
-                variant="link"
-                td="underline"
-                component="a"
-                href="/articles/14950"
-                target="_blank"
-              >
+              <Text td="underline" component="a" href="/articles/14950" target="_blank">
                 exclusive cosmetics
               </Text>
             </Text>

@@ -56,10 +56,12 @@ export function VerifiedText({ file, iconOnly }: Props) {
       </ThemeIcon>
       {!iconOnly ? (
         <Text c="dimmed" size="xs">
-          <Text component="span">{verified ? 'Verified' : 'Unverified'}: </Text>
+          <Text span inherit>
+            {verified ? 'Verified' : 'Unverified'}:{' '}
+          </Text>
           <Popover withArrow width={350} position="bottom" withinPortal>
             <Popover.Target>
-              <Text component="a" style={{ cursor: 'pointer' }}>
+              <Text component="a" style={{ cursor: 'pointer' }} inherit>
                 {scannedDate ? (
                   <abbr title={scannedDate.format()}>{scannedDate.fromNow()}</abbr>
                 ) : (

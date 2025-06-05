@@ -49,7 +49,7 @@ const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undef
   return (
     // TODO: In a perfect world, we wouldn't be relying on Mantine here.
     <Link legacyBehavior href={modHref} passHref {...props}>
-      <Text variant="link" component="a" style={{ textDecoration: 'underline', color: 'unset' }}>
+      <Text c="blue.4" component="a" style={{ textDecoration: 'underline', color: 'unset' }}>
         {content}
       </Text>
     </Link>

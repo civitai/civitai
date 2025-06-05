@@ -85,7 +85,6 @@ const theme = createTheme({
     Text: {
       defaultProps: {
         size: 'sm',
-        inherit: true,
       },
     },
     // InputWrapper: {

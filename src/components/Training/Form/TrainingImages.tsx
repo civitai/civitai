@@ -1704,7 +1704,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     is complete, the dataset is removed. By default, it is not public. Read our{' '}
                     <Text
                       component={Link}
-                      variant="link"
+                      c="blue.4"
                       href="/content/training/data-policy"
                       target="_blank"
                     >

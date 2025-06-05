@@ -727,7 +727,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               <Text>
                 On-site generation with SD3 is unsupported.{' '}
                 <Text
-                  variant="link"
                   td="underline"
                   component="a"
                   target="_blank"

@@ -412,7 +412,13 @@ export function GeneratedImage({
   );
 }
 
-function BlockedBlock({ title, message }: { title: string; message: string | (() => JSX.Element) }) {
+function BlockedBlock({
+  title,
+  message,
+}: {
+  title: string;
+  message: string | (() => JSX.Element);
+}) {
   return (
     <Stack gap="xs" className="p-2">
       <Text c="red" fw="bold" align="center" size="sm">
@@ -845,7 +851,6 @@ const imageBlockedReasonMap: Record<string, string | (() => JSX.Element)> = {
         align="center"
         size="sm"
         component={NextLink}
-        variant="link"
         href="https://civitai.com/changelog?id=11"
       >
         More info.

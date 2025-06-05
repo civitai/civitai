@@ -9,7 +9,7 @@ const defaultBenefits = [
   { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
   {
     content: (
-      <Text variant="link" td="underline" component="a" href="/product/link" target="_blank">
+      <Text td="underline" component="a" href="/product/link" target="_blank">
         Civitai Link
       </Text>
     ),
@@ -22,7 +22,7 @@ const defaultBenefits = [
     content: (
       <Text>
         Access to the{' '}
-        <Anchor variant="link" td="underline" component="a" href="/creator-program" target="_blank">
+        <Anchor td="underline" component="a" href="/creator-program" target="_blank">
           Creator Program
         </Anchor>{' '}
         to get paid for earned Buzz

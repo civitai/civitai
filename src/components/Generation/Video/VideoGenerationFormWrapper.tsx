@@ -24,9 +24,8 @@ export function VideoGenerationFormWrapper() {
           Learn more about{' '}
           <Text
             component="a"
-            variant="link"
             href="https://education.civitai.com/civitais-guide-to-video-in-the-civitai-generator"
-            target="blank"
+            target="_blank"
             inline
           >
             video generation

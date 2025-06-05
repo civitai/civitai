@@ -168,7 +168,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                   OP
                 </Badge>
               ) : null}
-              <Text c="dimmed" size="xs" component="a" href={directLink.toString()}>
+              <Text c="dimmed" className="text-xs" component="a" href={directLink.toString()}>
                 <DaysFromNow date={comment.createdAt} />
               </Text>
             </Group>

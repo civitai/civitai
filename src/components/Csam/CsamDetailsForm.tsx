@@ -209,7 +209,6 @@ function ModelVersionSelectList({
                 component="a"
                 href={`/models/${modelId}/${modelName}?modelVersionId=${modelVersionId}`}
                 target="_blank"
-                variant="link"
                 style={{ lineHeight: 1 }}
               >
                 <IconExternalLink size={18} />

@@ -550,7 +550,7 @@ const EstimatedEarningsCard = () => {
               <Table.Td className="text-right">
                 {cap && (
                   <Text
-                    variant="link"
+                    c="blue.4"
                     className="cursor-pointer pr-2 text-sm"
                     td="underline"
                     onClick={() => {

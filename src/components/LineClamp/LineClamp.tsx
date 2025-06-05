@@ -26,7 +26,7 @@ export function LineClamp({
       {clamped && (
         <div className="flex justify-start">
           <Text
-            variant="link"
+            c="blue.4"
             className="cursor-pointer text-sm"
             onClick={() => setShowMore(!showMore)}
           >

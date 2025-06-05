@@ -70,7 +70,7 @@ export function QueueSnackbar() {
         {includeQueueLink ? (
           <Text
             inline
-            variant="link"
+            c="blue.4"
             className="cursor-pointer"
             onClick={() => generationPanel.setView('queue')}
           >
@@ -115,7 +115,7 @@ export function QueueSnackbar() {
               <Popover.Dropdown>
                 <div className="flex flex-col items-center">
                   <Text fw={600}>Generation Buzz Credit </Text>
-                  <Text component={Link} variant="link" href="/articles/7012" target="_blank">
+                  <Text component={Link} href="/articles/7012" target="_blank">
                     Learn more
                   </Text>
                 </div>
@@ -129,7 +129,7 @@ export function QueueSnackbar() {
               dictionary[queueStatus]()
             ) : includeQueueLink ? (
               <Text
-                variant="link"
+                c="blue.4"
                 className="cursor-pointer"
                 onClick={() => generationPanel.setView('queue')}
               >

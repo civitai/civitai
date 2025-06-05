@@ -114,7 +114,6 @@ export function URNExplanation({ size }: { size?: number }) {
             For brevity we have opted not to show the full AIR here. To learn more about AIRs,{' '}
             <Text
               component="a"
-              variant="link"
               td="underline"
               href="/github/wiki/AIR-‐-Uniform-Resource-Names-for-AI"
               target="_blank"

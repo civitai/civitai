@@ -194,7 +194,7 @@ export default function UserTransactions() {
                     {isImage && details?.entityId ? (
                       <RoutedDialogLink
                         name="imageDetail"
-                        variant="link"
+                        c="blue.4"
                         state={{ imageId: details.entityId }}
                         style={{ fontSize: 12 }}
                       >

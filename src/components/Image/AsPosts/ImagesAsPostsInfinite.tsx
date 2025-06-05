@@ -230,12 +230,7 @@ export default function ImagesAsPostsInfinite({
                 This resource is intended to depict a real person. All images that use this resource
                 are scanned for mature themes and manually reviewed by a moderator in accordance
                 with our{' '}
-                <Text
-                  component={Link}
-                  href="/content/rules/real-people"
-                  variant="link"
-                  td="underline"
-                >
+                <Text component={Link} href="/content/rules/real-people" td="underline">
                   real person policy
                 </Text>
                 .{' '}

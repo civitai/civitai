@@ -218,7 +218,7 @@ export default function UserBuzzDashboard() {
           </Paper>
           <Text mt={-16} size="sm" mb="xs" align="right">
             Still looking for ways to get more Buzz? Consider posting to the{' '}
-            <Text variant="link" td="underline" component={Link} href="/collections/3870938">
+            <Text c="blue.4" td="underline" component={Link} href="/collections/3870938">
               Buzz Beggars Board
             </Text>
             .

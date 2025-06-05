@@ -162,7 +162,7 @@ export function EditResourceReview({
         {id ? (
           <Stack>
             {!editDetail ? (
-              <Text variant="link" onClick={toggleEditDetail} size="sm">
+              <Text c="blue.4" onClick={toggleEditDetail} size="sm">
                 <Group gap={4} style={{ cursor: 'pointer' }}>
                   <IconChevronDown size={16} />{' '}
                   <span>{!details ? 'Add' : 'Edit'} Review Comments</span>

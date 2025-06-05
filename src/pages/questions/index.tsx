@@ -67,7 +67,7 @@ export default function QuestionsList() {
               Have a question about stable diffusion, fine tuning models, or just how best to
               utilize a prompt? Ask it here! Clever people in the community can help you get the
               most out of your creations! Lost?{' '}
-              <Text variant="link" style={{ cursor: 'pointer' }} onClick={openModal} span>
+              <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={openModal} span>
                 {`Here's how this works...`}
               </Text>
             </Text>

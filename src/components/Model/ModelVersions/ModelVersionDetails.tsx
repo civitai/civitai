@@ -508,7 +508,6 @@ export function ModelVersionDetails({
       label: 'Training Images',
       value: (
         <Text
-          variant="link"
           component="a"
           href={`/api/download/training-data/${version.id}`}
           target="_blank"
@@ -550,7 +549,7 @@ export function ModelVersionDetails({
         </Group>
       ),
       value: (
-        <Text variant="link" component="a" href={`/bounties/${model.meta?.bountyId as number}`}>
+        <Text component="a" href={`/bounties/${model.meta?.bountyId as number}`} target="_blank">
           Go to bounty
         </Text>
       ),
@@ -948,7 +947,7 @@ export function ModelVersionDetails({
             <AlertWithIcon color="red" iconColor="red" icon={<IconExclamationMark />}>
               <Text>
                 This model has been unpublished due to a violation of our{' '}
-                <Text component="a" variant="link" href="/content/tos" target="_blank">
+                <Text component="a" href="/content/tos" target="_blank">
                   guidelines
                 </Text>{' '}
                 and is not visible to the community.{' '}
@@ -957,7 +956,7 @@ export function ModelVersionDetails({
               <Text>
                 If you adjust your model to comply with our guidelines, you can request a review
                 from one of our moderators. If you believe this was done in error, you can{' '}
-                <Text component="a" variant="link" href="/content/content-appeal" target="_blank">
+                <Text component="a" href="/content/content-appeal" target="_blank">
                   submit an appeal
                 </Text>
                 .
@@ -1005,7 +1004,6 @@ export function ModelVersionDetails({
                   download this model. Click{' '}
                   <Text
                     component={Link}
-                    variant="link"
                     td="underline"
                     href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                     className={!features.canWrite ? 'pointer-events-none' : undefined}
@@ -1017,7 +1015,7 @@ export function ModelVersionDetails({
               ) : (
                 <Text>
                   The creator has set this model to Generation-Only.{' '}
-                  <Text variant="link" td="underline" component={Link} href="/articles/11494">
+                  <Text td="underline" component={Link} href="/articles/11494">
                     Learn more
                   </Text>
                 </Text>
@@ -1242,7 +1240,7 @@ export function ModelVersionDetails({
                       : 'Files'}
                     {isOwnerOrMod && (
                       <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
-                        <Text variant="link" size="sm">
+                        <Text c="blue.4" size="sm">
                           Manage Files
                         </Text>
                       </RoutedDialogLink>
@@ -1318,7 +1316,7 @@ export function ModelVersionDetails({
                     )}
                     {cleanDescription.length > 150 ? (
                       <Text
-                        variant="link"
+                        c="blue.4"
                         size="xs"
                         onClick={() =>
                           dialogStore.trigger({

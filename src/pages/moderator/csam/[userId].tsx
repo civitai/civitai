@@ -52,7 +52,7 @@ function ReportCsamUserPage() {
             {user.username && (
               <Text size="xs" align="center">
                 User:{' '}
-                <Text component={Link} variant="link" href={`/user/${user.username}`}>
+                <Text component={Link} c="blue.4" href={`/user/${user.username}`}>
                   {user.username}
                 </Text>
               </Text>

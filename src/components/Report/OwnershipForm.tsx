@@ -48,12 +48,7 @@ export const OwnershipForm = createReportForm({
             description={
               <Text>
                 You would receive 70% of any proceeds made from the use of your model on Civitai.{' '}
-                <Text
-                  variant="link"
-                  component="a"
-                  href="/content/art-and-ai#monetizing-your-art"
-                  target="_blank"
-                >
+                <Text component="a" href="/content/art-and-ai#monetizing-your-art" target="_blank">
                   Learn more
                 </Text>
               </Text>

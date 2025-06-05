@@ -88,7 +88,7 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
           {earlyAccessDonationGoal ? ' or once the donation goal is met' : ''}. If you want to know
           more, check out our article{' '}
           <Anchor
-            color="yellow"
+            c="yellow"
             td="underline"
             target="_blank"
             href={`/articles/${constants.earlyAccess.article}`}
@@ -108,7 +108,7 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
                 toggleNotifyMutation.isLoading || !features.canWrite ? 'not-allowed' : 'pointer',
               lineHeight: 1,
             }}
-            color="yellow"
+            c="yellow"
             span
           >
             {alreadyNotifying

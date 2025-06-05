@@ -206,7 +206,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                         </List>
 
                         <Anchor
-                          target="blank"
+                          target="_blank"
                           href="https://education.civitai.com/civitais-guide-to-on-site-currency-buzz-⚡/#types-of-buzz"
                           size="xs"
                         >
@@ -284,7 +284,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                 { label: 'Blue', value: 'generation' },
               ]}
             />
-            <Text component="a" variant="link" href={`/user/transactions`} size="xs">
+            <Text component="a" c="blue.4" href={`/user/transactions`} size="xs">
               <Group gap={2}>
                 <IconArrowRight size={18} />
                 <span>View all</span>

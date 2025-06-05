@@ -33,7 +33,7 @@ export function CreateComment({
           <Text size="sm">
             You must{' '}
             <Text
-              variant="link"
+              c="blue.4"
               component={Link}
               href={`/login?returnUrl=${router.asPath}`}
               rel="nofollow"

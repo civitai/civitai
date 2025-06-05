@@ -240,11 +240,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
         <Divider
           label={
             <Group gap="xs" align="center">
-              <Text
-                variant="link"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setShowAll((x) => !x)}
-              >
+              <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={() => setShowAll((x) => !x)}>
                 {!showAll ? 'Show more' : 'Show less'}
               </Text>
             </Group>

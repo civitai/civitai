@@ -193,7 +193,7 @@ export default function Reports() {
         enableSorting: false,
         Cell: ({ row: { original: report } }) => (
           <Link legacyBehavior href={`/user/${report.user.username}`} passHref>
-            <Text variant="link" component="a" target="_blank">
+            <Text c="blue.4" component="a" target="_blank">
               {report.user.username}
             </Text>
           </Link>
@@ -397,7 +397,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
                   <Text
                     key={cuid}
                     component="a"
-                    variant="link"
+                    c="blue.4"
                     href={getEdgeUrl(cuid, { width: 450, name: cuid })}
                     target="_blank"
                     rel="nofollow noreferrer"
@@ -426,7 +426,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
     detailItems.unshift({
       label: 'Claiming User',
       value: (
-        <Text component="a" href={`mailto:${report.user.email}}`} variant="link" target="_blank">
+        <Text component="a" href={`mailto:${report.user.email}}`} target="_blank">
           {report.user.username} ({report.user.email})
         </Text>
       ),

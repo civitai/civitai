@@ -17,11 +17,11 @@ export function PoiAlert({ type = 'Model', ...alertProps }: Props) {
   return (
     <AlertWithIcon {...alertProps} icon={<IconExclamationMark />}>
       {openers[type]} Out of respect for this individual and in accordance with our{' '}
-      <Text component={Link} href="/content/rules/real-people" variant="link">
+      <Text component={Link} href="/content/rules/real-people">
         Content Rules
       </Text>
       , only{' '}
-      <Text component={Link} href="/content/rules/real-people" variant="link">
+      <Text component={Link} href="/content/rules/real-people">
         work-safe images
       </Text>{' '}
       and non-commercial use is permitted.
@@ -32,7 +32,7 @@ export function PoiAlert({ type = 'Model', ...alertProps }: Props) {
       </Text>
       , and would like to request the removal of this {type === 'Bounty' ? 'bounty' : 'resource'},
       you can do so{' '}
-      <Text component={Link} href="/content/rules/real-people" variant="link">
+      <Text component={Link} href="/content/rules/real-people">
         here
       </Text>
       .

@@ -43,7 +43,7 @@ export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }:
               ))}
               {!!remaining && !showMore && (
                 <div className="flex justify-center">
-                  <Text variant="link" className="cursor-pointer text-sm" onClick={toggleShowMore}>
+                  <Text c="blue.4" className="cursor-pointer text-sm" onClick={toggleShowMore}>
                     Show {remaining} More
                   </Text>
                 </div>

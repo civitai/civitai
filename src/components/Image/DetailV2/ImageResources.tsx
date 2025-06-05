@@ -109,11 +109,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
       )}
       {resources.length > LIMIT && (
         <div className="flex justify-start">
-          <Text
-            variant="link"
-            className="cursor-pointer text-sm"
-            onClick={() => setShowAll((x) => !x)}
-          >
+          <Text c="blue.4" className="cursor-pointer text-xs" onClick={() => setShowAll((x) => !x)}>
             {!showAll ? `Show ${resources.length - LIMIT} more` : 'Show less'}
           </Text>
         </div>

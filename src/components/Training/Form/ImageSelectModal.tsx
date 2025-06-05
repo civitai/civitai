@@ -549,7 +549,7 @@ const ImageGridMedia = ({
           baseModel in trainingModelInfo ? (
             trainingModelInfo[baseModel as TrainingDetailsBaseModelList].pretty
           ) : isAir(baseModel) ? (
-            <Text component="a" href={getAirModelLink(baseModel)} target="_blank" variant="link">
+            <Text component="a" href={getAirModelLink(baseModel)} target="_blank" c="blue.4">
               <Group gap="xs">
                 <Text>Custom</Text>
                 <IconExternalLink size={14} />

@@ -1101,7 +1101,7 @@ export default function ModelDetailsV2({
                     </ThemeIcon>
                     <Text size="sm" mt={-3}>
                       This model has been unpublished due to a violation of our{' '}
-                      <Text component="a" variant="link" href="/content/tos" target="_blank">
+                      <Text component="a" c="blue.4" href="/content/tos" target="_blank">
                         guidelines
                       </Text>{' '}
                       and is not visible to the community.{' '}

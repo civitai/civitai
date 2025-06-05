@@ -70,7 +70,7 @@ export default function CivitaiLinkWizardModal() {
   }, []);
 
   const vaultLink = (
-    <Text component="a" variant="link" target="_blank" href="/user/vault" td="underline">
+    <Text component="a" c="blue.4" target="_blank" href="/user/vault" td="underline">
       your Vault
     </Text>
   );
@@ -135,7 +135,7 @@ export default function CivitaiLinkWizardModal() {
                     content: (
                       <Text
                         component="a"
-                        variant="link"
+                        c="blue.4"
                         td="underline"
                         href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
                         target="_blank"
@@ -151,7 +151,7 @@ export default function CivitaiLinkWizardModal() {
                     content: (
                       <Text
                         component="a"
-                        variant="link"
+                        c="blue.4"
                         td="underline"
                         href="https://github.com/comfyanonymous/ComfyUI"
                         target="_blank"

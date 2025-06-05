@@ -124,7 +124,7 @@ function SupporterHelp() {
       Are you a supporter and seeing this message?{' '}
       <Text
         component="span"
-        variant="link"
+        c="blue.4"
         td="underline"
         onClick={() => refreshSession()}
         style={{ cursor: 'pointer' }}
@@ -412,7 +412,7 @@ function GetReconnected() {
           <List.Item>
             If your instance is running and you are still unable to connect,{' '}
             <Text
-              variant="link"
+              c="blue.4"
               display="inline"
               style={{ cursor: 'pointer' }}
               onClick={handleGenerateKey}

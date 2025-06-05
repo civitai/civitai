@@ -49,7 +49,7 @@ export function Feed() {
               <Text size="sm" c="dimmed">
                 Try{' '}
                 <Text
-                  variant="link"
+                  c="blue.4"
                   onClick={() => generationPanel.setView('generate')}
                   style={{ cursor: 'pointer' }}
                   span

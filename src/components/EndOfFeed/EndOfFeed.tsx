@@ -24,7 +24,7 @@ export function EndOfFeed({ text }: { text?: ReactNode }) {
             {text ?? 'Consider changing your period or filters to find more'}
           </Text>
           <Text
-            variant="link"
+            c="blue.4"
             size="sm"
             onClick={() => {
               node?.current?.scrollTo({ top: 0, behavior: 'smooth' });

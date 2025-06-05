@@ -247,7 +247,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                   {`Your files have finished uploading, let's publish this version.`}
                 </Text>
                 <Text
-                  variant="link"
+                  c="blue.4"
                   size="sm"
                   style={{ cursor: 'pointer' }}
                   onClick={() => {

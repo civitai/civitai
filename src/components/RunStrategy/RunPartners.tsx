@@ -279,8 +279,8 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
         <Text size="sm">{"Don't see your preferred service?"}</Text>
         <Text
           size="sm"
-          variant="link"
-          component={'a'}
+          component="a"
+          target="_blank"
           href="https://docs.google.com/forms/d/e/1FAIpQLSdlDQXJMIhgnOjmpgEqfesPThDpxskQNau2HtxPXoLSqDMbwA/viewform"
         >
           Request that they be added

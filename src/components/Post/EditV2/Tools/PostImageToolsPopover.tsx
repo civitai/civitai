@@ -124,7 +124,7 @@ export function ImageToolsPopover({
                   className="m-1 cursor-pointer"
                   onClick={() => setShowSelected((b) => !b)}
                 >
-                  <Text variant="link" align="center">
+                  <Text c="blue.4" align="center">
                     {!showSelected ? `Show ${value.length} selected` : `Show all`}
                   </Text>
                 </UnstyledButton>

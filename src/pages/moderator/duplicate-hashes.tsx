@@ -141,7 +141,7 @@ export default function DuplicatHashesPage({
                       </Badge>
                     )}
                     <Text size="sm">{createdAt.toLocaleDateString()}</Text>
-                    <Text size="sm" variant="link" component={NextLink} href={url} target="_blank">
+                    <Text size="sm" c="blue.4" component={NextLink} href={url} target="_blank">
                       {url}
                     </Text>
                   </div>
