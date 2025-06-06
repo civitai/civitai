@@ -2,11 +2,12 @@ import type { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
 import { env } from '~/env/server';
-import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
+import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import {
   BlockedReason,
+  ImageScanType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
@@ -20,17 +21,19 @@ import { scanJobsSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import {
+  createImageTagsForReview,
+  createImageForReview,
+} from '~/server/services/image-review.service';
+import {
   getImagesModRules,
   getTagNamesForImages,
   queueImageSearchIndexUpdate,
+  imageScanTypes,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
-import {
-  insertTagsOnImageNew,
-  upsertTagsOnImageNew,
-} from '~/server/services/tagsOnImageNew.service';
+import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
@@ -45,6 +48,7 @@ import {
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
+import { decreaseDate } from '~/utils/date-helpers';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import {
   auditMetaData,
@@ -52,11 +56,13 @@ import {
   includesInappropriate,
   includesPoi,
 } from '~/utils/metadata/audit';
+import poiWords from '~/utils/metadata/lists/words-poi.json';
 import { normalizeText } from '~/utils/normalize-text';
+import { removeEmpty } from '~/utils/object-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 
-const REQUIRED_SCANS = 2;
+// const REQUIRED_SCANS = 2;
 
 const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
 
@@ -113,6 +119,12 @@ function shouldIgnore(tag: string, source: TagSource) {
 }
 
 export default WebhookEndpoint(async function imageTags(req, res) {
+  if (req.method === 'GET' && req.query.imageId) {
+    const imageId = Number(req.query.imageId);
+    const image = await getImage(imageId);
+    const result = await auditImageScanResults({ image });
+    return res.status(200).json(result);
+  }
   if (req.method !== 'POST')
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 
@@ -184,428 +196,84 @@ async function isBlocked(hash: string) {
   return count > 0;
 }
 
-async function handleSuccess({
-  id,
-  tags: incomingTags = [],
-  source,
-  context,
-  hash,
-  result,
-}: BodyProps) {
-  // this is a temporary solution to add all clavata tags to the table `ShadowTagsOnImage`
-  if (source === TagSource.Clavata && env.CLAVATA_SCAN === 'shadow') {
-    const response = await getTagsFromIncomingTags({
-      id,
-      tags: incomingTags,
-      source,
-    });
-    if (!response) return;
-    const { tags } = response;
-    const data = tags
-      .map((x) => (!!x.id ? { tagId: x.id, imageId: id, confidence: x.confidence } : null))
-      .filter(isDefined);
-    await dbWrite.$executeRawUnsafe(`
-      INSERT INTO "ShadowTagsOnImage" ("tagId", "imageId", "confidence")
-      VALUES ${data.map((x) => `(${x.tagId}, ${x.imageId}, ${x.confidence})`).join(',')}
-      ON CONFLICT ("tagId", "imageId") DO UPDATE
-        SET "confidence" = EXCLUDED."confidence"
-    `);
-    return;
-  }
+async function handleSuccess(args: BodyProps) {
+  const { id } = args;
+  try {
+    const scanned = await processScanResult(args);
+    if (!scanned) return;
 
-  if (hash && (await isBlocked(hash))) {
-    await dbWrite.image.update({
-      where: { id },
-      data: {
-        pHash: BigInt(hash),
-        ingestion: ImageIngestionStatus.Blocked,
-        nsfwLevel: NsfwLevel.Blocked,
-        blockedFor: 'Similar to blocked content',
-      },
-    });
-    return;
-  }
+    // all scans have been processed
+    const image = await getImage(id);
+    if (image.ingestion === ImageIngestionStatus.Blocked) return;
 
-  if (hash && source === TagSource.ImageHash) {
-    await dbWrite.image.update({
-      where: { id },
-      data: { pHash: BigInt(hash), updatedAt: new Date() },
-    });
-    return;
-  }
+    const {
+      data,
+      reviewKey,
+      tagsForReview = [],
+      flags,
+      prompt,
+    } = await auditImageScanResults({ image });
 
-  if (source === TagSource.HiveDemographics || source === TagSource.MinorDetection) {
-    const update: Record<string, any> = {
-      [source]: Date.now(),
-    };
-    const additionalUpdates: string[] = [];
-    let hasMinor = false;
+    await dbWrite.image.update({ where: { id }, data });
+    if (reviewKey) {
+      await createImageForReview({ imageId: id, reason: reviewKey });
+      await createImageTagsForReview({ imageId: id, tagIds: tagsForReview.map((x) => x.id) });
+    }
 
-    // Process hive demographics
-    if (source === TagSource.HiveDemographics) {
-      if (!result) return;
+    if (data.ingestion === 'Scanned') {
+      await tagIdsForImagesCache.refresh(id);
+      const appliedRule = await applyModerationRules({
+        ...image,
+        prompt,
+        metadata: image.metadata as ImageMetadata | VideoMetadata,
+      });
 
-      const age = Math.min(...result.map((x) => x.age));
-      if (age < 18) hasMinor = true;
-      update.age = Math.round(age);
-      update.demographics = result.map((x) => {
-        const demographic: Record<string, any> = {
-          age: Math.round(x.age),
-          dimensions: x.dimensions,
+      const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
+      const isProfilePicture = imageMetadata?.profilePicture === true;
+      if (isProfilePicture) {
+        await deleteUserProfilePictureCache(image.userId);
+      }
+
+      await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
+      if (image.postId) await updatePostNsfwLevel(image.postId);
+
+      // Update search index
+      const action =
+        appliedRule?.action === ModerationRuleAction.Block
+          ? SearchIndexUpdateQueueAction.Delete
+          : SearchIndexUpdateQueueAction.Update;
+
+      await queueImageSearchIndexUpdate({ ids: [id], action });
+
+      if (image.type === MediaType.image) {
+        // #region [NewOrder]
+        // New Order Queue Management. Only added when scan is succesful.
+        const queueDetails: { priority: 1 | 2 | 3; rankType: NewOrderRankType } = {
+          priority: 1,
+          rankType: NewOrderRankType.Knight,
         };
 
-        for (const tag of x.tags) {
-          if (['male', 'female'].includes(tag.tag)) {
-            demographic.gender = tag.tag;
-            break;
-          }
+        if (flags.nsfw) queueDetails.priority = 2;
+
+        if (reviewKey) {
+          data.needsReview = reviewKey;
+          queueDetails.rankType = NewOrderRankType.Templar;
+
+          if (reviewKey === 'minor') queueDetails.priority = 1;
+          if (reviewKey === 'poi') queueDetails.priority = 2;
+        } else {
+          // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
+          await addImageToQueue({
+            imageIds: id,
+            rankType: queueDetails.rankType,
+            priority: queueDetails.priority,
+          });
         }
-
-        return demographic;
-      });
-    } else hasMinor = context?.hasMinor ?? false;
-
-    if (hasMinor) {
-      update.hasMinor = true;
-      additionalUpdates.push(
-        `"needsReview" = CASE WHEN i."nsfwLevel" > ${NsfwLevel.PG} AND i."nsfwLevel" < ${NsfwLevel.Blocked} THEN 'minor' ELSE i."needsReview" END`
-      );
-    }
-
-    await dbWrite.$executeRawUnsafe(`
-      UPDATE "Image" i SET
-        "scanJobs" = COALESCE("scanJobs", '{}') || '${JSON.stringify(update)}'::jsonb
-        ${additionalUpdates.length ? `, ${additionalUpdates.join(', ')}` : ''}
-      WHERE id = ${id};
-    `);
-    return;
-  }
-
-  const response = await getTagsFromIncomingTags({ id, source, tags: incomingTags });
-  if (!response) return;
-  const { image, tags, hasBlockedTag } = response;
-
-  try {
-    if (tags.length > 0) {
-      const uniqTags = uniqBy(tags, (x) => x.id);
-      const toInsert = uniqTags
-        .filter((x) => x.id)
-        .map((x) => ({
-          imageId: id,
-          tagId: x.id!,
-          source: x.source ?? source,
-          automated: true,
-          confidence: x.confidence,
-          disabled: shouldIgnore(x.tag, x.source ?? source),
-        }));
-      await insertTagsOnImageNew(toInsert);
-    } else {
-      await logToAxiom({
-        type: 'image-scan-result',
-        message: 'No tags found',
-        imageId: id,
-        source,
-      });
-    }
-
-    const prompt = normalizeText(
-      (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined
-    );
-    const negativePrompt = normalizeText(
-      (image.meta as Prisma.JsonObject)?.['negativePrompt'] as string | undefined
-    );
-
-    // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
-    const tagsFromTagsOnImageDetails = await dbWrite.$queryRaw<
-      { name: string; nsfwLevel: number }[]
-    >`
-      SELECT t.name, t."nsfwLevel"
-      FROM "TagsOnImageDetails" toi
-      JOIN "Tag" t ON t.id = toi."tagId"
-      WHERE toi."imageId" = ${id} AND toi.automated AND NOT toi.disabled
-    `;
-
-    let reviewKey: string | null = null;
-    const flags = {
-      hasAdultTag: false,
-      hasMinorTag: false,
-      hasCartoonTag: false,
-      nsfw: false,
-      minor: false,
-      poi: false,
-      minorReview: false,
-      poiReview: false,
-      tagReview: false,
-      newUserReview: false,
-    };
-
-    // let hasAdultTag = false,
-    //   hasMinorTag = false,
-    //   hasCartoonTag = false,
-    //   nsfw = false;
-    for (const { name, nsfwLevel } of tagsFromTagsOnImageDetails) {
-      if (nsfwLevel > sfwBrowsingLevelsFlag) flags.nsfw = true;
-      if (minorTags.includes(name)) {
-        flags.hasMinorTag = true;
-        flags.minor = true;
-      } else if (constants.imageTags.styles.includes(name)) flags.hasCartoonTag = true;
-      else if (['adult'].includes(name)) flags.hasAdultTag = true;
-    }
-
-    const clavataNsfwLevel = tags.find((x) =>
-      clavataNsfwLevelTags.includes(x.tag as ClavataNsfwLevelTag)
-    )?.tag as ClavataNsfwLevelTag | undefined;
-    if (clavataNsfwLevel) {
-      switch (clavataNsfwLevel) {
-        case 'pg':
-          if (tags.some((x) => x.tag === 'child-10')) flags.minor = true;
-          if (['realistic', 'child-15'].every((tag) => tags.find((x) => x.tag === tag))) {
-            flags.minor = true;
-            flags.minorReview = true;
-          }
-          break;
-        case 'pg-13':
-        case 'r':
-        case 'x':
-        case 'xxx':
-          if (tags.some((x) => x.tag === 'child-10')) {
-            flags.minor = true;
-            flags.minorReview = true;
-          }
-          if (
-            ['child-10', 'child-13', 'child-15'].some((tag) => tags.find((x) => x.tag === tag)) &&
-            tags.some((x) => x.tag === 'realistic')
-          ) {
-            flags.minor = true;
-            flags.minorReview = true;
-          }
-          break;
+        // #endregion
       }
     }
 
-    const inappropriate = includesInappropriate({ prompt, negativePrompt }, flags.nsfw);
-    if (inappropriate === 'minor') flags.minorReview = true;
-    if (inappropriate === 'poi') flags.poiReview = true;
-    if (prompt && includesPoi(prompt)) flags.poi = true;
-    if (hasBlockedTag) flags.tagReview = true;
-
-    const data: Prisma.ImageUpdateInput = {};
-
-    // if (hasMinorTag) {
-    //   data.minor = true;
-    // }
-
-    // const inappropriate = includesInappropriate({ prompt, negativePrompt }, flags.nsfw);
-    // if (inappropriate !== false) reviewKey = inappropriate;
-    // if (prompt && includesPoi(prompt)) data.poi = true; // We wanna mark it regardless of nsfw.
-    // if (!reviewKey && hasBlockedTag) reviewKey = 'tag';
-
-    // We now will mark images as poi / minor regardless of whether or not they're NSFW. This so that we know we need to hide from from
-    // NSFW feeds.
-    const [{ poi, minor, hasResource }] = await dbWrite.$queryRaw<
-      { poi: boolean; minor: boolean; hasResource: boolean }[]
-    >`
-        WITH to_check AS (
-          -- Check based on associated resources
-          SELECT
-            SUM(IIF(m.poi, 1, 0)) > 0 "poi",
-            SUM(IIF(m.minor, 1, 0)) > 0 "minor",
-            true "hasResource"
-          FROM "ImageResourceNew" ir
-          JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
-          JOIN "Model" m ON m.id = mv."modelId"
-          WHERE ir."imageId" = ${image.id}
-          UNION
-          -- Check based on associated bounties
-          SELECT
-            SUM(IIF(b.poi, 1, 0)) > 0 "poi",
-            false "minor",
-            false "hasResource"
-          FROM "Image" i
-          JOIN "ImageConnection" ic ON ic."imageId" = i.id
-          JOIN "Bounty" b ON ic."entityType" = 'Bounty' AND b.id = ic."entityId"
-          WHERE ic."imageId" = ${image.id}
-          UNION
-          -- Check based on associated bounty entries
-          SELECT
-            SUM(IIF(b.poi, 1, 0)) > 0 "poi",
-            false "minor",
-            false "hasResource"
-          FROM "Image" i
-          JOIN "ImageConnection" ic ON ic."imageId" = i.id
-          JOIN "BountyEntry" be ON ic."entityType" = 'BountyEntry' AND be.id = ic."entityId"
-          JOIN "Bounty" b ON b.id = be."bountyId"
-          WHERE ic."imageId" = ${image.id}
-        )
-        SELECT bool_or(poi) "poi", bool_or(minor) "minor", bool_or("hasResource") "hasResource" FROM to_check;
-      `;
-
-    if (poi) {
-      flags.poi = true;
-      if (flags.nsfw) flags.poiReview = true;
-    }
-
-    if (minor) {
-      flags.minor = true;
-      if (flags.nsfw) flags.minorReview = true;
-    }
-
-    if (flags.hasMinorTag && !flags.hasAdultTag && (!flags.hasCartoonTag || flags.nsfw)) {
-      flags.minorReview = true;
-    }
-
-    if (!flags.minorReview && !flags.poiReview && !flags.tagReview && flags.nsfw) {
-      // If user is new and image is NSFW send it for review
-      const [{ isNewUser }] =
-        (await dbRead.$queryRaw<{ isNewUser: boolean }[]>`
-        SELECT is_new_user(CAST(${image.userId} AS INT)) "isNewUser";
-      `) ?? [];
-      if (isNewUser) flags.newUserReview = true;
-    }
-
-    const reviewer = determineReviewer({ tags, source });
-    if (reviewer === 'moderators') flags.tagReview = true;
-    else if (reviewer === 'knights') {
-      // TODO @manuelurenah - Add knight review logic
-    }
-
-    if (flags.poiReview) reviewKey = 'poi';
-    else if (flags.minorReview) reviewKey = 'minor';
-    else if (flags.tagReview) reviewKey = 'tag';
-    else if (flags.newUserReview) reviewKey = 'newUser';
-
-    if (flags.poi) data.poi = true;
-    if (flags.minor) data.minor = true;
-    if (reviewKey) data.needsReview = reviewKey;
-    // Block NSFW images without meta:
-    if (
-      flags.nsfw &&
-      !isValidAIGeneration({
-        ...image,
-        // Make it so that if we have NSFW tags we treat it as R+
-        nsfwLevel: Math.max(image.nsfwLevel, flags.nsfw ? NsfwLevel.X : NsfwLevel.PG),
-        meta: image.meta as ImageMetadata | VideoMetadata,
-        tools: image.tools,
-        // Avoids blocking images that we know are AI generated with some resources.
-        resources: hasResource ? [1] : [],
-      })
-    ) {
-      data.ingestion = ImageIngestionStatus.Blocked;
-      data.blockedFor = BlockedReason.AiNotVerified;
-    }
-
-    if (flags.nsfw && prompt && data.ingestion !== ImageIngestionStatus.Blocked) {
-      // Determine if we need to block the image
-      const { success, blockedFor } = auditMetaData({ prompt }, flags.nsfw);
-      if (!success) {
-        data.ingestion = ImageIngestionStatus.Blocked;
-        data.blockedFor = blockedFor?.join(',') ?? 'Failed audit, no explanation';
-      }
-    }
-
-    if (Object.keys(data).length > 0) {
-      data.updatedAt = new Date();
-      await dbWrite.image.update({ where: { id }, data });
-    }
-
-    // Add to scanJobs and update aiRating
-    let aiRating: NsfwLevel | undefined;
-    let aiModel: string | undefined;
-    if (source === TagSource.WD14 && !!context?.movie_rating) {
-      aiRating = NsfwLevel[context.movie_rating as keyof typeof NsfwLevel];
-      aiModel = context.movie_rating_model_id;
-    }
-    await dbWrite.$executeRawUnsafe(`
-      UPDATE "Image" SET
-        "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
-        ${aiRating ? `, "aiNsfwLevel" = ${aiRating}, "aiModel" = '${aiModel}'` : ''}
-      WHERE id = ${id};
-    `);
-
-    // Update scannedAt and ingestion if not blocked
-    if (data.ingestion !== 'Blocked') {
-      const [
-        { ingestion, type } = { ingestion: ImageIngestionStatus.Pending, type: MediaType.image },
-      ] = await dbWrite.$queryRaw<{ ingestion: ImageIngestionStatus; type: MediaType }[]>`
-        WITH scan_count AS (
-          SELECT id, COUNT(*) as count
-          FROM "Image",
-              jsonb_object_keys("scanJobs"->'scans') AS keys
-          WHERE id = ${id}
-          GROUP BY id
-        )
-        UPDATE "Image" i SET
-          "scannedAt" =
-            CASE
-              WHEN i.metadata->'skipScannedAtReassignment' IS NOT NULL
-                OR i."createdAt" < NOW() - INTERVAL '1 week'
-              THEN "scannedAt"
-              ELSE NOW()
-            END,
-          "updatedAt" = NOW(),
-          "ingestion" = 'Scanned'
-        FROM scan_count s
-        WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS}
-        RETURNING "ingestion", type;
-      `;
-      data.ingestion = ingestion;
-
-      if (ingestion === 'Scanned') {
-        // Clear cached image tags after completing scans
-        await tagIdsForImagesCache.refresh(id);
-        const appliedRule = await applyModerationRules({
-          ...image,
-          prompt,
-          metadata: image.metadata as ImageMetadata | VideoMetadata,
-        });
-
-        const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
-        const isProfilePicture = imageMetadata?.profilePicture === true;
-        if (isProfilePicture) {
-          await deleteUserProfilePictureCache(image.userId);
-        }
-
-        await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
-        if (image.postId) await updatePostNsfwLevel(image.postId);
-
-        // Update search index
-        const action =
-          appliedRule?.action === ModerationRuleAction.Block
-            ? SearchIndexUpdateQueueAction.Delete
-            : SearchIndexUpdateQueueAction.Update;
-
-        await queueImageSearchIndexUpdate({ ids: [id], action });
-
-        if (type === MediaType.image) {
-          // #region [NewOrder]
-          // New Order Queue Management. Only added when scan is succesful.
-          const queueDetails: { priority: 1 | 2 | 3; rankType: NewOrderRankType } = {
-            priority: 1,
-            rankType: NewOrderRankType.Knight,
-          };
-
-          if (flags.nsfw) queueDetails.priority = 2;
-
-          if (reviewKey) {
-            data.needsReview = reviewKey;
-            queueDetails.rankType = NewOrderRankType.Templar;
-
-            if (reviewKey === 'minor') queueDetails.priority = 1;
-            if (reviewKey === 'poi') queueDetails.priority = 2;
-          } else {
-            // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
-            await addImageToQueue({
-              imageIds: id,
-              rankType: queueDetails.rankType,
-              priority: queueDetails.priority,
-            });
-          }
-          // #endregion
-        }
-      }
-    }
-
-    if (data.ingestion) {
+    if (data.ingestion && data.ingestion !== 'Blocked') {
       await signalClient.send({
         target: SignalMessages.ImageIngestionStatus,
         data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
@@ -798,6 +466,42 @@ async function applyModerationRules(image: IngestedImage) {
   }
 }
 
+type GetImageReturn = AsyncReturnType<typeof getImage>;
+async function getImage(id: number) {
+  const image = await dbWrite.image.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      createdAt: true,
+      scannedAt: true,
+      type: true,
+      userId: true,
+      meta: true,
+      metadata: true,
+      postId: true,
+      nsfwLevelLocked: true,
+      scanJobs: true,
+      ingestion: true,
+      // nsfwLevel: true,
+      tools: {
+        select: {
+          toolId: true,
+        },
+      },
+    },
+  });
+  if (!image) {
+    await logScanResultError({ id, message: 'Image not found' });
+    throw new Error('Image not found');
+  }
+  return {
+    ...image,
+    meta: image.meta as Prisma.JsonObject | undefined,
+    metadata: image.metadata as ImageMetadata | VideoMetadata | undefined,
+    scanJobs: (image.scanJobs ?? {}) as { scans?: Record<string, TagSource> },
+  };
+}
+
 // Tag Fetching
 // --------------------------------------------------
 async function getTagsFromIncomingTags({
@@ -811,26 +515,7 @@ async function getTagsFromIncomingTags({
 }) {
   if (!incomingTags) return;
 
-  const image = await dbWrite.image.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      userId: true,
-      meta: true,
-      metadata: true,
-      postId: true,
-      nsfwLevel: true,
-      tools: {
-        select: {
-          toolId: true,
-        },
-      },
-    },
-  });
-  if (!image) {
-    await logScanResultError({ id, message: 'Image not found' });
-    throw new Error('Image not found');
-  }
+  const image = await getImage(id);
   // Preprocess tags
   const preprocessor = tagPreprocessors[source];
   if (preprocessor) incomingTags = preprocessor(incomingTags);
@@ -879,12 +564,16 @@ async function getTagsFromIncomingTags({
   // Get Ids for tags
   const tagsToFind: string[] = [];
   let hasBlockedTag = false;
+  const blockedTags: number[] = [];
   for (const tag of tags) {
     const cachedTag = localTagCache[tag.tag];
     if (!cachedTag) tagsToFind.push(tag.tag);
     else {
       tag.id = cachedTag.id;
-      if (!cachedTag.ignored && cachedTag.blocked) hasBlockedTag = true;
+      if (!cachedTag.ignored && cachedTag.blocked) {
+        hasBlockedTag = true;
+        blockedTags.push(tag.id);
+      }
     }
   }
 
@@ -906,7 +595,10 @@ async function getTagsFromIncomingTags({
       const cachedTag = localTagCache[tag.tag];
       if (!cachedTag) continue;
       tag.id = cachedTag.id;
-      if (!cachedTag.ignored && cachedTag.blocked) hasBlockedTag = true;
+      if (!cachedTag.ignored && cachedTag.blocked) {
+        hasBlockedTag = true;
+        blockedTags.push(tag.id);
+      }
     }
   }
 
@@ -934,7 +626,7 @@ async function getTagsFromIncomingTags({
     }
   }
 
-  return { image, tags, hasBlockedTag };
+  return { image, tags, hasBlockedTag, blockedTags };
 }
 
 // Review Condition Processing
@@ -943,14 +635,15 @@ type Reviewer = 'moderators' | 'knights';
 type ReviewConditionStored = {
   reviewer: Reviewer;
   condition: string;
+  tags?: string[];
 };
 type ReviewConditionContext = {
   tags: IncomingTag[];
-  source: TagSource;
 };
 type ReviewConditionFn = {
   reviewer: Reviewer;
   condition: (tag: IncomingTag, ctx: ReviewConditionContext) => boolean;
+  tags?: string[];
 };
 type ReviewCondition = ReviewConditionStored | ReviewConditionFn;
 
@@ -959,10 +652,12 @@ const reviewConditions: ReviewCondition[] = [
     condition: (tag, ctx) =>
       tag.tag === 'unconscious' && ctx.tags.some((t) => ['r', 'x', 'xxx'].includes(t.tag)),
     reviewer: 'moderators',
+    tags: ['unconscious'],
   },
   {
     condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),
     reviewer: 'moderators',
+    tags: ['bestiality', 'animal'],
   },
   // {
   //   condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),
@@ -976,7 +671,7 @@ const reviewConditions: ReviewCondition[] = [
 
 export function determineReviewer(ctx: ReviewConditionContext) {
   for (const tag of ctx.tags) {
-    for (const { condition, reviewer } of reviewConditions) {
+    for (const { condition, reviewer, tags = [] } of reviewConditions) {
       const conditionFn =
         typeof condition === 'function'
           ? condition
@@ -985,7 +680,382 @@ export function determineReviewer(ctx: ReviewConditionContext) {
               ctx: ReviewConditionContext
             ) => boolean);
       // Return the first action that matches
-      if (conditionFn(tag, ctx)) return reviewer;
+      if (conditionFn(tag, ctx)) return { reviewer, tagNames: tags };
     }
   }
+}
+
+type TagDetails = {
+  id: number;
+  name: string;
+  nsfwLevel: number;
+  confidence: number;
+  disabled: boolean;
+  blocked?: boolean;
+};
+
+const ImageScanTypeTagSourceMap = new Map([
+  [ImageScanType.WD14, TagSource.WD14],
+  [ImageScanType.Hash, TagSource.ImageHash],
+  [ImageScanType.Hive, TagSource.Hive],
+  [ImageScanType.MinorDetection, TagSource.MinorDetection],
+  [ImageScanType.HiveDemographics, TagSource.HiveDemographics],
+  [ImageScanType.Clavata, TagSource.Clavata],
+]);
+
+async function updateImageScanJobs({
+  id,
+  source,
+  aiRating,
+  aiModel,
+  pHash,
+  ingestion,
+  nsfwLevel,
+  blockedFor,
+}: {
+  id: number;
+  source: TagSource;
+  aiRating?: NsfwLevel;
+  aiModel?: string;
+  pHash?: bigint;
+  ingestion?: ImageIngestionStatus;
+  nsfwLevel?: NsfwLevel;
+  blockedFor?: string;
+}) {
+  const result = await dbWrite.$queryRawUnsafe<{
+    scanJobs: { scans?: Record<string, TagSource> };
+  }>(`
+      UPDATE "Image" SET
+      ${pHash ? `"pHash" = ${pHash},` : ''}
+      ${ingestion ? `"ingestion" = '${ingestion}',` : ''}
+      ${nsfwLevel ? `"nsfwLevel" = ${nsfwLevel},` : ''}
+      ${blockedFor ? `"blockedFor" = '${blockedFor}',` : ''}
+      ${aiRating ? `"aiNsfwLevel" = ${aiRating}, "aiModel" = '${aiModel}',` : ''}
+      "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
+      WHERE id = ${id}
+      RETURNING "scanJobs";
+    `);
+
+  return getHasRequiredScans(result.scanJobs?.scans);
+}
+
+function getHasRequiredScans(scans: Record<string, TagSource> = {}) {
+  const requiredScans = imageScanTypes
+    .map((type) => ImageScanTypeTagSourceMap.get(type))
+    .filter(isDefined);
+
+  return requiredScans.every((scan) => scan in scans);
+}
+
+async function processScanResult({
+  id,
+  tags: incomingTags = [],
+  source,
+  context,
+  hash,
+  result,
+}: BodyProps) {
+  switch (source) {
+    case TagSource.ImageHash: {
+      if (!hash) throw new Error('missing hash from ImageHash scan');
+      const blocked = await isBlocked(hash);
+      const pHash = BigInt(hash);
+      if (!blocked) return await updateImageScanJobs({ id, source, pHash });
+      else
+        return await updateImageScanJobs({
+          id,
+          source,
+          pHash,
+          ingestion: ImageIngestionStatus.Blocked,
+          nsfwLevel: NsfwLevel.Blocked,
+          blockedFor: 'Similar to blocked content',
+        });
+    }
+    case TagSource.WD14:
+    case TagSource.Clavata: {
+      const response = await getTagsFromIncomingTags({ id, source, tags: incomingTags });
+      if (!response) {
+        await logToAxiom({
+          type: 'image-scan-result',
+          message: 'No tags found',
+          imageId: id,
+          source,
+        });
+        return await updateImageScanJobs({ id, source });
+      }
+      const { tags } = response;
+      if (tags.length > 0) {
+        const uniqTags = uniqBy(tags, (x) => x.id);
+        const toInsert = uniqTags
+          .filter((x) => x.id)
+          .map((x) => ({
+            imageId: id,
+            tagId: x.id!,
+            source: x.source ?? source,
+            automated: true,
+            confidence: x.confidence,
+            disabled: shouldIgnore(x.tag, x.source ?? source),
+          }));
+        await insertTagsOnImageNew(toInsert);
+      } else {
+        await logToAxiom({
+          type: 'image-scan-result',
+          message: 'No tags found',
+          imageId: id,
+          source,
+        });
+      }
+
+      // Add to scanJobs and update aiRating
+      let aiRating: NsfwLevel | undefined;
+      let aiModel: string | undefined;
+      if (source === TagSource.WD14 && !!context?.movie_rating) {
+        aiRating = NsfwLevel[context.movie_rating as keyof typeof NsfwLevel];
+        aiModel = context.movie_rating_model_id;
+      }
+
+      return await updateImageScanJobs({ id, source, aiRating, aiModel });
+    }
+    default:
+      throw new Error(`unhandled image scan type: ${source}`);
+  }
+}
+
+async function auditImageScanResults({ image }: { image: GetImageReturn }) {
+  const prompt = normalizeText(image.meta?.['prompt'] as string | undefined);
+  const negativePrompt = normalizeText(image.meta?.['negativePrompt'] as string | undefined);
+
+  const tagsFromTagsOnImageDetails = await dbWrite.$queryRaw<
+    { id: number; name: string; nsfwLevel: number; confidence: number; disabled: boolean }[]
+  >`
+      SELECT t.id, t.name, t."nsfwLevel", toi.confidence, toi.disabled
+      FROM "TagsOnImageDetails" toi
+      JOIN "Tag" t ON t.id = toi."tagId"
+      WHERE toi."imageId" = ${image.id} AND toi.automated AND NOT toi.disabled
+    `;
+  const tags = tagsFromTagsOnImageDetails.map((tag) => ({
+    ...tag,
+    blocked: tag.nsfwLevel === NsfwLevel.Blocked,
+  }));
+  const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0]);
+
+  let reviewKey: string | null = null;
+  const flags = {
+    hasAdultTag: false,
+    hasMinorTag: false,
+    hasCartoonTag: false,
+    nsfw: false,
+    minor: false,
+    poi: false,
+    minorReview: false,
+    poiReview: false,
+    tagReview: false,
+    newUserReview: false,
+  };
+
+  const minorTags: TagDetails[] = [];
+  const poiTags: TagDetails[] = tags.filter((tag) => poiWords.includes(tag.name.toLowerCase()));
+  const reviewTags: TagDetails[] = tags.filter((x) => x.blocked);
+  const hasBlockedTag = reviewTags.length > 0;
+
+  for (const tag of tags) {
+    if (nsfwLevel > sfwBrowsingLevelsFlag) flags.nsfw = true;
+    if (tagsNeedingReview.includes(tag.name)) {
+      flags.hasMinorTag = true;
+      flags.minor = true;
+      minorTags.push(tag);
+    } else if (constants.imageTags.styles.includes(tag.name)) flags.hasCartoonTag = true;
+    else if (['adult'].includes(tag.name)) flags.hasAdultTag = true;
+  }
+
+  const clavataNsfwLevel = tags.find((x) =>
+    clavataNsfwLevelTags.includes(x.name as ClavataNsfwLevelTag)
+  )?.name as ClavataNsfwLevelTag | undefined;
+
+  const child10 = tags.find((x) => x.name === 'child-10');
+  const child13 = tags.find((x) => x.name === 'child-13');
+  const child15 = tags.find((x) => x.name === 'child-15');
+  const realistic = tags.find((x) => x.name === 'realistic');
+  const potentialCelebrity = tags.find((x) => x.name === 'potential celebrity');
+
+  if (clavataNsfwLevel) {
+    switch (clavataNsfwLevel) {
+      case 'pg':
+        if (child10) flags.minor = true;
+        if (realistic && child15) {
+          flags.minor = true;
+          flags.minorReview = true;
+          minorTags.push(realistic, child15);
+        }
+        break;
+      case 'pg-13':
+      case 'r':
+      case 'x':
+      case 'xxx':
+        if (child10) {
+          flags.minor = true;
+          flags.minorReview = true;
+          minorTags.push(child10);
+        }
+        if ((child10 || child13 || child15) && realistic) {
+          flags.minor = true;
+          flags.minorReview = true;
+          minorTags.push(...[child10, child13, child15, realistic].filter(isDefined));
+        }
+        break;
+    }
+
+    if (potentialCelebrity) {
+      flags.poiReview = true;
+      poiTags.push(potentialCelebrity);
+    }
+  }
+
+  if (poiTags.length > 0) {
+    flags.poiReview = true;
+  }
+
+  const inappropriate = includesInappropriate({ prompt, negativePrompt }, flags.nsfw);
+  if (inappropriate === 'minor') flags.minorReview = true;
+  if (inappropriate === 'poi') flags.poiReview = true;
+  if (prompt && includesPoi(prompt)) flags.poi = true;
+  if (hasBlockedTag) flags.tagReview = true;
+
+  // TODO - add information to ImageForReview entity based on any connected entities
+  const [{ poi, minor, hasResource }] = await dbWrite.$queryRaw<
+    { poi: boolean; minor: boolean; hasResource: boolean }[]
+  >`
+      WITH to_check AS (
+        -- Check based on associated resources
+        SELECT
+          SUM(IIF(m.poi, 1, 0)) > 0 "poi",
+          SUM(IIF(m.minor, 1, 0)) > 0 "minor",
+          true "hasResource"
+        FROM "ImageResourceNew" ir
+        JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
+        JOIN "Model" m ON m.id = mv."modelId"
+        WHERE ir."imageId" = ${image.id}
+        UNION
+        -- Check based on associated bounties
+        SELECT
+          SUM(IIF(b.poi, 1, 0)) > 0 "poi",
+          false "minor",
+          false "hasResource"
+        FROM "Image" i
+        JOIN "ImageConnection" ic ON ic."imageId" = i.id
+        JOIN "Bounty" b ON ic."entityType" = 'Bounty' AND b.id = ic."entityId"
+        WHERE ic."imageId" = ${image.id}
+        UNION
+        -- Check based on associated bounty entries
+        SELECT
+          SUM(IIF(b.poi, 1, 0)) > 0 "poi",
+          false "minor",
+          false "hasResource"
+        FROM "Image" i
+        JOIN "ImageConnection" ic ON ic."imageId" = i.id
+        JOIN "BountyEntry" be ON ic."entityType" = 'BountyEntry' AND be.id = ic."entityId"
+        JOIN "Bounty" b ON b.id = be."bountyId"
+        WHERE ic."imageId" = ${image.id}
+      )
+      SELECT bool_or(poi) "poi", bool_or(minor) "minor", bool_or("hasResource") "hasResource" FROM to_check;
+    `;
+
+  if (poi) {
+    flags.poi = true;
+    if (flags.nsfw) flags.poiReview = true;
+  }
+
+  if (minor) {
+    flags.minor = true;
+    if (flags.nsfw) flags.minorReview = true;
+  }
+
+  if (flags.hasMinorTag && !flags.hasAdultTag && (!flags.hasCartoonTag || flags.nsfw)) {
+    flags.minorReview = true;
+  }
+
+  if (!flags.minorReview && !flags.poiReview && !flags.tagReview && flags.nsfw) {
+    // If user is new and image is NSFW send it for review
+    const [{ isNewUser }] =
+      (await dbRead.$queryRaw<{ isNewUser: boolean }[]>`
+        SELECT is_new_user(CAST(${image.userId} AS INT)) "isNewUser";
+      `) ?? [];
+    if (isNewUser) flags.newUserReview = true;
+  }
+
+  const reviewerResult = determineReviewer({
+    tags: tags.map((tag) => ({ ...tag, tag: tag.name })),
+  });
+  if (reviewerResult) {
+    const { reviewer, tagNames } = reviewerResult;
+    if (reviewer === 'moderators') {
+      flags.tagReview = true;
+      reviewTags.push(...tags.filter((x) => tagNames.includes(x.name)));
+    } else if (reviewer === 'knights') {
+      // TODO @manuelurenah - Add knight review logic
+    }
+  }
+
+  if (flags.poiReview) reviewKey = 'poi';
+  else if (flags.minorReview) reviewKey = 'minor';
+  else if (flags.tagReview) reviewKey = 'tag';
+  else if (flags.newUserReview) reviewKey = 'newUser';
+
+  const data: Prisma.ImageUpdateInput = {
+    ingestion: getHasRequiredScans(image.scanJobs?.scans)
+      ? ImageIngestionStatus.Scanned
+      : undefined,
+    updatedAt: new Date(),
+  };
+  if (!image.nsfwLevelLocked) data.nsfwLevel = nsfwLevel;
+  if (flags.poi) data.poi = true;
+  if (flags.minor) data.minor = true;
+  if (reviewKey) data.needsReview = reviewKey;
+
+  const validAiGeneration = isValidAIGeneration({
+    ...image,
+    nsfwLevel: Math.max(nsfwLevel, flags.nsfw ? NsfwLevel.X : NsfwLevel.PG),
+    meta: image.meta as ImageMetadata | VideoMetadata,
+    tools: image.tools,
+    // Avoids blocking images that we know are AI generated with some resources.
+    resources: hasResource ? [1] : [],
+  });
+  if (flags.nsfw && !validAiGeneration) {
+    data.ingestion = ImageIngestionStatus.Blocked;
+    data.blockedFor = BlockedReason.AiNotVerified;
+  }
+
+  if (flags.nsfw && prompt && data.ingestion !== ImageIngestionStatus.Blocked) {
+    // Determine if we need to block the image
+    const { success, blockedFor } = auditMetaData({ prompt }, flags.nsfw);
+    if (!success) {
+      data.ingestion = ImageIngestionStatus.Blocked;
+      data.blockedFor = blockedFor?.join(',') ?? 'Failed audit, no explanation';
+    }
+  }
+
+  if (data.ingestion === ImageIngestionStatus.Scanned) {
+    const createdAtTime = new Date(image.createdAt).getTime();
+    const now = new Date();
+    const oneWeekAgo = decreaseDate(now, 7, 'days').getTime();
+    if (!image.scannedAt) data.scannedAt = now;
+    else if (!image.metadata?.skipScannedAtReassignment && createdAtTime >= oneWeekAgo)
+      data.scannedAt = now;
+  }
+
+  return {
+    prompt,
+    data: removeEmpty(data),
+    flags,
+    reviewKey,
+    tagsForReview:
+      reviewKey === 'minor'
+        ? minorTags
+        : reviewKey === 'poi'
+        ? poiTags
+        : reviewKey === 'tag'
+        ? reviewTags
+        : undefined,
+    scans: image.scanJobs.scans,
+  };
 }
