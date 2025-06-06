@@ -234,7 +234,7 @@ async function handleSuccess(args: BodyProps) {
         await deleteUserProfilePictureCache(image.userId);
       }
 
-      await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
+      // await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
       if (image.postId) await updatePostNsfwLevel(image.postId);
 
       // Update search index
