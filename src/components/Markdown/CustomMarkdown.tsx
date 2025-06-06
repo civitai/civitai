@@ -65,10 +65,25 @@ export function CustomMarkdown({
           },
           table: ({ node, children, ref, ...props }) => {
             return (
-              <Table {...props} striped withBorder withColumnBorders>
+              <Table {...props} striped withTableBorder withColumnBorders>
                 {children}
               </Table>
             );
+          },
+          thead: ({ node, children, ref, ...props }) => {
+            return <Table.Thead {...props}>{children}</Table.Thead>;
+          },
+          tbody: ({ node, children, ref, ...props }) => {
+            return <Table.Tbody {...props}>{children}</Table.Tbody>;
+          },
+          tr: ({ node, children, ref, ...props }) => {
+            return <Table.Tr {...props}>{children}</Table.Tr>;
+          },
+          th: ({ node, children, ref, ...props }) => {
+            return <Table.Th {...props}>{children}</Table.Th>;
+          },
+          td: ({ node, children, ref, ...props }) => {
+            return <Table.Td {...props}>{children}</Table.Td>;
           },
         }}
       />

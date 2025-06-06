@@ -5,7 +5,6 @@ import {
   Center,
   Checkbox,
   Chip,
-  createStyles,
   Divider,
   Group,
   Input,
@@ -105,7 +104,7 @@ export const ClubResourceManagementInput = ({
 
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
-      <Stack spacing="xs" mt="sm">
+      <Stack gap="xs" mt="sm">
         {(userClubs ?? []).map((club) => {
           const clubResource = clubResources.find((cr) => cr.clubId === club.id);
           const tiers = clubTiers.filter((t) => t.clubId === club.id);
@@ -137,7 +136,7 @@ export const ClubResourceManagementInput = ({
                     isFetching ? (
                       <Loader size="xs" />
                     ) : (
-                      <Text color="dimmed" size="sm">
+                      <Text c="dimmed" size="sm">
                         No tiers avilable for this club.
                       </Text>
                     )

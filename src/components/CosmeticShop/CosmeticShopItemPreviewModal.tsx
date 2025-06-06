@@ -4,13 +4,13 @@ import {
   Grid,
   Modal,
   Stack,
-  createStyles,
   Text,
   CloseButton,
   Group,
   Button,
   Loader,
   UnstyledButton,
+  useMantineTheme,
 } from '@mantine/core';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
@@ -34,26 +34,13 @@ import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
 type Props = { shopItem: CosmeticShopItemGetById };
 
-const useStyles = createStyles((theme) => ({
-  sample: {
-    padding: theme.spacing.lg,
-  },
-  preview: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    padding: theme.spacing.lg,
-  },
-  text: {
-    color: theme.colorScheme === 'dark' ? theme.colors.white : theme.colors.black,
-  },
-}));
-
 export const CosmeticShopItemPurchaseCompleteModal = ({
   shopItem,
   userCosmetic,
 }: Props & { userCosmetic: { cosmeticId: number; claimKey: string } }) => {
   const dialog = useDialogContext();
   const { cosmetic } = shopItem;
-  const { classes, theme } = useStyles();
+  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const { equip, isLoading } = useEquipProfileDecoration();
   const router = useRouter();
@@ -77,19 +64,19 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="lg">
-      <Stack spacing="xl" px="md">
-        <Group position="apart">
-          <Text className={classes.text}>You got a shiny new thing!</Text>
+      <Stack gap="xl" px="md">
+        <Group justify="space-between">
+          <Text className="text-black dark:text-white">You got a shiny new thing!</Text>
           <CloseButton onClick={dialog.onClose} />
         </Group>
 
-        <Box className={classes.preview} style={{ borderRadius: theme.radius.lg }}>
+        <Box p="lg" className="bg-gray-0 dark:bg-dark-8" style={{ borderRadius: theme.radius.lg }}>
           <CosmeticPreview cosmetic={cosmetic} />
         </Box>
 
-        <Stack spacing={4}>
+        <Stack gap={4}>
           {cosmetic.type === CosmeticType.ContentDecoration && (
-            <Text size="xs" color="dimmed" align="center">
+            <Text size="xs" c="dimmed" align="center">
               This decoration is now available to apply to your content. You can select which piece
               to apply it on from your profile.
             </Text>
@@ -123,7 +110,6 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
   const dialog = useDialogContext();
   const { cosmetic } = shopItem;
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
-  const { classes } = useStyles();
   const { data: userCosmetics, isLoading } = useQueryUserCosmetics();
   const { equip, isLoading: isEquipping } = useEquipProfileDecoration();
   const hasCosmetic = Object.values(userCosmetics ?? {})
@@ -169,18 +155,13 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
       size="xl"
       withCloseButton={false}
       radius="lg"
-      styles={{
-        modal: {
-          padding: '0 !important',
-          overflow: 'hidden',
-        },
-      }}
+      classNames={{ body: 'p-0', content: 'overflow-hidden' }}
     >
-      <Grid m={0}>
-        <Grid.Col span={12} md={5} className={classes.sample}>
-          <Stack spacing="lg" px="md" h="100%">
-            <Group position="apart" noWrap>
-              <Text className={classes.text} size="sm">
+      <Grid classNames={{ inner: 'my-0' }}>
+        <Grid.Col span={{ base: 12, md: 5 }} p="lg">
+          <Stack gap="lg" px="md" h="100%">
+            <Group justify="space-between" wrap="nowrap">
+              <Text className="text-black dark:text-white" size="sm">
                 {getDisplayName(cosmetic.type)}
               </Text>
               <CloseButton className="show-mobile" onClick={dialog.onClose} />
@@ -188,12 +169,12 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
             <Center my="auto" h={250}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
             </Center>
-            <Text className={classes.text} mt="auto" weight="bold" size="lg">
+            <Text className="text-black dark:text-white" mt="auto" fw="bold" size="lg">
               {shopItem.title}
             </Text>
             {isLoading && (
               <Center>
-                <Loader variant="bars" />
+                <Loader type="bars" />
               </Center>
             )}
             {!isLoading && (
@@ -209,11 +190,11 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
                     color="yellow.7"
                   />
                 ) : (
-                  <Stack spacing={4}>
+                  <Stack gap={4}>
                     <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>
                       Equip now
                     </Button>
-                    <Text size="sm" align="center" color="dimmed">
+                    <Text size="sm" align="center" c="dimmed">
                       You already own this cosmetic
                     </Text>
                   </Stack>
@@ -221,8 +202,8 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
               </>
             )}
             {cosmetic.type === CosmeticType.ContentDecoration && (
-              <Group spacing="xs" noWrap>
-                <Text color="yellow">
+              <Group gap="xs" wrap="nowrap">
+                <Text c="yellow">
                   <IconAlertTriangleFilled />
                 </Text>
 
@@ -234,8 +215,8 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
             )}
           </Stack>
         </Grid.Col>
-        <Grid.Col span={12} md={7} className={classes.preview}>
-          <Stack spacing={0} h={0} align="flex-end" className="hide-mobile">
+        <Grid.Col span={{ base: 12, md: 7 }} p="lg" className="  bg-gray-0 dark:bg-dark-8">
+          <Stack gap={0} h={0} align="flex-end" className="hide-mobile">
             <CloseButton onClick={dialog.onClose} />
           </Stack>
           <Stack px="md" h="100%" justify="center">

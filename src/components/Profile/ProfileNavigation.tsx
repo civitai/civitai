@@ -6,12 +6,12 @@ import {
   IconPencilMinus,
   IconPhoto,
   IconBookmark,
+  IconVideo,
 } from '@tabler/icons-react';
-import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
+import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
-import { IconVideo } from '@tabler/icons-react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type ProfileNavigationProps = {

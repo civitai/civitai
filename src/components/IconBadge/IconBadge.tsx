@@ -11,7 +11,7 @@ export const IconBadge = forwardRef<HTMLDivElement, IconBadgeProps>(
         component={Link}
         href={href}
         styles={{
-          leftSection: { marginRight: 4 },
+          section: { marginRight: 4 },
           root: { paddingLeft: 3, paddingRight: 5, cursor: 'pointer' },
         }}
         radius="sm"
@@ -25,7 +25,7 @@ export const IconBadge = forwardRef<HTMLDivElement, IconBadgeProps>(
       <Badge
         ref={ref}
         styles={{
-          leftSection: { marginRight: 4 },
+          section: { marginRight: 4 },
           root: { paddingLeft: 3, paddingRight: 5 },
         }}
         radius="sm"

@@ -64,7 +64,7 @@ export function StripeSetupSuccessProvider() {
         showSuccessNotification({
           title: 'Payment method added',
           message: (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text>Your payment method has been added successfully.</Text>
               <Text>
                 You can manage your payment methods in your{' '}

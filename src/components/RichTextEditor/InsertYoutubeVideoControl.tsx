@@ -26,7 +26,7 @@ export function InsertYoutubeVideoControl(props: Props) {
   const handleSubmit = (values: z.infer<typeof schema>) => {
     const { url } = values;
 
-    editor.commands.setYoutubeVideo({ src: url });
+    editor?.commands.setYoutubeVideo({ src: url });
     closeAllModals();
     form.reset();
   };
@@ -36,7 +36,7 @@ export function InsertYoutubeVideoControl(props: Props) {
       title: controlTitle,
       children: (
         <Form form={form} onSubmit={handleSubmit}>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <InputText
               label="YouTube URL"
               name="url"

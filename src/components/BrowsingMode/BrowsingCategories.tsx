@@ -1,25 +1,6 @@
-import { Group, Paper, Switch, createStyles, Text, Stack, Checkbox } from '@mantine/core';
+import { Text, Stack, Checkbox } from '@mantine/core';
 import { useQueryHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { toggleableBrowsingCategories } from '~/shared/constants/browsingLevel.constants';
-
-const useStyles = createStyles((theme) => ({
-  root: {
-    ['& > div']: {
-      ['&:hover']: {
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-        cursor: 'pointer',
-      },
-      ['&:not(:last-child)']: {
-        borderBottom: `1px ${
-          theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-        } solid`,
-      },
-    },
-  },
-  active: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-  },
-}));
 
 export function BrowsingCategories() {
   // const { classes, cx } = useStyles();
@@ -45,7 +26,11 @@ export function BrowsingCategories() {
             checked={checked}
             onChange={(e) => toggle(e.target.checked, category.relatedTags)}
             disabled={isLoading}
-            label={<Text weight={500}>{category.title}</Text>}
+            label={
+              <Text size="sm" fw={500}>
+                {category.title}
+              </Text>
+            }
           />
         );
       })}
@@ -61,14 +46,14 @@ export function BrowsingCategories() {
 
   //       return (
   //         <Group
-  //           position="apart"
+  //           justify="space-between"
   //           key={category.title}
   //           className={cx({ [classes.active]: checked })}
   //           py="sm"
   //           px="md"
   //           onClick={() => toggle(!checked, category.relatedTags)}
   //         >
-  //           <Text weight={500}>{category.title}</Text>
+  //           <Text fw={500}>{category.title}</Text>
   //           <Switch
   //             checked={checked}
   //             onChange={(e) => toggle(e.target.checked, category.relatedTags)}

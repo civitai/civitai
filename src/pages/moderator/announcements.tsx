@@ -6,6 +6,7 @@ import { Announcement } from '~/components/Announcements/Announcement';
 import { AnnouncementEditModal } from '~/components/Announcements/AnnouncementEditModal';
 import { Page } from '~/components/AppLayout/Page';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import type { UpsertAnnouncementSchema } from '~/server/schema/announcement.schema';
@@ -62,24 +63,24 @@ export function AnnouncementsPage() {
                   ) : active ? (
                     <Badge>Active</Badge>
                   ) : null}
-                  <ActionIcon
+                  <LegacyActionIcon
                     onClick={() => {
                       const { id, startsAt, endsAt, ...rest } = announcement;
                       openEdit(rest);
                     }}
                   >
                     <IconCopy />
-                  </ActionIcon>
-                  <ActionIcon onClick={() => openEdit(announcement)}>
+                  </LegacyActionIcon>
+                  <LegacyActionIcon onClick={() => openEdit(announcement)}>
                     <IconPencil />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                   <PopConfirm
                     onConfirm={() => deleteMutation.mutate({ id: announcement.id })}
                     withinPortal
                   >
-                    <ActionIcon loading={deleteMutation.isLoading} color="red">
+                    <LegacyActionIcon loading={deleteMutation.isLoading} color="red">
                       <IconTrash />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </PopConfirm>
                 </div>
               }
@@ -89,7 +90,7 @@ export function AnnouncementsPage() {
       })}
       {data && (
         <div className="flex justify-end">
-          <Pagination page={page} total={data.totalPages} onChange={handlePaginationChange} />
+          <Pagination value={page} total={data.totalPages} onChange={handlePaginationChange} />
         </div>
       )}
     </div>

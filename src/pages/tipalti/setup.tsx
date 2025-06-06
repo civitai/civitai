@@ -4,7 +4,7 @@ import {
   useUserPaymentConfiguration,
 } from '~/components/UserPaymentConfiguration/util';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Container, Stack, Title, Text, SegmentedControl, Center, Loader } from '@mantine/core';
 import { Meta } from '~/components/Meta/Meta';
 
@@ -37,7 +37,7 @@ export default function Onboard() {
           </Text>
           <SegmentedControl
             value={type}
-            onChange={(v: 'setup' | 'paymentHistory') => setType(v)}
+            onChange={(v) => setType(v as 'setup' | 'paymentHistory')}
             data={[
               { label: 'Onboarding / Setup', value: 'setup' },
               { label: 'Payment History', value: 'paymentHistory' },

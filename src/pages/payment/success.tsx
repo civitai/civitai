@@ -16,7 +16,7 @@ import { useEffect } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { enterFall, jelloVertical } from '~/libs/animations';
+import animationClasses from '~/libs/animations.module.scss';
 
 export default function PaymentSuccess() {
   const router = useRouter();
@@ -38,26 +38,18 @@ export default function PaymentSuccess() {
       <Meta title="Successful Payment | Civitai" deIndex />
       <Container size="xs" mb="lg">
         <Stack>
-          <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-            <Group spacing="xs" noWrap position="center">
+          <Alert radius="sm" color="green" className="z-10">
+            <Group gap="xs" wrap="nowrap" justify="center">
               <ThemeIcon color="green" size="lg">
                 <IconCircleCheck />
               </ThemeIcon>
               <Title order={2}>Payment Complete!</Title>
             </Group>
           </Alert>
-          <Center
-            sx={{
-              // animation: `${jelloVerical} 2s 1s ease-in-out`,
-              animationName: `${enterFall}, ${jelloVertical}`,
-              animationDuration: `1.5s, 2s`,
-              animationDelay: `0s, 1.5s`,
-              animationIterationCount: '1, 1',
-            }}
-          >
+          <Center className={animationClasses.jelloFall}>
             <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
           </Center>
-          <Title order={1} align="center">
+          <Title order={1} className="text-center">
             Thank you! 🎉
           </Title>
           <Text size="lg" align="center" mb="lg">
@@ -65,7 +57,7 @@ export default function PaymentSuccess() {
           </Text>
 
           <Group grow>
-            <Button component={Link} href="/models" size="md" leftIcon={<IconLayoutDashboard />}>
+            <Button component={Link} href="/models" size="md" leftSection={<IconLayoutDashboard />}>
               View Models
             </Button>
             <Button
@@ -73,14 +65,14 @@ export default function PaymentSuccess() {
               component={Link}
               href="/user/account"
               size="md"
-              rightIcon={<IconRosette />}
+              rightSection={<IconRosette />}
             >
               Customize Profile
             </Button>
           </Group>
           <Text
             size="xs"
-            color="dimmed"
+            c="dimmed"
           >{`*Cosmetics and other perks should be delivered within 2-3 minutes, but you may need to refresh the site before you're able to see them in your profile.`}</Text>
         </Stack>
       </Container>

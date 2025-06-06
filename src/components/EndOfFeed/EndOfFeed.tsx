@@ -10,26 +10,26 @@ export function EndOfFeed({ text }: { text?: ReactNode }) {
       <Divider
         size="sm"
         label={
-          <Group spacing={4}>
+          <Group gap={4}>
             <IconClock size={16} stroke={1.5} />
             You are all caught up
           </Group>
         }
         labelPosition="center"
-        labelProps={{ size: 'sm' }}
+        className="text-sm"
       />
       <Center>
-        <Stack spacing={0} align="center">
-          <Text size="sm" color="dimmed">
+        <Stack gap={0} align="center">
+          <Text size="sm" c="dimmed">
             {text ?? 'Consider changing your period or filters to find more'}
           </Text>
           <Text
-            variant="link"
+            c="blue.4"
             size="sm"
             onClick={() => {
               node?.current?.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            sx={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer' }}
           >
             Back to the top
           </Text>

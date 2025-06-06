@@ -1,0 +1,63 @@
+.heroContainer {
+  margin-top: 40px;
+  margin-bottom: 40px;
+}
+
+.heroTitle {
+  font-size: 32px;
+  font-weight: 700;
+  color: light-dark(
+    var(--mantine-color-gray-9),
+    var(--mantine-color-white)
+  );
+
+  @container (min-width: theme('screens.md')) {
+    font-size: 40px;
+  }
+}
+
+.heroText {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.heading {
+  font-size: 24px;
+  font-weight: 700;
+  color: light-dark(
+    var(--mantine-color-gray-9),
+    var(--mantine-color-white)
+  );
+}
+
+.heading3 {
+  font-size: 32px;
+  font-weight: 700;
+  color: light-dark(
+    var(--mantine-color-gray-9),
+    var(--mantine-color-white)
+  );
+}
+
+.heading4 {
+  font-size: 20px;
+  font-weight: 700;
+  color: light-dark(
+    var(--mantine-color-gray-9),
+    var(--mantine-color-white)
+  )
+}
+
+.gradientContainer {
+  position: relative;
+  margin-bottom: 24px;
+}
+
+.gradientBox {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(26, 27, 30, 0.00) 50%, #1A1B1E 100%);
+}

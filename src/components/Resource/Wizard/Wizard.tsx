@@ -17,10 +17,10 @@ export const Wizard = ({ children }: { children: React.ReactNode }) => {
   return (
     <WizardContext.Provider value={{ currentStep, goNext, goBack }}>
       <Stepper
+        wrap
         active={currentStep}
         onStepClick={setCurrentStep}
         size="xs"
-        breakpoint="sm"
         allowNextStepsSelect
       >
         {children}

@@ -7,45 +7,14 @@ import {
   Drawer,
   ScrollArea,
   Group,
-  createStyles,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconFilter, IconChevronDown } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useIsClient } from '~/providers/IsClientProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        // color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));
+import classes from './AdaptiveFiltersDropdown.module.scss';
+import clsx from 'clsx';
 
 export function AdaptiveFiltersDropdown({
   children,
@@ -54,10 +23,10 @@ export function AdaptiveFiltersDropdown({
   dropdownProps,
   ...buttonProps
 }: Props) {
-  const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
   const [opened, setOpened] = useState(false);
+  const colorScheme = useComputedColorScheme('dark');
 
   const target = (
     <Indicator
@@ -65,8 +34,7 @@ export function AdaptiveFiltersDropdown({
       label={isClient && count ? count : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
+      disabled={!count}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
@@ -74,13 +42,13 @@ export function AdaptiveFiltersDropdown({
         className={classes.actionButton}
         color="gray"
         radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
+        rightSection={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
         {...buttonProps}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <IconFilter size={16} />
           Filters
         </Group>
@@ -88,7 +56,7 @@ export function AdaptiveFiltersDropdown({
     </Indicator>
   );
 
-  const dropdown = <Stack spacing="lg">{children}</Stack>;
+  const dropdown = <Stack gap="lg">{children}</Stack>;
 
   if (mobile)
     return (
@@ -99,16 +67,16 @@ export function AdaptiveFiltersDropdown({
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          classNames={{ drawer: dropdownProps?.className }}
+          classNames={{ root: dropdownProps?.className }}
           styles={{
-            drawer: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -132,7 +100,7 @@ export function AdaptiveFiltersDropdown({
         <ScrollArea.Autosize
           classNames={{ root: dropdownProps?.className }}
           type="hover"
-          maxHeight={'calc(90vh - var(--header-height) - 56px)'}
+          mah={'calc(90vh - var(--header-height) - 56px)'}
         >
           {dropdown}
         </ScrollArea.Autosize>

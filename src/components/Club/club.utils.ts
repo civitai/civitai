@@ -51,7 +51,7 @@ export const useQueryClub = ({ id }: { id: number }) => {
 };
 
 export const useMutateClub = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const upsertClubMutation = trpc.club.upsert.useMutation({
     async onSuccess(result, payload) {
@@ -813,7 +813,7 @@ export const useQueryClubAdminInvites = (
 };
 
 export const useMutateClubAdmin = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const upsertClubAdminInvite = trpc.clubAdmin.upsertInvite.useMutation({
     async onSuccess() {

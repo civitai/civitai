@@ -5,11 +5,12 @@ import {
   Stack,
   Text,
   Title,
-  createStyles,
   Group,
   Button,
   Anchor,
   Tooltip,
+  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
@@ -31,12 +32,6 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
-const useStyles = createStyles((theme) => ({
-  donationGoalContainer: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-  },
-}));
-
 const DonationGoalItem = ({
   donationGoal,
   modelVersionId,
@@ -44,7 +39,8 @@ const DonationGoalItem = ({
   donationGoal: ModelVersionDonationGoal;
   modelVersionId: number;
 }) => {
-  const { classes } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const progress = Math.min(100, (donationGoal.total / donationGoal.goalAmount) * 100);
   const [donationAmount, setDonationAmount] = useState<number>(10);
   const currentUser = useCurrentUser();
@@ -83,26 +79,28 @@ const DonationGoalItem = ({
       key={donationGoal.id}
       radius="md"
       p="xs"
-      sx={{ position: 'relative' }}
+      style={{
+        background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
+        position: 'relative',
+      }}
       withBorder
-      className={classes.donationGoalContainer}
     >
-      <Stack spacing="xs">
+      <Stack gap="xs">
         {donationGoal.isEarlyAccess && progress < 100 && modelVersionIsEarlyAccess && (
-          <Text color="yellow" size="xs" weight={500}>
+          <Text c="yellow" size="xs" fw={500}>
             The creator of this {resourceLabel} has set a donation goal! You can donate to make this
             resource available to everyone before the end of Early Access.
           </Text>
         )}
-        <Group position="apart" noWrap align="start">
-          <Text size="sm" weight={500}>
+        <Group justify="space-between" wrap="nowrap" align="start">
+          <Text size="sm" fw={500}>
             {donationGoal.title}
           </Text>
-          <Group spacing={0} position="left" align="center" noWrap>
+          <Group gap={0} justify="left" align="center" wrap="nowrap">
             <CurrencyIcon currency={Currency.BUZZ} size={16} />
             <Text
               size="xs"
-              sx={{
+              style={{
                 whiteSpace: 'nowrap',
               }}
             >
@@ -115,35 +113,30 @@ const DonationGoalItem = ({
             <Text size="xs">{donationGoal.description}</Text>
           </ContentClamp>
         )}
-        <Progress
-          size="xl"
-          h={25}
-          value={progress}
-          label={`${Math.floor(progress)}%`}
-          color={progress < 100 ? 'yellow.7' : 'green'}
-          striped={donationGoal.active}
-          animate={donationGoal.active}
-        />
+        <Progress.Root size="xl" style={{ height: 25 }}>
+          <Progress.Section
+            value={progress}
+            color={progress < 100 ? 'yellow.7' : 'green'}
+            striped={donationGoal.active}
+            animated={donationGoal.active}
+          >
+            <Progress.Label>{Math.floor(progress)}%</Progress.Label>
+          </Progress.Section>
+        </Progress.Root>
 
         {canDonate && (
-          <Stack spacing="xs" mt="xs">
-            <Group spacing="xs" noWrap>
-              <Group spacing="xs" noWrap>
+          <Stack gap="xs" mt="xs">
+            <Group gap="xs" wrap="nowrap">
+              <Group gap="xs" wrap="nowrap">
                 <NumberInputWrapper
                   value={donationAmount}
-                  onChange={(value) => setDonationAmount(value ?? 0)}
+                  onChange={(value) => setDonationAmount(Number(value ?? 0))}
                   variant="filled"
                   label="Amount to donate"
                   rightSectionWidth="10%"
                   min={10}
                   max={100000}
-                  icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                  parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-                  formatter={(value) =>
-                    value && !Number.isNaN(parseFloat(value))
-                      ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                      : ''
-                  }
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                   size={'xs'}
                   hideControls
                   labelProps={{ style: { display: 'none' } }}
@@ -151,6 +144,8 @@ const DonationGoalItem = ({
                   w="100%"
                   placeholder="Amount to donate"
                   disabled={donating}
+                  allowDecimal={false}
+                  allowNegative={false}
                 />
                 <Tooltip
                   label="Purchasing the model for generation or download will contribute to the donation goal."
@@ -165,8 +160,7 @@ const DonationGoalItem = ({
                 label="Donate"
                 buzzAmount={donationAmount}
                 color="yellow.7"
-                size="xs"
-                compact
+                size="compact-xs"
                 h={30}
                 disabled={!donationAmount}
                 loading={donating}
@@ -205,7 +199,7 @@ const ModelVersionDonationGoals = ({ modelVersionId }: Props) => {
   }
 
   return (
-    <Stack spacing="sm">
+    <Stack gap="sm">
       <Title order={4} mb={0}>
         Support this model
       </Title>

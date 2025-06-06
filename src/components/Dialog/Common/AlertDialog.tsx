@@ -42,10 +42,10 @@ export default function AlertDialog({ type, size, ...props }: Props) {
     <Modal {...dialog} size={size ?? 'sm'} withCloseButton={false} radius="md">
       {title ? (
         <Stack align="center">
-          <Group spacing="xs">
+          <Group gap="xs">
             {icon}
             {typeof title === 'string' ? (
-              <Text size="lg" weight="bold">
+              <Text size="lg" fw="bold">
                 {title}
               </Text>
             ) : (

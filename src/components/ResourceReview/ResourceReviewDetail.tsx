@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Button,
   Center,
@@ -13,12 +14,12 @@ import {
   Title,
 } from '@mantine/core';
 import { truncate } from 'lodash-es';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Meta } from '~/components/Meta/Meta';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ResourceReviewCarousel } from '~/components/ResourceReview/ResourceReviewCarousel';
@@ -106,22 +107,21 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       />
       <Container my="md" w="100%">
         <Stack>
-          <Group position="apart" noWrap align="center">
-            <Title order={3} sx={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Group justify="space-between" wrap="nowrap" align="center">
+            <Title order={3} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ whiteSpace: 'nowrap' }}>Review:</span>{' '}
-              <Text
+              <Anchor
                 component={Link}
                 href={getModelWithVersionUrl(data)}
-                variant="link"
                 lineClamp={1}
-                sx={{ cursor: 'pointer' }}
                 shallow={isModelPage}
+                inherit
               >
                 {data.model.name} - {data.modelVersion.name}
-              </Text>
+              </Anchor>
             </Title>
 
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               <ResourceReviewMenu
                 size="lg"
                 reviewId={reviewId}
@@ -137,7 +137,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
               </NavigateBack>
             </Group>
           </Group>
-          <Group spacing="xs" align="center" position="apart">
+          <Group gap="xs" align="center" justify="space-between">
             <UserAvatar
               user={data.user}
               subText={<DaysFromNow date={data.createdAt} />}
@@ -176,14 +176,14 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       )}
       <Container pb="md" w="100%">
         <Stack>
-          <Group spacing={4}>
+          <Group gap={4}>
             {!!relatedPosts?.items.length && (
-              <Text size="md" mr="xs" weight={500} lh="1.1">
+              <Text size="md" mr="xs" fw={500} lh="1.1">
                 Related posts
               </Text>
             )}
             {loadingRelatedPosts && !relatedPosts ? (
-              <Loader variant="dots" />
+              <Loader type="dots" />
             ) : (
               relatedPosts?.items.map((post) => (
                 <Link
@@ -194,10 +194,9 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                 >
                   <Button
                     component="a"
-                    size="xs"
                     variant="light"
                     styles={{ root: { height: 'auto' }, label: { whiteSpace: 'normal' } }}
-                    compact
+                    size="compact-xs"
                   >
                     {post.title ? post.title : `From: ${formatDate(post.publishedAt as Date)}`}
                   </Button>
@@ -208,7 +207,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
           <Divider />
           {data.details && <RenderHtml html={data.details} />}
 
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <Title order={3}>
               {commentCount.toLocaleString()} {commentCount === 1 ? 'Comment' : 'Comments'}
             </Title>

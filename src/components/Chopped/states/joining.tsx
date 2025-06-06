@@ -43,7 +43,7 @@ export function Joining() {
   return (
     <ChoppedLayout title="Join Game">
       <Stack>
-        <Text size="lg" weight={500} mb={-12}>
+        <Text size="lg" fw={500} mb={-12}>
           Game Code
         </Text>
         <TextInput
@@ -56,7 +56,7 @@ export function Joining() {
           placeholder="ABC123"
         />
 
-        <Text size="lg" weight={500} mb={-12}>
+        <Text size="lg" fw={500} mb={-12}>
           {`What's your name?`}
         </Text>
         <TextInput

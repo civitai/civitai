@@ -1,10 +1,21 @@
-import { ActionIcon, Avatar, Button, Grid, Group, Stack, Text, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Avatar,
+  Button,
+  Grid,
+  Group,
+  Stack,
+  Text,
+  Tooltip,
+  useMantineTheme,
+} from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import React from 'react';
 import type { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 import {
   Form,
@@ -32,6 +43,7 @@ export function ClubTierUpsertForm({
   onSuccess?: () => void;
   onCancel?: () => void;
 }) {
+  const theme = useMantineTheme();
   const form = useForm({
     schema: formSchema,
     defaultValues: {
@@ -61,11 +73,11 @@ export function ClubTierUpsertForm({
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={32}>
+      <Stack gap={32}>
         <Grid gutter="xl">
-          <Grid.Col xs={12}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
+          <Grid.Col span={12}>
+            <Stack gap={32}>
+              <Stack gap="xl">
                 <InputText name="name" label="Title" placeholder="e.g.: Gold Tier" withAsterisk />
                 <InputNumber
                   name="unitAmount"
@@ -73,7 +85,7 @@ export function ClubTierUpsertForm({
                   label="Monthly Buzz"
                   description="The amount of Buzz that will be charged to users every month. Updating this value will not affect existing members, and they will keep paying the same amount they were paying when they joined the tier."
                   variant="filled"
-                  icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                   withAsterisk
                 />
                 <InputRTE
@@ -107,22 +119,22 @@ export function ClubTierUpsertForm({
                         radius="sm"
                       />
                       <Tooltip label="Remove image">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="sm"
                           variant="filled"
                           color="red"
                           onClick={() =>
                             form.setValue('coverImage', clubTier?.coverImage?.id ? null : undefined)
                           }
-                          sx={(theme) => ({
+                          style={{
                             position: 'absolute',
-                            top: theme.spacing.xs * 0.4,
-                            right: theme.spacing.xs * 0.4,
+                            top: 'calc(--mantine-spacing-xs * 0.4)',
+                            right: 'calc(--mantine-spacing-xs * 0.4)',
                             zIndex: 1,
-                          })}
+                          }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </div>
                   )}
@@ -138,11 +150,11 @@ export function ClubTierUpsertForm({
                 <InputSwitch
                   name="unlisted"
                   label={
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
+                    <Stack gap={4}>
+                      <Group gap={4}>
                         <Text inline>Unlisted</Text>
                       </Group>
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         This tier will not be displayed to users directly, but they can join it if
                         they have the link.
                       </Text>
@@ -152,11 +164,11 @@ export function ClubTierUpsertForm({
                 <InputSwitch
                   name="joinable"
                   label={
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
+                    <Stack gap={4}>
+                      <Group gap={4}>
                         <Text inline>Joinable</Text>
                       </Group>
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         This tier will not be joinable by users, regardless of whether they have a
                         link or not. This is useful to create tiers that are only available to users
                         you want to invite and to start working on a tier before other users get
@@ -168,11 +180,11 @@ export function ClubTierUpsertForm({
                 <InputSwitch
                   name="oneTimeFee"
                   label={
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
+                    <Stack gap={4}>
+                      <Group gap={4}>
                         <Text inline>One time payment</Text>
                       </Group>
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         This tier will not be charged on a monthly basis and its users will only pay
                         the joining fee.
                       </Text>
@@ -183,11 +195,11 @@ export function ClubTierUpsertForm({
             </Stack>
           </Grid.Col>
         </Grid>
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button
               loading={upsertingTier}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onCancel?.();

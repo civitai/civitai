@@ -36,15 +36,15 @@ export function PostControls({
   }
 
   return (
-    <Menu position="bottom-end" transition="pop-top-right">
+    <Menu position="bottom-end" transitionProps={{ transition: 'pop-top-right' }} withArrow>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
         {/* TODO.posts - reports */}
         {isModerator && (
           <Menu.Item
-            icon={<IconShieldHalf size={14} stroke={1.5} />}
+            leftSection={<IconShieldHalf size={14} stroke={1.5} />}
             color="yellow"
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
               e.preventDefault();
               handleEnqueueNsfwLevelUpdate();
@@ -59,7 +59,7 @@ export function PostControls({
               {({ onClick }) => (
                 <Menu.Item
                   color={theme.colors.red[6]}
-                  icon={<IconTrash size={14} stroke={1.5} />}
+                  leftSection={<IconTrash size={14} stroke={1.5} />}
                   onClick={() => onClick()}
                 >
                   Delete Post
@@ -67,7 +67,7 @@ export function PostControls({
               )}
             </DeletePostButton>
             <Menu.Item
-              icon={<IconEdit size={14} stroke={1.5} />}
+              leftSection={<IconEdit size={14} stroke={1.5} />}
               onClick={() => router.push(`/posts/${postId}/edit`)}
             >
               Edit Post
@@ -77,7 +77,7 @@ export function PostControls({
         {(!isOwner || !currentUser) && (
           <LoginRedirect reason="report-content">
             <Menu.Item
-              icon={<IconFlag size={14} stroke={1.5} />}
+              leftSection={<IconFlag size={14} stroke={1.5} />}
               onClick={() => openReportModal({ entityType: ReportEntity.Post, entityId: postId })}
             >
               Report
@@ -91,7 +91,7 @@ export function PostControls({
               <Menu.Item
                 component="a"
                 target="_blank"
-                icon={<IconInfoCircle size={14} stroke={1.5} />}
+                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
                 href={`${env.NEXT_PUBLIC_POST_LOOKUP_URL}${postId}`}
               >
                 Lookup Post

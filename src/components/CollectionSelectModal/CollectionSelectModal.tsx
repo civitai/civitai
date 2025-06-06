@@ -15,20 +15,21 @@ import { IconCloudOff, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import React, { useContext, useEffect, useRef } from 'react';
 import type { InstantSearchProps } from 'react-instantsearch';
 import { Configure, InstantSearch, useInstantSearch } from 'react-instantsearch';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import searchClasses from '~/components/Search/SearchLayout.module.scss';
 import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ImageCover, ImageSrcCover } from '~/components/Cards/CollectionCard';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import clsx from 'clsx';
 
 const CollectionSelectContext = React.createContext<{
   onSelect: (collectionId: number) => void;
@@ -75,7 +76,7 @@ export default function ModelShowcaseCollectionModal({
                 <Text>Select Model Showcase Collection</Text>
                 <CloseButton onClick={handleClose} />
               </div>
-              <CustomSearchBox isMobile={isMobile} autoFocus />
+              <CustomSearchBox isMobile={!!isMobile} autoFocus />
             </div>
             <ResourceHitList />
           </InstantSearch>
@@ -93,7 +94,7 @@ export type CollectionSelectModalProps = {
 
 function HiddenNotice({ hiddenCount }: { hiddenCount: number }) {
   return (
-    <Text color="dimmed">
+    <Text c="dimmed">
       {hiddenCount} {hiddenCount > 1 ? 'collections have' : 'collection has'} been hidden due to
       your settings.
     </Text>
@@ -103,7 +104,6 @@ function HiddenNotice({ hiddenCount }: { hiddenCount: number }) {
 function ResourceHitList() {
   const startedRef = useRef(false);
   const { status } = useInstantSearch();
-  const { classes } = useSearchLayoutStyles();
   const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'collections'>();
   const {
     items: collections,
@@ -133,12 +133,12 @@ function ResourceHitList() {
     return (
       <div className="p-3 py-5">
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && <HiddenNotice hiddenCount={hiddenCount} />}
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <ThemeIcon size={128} radius={100} style={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
             </ThemeIcon>
-            <Title order={1} inline>
+            <Title order={1} className="inline-block">
               No collections found
             </Title>
             <Text align="center">
@@ -153,14 +153,14 @@ function ResourceHitList() {
     <div className="flex flex-col gap-3 p-3">
       {hiddenCount > 0 && <HiddenNotice hiddenCount={hiddenCount} />}
 
-      <div className={classes.grid}>
+      <div className={searchClasses.grid}>
         {collections.map((collection) => (
           <CollectionSelectCard key={collection.id} data={collection} />
         ))}
       </div>
       {items.length > 0 && !isLastPage && (
         <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
-          <Center sx={{ height: 36 }} my="md">
+          <Center style={{ height: 36 }} my="md">
             <Loader />
           </Center>
         </InViewLoader>
@@ -171,7 +171,6 @@ function ResourceHitList() {
 
 function CollectionSelectCard({ data }: { data: SearchIndexDataMap['collections'][number] }) {
   const { onSelect } = useCollectionSelectContext();
-  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
 
   const handleSelect = () => {
     onSelect(data.id);
@@ -198,24 +197,24 @@ function CollectionSelectCard({ data }: { data: SearchIndexDataMap['collections'
 
   return (
     <FeedCard
-      className={coverImages.length === 0 ? classes.noImage : undefined}
+      className={coverImages.length === 0 ? cardClasses.noImage : undefined}
       onClick={handleSelect}
       aspectRatio="portrait"
     >
       <div
-        className={cx({
-          [classes.root]: true,
-          [classes.noHover]: isMultiImage,
+        className={clsx({
+          [cardClasses.root]: true,
+          [cardClasses.noHover]: isMultiImage,
         })}
       >
         <div
           className={
             isMultiImage
-              ? cx({
-                  [classes.imageGroupContainer]: true,
-                  [classes.imageGroupContainer4x4]: coverImagesCount > 2,
+              ? clsx({
+                  [cardClasses.imageGroupContainer]: true,
+                  [cardClasses.imageGroupContainer4x4]: coverImagesCount > 2,
                 })
-              : classes.imageGroupContainer
+              : cardClasses.imageGroupContainer
           }
         >
           {coverImages.length > 0 ? (
@@ -224,24 +223,35 @@ function CollectionSelectCard({ data }: { data: SearchIndexDataMap['collections'
             <ImageSrcCover data={data} coverSrcs={coverSrcs} />
           ) : (
             <Center h="100%">
-              <Text color="dimmed">This collection has no images</Text>
+              <Text c="dimmed">This collection has no images</Text>
             </Center>
           )}
         </div>
 
-        <div className={cx('flex flex-col gap-2', classes.contentOverlay, classes.bottom)}>
-          <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
+        <div
+          className={clsx('flex flex-col gap-2', cardClasses.contentOverlay, cardClasses.bottom)}
+        >
+          <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} lh={1.2}>
             {data.name}
           </Text>
           <div className="flex flex-nowrap gap-1">
-            <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
-              <Group spacing={2}>
+            <Badge
+              className={clsx(cardClasses.statChip, cardClasses.chip)}
+              classNames={{ label: 'flex flex-nowrap gap-2' }}
+              variant="light"
+              radius="xl"
+            >
+              <Group gap={2}>
                 <IconLayoutGrid size={14} stroke={2.5} />
-                <Text size="xs">{abbreviateNumber(itemCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(itemCount)}
+                </Text>
               </Group>
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconUser size={14} stroke={2.5} />
-                <Text size="xs">{abbreviateNumber(contributorCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(contributorCount)}
+                </Text>
               </Group>
             </Badge>
           </div>

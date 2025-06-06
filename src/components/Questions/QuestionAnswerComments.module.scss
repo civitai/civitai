@@ -1,0 +1,8 @@
+.list {
+  border-top: 1px solid light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-3));
+}
+
+.listItem {
+  padding: var(--mantine-spacing-sm);
+  border-bottom: 1px solid light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-3));
+}

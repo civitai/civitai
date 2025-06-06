@@ -52,7 +52,7 @@ export default function ModelEditPage() {
           <Loader />
         </Center>
       ) : (
-        <Stack spacing="xl">
+        <Stack gap="xl">
           <ReadOnlyAlert
             message={
               "Civitai is currently in read-only mode and you won't be able to edit your model. Please try again later."
@@ -60,17 +60,17 @@ export default function ModelEditPage() {
           />
           <Link legacyBehavior href={`/models/${modelId}`} passHref>
             <Anchor size="xs">
-              <Group spacing={4}>
+              <Group gap={4}>
                 <IconArrowLeft size={12} />
                 <Text inherit>Back to {model.name} page</Text>
               </Group>
             </Anchor>
           </Link>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <Title>Editing model</Title>
             <ModelUpsertForm model={model} onSubmit={handleSubmit}>
               {({ loading }) => (
-                <Group position="right">
+                <Group justify="flex-end">
                   <Button type="submit" mt="xl" loading={loading}>
                     Save
                   </Button>

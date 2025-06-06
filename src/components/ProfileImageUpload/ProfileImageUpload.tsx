@@ -105,7 +105,7 @@ export function ProfileImageUpload({
             onDrop={handleDrop}
             accept={IMAGE_MIME_TYPE}
             maxFiles={1}
-            sx={{
+            style={{
               flex: 1,
               display: 'flex',
               justifyContent: 'center',
@@ -116,9 +116,7 @@ export function ProfileImageUpload({
               root: hasError ? { borderColor: theme.colors.red[6] } : undefined,
             })}
           >
-            <Text color="dimmed">{`Drop image here, should not exceed ${formatBytes(
-              maxSize
-            )}`}</Text>
+            <Text c="dimmed">{`Drop image here, should not exceed ${formatBytes(maxSize)}`}</Text>
           </Dropzone>
         </Stack>
       </Group>

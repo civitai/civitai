@@ -66,7 +66,7 @@ export const ImageContestCollectionDetails = ({
             <>
               {' '}
               for the{' '}
-              <Text component="span" tt="capitalize" weight="bold">
+              <Text component="span" tt="capitalize" fw="bold">
                 {item?.tag.name}
               </Text>{' '}
               category
@@ -109,7 +109,7 @@ export const ImageContestCollectionDetails = ({
                 <Divider />
                 <Text>
                   This image is part of the{' '}
-                  <Text weight="bold" component="span">
+                  <Text fw="bold" component="span">
                     {item.collection.name}
                   </Text>{' '}
                   contest{tagDisplay}.{' '}
@@ -177,7 +177,7 @@ export const ImageContestCollectionDetails = ({
                 <Divider />
                 <Text>
                   {isOwner ? 'You have' : 'This user has'} submitted this image to the{' '}
-                  <Text weight="bold" component="span">
+                  <Text fw="bold" component="span">
                     {item.collection.name}
                   </Text>{' '}
                   Contest{tagDisplay}.
@@ -186,7 +186,7 @@ export const ImageContestCollectionDetails = ({
                 {!!item.collection.metadata?.votingPeriodStart && (
                   <Text>
                     The ability to react/vote for this film will go live starting at{' '}
-                    <Text weight="bold" component="span">
+                    <Text fw="bold" component="span">
                       {formatDate(item.collection.metadata?.votingPeriodStart)}
                     </Text>{' '}
                     when the Community Voting period begins
@@ -220,7 +220,7 @@ export const ImageContestCollectionDetails = ({
                       title="Share now"
                       collect={{ type: CollectionType.Image, imageId: image.id }}
                     >
-                      <Button radius="xl" color="gray" size="sm" compact className="text-center">
+                      <Button radius="xl" color="gray" size="compact-sm" className="text-center">
                         <Text size="xs">Share Now</Text>
                       </Button>
                     </ShareButton>
@@ -249,7 +249,7 @@ export const ImageContestCollectionDetails = ({
               <Divider />
               <Text>
                 This image is part of the{' '}
-                <Text weight="bold" component="span">
+                <Text fw="bold" component="span">
                   {item.collection.name}
                 </Text>{' '}
                 contest{tagDisplay}.{' '}
@@ -257,7 +257,7 @@ export const ImageContestCollectionDetails = ({
               {!!item.collection.metadata?.votingPeriodStart && (
                 <Text>
                   The ability to react/vote for this film will go live starting at{' '}
-                  <Text weight="bold" component="span">
+                  <Text fw="bold" component="span">
                     {formatDate(item.collection.metadata?.votingPeriodStart)}
                   </Text>{' '}
                   when the Community Voting period begins
@@ -382,7 +382,7 @@ function ReviewActions({
         >
           <Button
             className="flex-1"
-            leftIcon={<IconBan size="1.25rem" />}
+            leftSection={<IconBan size="1.25rem" />}
             color="red"
             disabled={loading}
             loading={loading && status === CollectionItemStatus.REJECTED}
@@ -398,7 +398,7 @@ function ReviewActions({
         >
           <Button
             className="flex-1"
-            leftIcon={<IconCheck size="1.25rem" />}
+            leftSection={<IconCheck size="1.25rem" />}
             disabled={loading}
             loading={loading && status === CollectionItemStatus.ACCEPTED}
           >

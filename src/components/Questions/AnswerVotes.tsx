@@ -114,7 +114,7 @@ function AnswerVoteCheck(props: VoteButtonProps) {
   return (
     <ReactionBadge
       color={active ? 'green' : undefined}
-      leftIcon={<IconCheck size={18} />}
+      leftSection={<IconCheck size={18} />}
       onClick={!disabled ? handleClick : undefined}
       {...props}
     >
@@ -132,7 +132,7 @@ function AnswerVoteCross(props: VoteButtonProps) {
   return (
     <ReactionBadge
       color={active ? 'red' : undefined}
-      leftIcon={<IconX size={18} />}
+      leftSection={<IconX size={18} />}
       onClick={!disabled ? handleClick : undefined}
       {...props}
     >

@@ -5,6 +5,8 @@ import { useMemo } from 'react';
 import type { BaseModel } from '~/server/common/constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/utils/string-helpers';
+import classes from './ModelURN.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const ModelURN = ({ baseModel, type, modelId, modelVersionId, withCopy = true }: Props) => {
   const { copied, copy } = useClipboard();
@@ -15,55 +17,48 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId, withCopy = 
   if (!urn) return null;
 
   return (
-    <Group spacing={4}>
-      <Group
-        spacing={0}
-        sx={{
-          code: {
-            borderRadius: 0,
-            lineHeight: 1.2,
-            paddingLeft: 4,
-            paddingRight: 4,
-            cursor: withCopy ? 'pointer' : undefined,
-          },
-        }}
-      >
-        <Code>civitai:</Code>
+    <Group gap={4}>
+      <Group gap={0}>
+        <Code className={classes.code}>civitai:</Code>
 
         {withCopy ? (
           <CopyTooltip copied={copied} label="Model ID">
-            <Code color="blue" onClick={() => copy(modelId)}>
+            <Code className={classes.code} color="blue" onClick={() => copy(modelId)}>
               {modelId}
             </Code>
           </CopyTooltip>
         ) : (
           <Tooltip label="Model ID">
-            <Code color="blue">{modelId}</Code>
+            <Code className={classes.code} color="blue">
+              {modelId}
+            </Code>
           </Tooltip>
         )}
-        <Code>@</Code>
+        <Code className={classes.code}>@</Code>
         {withCopy ? (
           <CopyTooltip copied={copied} label="Version ID">
-            <Code color="blue" onClick={() => copy(modelVersionId)}>
+            <Code className={classes.code} color="blue" onClick={() => copy(modelVersionId)}>
               {modelVersionId}
             </Code>
           </CopyTooltip>
         ) : (
           <Tooltip label="Version ID">
-            <Code color="blue">{modelVersionId}</Code>
+            <Code className={classes.code} color="blue">
+              {modelVersionId}
+            </Code>
           </Tooltip>
         )}
       </Group>
       {withCopy && (
-        <ActionIcon
+        <LegacyActionIcon
           size="xs"
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
             copy(urn);
           }}
         >
           {copied ? <IconCheck size="20" /> : <IconCopy size="20" />}
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
     </Group>
   );
@@ -97,18 +92,21 @@ export function URNExplanation({ size }: { size?: number }) {
         <IconInfoSquareRounded size={size ?? 16} style={{ cursor: 'pointer', opacity: 0.7 }} />
       </Popover.Target>
       <Popover.Dropdown>
-        <Stack spacing="xs">
-          <Text size="sm" weight={500}>
+        <Stack gap="xs">
+          <Text size="sm" fw={500}>
             What is an AIR?
           </Text>
           <Text size="xs" lh={1.3}>
             AIR stands for Artificial Intelligence Resource. It is a comprehensive unique
             identifier, and is composed of the following parts:
           </Text>
-          <Stack spacing={4}>
+          <Stack gap={4}>
             {urnParts.map(({ name, description }) => (
               <Text size="xs" key={name}>
-                <Code color="blue">{name}</Code> {description}
+                <Code className={classes.code} color="blue">
+                  {name}
+                </Code>{' '}
+                {description}
               </Text>
             ))}
           </Stack>
@@ -116,7 +114,6 @@ export function URNExplanation({ size }: { size?: number }) {
             For brevity we have opted not to show the full AIR here. To learn more about AIRs,{' '}
             <Text
               component="a"
-              variant="link"
               td="underline"
               href="/github/wiki/AIR-‐-Uniform-Resource-Names-for-AI"
               target="_blank"

@@ -24,15 +24,14 @@ export function VideoGenerationFormWrapper() {
           Learn more about{' '}
           <Text
             component="a"
-            variant="link"
             href="https://education.civitai.com/civitais-guide-to-video-in-the-civitai-generator"
-            target="blank"
+            target="_blank"
             inline
           >
             video generation
           </Text>
         </Text>
-        <Text size="xs" color="dimmed">
+        <Text size="xs" c="dimmed">
           Note: this is an experimental build. Pricing, default settings, and results are subject to
           change.
         </Text>
@@ -56,7 +55,7 @@ export function VideoGenerationFormWrapper() {
             ).map(({ engine, label }) => (
               <Button
                 key={engine}
-                compact
+                size="compact-sm"
                 onClick={() => setEngine(engine)}
                 variant="outline"
                 color="yellow"

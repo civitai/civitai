@@ -184,7 +184,7 @@ export function useReportCsamImages(
       showNotification({
         id: CSAM_NOTIFICATION_ID,
         loading: true,
-        disallowClose: true,
+        withCloseButton: false,
         autoClose: false,
         message: 'Sending report...',
       });

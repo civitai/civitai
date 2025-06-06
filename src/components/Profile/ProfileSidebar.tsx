@@ -12,6 +12,7 @@ import {
   useMantineTheme,
   Badge,
   UnstyledButton,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import {
@@ -47,6 +48,7 @@ import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -92,6 +94,7 @@ const mapSize: Record<
 export function ProfileSidebar({ username, className }: { username: string; className?: string }) {
   const router = useRouter();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const { data: user } = trpc.userProfile.get.useQuery({
@@ -123,10 +126,10 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const equippedCosmetics = user?.cosmetics.filter((c) => !!c.equippedAt);
   const editProfileBtn = isCurrentUser && (
     <Button
-      leftIcon={isMobile ? undefined : <IconPencilMinus size={16} />}
+      leftSection={isMobile ? undefined : <IconPencilMinus size={16} />}
       size={sizeOpts.button}
       onClick={() => openUserProfileEditModal()}
-      sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+      style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
       radius="xl"
       fullWidth
     >
@@ -136,9 +139,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const followUserBtn = !isCurrentUser && (
     <FollowUserButton
       userId={user.id}
-      leftIcon={isMobile ? undefined : <IconRss size={16} />}
+      leftSection={isMobile ? undefined : <IconRss size={16} />}
       size={sizeOpts.button}
-      sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+      style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
       variant={isMobile ? 'filled' : undefined}
     />
   );
@@ -150,7 +153,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       variant={isMobile ? 'filled' : 'light'}
       color="yellow.7"
       label={label}
-      sx={{ fontSize: '14px', fontWeight: 590 }}
+      style={{ fontSize: '14px', fontWeight: 590 }}
     />
   );
 
@@ -160,21 +163,21 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       label={label}
       size={sizeOpts.button}
       color="success.9"
-      sx={{ fontSize: '14px', fontWeight: 590, lineHeight: 1.5 }}
+      style={{ fontSize: '14px', fontWeight: 590, lineHeight: 1.5 }}
     />
   );
 
   const shareBtn = (
     <ShareButton url={router.asPath} title={`${user.username} Profile`}>
-      <ActionIcon
+      <LegacyActionIcon
         size={30}
         radius="xl"
         color="gray"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
         ml="auto"
       >
         <IconShare3 size={16} />
-      </ActionIcon>
+      </LegacyActionIcon>
     </ShareButton>
   );
 
@@ -185,9 +188,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   );
 
   return (
-    <Stack className={className} spacing={sizeOpts.spacing} p="md">
-      <Group noWrap position="apart">
-        <Group align="flex-start" position="apart" w={!isMobile ? '100%' : undefined}>
+    <Stack className={className} gap={sizeOpts.spacing} p="md">
+      <Group wrap="nowrap" justify="space-between">
+        <Group align="flex-start" justify="space-between" w={!isMobile ? '100%' : undefined}>
           <UserAvatar
             avatarSize={sizeOpts.avatar}
             user={{ ...user, cosmetics: equippedCosmetics }}
@@ -204,7 +207,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           )}
         </Group>
         {isMobile && (
-          <Group noWrap spacing={4}>
+          <Group wrap="nowrap" gap={4}>
             {muted ? mutedAlert : editProfileBtn}
             {!user?.bannedAt && (
               <>
@@ -219,9 +222,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         )}
       </Group>
       <RankBadge rank={user.rank} size={sizeOpts.rankBadge} withTitle />
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Username {...user} cosmetics={equippedCosmetics} size="xl" />
-        <Text color="dimmed" size="sm">
+        <Text c="dimmed" size="sm">
           Joined {formatDate(user.createdAt)}
         </Text>
         {user?.bannedAt && (
@@ -230,7 +233,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               <Popover.Target>
                 <UnstyledButton>
                   <Badge color="red">
-                    <Group spacing={0}>
+                    <Group gap={0}>
                       <Text>{user?.banReason ? `Banned: ${user?.banReason}` : 'Banned'}</Text>
                       {user?.bannedReasonDetails && (
                         <IconInfoCircle size={16} style={{ marginLeft: 4 }} />
@@ -252,9 +255,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       </Stack>
 
       {profile.location && !muted && (
-        <Group spacing="sm" noWrap>
+        <Group gap="sm" wrap="nowrap">
           <IconMapPin size={16} style={{ flexShrink: 0 }} />
-          <Text color="dimmed" truncate size={sizeOpts.text}>
+          <Text c="dimmed" truncate size={sizeOpts.text}>
             {profile.location}
           </Text>
         </Group>
@@ -265,9 +268,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         </ContentClamp>
       )}
       {!muted && (
-        <Group spacing={4}>
+        <Group gap={4}>
           {sortDomainLinks(user.links).map((link, index) => (
-            <ActionIcon
+            <LegacyActionIcon
               key={index}
               component="a"
               href={link.url}
@@ -276,7 +279,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
               size={24}
             >
               <DomainIcon domain={link.domain} size={sizeOpts.icons} />
-            </ActionIcon>
+            </LegacyActionIcon>
           ))}
         </Group>
       )}
@@ -305,11 +308,11 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       {(!isCurrentUser || shouldDisplayStats) && <Divider my={sizeOpts.spacing} />}
 
       {badges.length > 0 && (
-        <Stack spacing={sizeOpts.spacing}>
-          <Text size={sizeOpts.text} color="dimmed" weight={590}>
+        <Stack gap={sizeOpts.spacing}>
+          <Text size={sizeOpts.text} c="dimmed" fw={590}>
             Badges
           </Text>
-          <Group spacing="xs">
+          <Group gap="xs">
             {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
               const data = (award.data ?? {}) as BadgeCosmetic['data'];
               const url = (data.url ?? '') as string;
@@ -355,8 +358,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                     )}
                   </Popover.Target>
                   <Popover.Dropdown>
-                    <Stack spacing={0}>
-                      <Text size="sm" align="center" weight={500}>
+                    <Stack gap={0}>
+                      <Text size="sm" align="center" fw={500}>
                         {award.name}
                       </Text>
                       {award.videoUrl && (
@@ -383,7 +386,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                 variant="light"
                 onClick={() => setShowAllBadges((prev) => !prev)}
                 size="xs"
-                sx={{ fontSize: 12, fontWeight: 600 }}
+                style={{ fontSize: 12, fontWeight: 600 }}
                 fullWidth
               >
                 {showAllBadges ? 'Show less' : `Show all (${badges.length})`}

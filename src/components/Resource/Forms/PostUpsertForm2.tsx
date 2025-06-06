@@ -113,7 +113,7 @@ export function PostUpsertForm2({
           </Center>
         ) : isCreatePage ? (
           <div className="flex flex-col gap-3">
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Our site is mostly used for sharing AI generated content. Make sure the images you are
               sharing for this resource have been generated with it.
             </Text>

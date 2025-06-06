@@ -20,7 +20,6 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { usePaddleAdjustmentsInfinite } from '~/components/Paddle/util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { usePaddle } from '~/providers/PaddleProvider';
 
 import type { GetPaddleAdjustmentsSchema } from '~/server/schema/paddle.schema';
 import { AdjustmentAction } from '~/server/schema/paddle.schema';
@@ -34,8 +33,7 @@ export default function ModeratorPaddleAdjustments() {
     customerId: [],
     subscriptionId: [],
   });
-  const { paddle } = usePaddle();
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
   const { adjustments, isLoading, isFetching, fetchNextPage, hasNextPage } =
     usePaddleAdjustmentsInfinite(debouncedFilters);
   const featureFlags = useFeatureFlags();
@@ -49,14 +47,14 @@ export default function ModeratorPaddleAdjustments() {
       <Meta title="Paddle Adjustments | Moderator" deIndex />
 
       <Container size="lg">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Paddle Adjustments</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Includes refunds and Cashbacks we&rsquo;ve seen on Paddle. This mainly because Paddle
             has no way to check this on their platform.
           </Text>
         </Stack>
-        <Group position="apart" my="md">
+        <Group justify="space-between" my="md">
           <Group>
             <TextInput
               label="Filter by Customer Id"
@@ -109,7 +107,7 @@ export default function ModeratorPaddleAdjustments() {
               })),
             ]}
             value={filters.action ?? 'all'}
-            onChange={(value: string) =>
+            onChange={(value) =>
               setFilters({
                 ...filters,
                 action: value === 'all' ? undefined : (value as (typeof AdjustmentAction)[number]),
@@ -126,34 +124,34 @@ export default function ModeratorPaddleAdjustments() {
         ) : !!adjustments.length ? (
           <Stack>
             <Table>
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>Created at</th>
-                  <th>Currency</th>
-                  <th>Amount</th>
-                  <th>Status</th>
-                  <th>Customer</th>
-                  <th>Reason</th>
-                </tr>
-              </thead>
-              <tbody>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Type</Table.Th>
+                  <Table.Th>Created at</Table.Th>
+                  <Table.Th>Currency</Table.Th>
+                  <Table.Th>Amount</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th>Customer</Table.Th>
+                  <Table.Th>Reason</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {adjustments.map((adjustment) => {
                   return (
-                    <tr key={adjustment.id}>
-                      <td>{toPascalCase(adjustment.action.replace('_', ' '))}</td>
-                      <td>{formatDate(adjustment.createdAt)}</td>
-                      <td>{adjustment.currencyCode ?? 'N/A'}</td>
-                      <td>
+                    <Table.Tr key={adjustment.id}>
+                      <Table.Td>{toPascalCase(adjustment.action.replace('_', ' '))}</Table.Td>
+                      <Table.Td>{formatDate(adjustment.createdAt)}</Table.Td>
+                      <Table.Td>{adjustment.currencyCode ?? 'N/A'}</Table.Td>
+                      <Table.Td>
                         {adjustment.payoutTotals?.total
                           ? formatPriceForDisplay(parseInt(adjustment.payoutTotals?.total, 10))
                           : 'N/A'}
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <Badge>{getDisplayName(adjustment.status.replace('_', ' '))}</Badge>
-                      </td>
-                      <td>
-                        <Stack spacing={0}>
+                      </Table.Td>
+                      <Table.Td>
+                        <Stack gap={0}>
                           <Anchor
                             size="xs"
                             // Not keen on this approach, but will have to do in the meantime.
@@ -180,12 +178,12 @@ export default function ModeratorPaddleAdjustments() {
                             Retool
                           </Anchor>
                         </Stack>
-                      </td>
-                      <td>{adjustment.reason}</td>
-                    </tr>
+                      </Table.Td>
+                      <Table.Td>{adjustment.reason}</Table.Td>
+                    </Table.Tr>
                   );
                 })}
-              </tbody>
+              </Table.Tbody>
             </Table>
 
             {isFetching && !isLoading && (
@@ -196,7 +194,7 @@ export default function ModeratorPaddleAdjustments() {
             <Center>
               <Stack>
                 {!hasNextPage && (
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     No more adjustments
                   </Text>
                 )}
@@ -214,7 +212,7 @@ export default function ModeratorPaddleAdjustments() {
         ) : (
           <Paper p="xl" withBorder>
             <Center>
-              <Text size="md" color="dimmed">
+              <Text size="md" c="dimmed">
                 No adjustments found
               </Text>
             </Center>

@@ -1,0 +1,48 @@
+.control {
+  svg {
+    width: 24px;
+    height: 24px;
+
+    @container (max-width: theme('screens.sm')) {
+      min-width: 16px;
+      min-height: 16px;
+    }
+  }
+}
+
+.footer {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(0deg, rgba(37, 38, 43, 0.8) 0%, rgba(37, 38, 43, 0) 100%);
+  /* backdrop-filter: blur(13px) saturate(160%); */
+  box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
+  z-index: 10;
+  gap: 6px;
+  padding: var(--mantine-spacing-xs);
+}
+
+.reactions {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    alpha(var(--mantine-color-dark-6), 0.6)
+  );
+  /* backdrop-filter: blur(13px) saturate(160%); */
+  box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
+  padding: 4px;
+}
+
+.info {
+  position: absolute;
+  bottom: 5px;
+  right: 5px;
+}

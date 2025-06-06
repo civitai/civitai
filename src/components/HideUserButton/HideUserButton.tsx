@@ -54,7 +54,7 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
     <LoginRedirect reason="hide-content">
       <Menu.Item
         onClick={handleHideClick}
-        icon={
+        leftSection={
           alreadyHiding ? (
             <IconUser size={16} stroke={1.5} />
           ) : (

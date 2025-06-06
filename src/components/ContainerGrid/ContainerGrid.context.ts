@@ -1,13 +1,12 @@
-import { createSafeContext } from '@mantine/utils';
-import type { MantineNumberSize } from '@mantine/styles';
+import { createSafeContext, MantineSpacing } from '@mantine/core';
 
 interface GridContextValue {
-  gutter: MantineNumberSize;
-  gutterXs: MantineNumberSize;
-  gutterSm: MantineNumberSize;
-  gutterMd: MantineNumberSize;
-  gutterLg: MantineNumberSize;
-  gutterXl: MantineNumberSize;
+  gutter: MantineSpacing;
+  gutterXs: MantineSpacing;
+  gutterSm: MantineSpacing;
+  gutterMd: MantineSpacing;
+  gutterLg: MantineSpacing;
+  gutterXl: MantineSpacing;
   grow: boolean;
   columns: number;
   containerName?: string;

@@ -53,18 +53,14 @@ export const ClubDepositFunds = ({ clubId }: { clubId: number }) => {
             <Stack>
               <NumberInputWrapper
                 value={amount}
-                onChange={(value) => setAmount(value ?? 0)}
+                onChange={(value) => setAmount(Number(value ?? 0))}
                 variant="filled"
                 label="Amount to deposit"
                 rightSectionWidth="10%"
                 min={5000}
-                icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-                formatter={(value) =>
-                  value && !Number.isNaN(parseFloat(value))
-                    ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                    : ''
-                }
+                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                allowDecimal={false}
+                allowNegative={false}
                 hideControls
               />
 

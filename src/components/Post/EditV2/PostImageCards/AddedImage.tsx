@@ -82,6 +82,8 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { CustomCard } from './CustomCard';
+import { VotableTagModel } from '~/libs/tags';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -360,7 +362,7 @@ const ResourceHeader = () => {
         </InfoPopover>
       </div>
       {canAdd ? (
-        <Group spacing="xs">
+        <Group gap="xs">
           <Box className="hidden group-hover:block">
             <InfoPopover
               type="hover"
@@ -393,8 +395,7 @@ const ResourceHeader = () => {
                 excludeIds: image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined),
               }}
               buttonProps={{
-                size: 'sm',
-                compact: true,
+                size: 'compact-sm',
                 className: 'text-sm',
                 loading: isAddingResource,
                 disabled: cantAdd,
@@ -515,7 +516,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   };
 
   return !!modelId && !!modelVersionId ? (
-    <Group spacing="xs" noWrap mt={i === 0 ? 4 : undefined}>
+    <Group gap="xs" wrap="nowrap" mt={i === 0 ? 4 : undefined}>
       {!detected && (
         <Tooltip label="Manually-added" withArrow>
           <ThemeIcon color="cyan" variant="light" radius="xl" size="sm">
@@ -531,11 +532,11 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
         <Box className="flex items-center justify-between gap-3 hover:bg-gray-2 hover:dark:bg-dark-5">
           <Text>
             {modelName} -{' '}
-            <Text span color="dimmed" size="sm">
+            <Text span c="dimmed" size="sm">
               {modelVersionName}
             </Text>
           </Text>
-          <Group spacing={2}>
+          <Group gap={2}>
             <Badge color="gray" size="md" variant="filled">
               {getDisplayName(modelType ?? 'unknown')}
             </Badge>
@@ -544,33 +545,33 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
       </Link>
 
       {!detected && (
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           {!otherAvailableIDs.length ? (
             <></>
           ) : (
             <Tooltip label="Copy to All">
-              <ActionIcon
+              <LegacyActionIcon
                 color="violet"
                 size="sm"
                 onClick={handleCopyResource}
                 loading={copyResourceMutation.isLoading}
               >
                 <IconArrowFork size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           )}
           {!canAdd ? (
             <></>
           ) : (
             <Tooltip label="Delete">
-              <ActionIcon
+              <LegacyActionIcon
                 color="red"
                 size="sm"
                 onClick={handleRemoveResource}
                 loading={removeResourceMutation.isLoading}
               >
                 <IconTrash size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           )}
         </Group>
@@ -580,11 +581,11 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
     <div className="flex items-center justify-between gap-3">
       <Text>
         {modelName} -{' '}
-        <Text span color="dimmed" size="sm">
+        <Text span c="dimmed" size="sm">
           {modelVersionName}
         </Text>
       </Text>
-      <Group spacing={4}>
+      <Group gap={4}>
         <Badge color="gray" size="md" variant="filled">
           {getDisplayName(modelType ?? 'unknown')}
         </Badge>
@@ -655,9 +656,8 @@ function EditDetail() {
                       <Button
                         variant="light"
                         color="blue"
-                        compact
+                        size="compact-sm"
                         classNames={{ label: 'flex gap-1' }}
-                        size="sm"
                         onClick={onEditMetaClick}
                         className="text-sm"
                       >
@@ -687,7 +687,7 @@ function EditDetail() {
                 className={`p-3 @container ${showPreview ? 'rounded-none' : 'rounded-lg'}`}
                 classNames={{ message: 'flex flex-col items-center justify-center' }}
               >
-                <Text color="red" className="font-bold">
+                <Text c="red" className="font-bold">
                   Unable to Verify AI Generation
                 </Text>
                 <Text size="sm">
@@ -712,8 +712,7 @@ function EditDetail() {
                     <Button
                       variant="light"
                       color="blue"
-                      compact
-                      size="sm"
+                      size="compact-sm"
                       onClick={onEditMetaClick}
                       className="text-sm"
                     >
@@ -723,8 +722,7 @@ function EditDetail() {
                       <Button
                         variant={hideMeta ? 'filled' : 'light'}
                         color="blue"
-                        compact
-                        size="sm"
+                        size="compact-sm"
                         classNames={{ label: 'flex gap-1 text-sm' }}
                         onClick={toggleHidePrompt}
                         loading={isUpdating}
@@ -778,8 +776,7 @@ function EditDetail() {
                     <Button
                       variant="light"
                       color="blue"
-                      compact
-                      size="sm"
+                      size="compact-sm"
                       classNames={{ label: 'flex gap-1' }}
                       onClick={() => setShowMoreResources((o) => !o)}
                     >
@@ -815,7 +812,6 @@ function EditDetail() {
                         component="a"
                         href="https://github.com/civitai/sd_civitai_extension"
                         target="_blank"
-                        variant="link"
                         rel="nofollow"
                       >
                         Civitai Extension for Automatic 1111 Stable Diffusion Web UI
@@ -868,7 +864,7 @@ function EditDetail() {
                     hideClick={true}
                     variant="transparent"
                     size="sm"
-                    position="right"
+                    className="justify-end"
                     iconProps={{ size: 20 }}
                   >
                     Traditional or generative AI programs, platforms or websites used to create this
@@ -881,8 +877,7 @@ function EditDetail() {
                     // @ts-ignore eslint-disable-next-line
                     variant="light"
                     color="blue"
-                    compact
-                    size="sm"
+                    size="compact-sm"
                     classNames={{ label: 'flex gap-1' }}
                     onClick={() => undefined}
                     className="text-sm"
@@ -922,9 +917,9 @@ function EditDetail() {
                   <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
                     Techniques
                   </h3>
-                  {/* <ActionIcon variant="transparent" size="sm">
+                  {/* <LegacyActionIcon variant="transparent" size="sm">
                     <IconInfoCircle />
-                  </ActionIcon> */}
+                  </LegacyActionIcon> */}
                 </div>
                 <Popover>
                   <PopoverButton
@@ -932,8 +927,7 @@ function EditDetail() {
                     // @ts-ignore eslint-disable-next-line
                     variant="light"
                     color="blue"
-                    compact
-                    size="sm"
+                    size="compact-sm"
                     classNames={{ label: 'flex gap-1' }}
                     onClick={() => undefined}
                     className="text-sm"
@@ -978,7 +972,7 @@ function EditDetail() {
                       hideClick={true}
                       variant="transparent"
                       size="sm"
-                      position="right"
+                      className="justify-end"
                       iconProps={{ size: 20 }}
                     >
                       The thumbnail is the image that represents your post. It is the first thing
@@ -987,7 +981,6 @@ function EditDetail() {
                   </div>
                   <Button
                     className="text-sm uppercase"
-                    size="sm"
                     variant="light"
                     onClick={() => {
                       const metadata = image.metadata as VideoMetadata;
@@ -1004,7 +997,7 @@ function EditDetail() {
                         },
                       });
                     }}
-                    compact
+                    size="compact-sm"
                   >
                     Select
                   </Button>
@@ -1126,22 +1119,22 @@ function PostImage() {
       <div className="absolute right-2 top-2 z-20 flex gap-1">
         <Menu withArrow position="bottom-end">
           <Menu.Target>
-            <ActionIcon>
+            <LegacyActionIcon>
               <IconDotsVertical
                 color="#fff"
                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
               />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
             {!isBlocked && (
-              <Menu.Item icon={<IconPencil size={16} />} onClick={onEditMetaClick}>
+              <Menu.Item leftSection={<IconPencil size={16} />} onClick={onEditMetaClick}>
                 Edit image
               </Menu.Item>
             )}
             <Menu.Item
               color="red"
-              icon={<IconTrash size={16} />}
+              leftSection={<IconTrash size={16} />}
               onClick={onDelete}
               disabled={isDeleting}
             >
@@ -1165,14 +1158,14 @@ function TosViolationBanner() {
       className={`p-3 @container ${showPreview ? 'rounded-none' : 'rounded-lg'}`}
       classNames={{ message: 'flex flex-col items-center justify-center' }}
     >
-      <Text color="red" className="font-bold">
+      <Text c="red" className="font-bold">
         TOS Violation
       </Text>
       <Text>This image has been flagged as a TOS violation.</Text>
       {blockedFor && (
         <Text className="flex flex-wrap items-center gap-1">
           <span>Blocked for:</span>
-          <Text color="red" inline className="font-semibold">
+          <Text c="red" inline className="font-semibold">
             {blockedFor}
           </Text>
         </Text>
@@ -1186,7 +1179,7 @@ function TosViolationBanner() {
                 loading={isLoading}
                 color="gray.6"
                 mt="xs"
-                leftIcon={<IconArrowBackUp size={20} />}
+                leftSection={<IconArrowBackUp size={20} />}
               >
                 Unblock
               </Button>
@@ -1198,7 +1191,7 @@ function TosViolationBanner() {
           loading={isDeleting}
           color="red.7"
           mt="xs"
-          leftIcon={<IconTrash size={20} />}
+          leftSection={<IconTrash size={20} />}
         >
           Delete
         </Button>

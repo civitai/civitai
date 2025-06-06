@@ -1,8 +1,6 @@
 import {
-  ActionIcon,
   Alert,
   Box,
-  createStyles,
   Divider,
   Group,
   Loader,
@@ -10,16 +8,20 @@ import {
   Stack,
   Text,
   TextInput,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { getHotkeyHandler, useClickOutside, useDebouncedValue, usePrevious } from '@mantine/hooks';
 import { IconPlus, IconStar, IconX } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
 import type { PostDetailEditable } from '~/server/services/post.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from './EditPostTags.module.scss';
 
 type TagProps = {
   id?: number;
@@ -52,7 +54,7 @@ export function EditPostTags({
     <EditPostTagsContext.Provider
       value={{ postId: post.id, tags, setTags: handleSetTags, autosuggest }}
     >
-      <Group spacing="xs">
+      <Group gap="xs">
         {tags.map((tag, index) => (
           <PostTag
             key={index}
@@ -69,6 +71,7 @@ export function EditPostTags({
 function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
   const { postId, tags, setTags } = useEditPostTagsContext();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const previousTags = usePrevious(tags);
   const { mutate, isLoading } = trpc.post.removeTag.useMutation({
@@ -92,15 +95,15 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
     <Alert
       radius="xl"
       color="gray"
-      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+      variant={colorScheme === 'dark' ? 'filled' : 'light'}
       py={4}
       pr={tag.id ? 'xs' : undefined}
-      sx={{ minHeight: 32, display: 'flex', alignItems: 'center' }}
+      style={{ minHeight: 32, display: 'flex', alignItems: 'center' }}
     >
-      <Group spacing="xs">
+      <Group gap="xs">
         <Text>{tag.name}</Text>
         {tag.id && canRemove && (
-          <ActionIcon
+          <LegacyActionIcon
             size="xs"
             variant="outline"
             radius="xl"
@@ -108,7 +111,7 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
             disabled={isLoading}
           >
             <IconX size={14} />
-          </ActionIcon>
+          </LegacyActionIcon>
         )}
       </Group>
     </Alert>
@@ -116,9 +119,9 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
 }
 
 function TagPicker() {
+  const colorScheme = useComputedColorScheme('dark');
   const { postId, tags, setTags, autosuggest } = useEditPostTagsContext();
 
-  const { classes, cx, theme } = useDropdownContentStyles();
   const [active, setActive] = useState<number>();
   const [editing, setEditing] = useState(false);
   const [query, setQuery] = useState<string>('');
@@ -231,12 +234,12 @@ function TagPicker() {
         radius="xl"
         py={4}
         color="gray"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
         onClick={() => setEditing(true)}
-        sx={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+        style={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
       >
         {!editing ? (
-          <Group spacing={4} data-tour="post:tag">
+          <Group gap={4} data-tour="post:tag">
             <IconPlus size={16} />
             <Text>Tag</Text>
           </Group>
@@ -275,7 +278,7 @@ function TagPicker() {
         )}
       </Alert>
     ),
-    [editing, handleClose, handleDown, handleEnter, handleUp, query, theme.colorScheme]
+    [editing, handleClose, handleDown, handleEnter, handleUp, query, colorScheme]
   );
 
   if (!autosuggest) return target;
@@ -285,28 +288,28 @@ function TagPicker() {
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown p={0}>
         <Box style={{ width: 300 }} ref={setDropdown}>
-          <Group position="apart" px="sm" py="xs">
-            <Text weight={500}>{label} Tags</Text>
-            {isFetching && <Loader variant="dots" />}
+          <Group justify="space-between" px="sm" py="xs">
+            <Text fw={500}>{label} Tags</Text>
+            {isFetching && <Loader type="dots" />}
           </Group>
           <Divider />
           {!!filteredData?.length && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               {filteredData.map((tag, index) => (
                 <Group
-                  position="apart"
+                  justify="space-between"
                   key={index}
-                  className={cx({ [classes.active]: index === active })}
+                  className={clsx({ [classes.active]: index === active })}
                   onMouseOver={() => setActive(index)}
                   onMouseLeave={() => setActive(undefined)}
                   onClick={() => handleClick(index)}
                   p="sm"
                 >
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <Text size="sm">{tag.name}</Text>
                     {tag.isCategory && <IconStar className={classes.categoryIcon} size={12} />}
                   </Group>
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     {tag.postCount.toString()} posts
                   </Text>
                 </Group>
@@ -318,15 +321,3 @@ function TagPicker() {
     </Popover>
   );
 }
-
-const useDropdownContentStyles = createStyles((theme) => ({
-  active: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-    cursor: 'pointer',
-  },
-  categoryIcon: {
-    strokeWidth: 0,
-    fill: theme.colors.blue[6],
-    marginTop: 1,
-  },
-}));

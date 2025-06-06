@@ -26,7 +26,7 @@ export function CollectionContextMenu({
   mode,
   ...menuProps
 }: Props) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const router = useRouter();
   const currentUser = useCurrentUser();
 
@@ -134,7 +134,7 @@ export function CollectionContextMenu({
               py={0}
               h={14}
               w="100%"
-              align="left"
+              justify="flex-start"
               style={{
                 display: 'flex',
                 alignItems: 'start',
@@ -147,8 +147,8 @@ export function CollectionContextMenu({
           <>
             <Menu.Item
               color="red"
-              icon={<IconTrash size={14} stroke={1.5} />}
-              onClick={(e) => {
+              leftSection={<IconTrash size={14} stroke={1.5} />}
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 handleDeleteClick();
@@ -157,8 +157,8 @@ export function CollectionContextMenu({
               Delete collection
             </Menu.Item>
             <Menu.Item
-              icon={<IconEdit size={14} stroke={1.5} />}
-              onClick={(e) => {
+              leftSection={<IconEdit size={14} stroke={1.5} />}
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 triggerRoutedDialog({ name: 'collectionEdit', state: { collectionId } });
@@ -170,8 +170,8 @@ export function CollectionContextMenu({
         )}
         {currentUser && permissions?.read && (
           <Menu.Item
-            icon={<IconHome size={14} stroke={1.5} />}
-            onClick={(e) => {
+            leftSection={<IconHome size={14} stroke={1.5} />}
+            onClick={(e: React.MouseEvent) => {
               e.preventDefault();
               e.stopPropagation();
               onToggleCollectionHomeBlock();
@@ -182,7 +182,7 @@ export function CollectionContextMenu({
         )}
         {!isBookmarkCollection && permissions?.manage && (
           <Link legacyBehavior href={`/collections/${collectionId}/review`} passHref>
-            <Menu.Item component="a" icon={<IconPencil size={14} stroke={1.5} />}>
+            <Menu.Item component="a" leftSection={<IconPencil size={14} stroke={1.5} />}>
               Review items
             </Menu.Item>
           </Link>

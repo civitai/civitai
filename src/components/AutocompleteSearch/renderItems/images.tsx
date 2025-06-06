@@ -1,27 +1,24 @@
 import React, { forwardRef } from 'react';
-import type { AutocompleteItem, BadgeProps } from '@mantine/core';
-import { Badge, Center, Group, Stack, Text } from '@mantine/core';
+import type { ComboboxItem, BadgeProps } from '@mantine/core';
+import { Badge, Center, Group, Stack, Text, useComputedColorScheme } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import {
-  ActionIconBadge,
-  useSearchItemStyles,
-  ViewMoreItem,
-} from '~/components/AutocompleteSearch/renderItems/common';
+import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import styles from './common.module.scss';
 
 export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: SearchIndexDataMap['images'][number] }
+  ComboboxItem & { hit: SearchIndexDataMap['images'][number] }
 >(({ value, hit, ...props }, ref) => {
-  const { theme } = useSearchItemStyles();
+  const colorScheme = useComputedColorScheme('dark');
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
@@ -40,20 +37,21 @@ export const ImagesSearchItem = forwardRef<
     radius: 'xl',
     size: 'xs',
     color: 'gray',
-    variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
+    variant: colorScheme === 'dark' ? 'filled' : 'light',
   };
 
   const nsfw = !getIsSafeBrowsingLevel(hit.nsfwLevel);
 
   return (
-    <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
+    <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
       <Center
-        sx={{
+        style={{
           width: 64,
           height: 64,
           position: 'relative',
           overflow: 'hidden',
           borderRadius: '10px',
+          flexShrink: 0,
         }}
       >
         {nsfw ? (
@@ -77,10 +75,10 @@ export const ImagesSearchItem = forwardRef<
           />
         )}
       </Center>
-      <Stack spacing={8} sx={{ flex: '1 !important' }}>
+      <Stack gap={8} style={{ flex: '1 !important' }}>
         {!hit.hideMeta && hit.prompt && (
           <Text lineClamp={2} size="sm" inline>
-            <Text weight={600} ml={1} span>
+            <Text fw={600} ml={1} span>
               Positive prompt:{' '}
             </Text>
 
@@ -88,7 +86,7 @@ export const ImagesSearchItem = forwardRef<
           </Text>
         )}
         <UserAvatar size="xs" user={user} withUsername />
-        <Group spacing={8}>
+        <Group gap={8}>
           {tagsMax?.map((tag, index) => (
             <Badge key={index} {...tagBadgeProps}>
               {tag}
@@ -97,7 +95,7 @@ export const ImagesSearchItem = forwardRef<
           {remainingTagsCount > 0 && <Badge {...tagBadgeProps}>+{remainingTagsCount}</Badge>}
         </Group>
         {stats && (
-          <Group spacing={4}>
+          <Group gap={4}>
             <ActionIconBadge icon={<IconMoodSmile size={12} stroke={2.5} />}>
               {abbreviateNumber(reactionCountAllTime)}
             </ActionIconBadge>

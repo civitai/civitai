@@ -34,7 +34,7 @@ function ChallengesPage() {
       />
       <ChallengeHero />
       <MasonryContainer>
-        <Stack spacing="xs">
+        <Stack gap="xs">
           {isLoading ? (
             <Center p="xl">
               <Loader size="xl" />

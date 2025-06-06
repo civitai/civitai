@@ -100,13 +100,13 @@ export const ModelVersionEarlyAccessPurchase = ({
             The creator of this {resourceLabel} has set this version to early access, You can{' '}
             {userCanDoLabel} with this {resourceLabel} by purchasing it during the early access
             period or just waiting until it becomes public. The remaining time for early access is{' '}
-            <Text component="span" weight="bold">
+            <Text component="span" fw="bold">
               <Countdown endTime={earlyAccessEndsAt ?? new Date()} />
             </Text>
           </Text>
           <Stack>
             {supportsDownloadPurchase && (
-              <Stack spacing="xs">
+              <Stack gap="xs">
                 <BuzzTransactionButton
                   type="submit"
                   label="Get Download Access"
@@ -115,14 +115,14 @@ export const ModelVersionEarlyAccessPurchase = ({
                   onPerformTransaction={() => handlePurchase('download')}
                   disabled={canDownload}
                 />
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   Download access also grants generation access.
                 </Text>
               </Stack>
             )}
 
             {supportsGenerationPurchase && (
-              <Stack spacing="xs">
+              <Stack gap="xs">
                 <BuzzTransactionButton
                   type="submit"
                   label="Get Generation Access"
@@ -131,7 +131,7 @@ export const ModelVersionEarlyAccessPurchase = ({
                   onPerformTransaction={() => handlePurchase('generation')}
                   disabled={canGenerate}
                 />
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   The creator of the {resourceLabel} has enabled{' '}
                   {earlyAccessConfig.generationTrialLimit} trials for generation. Test this{' '}
                   {resourceLabel}{' '}
@@ -147,14 +147,14 @@ export const ModelVersionEarlyAccessPurchase = ({
                   </GenerateButton>
                   .
                 </Text>
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   By purchasing generation access, you will not be able to download this resource,
                   but you can make unlimited generations with it
                 </Text>
               </Stack>
             )}
 
-            <Button onClick={handleClose} variant="light" color="gray" compact>
+            <Button onClick={handleClose} variant="light" color="gray" size="compact-sm">
               Cancel
             </Button>
           </Stack>

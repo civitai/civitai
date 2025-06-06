@@ -1,4 +1,11 @@
-import { Badge, Group, Text } from '@mantine/core';
+import {
+  Badge,
+  getPrimaryShade,
+  Group,
+  Text,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   IconArchiveFilled,
   IconBolt,
@@ -7,11 +14,12 @@ import {
   IconLock,
   IconMessageCircle2,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
@@ -31,11 +39,10 @@ import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ModelCard({ data }: Props) {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const image = data.images[0];
   const aspectRatio = image && image.width && image.height ? image.width / image.height : 1;
-  const { classes, cx } = useCardStyles({
-    aspectRatio,
-  });
 
   const currentUser = useCurrentUser();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
@@ -86,73 +93,81 @@ export function ModelCard({ data }: Props) {
           <div className="flex gap-1">
             {currentUser?.isModerator && isPOI && (
               <Badge
-                className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
                 variant="light"
                 radius="xl"
               >
-                <Text color="white" size="xs" transform="capitalize">
+                <Text c="white" size="xs" fw="bold">
                   POI
                 </Text>
               </Badge>
             )}
             {currentUser?.isModerator && isMinor && (
               <Badge
-                className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
                 variant="light"
                 radius="xl"
               >
-                <Text color="white" size="xs" transform="capitalize">
+                <Text c="white" size="xs" fw="bold">
                   Minor
                 </Text>
               </Badge>
             )}
             {currentUser?.isModerator && isNSFW && (
               <Badge
-                className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
                 variant="light"
                 radius="xl"
               >
-                <Text color="white" size="xs" transform="capitalize">
+                <Text c="white" size="xs" fw="bold">
                   NSFW
                 </Text>
               </Badge>
             )}
             {isPrivate && (
-              <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
+              <Badge
+                className={clsx(cardClasses.infoChip, cardClasses.chip)}
+                variant="light"
+                radius="xl"
+              >
                 <IconLock size={16} />
               </Badge>
             )}
             <ModelTypeBadge
-              className={cx(classes.infoChip, classes.chip)}
+              className={clsx(cardClasses.infoChip, cardClasses.chip)}
               type={data.type}
               baseModel={data.version.baseModel}
             />
 
             {(isNew || isUpdated || isEarlyAccess) && (
               <Badge
-                className={classes.chip}
+                className={cardClasses.chip}
                 variant="filled"
                 radius="xl"
-                sx={(theme) => ({
+                style={{
                   backgroundColor: isEarlyAccess
                     ? theme.colors.success[5]
                     : isUpdated
                     ? theme.colors.teal[5]
-                    : theme.colors.blue[theme.fn.primaryShade()],
-                })}
+                    : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
+                }}
               >
-                <Text color="white" size="xs" transform="capitalize">
+                <Text c="white" size="xs" tt="capitalize">
                   {isEarlyAccess ? 'Early Access' : isUpdated ? 'Updated' : 'New'}
                 </Text>
               </Badge>
             )}
             {isArchived && (
-              <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
+              <Badge
+                className={clsx(cardClasses.infoChip, cardClasses.chip)}
+                variant="light"
+                radius="xl"
+              >
                 <IconArchiveFilled size={16} />
               </Badge>
             )}
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col items-center gap-2">
             <ModelCardContextMenu data={data} />
             <RemixButton type="modelVersion" id={data.version.id} canGenerate={data.canGenerate} />
 
@@ -183,7 +198,7 @@ export function ModelCard({ data }: Props) {
       footer={
         <div className="flex w-full flex-col items-start gap-1">
           <UserAvatarSimple {...data.user} />
-          <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={3} lh={1.2}>
+          <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={3} lh={1.2}>
             {data.name}
           </Text>
           {data.rank && (
@@ -191,18 +206,29 @@ export function ModelCard({ data }: Props) {
               {(!!data.rank.downloadCount ||
                 !!data.rank.collectedCount ||
                 !!data.rank.tippedAmountCount) && (
-                <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
-                  <Group spacing={2}>
+                <Badge
+                  className={clsx(cardClasses.statChip, cardClasses.chip)}
+                  classNames={{ label: 'flex flex-nowrap gap-2' }}
+                  variant="light"
+                  radius="xl"
+                >
+                  <Group gap={2}>
                     <IconDownload size={14} strokeWidth={2.5} />
-                    <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
+                    <Text size="xs" lh={1} fw="bold">
+                      {abbreviateNumber(data.rank.downloadCount)}
+                    </Text>
                   </Group>
-                  <Group spacing={2}>
+                  <Group gap={2}>
                     <IconBookmark size={14} strokeWidth={2.5} />
-                    <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
+                    <Text size="xs" lh={1} fw="bold">
+                      {abbreviateNumber(data.rank.collectedCount)}
+                    </Text>
                   </Group>
-                  <Group spacing={2}>
+                  <Group gap={2}>
                     <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                    <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
+                    <Text size="xs" lh={1} fw="bold">
+                      {abbreviateNumber(data.rank.commentCount)}
+                    </Text>
                   </Group>
                   {!isPOI && (
                     <InteractiveTipBuzzButton
@@ -210,9 +236,9 @@ export function ModelCard({ data }: Props) {
                       entityType={'Model'}
                       entityId={data.id}
                     >
-                      <Group spacing={2}>
+                      <Group gap={2}>
                         <IconBolt size={14} strokeWidth={2.5} />
-                        <Text size="xs" tt="uppercase">
+                        <Text size="xs" lh={1} fw="bold" tt="uppercase">
                           {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
                         </Text>
                       </Group>
@@ -222,18 +248,18 @@ export function ModelCard({ data }: Props) {
               )}
               {!data.locked && !!data.rank.thumbsUpCount && (
                 <Badge
-                  className={cx(classes.statChip, classes.chip)}
+                  className={clsx(cardClasses.statChip, cardClasses.chip)}
                   pl={6}
                   pr={8}
                   data-reviewed={hasReview}
                   radius="xl"
                   title={`${Math.round(positiveRating * 100)}% of reviews are positive`}
-                  classNames={{ inner: 'gap-1' }}
+                  classNames={{ label: 'gap-2 flex items-center' }}
                 >
-                  <Text color={hasReview ? 'success.5' : 'yellow'} component="span" mt={2}>
+                  <Text c={hasReview ? 'success.5' : 'yellow.8'} mt={2} lh={1} span>
                     <ThumbsUpIcon size={20} filled={hasReview} strokeWidth={2.5} />
                   </Text>
-                  <Text size={16} weight={500}>
+                  <Text fz={16} fw={500} lh={1} span>
                     {abbreviateNumber(data.rank.thumbsUpCount)}
                   </Text>
                 </Badge>

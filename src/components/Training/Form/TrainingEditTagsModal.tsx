@@ -72,7 +72,7 @@ export const TrainingEditTagsModal = ({
             </Fragment>
           ))}
         </Grid>
-        <Group position="right" mt="md">
+        <Group justify="flex-end" mt="md">
           <Button variant="light" color="gray" onClick={handleClose}>
             Cancel
           </Button>

@@ -1,10 +1,12 @@
-import { Box, Button, createStyles, Text, Title } from '@mantine/core';
+import { Box, Button, Text, Title, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import { Badge } from './Assets/Badge';
 import { Logo } from './Assets/Logo';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import classes from './MediaKit.module.scss';
 
 export function MediaKit() {
-  const { classes, theme } = useStyle();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
+
   return (
     <>
       <Box className={classes.kit}>
@@ -30,8 +32,7 @@ export function MediaKit() {
             <Box
               bg="white"
               style={{
-                border:
-                  theme.colorScheme === 'light' ? `1px solid ${theme.colors.gray[2]}` : undefined,
+                border: colorScheme === 'light' ? `1px solid ${theme.colors.gray[2]}` : undefined,
               }}
             >
               <Logo baseColor="#222" />
@@ -39,8 +40,7 @@ export function MediaKit() {
             <Box
               bg="white"
               style={{
-                border:
-                  theme.colorScheme === 'light' ? `1px solid ${theme.colors.gray[2]}` : undefined,
+                border: colorScheme === 'light' ? `1px solid ${theme.colors.gray[2]}` : undefined,
               }}
             >
               <Badge />
@@ -84,60 +84,3 @@ export function MediaKit() {
     </>
   );
 }
-
-const useStyle = createStyles((theme) => ({
-  kit: {
-    display: 'grid',
-    gridTemplateColumns: '1fr',
-    gap: theme.spacing.xl,
-    [containerQuery.largerThan('md')]: {
-      gridTemplateColumns: '1fr 2fr',
-    },
-    ['&+&']: {
-      marginTop: theme.spacing.xl * 2,
-    },
-  },
-  description: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: theme.spacing.md,
-    alignItems: 'flex-start',
-  },
-  descriptionTitle: {},
-  descriptionText: {},
-  descriptionButton: {
-    marginTop: theme.spacing.md,
-  },
-  media: {
-    display: 'grid',
-    gap: theme.spacing.sm,
-
-    img: {
-      maxWidth: '100%',
-    },
-  },
-  mediaRow: {
-    width: '100%',
-    display: 'grid',
-    gap: theme.spacing.sm,
-    div: {
-      height: '7rem',
-      borderRadius: theme.radius.sm,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: theme.spacing.sm,
-
-      [containerQuery.largerThan('md')]: {
-        height: '10rem',
-        padding: theme.spacing.lg,
-      },
-
-      svg: {
-        width: '100%',
-        height: '100%',
-        maxHeight: 60,
-      },
-    },
-  },
-}));

@@ -28,7 +28,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
   );
   const { data: model } = trpc.model.getById.useQuery({ id: comment.modelId });
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
     async onMutate({ id, reaction }) {
@@ -75,7 +75,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
 
   return (
     <Card radius="md" p="md" withBorder>
-      <Group align="flex-start" position="apart" noWrap mb="xs">
+      <Group align="flex-start" justify="space-between" wrap="nowrap" mb="xs">
         <UserAvatar
           user={comment.user}
           subText={<DaysFromNow date={comment.createdAt} />}
@@ -95,20 +95,16 @@ export function CommentDiscussionItem({ data: comment }: Props) {
       </Group>
 
       <ContentClamp maxHeight={100}>
-        <RenderHtml
-          html={comment.content}
-          sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-          withMentions
-        />
+        <RenderHtml html={comment.content} className="text-sm" withMentions />
       </ContentClamp>
 
-      <Group mt="sm" align="flex-start" position="apart" noWrap>
+      <Group mt="sm" align="flex-start" justify="space-between" wrap="nowrap">
         <ReactionPicker
           reactions={reactions}
           onSelect={handleReactionClick}
           disabled={toggleReactionMutation.isLoading}
         />
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           {currentUser?.isModerator && comment.tosViolation && (
             <Tooltip label="Has TOS Violation">
               <ThemeIcon color="orange" size="xs">
@@ -122,15 +118,14 @@ export function CommentDiscussionItem({ data: comment }: Props) {
             </ThemeIcon>
           )}
           <Button
-            size="xs"
             radius="xl"
             variant="subtle"
             onClick={() =>
               triggerRoutedDialog({ name: 'commentThread', state: { commentId: comment.id } })
             }
-            compact
+            size="compact-xs"
           >
-            <Group spacing={2} noWrap>
+            <Group gap={2} wrap="nowrap">
               <IconMessageCircle2 size={14} />
               <Text>{abbreviateNumber(commentCount)}</Text>
             </Group>

@@ -7,7 +7,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 
 export function ToggleSearchableMenuItem({ entityType, entityId }: Props) {
   const currentUser = useCurrentUser();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const { data: entities = [], isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
     {
       entityId: [entityId],
@@ -49,7 +49,7 @@ export function ToggleSearchableMenuItem({ entityType, entityId }: Props) {
 
   if (isLoadingAccess) {
     return (
-      <Menu.Item icon={<IconSearch size={14} stroke={1.5} />} disabled>
+      <Menu.Item leftSection={<IconSearch size={14} stroke={1.5} />} disabled>
         &hellip;Loading&hellip;
       </Menu.Item>
     );
@@ -57,14 +57,14 @@ export function ToggleSearchableMenuItem({ entityType, entityId }: Props) {
 
   return (
     <Menu.Item
-      icon={
+      leftSection={
         isSearchable ? (
           <IconSearchOff size={14} stroke={1.5} />
         ) : (
           <IconSearch size={14} stroke={1.5} />
         )
       }
-      onClick={(e) => {
+      onClick={(e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         onUpdateAvailability({

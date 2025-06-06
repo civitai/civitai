@@ -1,5 +1,4 @@
 import { trpc } from '~/utils/trpc';
-import { createStyles } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 
@@ -14,6 +13,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { NoContent } from '~/components/NoContent/NoContent';
+import classes from './ProfileLayout.module.scss';
 
 export function ProfileLayout({
   username,
@@ -28,7 +28,6 @@ export function ProfileLayout({
   const isBlocked = blockedUsers.some((x) => x.id === user?.id);
 
   const stats = user?.stats;
-  const { classes } = useStyles();
 
   if (isInitialLoading) {
     return <PageLoader />;
@@ -79,20 +78,3 @@ export function ProfileLayout({
 }
 
 export default ProfileLayout;
-
-const useStyles = createStyles((theme) => ({
-  sidebar: {
-    width: 320,
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-  root: {
-    display: 'flex',
-    flex: 1,
-    height: '100%',
-  },
-}));

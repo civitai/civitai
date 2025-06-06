@@ -66,7 +66,7 @@ export function ToolBanner({
                     color="blue"
                     radius="xl"
                     target="_blank"
-                    rightIcon={<IconExternalLink size={18} />}
+                    rightSection={<IconExternalLink size={18} />}
                     component="a"
                     href={selected.domain}
                     rel="nofollow noreferrer"
@@ -78,7 +78,7 @@ export function ToolBanner({
                   <Button
                     color="blue"
                     radius="xl"
-                    rightIcon={<IconBrush size={18} />}
+                    rightSection={<IconBrush size={18} />}
                     data-activity="generate:tool"
                     onClick={() => {
                       const isVideo = selected.type === ToolType.Video;

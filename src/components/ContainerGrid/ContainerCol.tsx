@@ -4,7 +4,7 @@ import React, { forwardRef } from 'react';
 import { useContainerGridContext } from './ContainerGrid.context';
 import useStyles from './ContainerCol.styles';
 import type { ColSpan, DefaultProps } from '@mantine/core';
-import { Box, useComponentDefaultProps } from '@mantine/core';
+import { Box, useProps } from '@mantine/core';
 
 export interface ColProps extends DefaultProps, React.ComponentPropsWithoutRef<'div'> {
   /** Default col span */
@@ -96,50 +96,48 @@ export const ContainerCol = forwardRef<HTMLDivElement, ColProps>((props: ColProp
     id,
     unstyled,
     ...others
-  } = useComponentDefaultProps('GridCol', defaultProps, props);
+  } = useProps('GridCol', defaultProps, props);
 
   const ctx = useContainerGridContext();
 
   const colSpan = span || ctx.columns;
-  const { classes, cx } = useStyles(
-    {
-      gutter: ctx.gutter,
-      gutterXs: ctx.gutterXs,
-      gutterSm: ctx.gutterSm,
-      gutterMd: ctx.gutterMd,
-      gutterLg: ctx.gutterLg,
-      gutterXl: ctx.gutterXl,
-      offset,
-      offsetXs,
-      offsetSm,
-      offsetMd,
-      offsetLg,
-      offsetXl,
-      xs,
-      sm,
-      md,
-      lg,
-      xl,
-      order,
-      orderXs,
-      orderSm,
-      orderMd,
-      orderLg,
-      orderXl,
-      grow: ctx.grow,
-      columns: ctx.columns,
-      span: colSpan,
-      containerName: ctx.containerName,
-    },
-    { unstyled, name: 'ContainerGrid' }
-  );
+
+  const style = {
+    '--col-gutter': ctx.gutter,
+    '--col-gutter-xs': ctx.gutterXs,
+    '--col-gutter-sm': ctx.gutterSm,
+    '--col-gutter-md': ctx.gutterMd,
+    '--col-gutter-lg': ctx.gutterLg,
+    '--col-gutter-xl': ctx.gutterXl,
+    '--col-offset': offset,
+    '--col-offset-xs': offsetXs,
+    '--col-offset-sm': offsetSm,
+    '--col-offset-md': offsetMd,
+    '--col-offset-lg': offsetLg,
+    '--col-offset-xl': offsetXl,
+    '--col-span': colSpan,
+    '--col-span-xs': xs,
+    '--col-span-sm': sm,
+    '--col-span-md': md,
+    '--col-span-lg': lg,
+    '--col-span-xl': xl,
+    '--col-order': order,
+    '--col-order-xs': orderXs,
+    '--col-order-sm': orderSm,
+    '--col-order-md': orderMd,
+    '--col-order-lg': orderLg,
+    '--col-order-xl': orderXl,
+    '--col-columns': ctx.columns,
+    '--col-grow': ctx.grow ? 1 : 0,
+    ...(others.style ?? {}),
+  } as React.CSSProperties;
 
   if (!isValidSpan(colSpan) || (typeof colSpan === 'number' && colSpan > ctx.columns)) {
     return null;
   }
 
   return (
-    <Box className={cx(classes.col, className)} ref={ref} {...others}>
+    <Box className={clsx(classes.col, className)} ref={ref} style={style} {...others}>
       {children}
     </Box>
   );

@@ -39,8 +39,8 @@ export function ClubPostFromResourceMenuItem({ entityType, entityId }: Props) {
 
   return (
     <Menu.Item
-      icon={<IconPencilPin size={14} stroke={1.5} />}
-      onClick={(e) => {
+      leftSection={<IconPencilPin size={14} stroke={1.5} />}
+      onClick={(e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         onClick();

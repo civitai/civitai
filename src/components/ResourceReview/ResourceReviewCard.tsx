@@ -25,7 +25,7 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
       <Stack>
         <UserAvatar user={data.user} withUsername withLink />
         {data.recommended && (
-          <Group position="apart">
+          <Group justify="space-between">
             <ThemeIcon
               variant="light"
               size="lg"
@@ -48,16 +48,16 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
           </Group>
         )}
         {data.details && (
-          <ScrollArea.Autosize maxHeight={200}>
-            <RenderHtml html={data.details} sx={(theme) => ({ fontSize: theme.fontSizes.sm })} />
+          <ScrollArea.Autosize mah={200}>
+            <RenderHtml html={data.details} className="text-sm" />
           </ScrollArea.Autosize>
         )}
       </Stack>
       <Card.Section>
-        <Group p="xs" position="apart">
+        <Group p="xs" justify="space-between">
           <span>{/* TODO.posts  - Reactions */}</span>
-          <Button size="xs" radius="xl" variant="subtle" compact>
-            <Group spacing={2} noWrap>
+          <Button radius="xl" variant="subtle" size="compact-xs">
+            <Group gap={2} wrap="nowrap">
               <IconMessageCircle2 size={14} />
               {data.thread && <Text>{abbreviateNumber(data.thread._count.comments)}</Text>}
             </Group>

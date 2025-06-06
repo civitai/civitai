@@ -20,6 +20,7 @@ import type { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   const { setState } = useChatContext();
@@ -113,28 +114,30 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   };
 
   return (
-    <Group noWrap spacing={6}>
+    <Group wrap="nowrap" gap={6}>
       {!!chatObj && (
         <Menu withArrow position="bottom-end">
           <Menu.Target>
-            <ActionIcon>
+            <LegacyActionIcon>
               <IconSettings />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
             <>
               {/*<Menu.Label>Owner Actions</Menu.Label>*/}
               {/*TODO enable these*/}
-              {/*{isOwner && <Menu.Item icon={<IconUserPlus size={18} />}>Add users</Menu.Item>}*/}
-              {/*{isOwner && <Menu.Item icon={<IconUserX size={18} />}>Ban users</Menu.Item>}*/}
+              {/*{isOwner && <Menu.Item leftSection={<IconUserPlus size={18} />}>Add users</Menu.Item>}*/}
+              {/*{isOwner && <Menu.Item leftSection={<IconUserX size={18} />}>Ban users</Menu.Item>}*/}
               {/*<Menu.Label>Chat Actions</Menu.Label>*/}
               {myMember?.status === ChatMemberStatus.Joined && (
                 <Menu.Item
-                  icon={myMember?.isMuted ? <IconBell size={18} /> : <IconBellOff size={18} />}
+                  leftSection={
+                    myMember?.isMuted ? <IconBell size={18} /> : <IconBellOff size={18} />
+                  }
                   onClick={toggleNotifications}
                 >{`${myMember?.isMuted ? 'Enable' : 'Disable'} notifications`}</Menu.Item>
               )}
-              <Menu.Item icon={<IconFlag size={18} />} color="orange" onClick={reportModal}>
+              <Menu.Item leftSection={<IconFlag size={18} />} color="orange" onClick={reportModal}>
                 Report
               </Menu.Item>
               {myMember?.status === ChatMemberStatus.Joined ? (
@@ -147,7 +150,7 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
                   disabled={!cantLeave}
                 >
                   <Menu.Item
-                    icon={<IconDoorExit size={18} />}
+                    leftSection={<IconDoorExit size={18} />}
                     color="red"
                     onClick={leaveModal}
                     disabled={cantLeave}
@@ -158,7 +161,7 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
                 </Tooltip>
               ) : myMember?.status === ChatMemberStatus.Left ? (
                 <Menu.Item
-                  icon={<IconArrowsJoin2 size={18} />}
+                  leftSection={<IconArrowsJoin2 size={18} />}
                   color="green"
                   onClick={() => adjustChat(ChatMemberStatus.Joined)}
                 >
@@ -172,9 +175,9 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
           </Menu.Dropdown>
         </Menu>
       )}
-      <ActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
+      <LegacyActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
         <IconX />
-      </ActionIcon>
+      </LegacyActionIcon>
     </Group>
   );
 };

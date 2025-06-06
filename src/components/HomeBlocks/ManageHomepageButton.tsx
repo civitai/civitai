@@ -1,5 +1,5 @@
 import type { ActionIconProps } from '@mantine/core';
-import { ActionIcon } from '@mantine/core';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { IconProps } from '@tabler/icons-react';
 import { IconSettings } from '@tabler/icons-react';
 import { openManageHomeBlocksModal } from '~/components/Dialog/dialog-registry';
@@ -13,14 +13,14 @@ export function ManageHomepageButton({
   if (!user) return null;
 
   return (
-    <ActionIcon
+    <LegacyActionIcon
       size="md"
       variant="subtle"
-      color="dark"
+      color="gray"
       {...actionIconProps}
       onClick={() => openManageHomeBlocksModal()}
     >
       <IconSettings {...iconProps} />
-    </ActionIcon>
+    </LegacyActionIcon>
   );
 }

@@ -1,0 +1,80 @@
+.title {
+  @container (max-width: theme('screens.xs')) {
+    font-size: 28px;
+  }
+}
+
+.slogan {
+  @container (max-width: theme('screens.xs')) {
+    font-size: var(--mantine-font-size-sm);
+  }
+}
+
+.navItem {
+  border-right: light-dark(
+    1px solid var(--mantine-color-gray-2),
+    1px solid var(--mantine-color-gray-9)
+  );
+
+  &[data-active="true"] {
+    border-right-color: light-dark(
+      var(--mantine-color-blue-2),
+      var(--mantine-color-blue-9)
+    );
+  }
+}
+
+.sidebar {
+  display: block;
+
+  @container (max-width: theme('screens.sm')) {
+    display: none;
+  }
+}
+
+.drawerButton {
+  display: none;
+
+  @container (max-width: theme('screens.sm')) {
+    margin-left: auto;
+    display: block;
+  }
+}
+
+.drawerHeader {
+  padding: var(--mantine-spacing-xs);
+  margin-bottom: 0;
+  box-shadow: var(--mantine-shadow-sm);
+}
+
+.legendsToggleSm {
+  @container (max-width: theme('screens.sm')) {
+    display: none;
+  }
+}
+
+.legendsToggle {
+  width: 100%;
+  margin-top: var(--mantine-spacing-xs);
+  margin-bottom: var(--mantine-spacing-xs);
+
+  @container (min-width: theme('screens.sm')) {
+    display: none;
+  }
+}
+
+.userPosition {
+  cursor: pointer;
+  
+  &:hover {
+    transition: background-color 0.3s ease;
+  }
+
+  &.top10:hover {
+    background-color: alpha(var(--mantine-color-yellow-5), 0.2);
+  }
+
+  &.top100:hover {
+    background-color: alpha(var(--mantine-color-blue-5), 0.2);
+  }
+}

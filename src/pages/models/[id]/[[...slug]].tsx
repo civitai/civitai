@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -7,7 +6,6 @@ import {
   Button,
   Center,
   Container,
-  createStyles,
   Divider,
   Group,
   Loader,
@@ -18,6 +16,7 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -51,7 +50,7 @@ import {
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -127,7 +126,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import {
@@ -139,6 +137,9 @@ import {
 } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
+
+import classes from './[[...slug]].module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -267,7 +268,7 @@ export default function ModelDetailsV2({
   const currentUser = useCurrentUser();
 
   const router = useRouter();
-  const { classes, theme } = useStyles();
+  const colorScheme = useComputedColorScheme('dark');
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
@@ -306,9 +307,11 @@ export default function ModelDetailsV2({
   const isModerator = currentUser?.isModerator ?? false;
   const isCreator = model?.user.id === currentUser?.id;
   const isOwner = isCreator || isModerator;
-  const publishedVersions = !isOwner
-    ? model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? []
-    : model?.modelVersions ?? [];
+  const publishedVersions = useMemo(() => {
+    return !isOwner
+      ? model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? []
+      : model?.modelVersions ?? [];
+  }, [isOwner, model?.modelVersions]);
   const latestVersion =
     publishedVersions.find((version) => version.id === modelVersionId) ??
     publishedVersions[0] ??
@@ -520,7 +523,7 @@ export default function ModelDetailsV2({
         shallow: true,
       });
     }
-  }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel]);
+  }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel, router]);
 
   useEffect(() => {
     if (!canLoadBelowTheFold) return;
@@ -641,10 +644,10 @@ export default function ModelDetailsV2({
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
         <Container size="xl" data-tour="model:start">
-          <Stack spacing="xl">
-            <Stack spacing="xs">
-              <Stack spacing={4}>
-                <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
+          <Stack gap="xl">
+            <Stack gap="xs">
+              <Stack gap={4}>
+                <Group align="flex-start" justify="space-between" wrap="nowrap">
                   <Group className={classes.titleWrapper} align="center">
                     <Title className={classes.title} order={1} lineClamp={2}>
                       {model?.name}
@@ -668,7 +671,7 @@ export default function ModelDetailsV2({
                                 filled={isFavorite}
                               />
                             }
-                            sx={{ cursor: 'pointer' }}
+                            className="cursor-pointer"
                             onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
                           >
                             <Text className={classes.modelBadgeText}>
@@ -706,7 +709,7 @@ export default function ModelDetailsV2({
                           radius="sm"
                           size="lg"
                           icon={<IconBookmark size={18} />}
-                          sx={{ cursor: 'pointer' }}
+                          className="cursor-pointer"
                           onClick={handleCollect}
                         >
                           <Text className={classes.modelBadgeText}>
@@ -722,14 +725,11 @@ export default function ModelDetailsV2({
                         entityType="Model"
                       >
                         <IconBadge
+                          className="cursor-pointer"
                           radius="sm"
                           size="lg"
                           icon={
-                            <IconBolt
-                              size={18}
-                              color="yellow.7"
-                              style={{ fill: theme.colors.yellow[7] }}
-                            />
+                            <IconBolt size={18} className="text-yellow-7" fill="currentColor" />
                           }
                         >
                           <Text
@@ -762,7 +762,7 @@ export default function ModelDetailsV2({
                     )}
                   </Group>
 
-                  <Group spacing={8} noWrap>
+                  <Group gap={8} wrap="nowrap">
                     <HowToButton
                       size={30}
                       stroke={1.5}
@@ -782,6 +782,7 @@ export default function ModelDetailsV2({
                         actionIconProps={{
                           className: classes.headerButton,
                         }}
+                        buttonProps={{ className: classes.headerButton }}
                         entityData={getEntityDataForBidModelButton({
                           version: selectedVersion,
                           model,
@@ -794,16 +795,20 @@ export default function ModelDetailsV2({
                       modelId={model.id}
                       userId={model.user.id}
                     />
-                    <Menu position="bottom-end" transition="pop-top-right" withinPortal>
+                    <Menu
+                      position="bottom-end"
+                      transitionProps={{ transition: 'pop-top-right' }}
+                      withinPortal
+                    >
                       <Menu.Target>
-                        <ActionIcon className={classes.headerButton} variant="light">
-                          <IconDotsVertical />
-                        </ActionIcon>
+                        <LegacyActionIcon className={classes.headerButton} variant="light">
+                          <IconDotsVertical size={20} />
+                        </LegacyActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>
                         {currentUser && isCreator && published && (
                           <Menu.Item
-                            icon={<IconBan size={14} stroke={1.5} />}
+                            leftSection={<IconBan size={14} stroke={1.5} />}
                             color="yellow"
                             onClick={() => unpublishModelMutation.mutate({ id })}
                             disabled={unpublishModelMutation.isLoading}
@@ -813,7 +818,7 @@ export default function ModelDetailsV2({
                         )}
                         {currentUser && isCreator && model.status === ModelStatus.Unpublished && (
                           <Menu.Item
-                            icon={<IconRepeat size={14} stroke={1.5} />}
+                            leftSection={<IconRepeat size={14} stroke={1.5} />}
                             color="green"
                             onClick={handlePublishModel}
                             disabled={publishModelMutation.isLoading}
@@ -823,7 +828,7 @@ export default function ModelDetailsV2({
                         )}
                         {currentUser && isModerator && modelDeleted && (
                           <Menu.Item
-                            icon={<IconRecycle size={14} stroke={1.5} />}
+                            leftSection={<IconRecycle size={14} stroke={1.5} />}
                             color="green"
                             onClick={() => restoreModelMutation.mutate({ id })}
                             disabled={restoreModelMutation.isLoading}
@@ -837,7 +842,7 @@ export default function ModelDetailsV2({
                               <Menu.Item
                                 component="a"
                                 target="_blank"
-                                icon={<IconInfoCircle size={14} stroke={1.5} />}
+                                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
                                 href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
                               >
                                 Lookup Model
@@ -846,7 +851,7 @@ export default function ModelDetailsV2({
                             {published && (
                               <Menu.Item
                                 color="yellow"
-                                icon={<IconBan size={14} stroke={1.5} />}
+                                leftSection={<IconBan size={14} stroke={1.5} />}
                                 onClick={() => openUnpublishModal({ props: { modelId: model.id } })}
                               >
                                 Unpublish as Violation
@@ -854,14 +859,14 @@ export default function ModelDetailsV2({
                             )}
                             <Menu.Item
                               color="orange"
-                              icon={<IconBan size={14} stroke={1.5} />}
+                              leftSection={<IconBan size={14} stroke={1.5} />}
                               onClick={() => handleToggleCannotPromote()}
                             >
                               {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
                             </Menu.Item>
                             <Menu.Item
-                              color={theme.colors.red[6]}
-                              icon={<IconTrash size={14} stroke={1.5} />}
+                              color="red.6"
+                              leftSection={<IconTrash size={14} stroke={1.5} />}
                               onClick={() => handleDeleteModel({ permanently: true })}
                             >
                               Permanently Delete Model
@@ -871,14 +876,14 @@ export default function ModelDetailsV2({
                         {currentUser && isOwner && !modelDeleted && (
                           <>
                             <Menu.Item
-                              color={theme.colors.red[6]}
-                              icon={<IconTrash size={14} stroke={1.5} />}
+                              color="red.6"
+                              leftSection={<IconTrash size={14} stroke={1.5} />}
                               onClick={() => handleDeleteModel()}
                             >
                               Delete Model
                             </Menu.Item>
                             <Menu.Item
-                              icon={<IconEdit size={14} stroke={1.5} />}
+                              leftSection={<IconEdit size={14} stroke={1.5} />}
                               component={Link}
                               href={`/models/${model.id}/edit`}
                             >
@@ -908,7 +913,7 @@ export default function ModelDetailsV2({
                         {(!currentUser || !isOwner || isModerator) && (
                           <LoginRedirect reason="report-model">
                             <Menu.Item
-                              icon={<IconFlag size={14} stroke={1.5} />}
+                              leftSection={<IconFlag size={14} stroke={1.5} />}
                               onClick={() =>
                                 openReportModal({
                                   entityType: ReportEntity.Model,
@@ -922,7 +927,7 @@ export default function ModelDetailsV2({
                         )}
                         {isModerator && (
                           <Menu.Item
-                            icon={
+                            leftSection={
                               rescanModelMutation.isLoading ? (
                                 <Loader size={14} />
                               ) : (
@@ -940,7 +945,7 @@ export default function ModelDetailsV2({
                             <HideUserButton as="menu-item" userId={model.user.id} />
                             <HideModelButton as="menu-item" modelId={model.id} />
                             <Menu.Item
-                              icon={<IconTagOff size={14} stroke={1.5} />}
+                              leftSection={<IconTagOff size={14} stroke={1.5} />}
                               onClick={() =>
                                 openBlockModelTagsModal({ props: { modelId: model.id } })
                               }
@@ -952,7 +957,7 @@ export default function ModelDetailsV2({
                                 <ToggleLockModel modelId={model.id} locked={model.locked}>
                                   {({ onClick }) => (
                                     <Menu.Item
-                                      icon={
+                                      leftSection={
                                         model.locked ? (
                                           <IconLockOff size={14} stroke={1.5} />
                                         ) : (
@@ -971,7 +976,7 @@ export default function ModelDetailsV2({
                                 >
                                   {({ onClick }) => (
                                     <Menu.Item
-                                      icon={
+                                      leftSection={
                                         model.meta?.commentsLocked ? (
                                           <IconLockOff size={14} stroke={1.5} />
                                         ) : (
@@ -993,13 +998,13 @@ export default function ModelDetailsV2({
                                 {!model.mode ? (
                                   <>
                                     <Menu.Item
-                                      icon={<IconArchive size={14} stroke={1.5} />}
+                                      leftSection={<IconArchive size={14} stroke={1.5} />}
                                       onClick={() => handleChangeMode(ModelModifier.Archived)}
                                     >
                                       Archive
                                     </Menu.Item>
                                     <Menu.Item
-                                      icon={<IconCircleMinus size={14} stroke={1.5} />}
+                                      leftSection={<IconCircleMinus size={14} stroke={1.5} />}
                                       onClick={() => handleChangeMode(ModelModifier.TakenDown)}
                                     >
                                       Take Down
@@ -1007,7 +1012,7 @@ export default function ModelDetailsV2({
                                   </>
                                 ) : (
                                   <Menu.Item
-                                    icon={<IconReload size={14} stroke={1.5} />}
+                                    leftSection={<IconReload size={14} stroke={1.5} />}
                                     onClick={() => handleChangeMode(null)}
                                   >
                                     Bring Back
@@ -1033,8 +1038,8 @@ export default function ModelDetailsV2({
                     </Menu>
                   </Group>
                 </Group>
-                <Group spacing={4}>
-                  <Text size="xs" color="dimmed">
+                <Group gap={4}>
+                  <Text size="xs" c="dimmed">
                     Updated: {formatDate(model.updatedAt)}
                   </Text>
                   {category && (
@@ -1045,7 +1050,7 @@ export default function ModelDetailsV2({
                         legacyBehavior
                         passHref
                       >
-                        <Badge component="a" size="sm" color="blue" sx={{ cursor: 'pointer' }}>
+                        <Badge component="a" size="sm" color="blue" className="cursor-pointer">
                           {category.name}
                         </Badge>
                       </Link>
@@ -1065,8 +1070,8 @@ export default function ModelDetailsV2({
                           component="a"
                           size="sm"
                           color="gray"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
-                          sx={{ cursor: 'pointer' }}
+                          variant={colorScheme === 'dark' ? 'filled' : undefined}
+                          className="cursor-pointer"
                         >
                           {tag.name}
                         </Badge>
@@ -1077,7 +1082,7 @@ export default function ModelDetailsV2({
               </Stack>
               {(model.status === ModelStatus.Unpublished || modelDeleted) && (
                 <Alert color="red">
-                  <Group spacing="xs" noWrap align="flex-start">
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
                     <ThemeIcon color="red">
                       <IconExclamationMark />
                     </ThemeIcon>
@@ -1090,13 +1095,13 @@ export default function ModelDetailsV2({
               )}
               {model.status === ModelStatus.UnpublishedViolation && !model.meta?.needsReview && (
                 <Alert color="red">
-                  <Group spacing="xs" noWrap align="flex-start">
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
                     <ThemeIcon color="red">
                       <IconExclamationMark />
                     </ThemeIcon>
                     <Text size="sm" mt={-3}>
                       This model has been unpublished due to a violation of our{' '}
-                      <Text component="a" variant="link" href="/content/tos" target="_blank">
+                      <Text component="a" c="blue.4" href="/content/tos" target="_blank">
                         guidelines
                       </Text>{' '}
                       and is not visible to the community.{' '}
@@ -1109,7 +1114,7 @@ export default function ModelDetailsV2({
               )}
               {model.status === ModelStatus.UnpublishedViolation && model.meta?.needsReview && (
                 <Alert color="yellow">
-                  <Group spacing="xs" noWrap>
+                  <Group gap="xs" wrap="nowrap">
                     <ThemeIcon color="yellow">
                       <IconExclamationMark />
                     </ThemeIcon>
@@ -1122,7 +1127,7 @@ export default function ModelDetailsV2({
               )}
               {inaccurate && (
                 <Alert color="yellow">
-                  <Group spacing="xs" noWrap align="flex-start">
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
                     <ThemeIcon color="yellow">
                       <IconExclamationMark />
                     </ThemeIcon>
@@ -1142,24 +1147,24 @@ export default function ModelDetailsV2({
                 </AlertWithIcon>
               )}
             </Stack>
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               {isOwner ? (
                 <>
                   {model.availability !== Availability.Private && (
                     <ButtonTooltip label="Add Version">
                       <Link href={`/models/${model.id}/model-versions/create`}>
-                        <ActionIcon variant="light" color="blue">
+                        <LegacyActionIcon variant="light" color="blue">
                           <IconPlus size={14} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Link>
                     </ButtonTooltip>
                   )}
 
                   {versionCount > 1 && (
                     <ButtonTooltip label="Rearrange Versions">
-                      <ActionIcon onClick={toggle}>
+                      <LegacyActionIcon onClick={toggle}>
                         <IconArrowsLeftRight size={14} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </ButtonTooltip>
                   )}
                 </>
@@ -1201,10 +1206,10 @@ export default function ModelDetailsV2({
             type="Suggested"
             versionId={selectedVersion?.id}
             label={
-              <Group spacing={8} noWrap>
+              <Group gap={8} wrap="nowrap">
                 Suggested Resources{' '}
                 <InfoPopover>
-                  <Text size="sm" weight={400}>
+                  <Text size="sm" fw={400}>
                     These are resources suggested by the creator of this model. They may be related
                     to this model or created by the same user.
                   </Text>
@@ -1217,9 +1222,9 @@ export default function ModelDetailsV2({
         {canLoadBelowTheFold &&
           (!model.locked && !model.meta?.commentsLocked ? (
             <Container size="xl" my="xl">
-              <Stack spacing="md">
-                <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
-                  <Group spacing="xs">
+              <Stack gap="md">
+                <Group ref={discussionSectionRef} justify="space-between">
+                  <Group gap="xs">
                     <Title order={2} data-tour="model:discussion">
                       Discussion
                     </Title>
@@ -1227,7 +1232,7 @@ export default function ModelDetailsV2({
                       <>
                         <LoginRedirect reason="create-comment">
                           <Button
-                            leftIcon={<IconMessage size={16} />}
+                            leftSection={<IconMessage size={16} />}
                             variant="outline"
                             onClick={() => triggerRoutedDialog({ name: 'commentEdit', state: {} })}
                             size="xs"
@@ -1241,7 +1246,7 @@ export default function ModelDetailsV2({
                       onlyEarlyAccess && (
                         <JoinPopover message="You must be a Civitai Member to join this discussion">
                           <Button
-                            leftIcon={<IconClock size={16} />}
+                            leftSection={<IconClock size={16} />}
                             variant="outline"
                             size="xs"
                             color="green"
@@ -1259,11 +1264,11 @@ export default function ModelDetailsV2({
           ) : (
             <Paper p="lg" withBorder bg={`rgba(0, 0, 0, 0.1)`}>
               <Center>
-                <Group spacing="xs">
+                <Group gap="xs">
                   <ThemeIcon color="gray" size="xl" radius="xl">
                     <IconMessageCircleOff />
                   </ThemeIcon>
-                  <Text size="lg" color="dimmed">
+                  <Text size="lg" c="dimmed">
                     Discussion is turned off for this model.
                   </Text>
                 </Group>
@@ -1290,93 +1295,3 @@ export default function ModelDetailsV2({
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  actions: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  titleWrapper: {
-    gap: theme.spacing.xs,
-
-    [containerQuery.smallerThan('md')]: {
-      gap: theme.spacing.xs * 0.4,
-    },
-  },
-
-  title: {
-    wordBreak: 'break-word',
-    [containerQuery.smallerThan('md')]: {
-      fontSize: 24,
-      width: '100%',
-      paddingBottom: 0,
-    },
-  },
-
-  engagementBar: {
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-
-  mobileCarousel: {
-    display: 'none',
-    [containerQuery.smallerThan('md')]: {
-      display: 'block',
-    },
-  },
-  desktopCarousel: {
-    display: 'block',
-    [containerQuery.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-
-  modelBadgeText: {
-    fontSize: theme.fontSizes.md,
-    [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.sm,
-    },
-  },
-
-  discussionActionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  // Increase carousel control arrow size
-  control: {
-    svg: {
-      width: 24,
-      height: 24,
-
-      [containerQuery.smallerThan('sm')]: {
-        minWidth: 16,
-        minHeight: 16,
-      },
-    },
-  },
-
-  headerButton: {
-    width: 32,
-    height: 32,
-
-    ['> svg']: {
-      width: 16,
-      height: 16,
-    },
-
-    [containerQuery.largerThan('md')]: {
-      width: 44,
-      height: 44,
-
-      ['> svg']: {
-        width: 20,
-        height: 20,
-      },
-    },
-  },
-}));

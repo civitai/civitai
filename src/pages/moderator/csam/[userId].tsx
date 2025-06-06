@@ -45,14 +45,14 @@ function ReportCsamUserPage() {
     <CsamProvider user={user} type="Image">
       {userCountRef.current > 1 && (
         <Card py={4}>
-          <Group position="center">
+          <Group justify="center">
             <Badge>
               Reporting: {progress + 1} / {userCountRef.current}
             </Badge>
             {user.username && (
               <Text size="xs" align="center">
                 User:{' '}
-                <Text component={Link} variant="link" href={`/user/${user.username}`}>
+                <Text component={Link} c="blue.4" href={`/user/${user.username}`}>
                   {user.username}
                 </Text>
               </Text>

@@ -14,9 +14,8 @@ import {
   Text,
   Textarea,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
-import type { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
+import type { TooltipProps } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
@@ -51,6 +50,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -122,7 +122,7 @@ const ImageReviewType = {
 type ImageReviewType = keyof typeof ImageReviewType;
 
 export default function Images() {
-  // const queryUtils = trpc.useContext();
+  // const queryUtils = trpc.useUtils();
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
   const [type, setType] = useState<ImageReviewType>('minor');
@@ -176,7 +176,7 @@ export default function Images() {
             withBorder
             shadow="lg"
             p="xs"
-            sx={{
+            style={{
               display: 'inline-flex',
               float: 'right',
               alignSelf: 'flex-end',
@@ -196,11 +196,11 @@ export default function Images() {
               <SegmentedControl
                 size="sm"
                 data={segments}
-                onChange={handleTypeChange}
+                onChange={(type) => handleTypeChange(type as ImageReviewType)}
                 value={type}
               />
             </Group>
-            <Text color="dimmed">
+            <Text c="dimmed">
               These are images that have been{' '}
               {viewingReported ? 'reported by users' : 'marked by our AI'} which needs further
               attention from the mods
@@ -225,10 +225,10 @@ export default function Images() {
                     style={{ cursor: 'pointer' }}
                     onClick={() => setActiveNameTag(isActive ? null : tag.id)}
                   >
-                    <Text component="span" size="xs" weight={500}>
+                    <Text component="span" size="xs" fw={500}>
                       {tag.name}
                     </Text>{' '}
-                    <Text component="span" size="xs" color="dimmed" weight={500}>
+                    <Text component="span" size="xs" c="dimmed" fw={500}>
                       {tag.count}
                     </Text>
                   </Badge>
@@ -261,7 +261,7 @@ export default function Images() {
                   loadCondition={!isRefetching && hasNextPage}
                   style={{ gridColumn: '1/-1' }}
                 >
-                  <Center p="xl" sx={{ height: 36 }} mt="md">
+                  <Center p="xl" style={{ height: 36 }} mt="md">
                     <Loader />
                   </Center>
                 </InViewLoader>
@@ -279,7 +279,6 @@ export default function Images() {
 function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const selected = useStore(useCallback((state) => state.selected[image.id] ?? false, [image.id]));
   const toggleSelected = useStore((state) => state.toggleSelected);
-  const theme = useMantineTheme();
 
   const hasReport = !!image.report;
   const hasAppeal = !!image.appeal;
@@ -295,16 +294,22 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
       shadow="sm"
       withBorder
       ref={mergedRef as any}
-      style={{
+      style={(theme) => ({
         minHeight: height,
         outline: selected
-          ? `3px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`
+          ? `3px solid ${
+              theme.colors[theme.primaryColor][
+                typeof theme.primaryShade === 'number'
+                  ? theme.primaryShade
+                  : theme.primaryShade.dark
+              ]
+            }`
           : undefined,
         opacity: !image.needsReview && !pendingReport ? 0.2 : undefined,
-      }}
+      })}
     >
       <>
-        <Card.Section sx={{ height: `${height}px` }} className="relative">
+        <Card.Section style={{ height: `${height}px` }} className="relative">
           {inView && (
             <>
               <Checkbox
@@ -336,7 +341,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 )}
               </ImageGuard2>
               {!!entityUrl && (
-                <ActionIcon
+                <LegacyActionIcon
                   component={Link}
                   href={`${entityUrl}?moderator`}
                   variant="transparent"
@@ -351,11 +356,11 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     strokeWidth={2.5}
                     size={26}
                   />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
               {image.meta ? (
                 <ImageMetaPopover meta={image.meta}>
-                  <ActionIcon
+                  <LegacyActionIcon
                     variant="transparent"
                     style={{ position: 'absolute', bottom: '5px', right: '5px' }}
                     size="lg"
@@ -367,7 +372,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                       strokeWidth={2.5}
                       size={26}
                     />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </ImageMetaPopover>
               ) : image.metadata?.profilePicture ? (
                 <Badge
@@ -381,13 +386,13 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           )}
         </Card.Section>
         {hasReport && (
-          <Stack spacing={8} p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-            <Group position="apart" noWrap>
-              <Stack spacing={2}>
-                <Text size="xs" color="dimmed" inline>
+          <Stack gap={8} p="xs" style={{ cursor: 'auto', color: 'initial' }}>
+            <Group justify="space-between" wrap="nowrap">
+              <Stack gap={2}>
+                <Text size="xs" c="dimmed" inline>
                   Reported by
                 </Text>
-                <Group spacing={4}>
+                <Group gap={4}>
                   <Link legacyBehavior href={`/user/${image.report?.user.username}`} passHref>
                     <Anchor size="xs" target="_blank" lineClamp={1} inline>
                       {image.report?.user.username}
@@ -400,8 +405,8 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   )}
                 </Group>
               </Stack>
-              <Stack spacing={2} align="flex-end">
-                <Text size="xs" color="dimmed" inline>
+              <Stack gap={2} align="flex-end">
+                <Text size="xs" c="dimmed" inline>
                   Reported for
                 </Text>
                 <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
@@ -416,7 +421,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               {image.report?.details
                 ? Object.entries(image.report.details).map(([key, value]) => (
                     <Text key={key} size="sm">
-                      <Text weight="bold" span className="capitalize">
+                      <Text fw="bold" span className="capitalize">
                         {splitUppercase(key)}:
                       </Text>{' '}
                       {value}
@@ -441,8 +446,8 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 !includesInappropriate ? (
                   <></>
                 ) : (
-                  <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-                    <Text size="sm" lh={1.2} dangerouslySetInnerHTML={{ __html: html }} />
+                  <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
+                    <div className="lh-1.2 text-sm" dangerouslySetInnerHTML={{ __html: html }} />
                   </Card.Section>
                 )
               }
@@ -450,8 +455,8 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </Stack>
         )}
         {image.needsReview === 'poi' && !!image.names?.length && (
-          <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-            <Group spacing={4}>
+          <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
+            <Group gap={4}>
               {image.names.map((name) => (
                 <Badge key={name} size="sm">
                   {name}
@@ -461,8 +466,8 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </Card.Section>
         )}
         {image.needsReview === 'tag' && !!image.tags && (
-          <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-            <Group spacing={4}>
+          <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
+            <Group gap={4}>
               {image.tags
                 .filter((x) => x.nsfwLevel === NsfwLevel.Blocked)
                 .map(({ name }) => (
@@ -475,10 +480,10 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         )}
         {image.needsReview === 'appeal' && hasAppeal && (
           <Card.Section p="xs">
-            <Stack spacing={8} sx={{ cursor: 'auto', color: 'initial' }}>
-              <Group position="apart" noWrap>
-                <Stack spacing={2}>
-                  <Text size="xs" color="dimmed" inline>
+            <Stack gap={8} style={{ cursor: 'auto', color: 'initial' }}>
+              <Group justify="space-between" wrap="nowrap">
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed" inline>
                     Appealed by
                   </Text>
                   <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
@@ -487,8 +492,8 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     </Anchor>
                   </Link>
                 </Stack>
-                <Stack spacing={2} align="flex-end">
-                  <Text size="xs" color="dimmed" inline>
+                <Stack gap={2} align="flex-end">
+                  <Text size="xs" c="dimmed" inline>
                     Created at
                   </Text>
                   {image.appeal?.createdAt ? (
@@ -497,17 +502,17 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 </Stack>
               </Group>
               {image.appeal?.moderator && (
-                <Group position="apart" noWrap>
-                  <Stack spacing={2}>
-                    <Text size="xs" color="dimmed" inline>
+                <Group justify="space-between" wrap="nowrap">
+                  <Stack gap={2}>
+                    <Text size="xs" c="dimmed" inline>
                       Moderated by
                     </Text>
                     <Text size="xs" lineClamp={1} inline>
                       {image.appeal?.moderator.username}
                     </Text>
                   </Stack>
-                  <Stack spacing={2} align="flex-end">
-                    <Text size="xs" color="dimmed" inline>
+                  <Stack gap={2} align="flex-end">
+                    <Text size="xs" c="dimmed" inline>
                       Removed at
                     </Text>
                     {image.removedAt ? <Text size="xs">{formatDate(image.removedAt)}</Text> : null}
@@ -731,20 +736,20 @@ function ModerationControls({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <Group noWrap spacing="xs">
+      <Group wrap="nowrap" gap="xs">
         <ButtonTooltip label="Select all" {...tooltipProps}>
-          <ActionIcon
+          <LegacyActionIcon
             variant="outline"
             onClick={handleSelectAll}
             disabled={selected.length === images.length}
           >
             <IconSquareCheck size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
         <ButtonTooltip label="Clear selection" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+          <LegacyActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
             <IconSquareOff size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
         {view === 'appeal' ? (
           <AppealActions selected={selected} filters={filters} />
@@ -757,9 +762,9 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Accept" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="green">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
                 <IconCheck size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
@@ -772,9 +777,9 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Not POI" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="green">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
                 <IconUserOff size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
@@ -787,9 +792,9 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Remove Name" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="yellow">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="yellow">
                 <IconUserMinus size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
@@ -802,30 +807,30 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Delete" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="red">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
                 <IconTrash size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
 
         <ButtonTooltip {...tooltipProps} label="Report CSAM">
-          <ActionIcon
+          <LegacyActionIcon
             variant="outline"
             disabled={!selected.length}
             onClick={handleReportCsam}
             color="orange"
           >
             <IconAlertTriangle size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
         <ButtonTooltip label="Refresh" {...tooltipProps}>
-          <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+          <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
             <IconReload size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </Group>
-      <BrowsingLevelsGrouped spacing={4} size="xs" />
+      <BrowsingLevelsGrouped gap={4} size="xs" />
     </div>
   );
 }
@@ -906,9 +911,9 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
         withinPortal
       >
         <ButtonTooltip label="Approve" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
             <IconCheck size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <PopConfirm
@@ -927,9 +932,9 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
         withinPortal
       >
         <ButtonTooltip label="Reject" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
             <IconBan size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
     </>
@@ -948,7 +953,7 @@ function ConfirmResolvedAppeal({
   error?: string;
 }) {
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <Text size="sm">
         Are you sure you want to {status === AppealStatus.Approved ? 'approve' : 'reject'}{' '}
         {itemCount} image(s)?

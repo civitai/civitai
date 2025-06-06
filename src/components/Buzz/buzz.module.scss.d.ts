@@ -1,0 +1,13 @@
+export declare const accordionItem: string;
+export declare const buzzIcon: string;
+export declare const chipCheckmark: string;
+export declare const chipDisabled: string;
+export declare const chipGroup: string;
+export declare const chipLabel: string;
+export declare const goldText: string;
+export declare const lifetimeBuzz: string;
+export declare const lifetimeBuzzBadge: string;
+export declare const lifetimeBuzzContainer: string;
+export declare const moveBackground: string;
+export declare const pulse: string;
+export declare const tileCard: string;

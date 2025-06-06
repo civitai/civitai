@@ -18,7 +18,7 @@ export function ToggleArticleEngagement({
   }) => React.ReactElement;
 }) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { data } = trpc.user.getArticleEngagement.useQuery(undefined, { enabled: !!currentUser });
   const { data: bookmarkedArticles } = trpc.user.getBookmarkedArticles.useQuery(undefined, {
     enabled: !!currentUser,

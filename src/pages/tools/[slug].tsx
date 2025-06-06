@@ -69,7 +69,7 @@ function ToolFeedPage() {
       <ToolBanner slug={slug as string} />
       <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
         <MasonryContainer>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <IsClient>
               <ImageCategories />
               <ImagesInfinite

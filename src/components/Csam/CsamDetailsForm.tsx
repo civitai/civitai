@@ -86,12 +86,12 @@ export function CsamDetailsForm({
   return (
     <ScrollArea>
       <Container>
-        <Title align="center" mb="md">
+        <Title className="text-center" mb="md">
           CSAM Details Form
         </Title>
         <Card>
           <Form id="csamForm" form={form} onSubmit={handleSubmit}>
-            <Stack spacing="xl">
+            <Stack gap="xl">
               <InputRadioGroup name="minorDepiction" label="Minor depiction">
                 <Radio value="real" label="Real" />
                 <Radio value="non-real" label="Non-real" />
@@ -106,7 +106,7 @@ export function CsamDetailsForm({
                   name="capabilities"
                   label="Model capabilities"
                   orientation="vertical"
-                  spacing="xs"
+                  gap="xs"
                 >
                   {Object.entries(csamCapabilitiesDictionary).map(([key, value]) => (
                     <Checkbox key={key} value={key} label={value} />
@@ -117,19 +117,19 @@ export function CsamDetailsForm({
               <InputCheckboxGroup
                 name="contents"
                 label="The images/videos in this report may involve:"
-                orientation="vertical"
-                spacing="xs"
               >
-                {Object.entries(csamContentsDictionary).map(([key, value]) => (
-                  <Checkbox key={key} value={key} label={value} />
-                ))}
+                <Stack gap="xs">
+                  {Object.entries(csamContentsDictionary).map(([key, value]) => (
+                    <Checkbox key={key} value={key} label={value} />
+                  ))}
+                </Stack>
               </InputCheckboxGroup>
               {type === 'Image' && (
                 <Input.Wrapper label="Select the resources that you'd like to have referenced in this report">
                   <InputModelVersionSelect name="modelVersionIds" imageIds={imageIds} />
                 </Input.Wrapper>
               )}
-              <Group position="right">
+              <Group justify="flex-end">
                 {onPrevious && (
                   <Button variant="default" onClick={onPrevious} disabled={isLoading}>
                     Previous
@@ -185,7 +185,7 @@ function ModelVersionSelectList({
   if (!resources) return <Alert>No resources associated with the selected images</Alert>;
 
   return (
-    <Stack spacing="xs" mt="xs">
+    <Stack gap="xs" mt="xs">
       {resources.map(({ modelName, modelId, modelVersionName, modelVersionId, imageId }, i) => {
         const associatedCount = 0;
         const checked = !!modelVersionId && value?.includes(modelVersionId);
@@ -198,7 +198,7 @@ function ModelVersionSelectList({
         }
         return (
           <Card p={0} key={i}>
-            <Group align="center" spacing={4} noWrap>
+            <Group align="center" gap={4} wrap="nowrap">
               <Checkbox
                 checked={checked}
                 onChange={(e) => handleChange(e.target.checked)}
@@ -209,7 +209,6 @@ function ModelVersionSelectList({
                 component="a"
                 href={`/models/${modelId}/${modelName}?modelVersionId=${modelVersionId}`}
                 target="_blank"
-                variant="link"
                 style={{ lineHeight: 1 }}
               >
                 <IconExternalLink size={18} />

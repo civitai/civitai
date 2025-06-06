@@ -21,7 +21,7 @@ function VideosPage() {
       />
       <MasonryContainer>
         {hidden && <Title>Your Hidden Videos</Title>}
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <IsClient>
             <ImageCategories />
             <ImagesInfinite

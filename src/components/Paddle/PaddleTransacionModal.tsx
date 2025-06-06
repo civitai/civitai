@@ -14,6 +14,7 @@ import {
   CloseButton,
   Alert,
   Anchor,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -64,6 +65,7 @@ export default function PaddleTransactionModal({
 }: Props) {
   const dialog = useDialogContext();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const {
     transactionId,
     error: transactionError,
@@ -176,7 +178,7 @@ export default function PaddleTransactionModal({
   ) {
     return (
       <Modal {...dialog} {...modalProps}>
-        <Stack spacing="md">
+        <Stack gap="md">
           <Center>
             <TimeoutLoader
               renderTimeout={() => (
@@ -227,8 +229,8 @@ export default function PaddleTransactionModal({
     return (
       <Modal {...dialog} {...modalProps}>
         <Stack>
-          <Group position="apart" noWrap>
-            <Text size="lg" weight={700}>
+          <Group justify="space-between" wrap="nowrap">
+            <Text size="lg" fw={700}>
               Complete your transaction
             </Text>
           </Group>
@@ -254,17 +256,17 @@ export default function PaddleTransactionModal({
   // Wanna keep the component live for the event listeners
   return (
     <Modal {...dialog} {...modalProps}>
-      <Stack spacing="md">
-        <Group position="apart" noWrap>
-          <Text size="lg" weight={700}>
+      <Stack gap="md">
+        <Group justify="space-between" wrap="nowrap">
+          <Text size="lg" fw={700}>
             Complete your transaction
           </Text>
           <CloseButton onClick={dialog.onClose} />
         </Group>
         <Divider mx="-lg" />
         {message && <>{message}</>}
-        <Stack spacing={0}>
-          <Text size="sm" color="dimmed">
+        <Stack gap={0}>
+          <Text size="sm" c="dimmed">
             Transaction details
           </Text>
           <Paper
@@ -274,16 +276,16 @@ export default function PaddleTransactionModal({
             withBorder
             className="border-yellow-6 bg-gray-2 dark:bg-dark-9"
           >
-            <Group spacing="sm" align="center">
-              <Group spacing={8} position="apart" sx={{ flexGrow: 1 }}>
-                <Text size={20} weight={510} color="yellow.6">
+            <Group gap="sm" align="center">
+              <Group gap={8} justify="space-between" style={{ flexGrow: 1 }}>
+                <Text fz={20} fw={510} color="yellow.6">
                   {numberWithCommas(unitAmount * 10)} Buzz
                 </Text>
                 <Text
-                  color={theme.colorScheme === 'dark' ? 'gray.0' : 'dark'}
-                  size={20}
-                  weight="bold"
-                  sx={{ fontVariantNumeric: 'tabular-nums' }}
+                  color={colorScheme === 'dark' ? 'gray.0' : 'dark'}
+                  fz={20}
+                  fw="bold"
+                  style={{ fontVariantNumeric: 'tabular-nums' }}
                 >
                   ${formatPriceForDisplay(unitAmount)} {currency}
                 </Text>
@@ -292,7 +294,7 @@ export default function PaddleTransactionModal({
           </Paper>
         </Stack>
         <Text>How would you like to pay for your transaction?</Text>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Stack>
             <Button
               onClick={() => {
@@ -305,7 +307,7 @@ export default function PaddleTransactionModal({
               Use Card on File
             </Button>
             {error && (
-              <Text color="red" size="sm">
+              <Text c="red" size="sm">
                 {error}
               </Text>
             )}

@@ -1,4 +1,12 @@
-import { Group, Modal, Stack, UnstyledButton, Text, createStyles } from '@mantine/core';
+import {
+  Group,
+  Modal,
+  Stack,
+  UnstyledButton,
+  Text,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { dialogStore } from '../Dialog/dialogStore';
 import { IconFile, IconPencilMinus, IconPictureInPicture } from '@tabler/icons-react';
@@ -6,26 +14,24 @@ import { IconFile, IconPencilMinus, IconPictureInPicture } from '@tabler/icons-r
 import { AddResourceToClubModal } from './AddResourceToClubModal';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { useClubContributorStatus } from './club.utils';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
-
-const useStyles = createStyles((theme) => ({
-  button: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.md,
-    width: '150px',
-  },
-}));
 
 export const ClubAddContent = ({ clubId }: { clubId: number }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const router = useRouter();
-  const { classes } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { isOwner, isModerator, isClubAdmin, permissions } = useClubContributorStatus({
     clubId,
   });
+
+  const btnStyle = {
+    background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+    borderRadius: theme.radius.lg,
+    padding: theme.spacing.md,
+    width: '150px',
+  };
 
   const canCreatePosts =
     isOwner || isModerator || permissions.includes(ClubAdminPermission.ManagePosts);
@@ -37,10 +43,10 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
   return (
     <Modal {...dialog} title="Add content to this club" size="sm" withCloseButton>
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           {canCreatePosts && (
             <UnstyledButton
-              className={classes.button}
+              style={btnStyle}
               onClick={() => {
                 // dialogStore.trigger({
                 //   component: ClubPostUpsertFormModal,
@@ -64,7 +70,7 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
                 router.push(`/posts/create?clubId=${clubId}&returnUrl=${router.asPath}`);
                 handleClose();
               }}
-              className={classes.button}
+              style={btnStyle}
             >
               <Stack align="center">
                 <IconPictureInPicture />
@@ -74,7 +80,7 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
           )}
           {canCreateResources && (
             <UnstyledButton
-              className={classes.button}
+              style={btnStyle}
               onClick={() => {
                 dialogStore.trigger({
                   component: AddResourceToClubModal,
@@ -94,7 +100,7 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
           )}
         </Group>
         {noActions && (
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You don&rsquo;t have permissions to add content to this club.
           </Text>
         )}

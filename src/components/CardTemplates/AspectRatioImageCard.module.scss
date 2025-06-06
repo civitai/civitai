@@ -64,4 +64,8 @@
   height: 26px;
   overflow: unset;
   pointer-events: auto;
+
+  & * {
+    overflow: unset;
+  }
 }

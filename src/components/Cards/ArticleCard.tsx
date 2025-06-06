@@ -1,6 +1,6 @@
 import { Badge, Text } from '@mantine/core';
 import React from 'react';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -13,9 +13,9 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import clsx from 'clsx';
 
 export function ArticleCard({ data, aspectRatio }: Props) {
-  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const { id, title, coverImage, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
   const { commentCount, viewCount, collectedCount, tippedAmountCount } = stats || {
@@ -43,7 +43,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
               size="sm"
               variant="gradient"
               gradient={{ from: 'cyan', to: 'blue' }}
-              className={classes.chip}
+              className={cardClasses.chip}
             >
               {category.name}
             </Badge>
@@ -56,39 +56,54 @@ export function ArticleCard({ data, aspectRatio }: Props) {
           <UserAvatarSimple {...user} />
           <div>
             {publishedAt && (
-              <Text className={classes.dropShadow} size="xs" weight={500} color="white" inline>
+              <Text className={cardClasses.dropShadow} size="xs" fw={500} color="white" inline>
                 {formatDate(publishedAt)}
               </Text>
             )}
             {title && (
-              <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
+              <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} lh={1.2}>
                 {title}
               </Text>
             )}
           </div>
           <div className="flex items-center justify-between gap-1">
-            <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
+            <Badge
+              className={clsx(cardClasses.statChip, cardClasses.chip)}
+              classNames={{ label: 'flex flex-nowrap gap-2' }}
+              variant="light"
+              radius="xl"
+            >
               <div className="flex items-center gap-0.5">
                 <IconBookmark size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(collectedCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(collectedCount)}
+                </Text>
               </div>
               <div className="flex items-center gap-0.5">
                 <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(commentCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(commentCount)}
+                </Text>
               </div>
               <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
                 <div className="flex items-center gap-0.5">
                   <IconBolt size={14} strokeWidth={2.5} />
-                  <Text size="xs" tt="uppercase">
+                  <Text fw="bold" size="xs" tt="uppercase">
                     {abbreviateNumber(tippedAmountCount + tippedAmount)}
                   </Text>
                 </div>
               </InteractiveTipBuzzButton>
             </Badge>
-            <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
+            <Badge
+              className={clsx(cardClasses.statChip, cardClasses.chip)}
+              variant="light"
+              radius="xl"
+            >
               <div className="flex items-center gap-0.5">
                 <IconEye size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(viewCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(viewCount)}
+                </Text>
               </div>
             </Badge>
           </div>

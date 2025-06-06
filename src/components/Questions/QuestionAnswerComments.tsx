@@ -1,8 +1,9 @@
-import { Box, createStyles, Group, Text, Center, Loader } from '@mantine/core';
+import { Box, Group, Text, Center, Loader } from '@mantine/core';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import classes from './QuestionAnswerComments.module.scss';
 
 type Props = CommentConnectorInput & {
   initialCount?: number;
@@ -16,8 +17,6 @@ export function QuestionAnswerComments({
   entityType,
   initialCount,
 }: Props) {
-  const { classes } = useStyles();
-
   return (
     <RootThreadProvider
       limit={limit}
@@ -29,7 +28,7 @@ export function QuestionAnswerComments({
       {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
         isLoading ? (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         ) : (
           <Box className={classes.list}>
@@ -38,8 +37,8 @@ export function QuestionAnswerComments({
             ))}
 
             {!!remaining && !showMore && (
-              <Group spacing="xs" align="center" p="sm" pb={0}>
-                <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+              <Group gap="xs" align="center" p="sm" pb={0}>
+                <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                   Show {remaining} More
                 </Text>
               </Group>
@@ -58,16 +57,3 @@ export function QuestionAnswerComments({
     </RootThreadProvider>
   );
 }
-
-const useStyles = createStyles((theme) => {
-  const borderColor = theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3];
-  return {
-    list: {
-      borderTop: `1px solid ${borderColor}`,
-    },
-    listItem: {
-      padding: theme.spacing.sm,
-      borderBottom: `1px solid ${borderColor}`,
-    },
-  };
-});

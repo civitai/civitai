@@ -37,7 +37,10 @@ module.exports = {
     '@typescript-eslint/no-unused-vars': ['warn', { 'ignoreRestSiblings': true }],
     '@typescript-eslint/no-namespace': 'off',
     '@typescript-eslint/no-non-null-assertion': 'off',
-    '@typescript-eslint/consistent-type-imports': ['error']
+    '@typescript-eslint/consistent-type-imports': ['error'],
+    'tailwindcss/no-custom-classname': ['warn', {
+      whitelist: ['mantine-focus-auto']
+    }]
   },
   // settings: {
   //   'import/parsers': {

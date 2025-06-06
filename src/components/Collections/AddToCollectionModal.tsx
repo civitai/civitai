@@ -8,7 +8,6 @@ import {
   Select,
   Stack,
   Text,
-  createStyles,
   Modal,
 } from '@mantine/core';
 import { hideNotification, showNotification } from '@mantine/notifications';
@@ -44,6 +43,7 @@ import { closeAllModals, openModal } from '@mantine/modals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import classes from './AddToCollectionModal.module.scss';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
@@ -69,12 +69,6 @@ export default function AddToCollectionModal(props: Props) {
   );
 }
 
-const useCollectionListStyles = createStyles((theme) => ({
-  body: { alignItems: 'center' },
-  labelWrapper: { flex: 1 },
-  contentWrap: { paddingTop: theme.spacing.xs, paddingBottom: theme.spacing.xs },
-}));
-
 type SelectedCollection = {
   collectionId: number;
   tagId?: number | null;
@@ -88,7 +82,6 @@ function CollectionListForm({
   ...props
 }: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
   const { note, ...target } = props;
-  const { classes } = useCollectionListStyles();
   const queryUtils = trpc.useUtils();
   const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);
 
@@ -198,31 +191,30 @@ function CollectionListForm({
   return (
     <Stack>
       <ReadOnlyAlert />
-      <Stack spacing="xl">
-        <Stack spacing={4}>
-          <Group spacing="xs" position="apart" noWrap>
-            <Text size="sm" weight="bold">
+      <Stack gap="xl">
+        <Stack gap={4}>
+          <Group gap="xs" justify="space-between" wrap="nowrap">
+            <Text size="sm" fw="bold">
               Your collections
             </Text>
             <Button
               variant="subtle"
-              size="xs"
-              leftIcon={<IconPlus size={16} />}
+              leftSection={<IconPlus size={16} />}
               onClick={onNewClick}
-              compact
+              size="compact-xs"
             >
               New collection
             </Button>
           </Group>
           {isLoading ? (
             <Center py="xl">
-              <Loader variant="bars" />
+              <Loader type="bars" />
             </Center>
           ) : (
             <>
-              <ScrollArea.Autosize maxHeight={200}>
+              <ScrollArea.Autosize mah={200}>
                 {ownedCollections.length > 0 ? (
-                  <Stack spacing={4}>
+                  <Stack gap={4}>
                     {ownedCollections.map((collection) => {
                       const Icon = collectionReadPrivacyData[collection.read].icon;
                       const selectedItem = selectedCollections.find(
@@ -234,7 +226,7 @@ function CollectionListForm({
                       );
 
                       return (
-                        <Stack key={collection.id} className={classes.contentWrap} spacing={0}>
+                        <Stack key={collection.id} className={classes.contentWrap} gap={0}>
                           <Checkbox
                             classNames={classes}
                             key={selectedItem?.collectionId}
@@ -257,7 +249,7 @@ function CollectionListForm({
                               }
                             }}
                             label={
-                              <Group spacing="xs" position="apart" w="100%" noWrap>
+                              <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
                                 <Text lineClamp={1} inherit>
                                   {collection.name}
                                 </Text>
@@ -267,7 +259,6 @@ function CollectionListForm({
                           />
                           {selectedItem && availableTags?.length > 0 && (
                             <Select
-                              withinPortal
                               withAsterisk
                               placeholder="Select a tag for your entry in the contest"
                               size="xs"
@@ -289,7 +280,9 @@ function CollectionListForm({
                                 value: tag.id.toString(),
                                 label: tag.name,
                               }))}
-                              zIndex={400}
+                              style={{
+                                zIndex: 400,
+                              }}
                             />
                           )}
                         </Stack>
@@ -298,7 +291,7 @@ function CollectionListForm({
                   </Stack>
                 ) : (
                   <Center py="xl">
-                    <Text color="dimmed">{`You don't have any ${
+                    <Text c="dimmed">{`You don't have any ${
                       props.type?.toLowerCase() || ''
                     } collections yet.`}</Text>
                   </Center>
@@ -306,11 +299,11 @@ function CollectionListForm({
               </ScrollArea.Autosize>
               {contributingCollections.length > 0 && (
                 <>
-                  <Text size="sm" weight="bold" mt="md">
+                  <Text size="sm" fw="bold" mt="md">
                     Collections you contribute to
                   </Text>
-                  <ScrollArea.Autosize maxHeight={200}>
-                    <Stack spacing={4}>
+                  <ScrollArea.Autosize mah={200}>
+                    <Stack gap={4}>
                       {contributingCollections.map((collection) => {
                         const Icon = collectionReadPrivacyData[collection.read].icon;
                         const selectedItem = selectedCollections.find(
@@ -322,7 +315,7 @@ function CollectionListForm({
                         );
 
                         return (
-                          <Stack key={collection.id} className={classes.contentWrap} spacing={0}>
+                          <Stack key={collection.id} className={classes.contentWrap} gap={0}>
                             <Checkbox
                               classNames={classes}
                               key={selectedItem?.collectionId}
@@ -347,7 +340,7 @@ function CollectionListForm({
                                 }
                               }}
                               label={
-                                <Group spacing="xs" position="apart" w="100%" noWrap>
+                                <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
                                   <Text lineClamp={1} inherit>
                                     {collection.name}
                                   </Text>
@@ -357,13 +350,14 @@ function CollectionListForm({
                             />
                             {selectedItem && availableTags?.length > 0 && (
                               <Select
-                                withinPortal
                                 withAsterisk
                                 placeholder="Select a tag for your entry in the contest"
                                 size="xs"
                                 label="Tag your entry"
                                 value={selectedItem.tagId?.toString() ?? null}
-                                zIndex={400}
+                                style={{
+                                  zIndex: 400,
+                                }}
                                 onChange={(value) => {
                                   setSelectedCollections((curr) =>
                                     curr.map((c) => {
@@ -396,7 +390,7 @@ function CollectionListForm({
           )}
         </Stack>
 
-        <Group position="right">
+        <Group justify="flex-end">
           <Button
             disabled={!features.canWrite}
             loading={addCollectionItemMutation.isLoading}
@@ -436,7 +430,7 @@ function NewCollectionForm({
     showNotification({
       id: NOTIFICATION_ID,
       loading: true,
-      disallowClose: true,
+      withCloseButton: false,
       autoClose: false,
       message: 'Creating collection...',
     });
@@ -481,18 +475,17 @@ function NewCollectionForm({
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing="xl">
-        <Stack spacing={4}>
-          <Group position="apart">
-            <Text size="sm" weight="bold">
+      <Stack gap="xl">
+        <Stack gap={4}>
+          <Group justify="space-between">
+            <Text size="sm" fw="bold">
               New Collection
             </Text>
             <Button
               variant="subtle"
-              size="xs"
-              leftIcon={<IconArrowLeft size={16} />}
+              leftSection={<IconArrowLeft size={16} />}
               onClick={onBack}
-              compact
+              size="compact-xs"
             >
               Back to selection
             </Button>
@@ -514,7 +507,11 @@ function NewCollectionForm({
             name="read"
             label="Privacy"
             data={Object.values(collectionReadPrivacyData)}
-            itemComponent={SelectItem}
+            renderOption={(item) => {
+              const data =
+                collectionReadPrivacyData[item.option.value as CollectionReadConfiguration];
+              return <SelectItem {...data} {...item} />;
+            }}
           />
           {currentUser?.isModerator && (
             <>
@@ -546,10 +543,10 @@ function NewCollectionForm({
                     name="metadata.endsAt"
                     label="End Date"
                     placeholder="Select an end date"
-                    icon={<IconCalendar size={16} />}
+                    leftSection={<IconCalendar size={16} />}
                     clearable
                   />
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     This is only used to stop recurring job updating the random indexes. We suggest
                     you add this in to save some resources, but this value will not be shown to
                     end-users.
@@ -560,7 +557,7 @@ function NewCollectionForm({
           )}
           <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
         </Stack>
-        <Group position="right">
+        <Group justify="flex-end">
           <Button type="submit" loading={upsertCollectionMutation.isLoading}>
             Create
           </Button>
@@ -574,11 +571,11 @@ const SelectItem = forwardRef<HTMLDivElement, PrivacyData>(
   ({ label, description, icon: Icon, ...otherProps }, ref) => {
     return (
       <div ref={ref} {...otherProps}>
-        <Group align="center" noWrap>
+        <Group align="center" wrap="nowrap">
           <Icon size={18} />
           <div>
             <Text size="sm">{label}</Text>
-            <Text size="xs" sx={{ opacity: 0.7 }}>
+            <Text size="xs" style={{ opacity: 0.7 }}>
               {description}
             </Text>
           </div>

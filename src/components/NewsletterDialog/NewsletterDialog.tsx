@@ -1,4 +1,4 @@
-import { Button, Dialog, Group, Image, Stack, Text, createStyles } from '@mantine/core';
+import { Button, Dialog, Group, Image, Stack, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -8,39 +8,14 @@ import { updateSubscriptionSchema } from '~/server/schema/newsletter.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { increaseDate } from '~//utils/date-helpers';
+import classes from './NewsletterDialog.module.scss';
+import clsx from 'clsx';
 
 const REFETCH_TIMEOUT = 30000; // 30 seconds
-
-const useStyles = createStyles((theme) => ({
-  dialogRoot: {
-    width: '400px',
-
-    [theme.fn.smallerThan('sm')]: {
-      width: '85vw',
-    },
-  },
-  bannerRoot: {
-    position: 'absolute',
-    top: '-85%',
-    left: '50%',
-    height: '85%',
-    width: '70% !important',
-    transform: 'translateX(-50%)',
-
-    [theme.fn.smallerThan('sm')]: {
-      top: '-65%',
-      height: '65%',
-      width: '65% !important',
-    },
-  },
-  bannerFigure: { height: '100%' },
-  bannerImageWrapper: { height: '100%' },
-}));
 
 export function NewsletterDialog() {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
 
   const [opened, setOpened] = useState(true);
   const [postponedUntil, setPostponedUntil] = useLocalStorage<string | null>({
@@ -94,7 +69,9 @@ export function NewsletterDialog() {
 
   return (
     <Dialog
-      transition="slide-left"
+      transitionProps={{
+        transition: 'slide-left',
+      }}
       radius="md"
       shadow="lg"
       p={0}
@@ -107,22 +84,12 @@ export function NewsletterDialog() {
       <Image
         src="/images/newsletter-banner.png"
         alt="Robot holding a newspaper"
-        classNames={{
-          root: classes.bannerRoot,
-          figure: classes.bannerFigure,
-          imageWrapper: classes.bannerImageWrapper,
-        }}
-        imageProps={{
-          style: {
-            objectPosition: 'top',
-            width: '100%',
-            objectFit: 'cover',
-          },
-        }}
+        className={clsx(classes.bannerRoot, classes.bannerFigure, classes.bannerImageWrapper)}
+        fit="cover"
       />
-      <Stack spacing="md" p="md">
-        <Stack spacing={4}>
-          <Text size="md" weight={600}>
+      <Stack gap="md" p="md">
+        <Stack gap={4}>
+          <Text size="md" fw={600}>
             Stay in the loop!
           </Text>
           <Text size="sm" lh={1.1}>
@@ -132,7 +99,7 @@ export function NewsletterDialog() {
         </Stack>
 
         <Form form={form} onSubmit={handleSubscribe}>
-          <Group spacing={8} align="flex-start" position="right">
+          <Group gap={8} align="flex-start" justify="flex-end">
             <InputText
               placeholder="hello@civitai.com"
               name="email"

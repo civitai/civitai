@@ -17,27 +17,21 @@ import {
   Button,
   Card,
   Center,
-  createStyles,
   Group,
   Loader,
   Stack,
   Text,
   Modal,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconGripVertical, IconInfoCircle, IconPlus, IconTrash } from '@tabler/icons-react';
 import { CSS } from '@dnd-kit/utilities';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-
-const useStyles = createStyles((theme) => ({
-  sectionHeader: {
-    height: 30,
-    fontSize: theme.fontSizes.sm,
-    textTransform: 'capitalize',
-    fontWeight: 500,
-  },
-}));
+import classes from './ManageHomeBlocksModal.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function ManageHomeBlocksModal() {
   const dialog = useDialogContext();
@@ -51,7 +45,8 @@ export default function ManageHomeBlocksModal() {
 
 type Props = { onClose: VoidFunction };
 function ManageHomeBlocks({ onClose }: Props) {
-  const { classes } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { data: homeBlocks = [], isLoading: isLoadingOwnedHomeBlocks } =
     trpc.homeBlock.getHomeBlocks.useQuery({
       withCoreData: true,
@@ -62,7 +57,7 @@ function ManageHomeBlocks({ onClose }: Props) {
       permanent: false,
     });
 
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
 
   const isLoading = isLoadingSystemHomeBlocks || isLoadingOwnedHomeBlocks;
   const [items, setItems] = useState<HomeBlockGetAll>(homeBlocks);
@@ -118,7 +113,7 @@ function ManageHomeBlocks({ onClose }: Props) {
   if (isLoading) {
     return (
       <Center py="xl">
-        <Loader variant="bars" />
+        <Loader type="bars" />
       </Center>
     );
   }
@@ -149,18 +144,18 @@ function ManageHomeBlocks({ onClose }: Props) {
   return (
     <>
       <Group
-        spacing="xs"
+        gap="xs"
         py="md"
-        sx={(theme) => ({
+        style={{
           borderTop: `1px solid ${
-            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+            colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
           }`,
-        })}
+        }}
       >
         <Badge color="yellow" variant="light" size="xs">
           Beta
         </Badge>
-        <Text size="xs" color="dimmed" inline>
+        <Text size="xs" c="dimmed" inline>
           Expect frequent changes.
         </Text>
       </Group>
@@ -173,7 +168,7 @@ function ManageHomeBlocks({ onClose }: Props) {
           <Accordion.Control>Civitai Home Blocks</Accordion.Control>
           <Accordion.Panel>
             {availableSystemHomeBlocks.length > 0 ? (
-              <Stack spacing={8}>
+              <Stack gap={8}>
                 {availableSystemHomeBlocks.map((systemHomeBlock) => (
                   <SystemHomeBlock
                     key={systemHomeBlock.id}
@@ -198,7 +193,7 @@ function ManageHomeBlocks({ onClose }: Props) {
         </Accordion.Item>
       </Accordion>
 
-      <Stack spacing={8}>
+      <Stack gap={8}>
         <Badge
           mt="md"
           size="md"
@@ -277,15 +272,15 @@ function SortableHomeBlock({
 
   return (
     <Card px="md" py={8} withBorder style={style} {...attributes} {...listeners} ref={setNodeRef}>
-      <Group noWrap align="center">
+      <Group wrap="nowrap" align="center">
         <IconGripVertical />
         <Text size="md" lineClamp={1}>
           {homeBlockName}
         </Text>
         {onRemove && (
-          <ActionIcon ml="auto" color="red" onClick={() => onRemove(homeBlock.id)}>
+          <LegacyActionIcon ml="auto" color="red" onClick={() => onRemove(homeBlock.id)}>
             <IconTrash size={16} />
-          </ActionIcon>
+          </LegacyActionIcon>
         )}
       </Group>
     </Card>
@@ -310,9 +305,9 @@ function SystemHomeBlock({
         </Text>
 
         {onAdd && (
-          <ActionIcon ml="auto" onClick={() => onAdd(homeBlock.id)}>
+          <LegacyActionIcon ml="auto" onClick={() => onAdd(homeBlock.id)}>
             <IconPlus size={16} />
-          </ActionIcon>
+          </LegacyActionIcon>
         )}
       </Group>
     </Card>

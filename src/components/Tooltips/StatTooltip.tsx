@@ -13,17 +13,17 @@ export function StatTooltip({ value, label }: Props) {
   ) as React.ReactNode;
 
   return (
-    <Stack spacing={0} align="center" w="100%">
+    <Stack gap={0} align="center" w="100%">
       <Text
-        sx={{ borderBottom: '1px solid rgba(255,255,255,0.2)' }}
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.2)' }}
         size="xs"
-        color="dimmed"
+        c="dimmed"
         mb={4}
         mt={-5}
         mx={-8}
         px={5}
         pb={2}
-        weight={500}
+        fw={500}
       >
         {label}
       </Text>

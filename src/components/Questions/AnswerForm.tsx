@@ -24,7 +24,7 @@ export function AnswerForm({
     defaultValues: answer,
   });
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { mutate, isLoading } = trpc.answer.upsert.useMutation({
     async onSuccess(results, input) {
       showNotification({
@@ -79,7 +79,7 @@ export function AnswerForm({
             </List.Item>
           </List>
         </Alert>
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button variant="default" onClick={onCancel}>
               Cancel

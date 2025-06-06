@@ -64,8 +64,8 @@ function UserCollectionsPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer p={0}>
-          <Stack spacing="xs">
-            <Group spacing={8} position="right">
+          <Stack gap="xs">
+            <Group gap={8} justify="flex-end">
               <SortFilter
                 type="collections"
                 value={sort}

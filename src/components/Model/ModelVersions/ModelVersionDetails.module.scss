@@ -1,0 +1,21 @@
+.ctaContainer {
+  width: 100%;
+  flex-wrap: wrap;
+
+  >* {
+    flex-grow: 1;
+  }
+
+  @container (min-width: theme('screens.sm')) {
+    >* {
+      flex-grow: 0;
+    }
+  }
+}
+
+.mainSection {
+  @container (min-width: theme('screens.xs')) {
+    padding: 0 var(--mantine-spacing-sm);
+    margin: var(--mantine-spacing-sm) 0;
+  }
+}

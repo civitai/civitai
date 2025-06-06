@@ -4,16 +4,16 @@ import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { z } from 'zod';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { env } from '~/env/client';
-import { enterFall, jelloVertical } from '~/libs/animations';
 import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
+import animationClasses from '~/libs/animations.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -48,7 +48,7 @@ const BuzzFeatures = (props: Omit<ListProps, 'children'>) => {
     <List listStyleType="none" spacing="sm" {...props}>
       {BUZZ_FEATURE_LIST.map((feature) => (
         <List.Item key={feature}>
-          <Group noWrap>
+          <Group wrap="nowrap">
             <CurrencyIcon style={{ flexShrink: 0 }} currency={Currency.BUZZ} size={18} />
             <Text>{feature}</Text>
           </Group>
@@ -73,18 +73,10 @@ export default function PurchaseBuzz() {
   if (success) {
     return (
       <Container size="md" mb="lg">
-        <Center
-          sx={{
-            // animation: `${jelloVerical} 2s 1s ease-in-out`,
-            animationName: `${enterFall}, ${jelloVertical}`,
-            animationDuration: `1.5s, 2s`,
-            animationDelay: `0s, 1.5s`,
-            animationIterationCount: '1, 1',
-          }}
-        >
+        <Center className={animationClasses.jelloFall}>
           <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
         </Center>
-        <Title order={1} align="center">
+        <Title order={1} className="text-center">
           Thank you! 🎉
         </Title>
         <Text size="lg" align="center" mb="lg">
@@ -101,7 +93,7 @@ export default function PurchaseBuzz() {
             </Stack>
           ) : (
             <Stack>
-              <Title order={3} align="center">
+              <Title order={3} className="text-center">
                 Where to go from here?
               </Title>
               <BuzzFeatures />
@@ -116,7 +108,7 @@ export default function PurchaseBuzz() {
     <Container size="lg" mb="lg">
       {minBuzzAmount && (
         <Alert radius="sm" color="info" mb="xl">
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text>
               The action you are trying to perform requires you to purchase a minimum of
               <CurrencyBadge currency={Currency.BUZZ} unitAmount={minBuzzAmount} /> to continue.
@@ -130,19 +122,19 @@ export default function PurchaseBuzz() {
         </Alert>
       )}
       <Alert radius="sm" color="yellow" style={{ zIndex: 10 }} mb="xl">
-        <Group spacing="xs" noWrap position="center">
+        <Group gap="xs" wrap="nowrap" justify="center">
           <CurrencyIcon currency={Currency.BUZZ} size={24} />
           <Title order={2}>Buy Buzz now</Title>
         </Group>
       </Alert>
-      <ContainerGrid gutter={48}>
-        <ContainerGrid.Col xs={12} md={3}>
+      <ContainerGrid2 gutter={48}>
+        <ContainerGrid2.Col span={{ base: 12, md: 3 }}>
           <Stack>
             <Title order={2}>Buzz Benefits</Title>
             <BuzzFeatures />
           </Stack>
-        </ContainerGrid.Col>
-        <ContainerGrid.Col xs={12} md={9}>
+        </ContainerGrid2.Col>
+        <ContainerGrid2.Col span={{ base: 12, md: 9 }}>
           <BuzzPurchase
             onPurchaseSuccess={handlePurchaseSuccess}
             minBuzzAmount={minBuzzAmount}
@@ -161,8 +153,8 @@ export default function PurchaseBuzz() {
                 : undefined
             }
           />
-        </ContainerGrid.Col>
-      </ContainerGrid>
+        </ContainerGrid2.Col>
+      </ContainerGrid2>
     </Container>
   );
 }

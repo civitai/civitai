@@ -18,7 +18,7 @@ export function ModelDiscussionComments({
       {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
         isLoading ? (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         ) : (
           <Stack>
@@ -29,8 +29,13 @@ export function ModelDiscussionComments({
             {!!remaining && !showMore && (
               <Divider
                 label={
-                  <Group spacing="xs" align="center">
-                    <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                  <Group gap="xs" align="center">
+                    <Text
+                      c="blue.4"
+                      size="xs"
+                      style={{ cursor: 'pointer' }}
+                      onClick={toggleShowMore}
+                    >
                       Show {remaining} More
                     </Text>
                   </Group>

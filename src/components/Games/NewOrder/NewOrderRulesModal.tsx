@@ -8,7 +8,7 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
       size="lg"
       onClose={onClose}
       opened={opened}
-      title={<h1 className="text-xl font-semibold text-gold-9">What is Knights of New Order?</h1>}
+      title={<div className="text-xl font-semibold text-gold-9">What is Knights of New Order?</div>}
       centered
     >
       <div className="flex flex-col gap-4">

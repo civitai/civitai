@@ -1,17 +1,5 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
-import {
-  Anchor,
-  Button,
-  Group,
-  Stack,
-  Text,
-  Title,
-  Tooltip,
-  createStyles,
-  ActionIcon,
-  Paper,
-  Input,
-} from '@mantine/core';
+import { Anchor, Button, Group, Stack, Text, Title, Tooltip, Paper, Input } from '@mantine/core';
 import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -30,7 +18,6 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { upsertArticleInput } from '~/server/schema/article.schema';
 import type { ArticleGetById } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
@@ -38,7 +25,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureIntroduction';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -50,6 +37,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -69,13 +57,6 @@ const tooltipProps: Partial<TooltipProps> = {
   withinPortal: true,
 };
 
-const useStyles = createStyles((theme) => ({
-  sidebar: {
-    position: 'sticky',
-    top: 70 + theme.spacing.xl,
-  },
-}));
-
 export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
   label: browsingLevelLabels[level],
   value: String(level),
@@ -83,7 +64,6 @@ export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
 
 export function ArticleUpsertForm({ article }: Props) {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const features = useFeatureFlags();
@@ -198,10 +178,10 @@ export function ArticleUpsertForm({ article }: Props) {
           "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this article."
         }
       />
-      <ContainerGrid gutter="xl">
-        <ContainerGrid.Col xs={12} md={8}>
-          <Stack spacing="xl">
-            <Group spacing={8} noWrap>
+      <ContainerGrid2 gutter="xl">
+        <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
+          <Stack gap="xl">
+            <Group gap={8} wrap="nowrap">
               <BackButton url="/articles" />
               <Title>{article?.id ? 'Editing article' : 'Create an Article'}</Title>
               <FeatureIntroductionHelpButton
@@ -232,9 +212,15 @@ export function ArticleUpsertForm({ article }: Props) {
               stickyToolbar
             />
           </Stack>
-        </ContainerGrid.Col>
-        <ContainerGrid.Col xs={12} md={4}>
-          <Stack className={classes.sidebar} spacing="xl">
+        </ContainerGrid2.Col>
+        <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
+          <Stack
+            style={{
+              position: 'sticky',
+              top: 'calc(var(--header-height) + var(--mantine-spacing-md))',
+            }}
+            gap="xl"
+          >
             <ActionButtons
               article={article}
               saveButtonProps={{
@@ -247,23 +233,24 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
-              sx={hideMobile}
+              className="hidden @sm:flex"
             />
             <InputSelect
               name="userNsfwLevel"
               data={browsingLevelSelectOptions}
               label={
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   Maturity Level
-                  <ActionIcon
+                  <LegacyActionIcon
                     radius="xl"
                     size="xs"
                     variant="outline"
+                    color="gray"
                     onClick={openBrowsingLevelGuide}
                   >
-                    <IconQuestionMark />
-                  </ActionIcon>
-                  <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
+                    <IconQuestionMark size={18} />
+                  </LegacyActionIcon>
+                  <ContentPolicyLink size="xs" variant="text" c="dimmed" td="underline" />
                 </Group>
               }
             />
@@ -276,7 +263,7 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputSelect
               name="categoryId"
               label={
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   <Input.Label required>Category</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -289,13 +276,13 @@ export function ArticleUpsertForm({ article }: Props) {
               }
               placeholder="Select a category"
               data={categories}
-              nothingFound="Nothing found"
+              nothingFoundMessage="Nothing found"
               loading={loadingCategories}
             />
             <InputTags
               name="tags"
               label={
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   <Input.Label>Tags</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -313,7 +300,7 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputMultiFileUpload
               name="attachments"
               label={
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   <Input.Label>Attachments</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -338,20 +325,25 @@ export function ArticleUpsertForm({ article }: Props) {
               }}
               renderItem={(file, onRemove) => (
                 <Paper key={file.id} radius="sm" p={0} w="100%">
-                  <Group position="apart">
+                  <Group justify="space-between">
                     {article && file.id ? (
                       <Anchor href={`/api/download/attachments/${file.id}`} lineClamp={1} download>
                         {file.name}
                       </Anchor>
                     ) : (
-                      <Text size="sm" weight={500} lineClamp={1}>
+                      <Text size="sm" fw={500} lineClamp={1}>
                         {file.name}
                       </Text>
                     )}
                     <Tooltip label="Remove">
-                      <ActionIcon size="sm" color="red" variant="transparent" onClick={onRemove}>
+                      <LegacyActionIcon
+                        size="sm"
+                        color="red"
+                        variant="transparent"
+                        onClick={onRemove}
+                      >
                         <IconTrash />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Tooltip>
                   </Group>
                 </Paper>
@@ -370,11 +362,11 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
-              sx={showMobile}
+              className="@sm:hidden"
             />
           </Stack>
-        </ContainerGrid.Col>
-      </ContainerGrid>
+        </ContainerGrid2.Col>
+      </ContainerGrid2>
     </Form>
   );
 }
@@ -383,13 +375,12 @@ type Props = { article?: ArticleGetById };
 
 function ActionButtons({
   article,
-  className,
   saveButtonProps,
   publishButtonProps,
   ...stackProps
 }: ActionButtonProps) {
   return (
-    <Stack spacing={8} {...stackProps}>
+    <Stack {...stackProps} gap={8}>
       {article?.publishedAt ? (
         <Button
           {...(article.status !== ArticleStatus.Published ? publishButtonProps : saveButtonProps)}
@@ -409,17 +400,17 @@ function ActionButtons({
         </>
       )}
       {article?.publishedAt ? (
-        <Text size="xs" color="dimmed">
+        <Text size="xs" c="dimmed">
           Published at {formatDate(article.publishedAt)}
         </Text>
       ) : (
-        <Text size="xs" color="dimmed">
+        <Text size="xs" c="dimmed">
           Your article is currently{' '}
           <Tooltip
             label="Click the publish button to make your article public to share with the Civitai community for comments and reactions."
             {...tooltipProps}
           >
-            <Text span underline>
+            <Text td="underline" span inherit>
               hidden
             </Text>
           </Tooltip>
