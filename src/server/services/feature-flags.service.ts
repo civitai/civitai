@@ -116,7 +116,7 @@ const featureFlags = createFeatureFlags({
   appTour: ['public'],
   privateModels: ['mod', 'granted'],
   auctions: ['public'],
-  newOrderGame: ['mod', 'member', 'granted'],
+  newOrderGame: ['public'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
   annualMemberships: ['public'],

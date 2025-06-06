@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { updateCollectionsNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
@@ -77,9 +78,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     // const data = await getGenerationResourceData({ ids: [1703341] });
 
     // await setExperimentalConfig({ userIds: [5] });
+    const data = await updateCollectionsNsfwLevels([24004]);
 
     // res.status(200).send({ data });
-    res.status(200).send({ ok: true });
+    res.status(200).send({ data });
   } catch (e) {
     console.log(e);
     res.status(400).end();

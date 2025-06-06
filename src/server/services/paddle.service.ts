@@ -403,7 +403,13 @@ export const upsertSubscription = async (
   const userSubscription = await dbWrite.customerSubscription.findFirst({
     // I rather we trust this than the subscriptionId on the user.
     where: { userId: user.id },
-    select: { id: true, status: true, metadata: true, product: { select: { provider: true } } },
+    select: {
+      id: true,
+      status: true,
+      metadata: true,
+      currentPeriodEnd: true,
+      product: { select: { provider: true } },
+    },
   });
 
   const userHasSubscription = !!userSubscription;
@@ -429,14 +435,25 @@ export const upsertSubscription = async (
   }
 
   if (subscriptionNotification.status === 'canceled') {
+    // @justin - Disabling this for now since Paddle is immediately canceling...
     // immediate cancel:
-    log('upsertSubscription :: Subscription canceled immediately');
+    // log('upsertSubscription :: Subscription canceled immediately');
+    // await dbWrite.customerSubscription.update({
+    //   where: { userId: user.id },
+    //   data: {
+    //     status: 'canceled',
+    //     canceledAt: new Date(),
+    //     cancelAtPeriodEnd: false,
+    //   },
+    // });
+    // @justin - Cancel at period end for now...
     await dbWrite.customerSubscription.update({
       where: { userId: user.id },
       data: {
-        status: 'canceled',
-        canceledAt: new Date(),
-        cancelAtPeriodEnd: false,
+        status: userSubscription?.status ?? 'canceled',
+        cancelAt: userSubscription?.currentPeriodEnd ?? new Date(),
+        canceledAt: userSubscription?.currentPeriodEnd ?? new Date(),
+        cancelAtPeriodEnd: true,
       },
     });
     await getMultipliersForUser(user.id, true);
@@ -912,74 +929,76 @@ export const updateSubscriptionPlan = async ({
 };
 
 export const refreshSubscription = async ({ userId }: { userId: number }) => {
-  let customerId = '';
-  const user = await dbWrite.user.findUnique({
-    where: { id: userId },
-    select: { paddleCustomerId: true, email: true, id: true },
-  });
+  return true; // Disable refreshing from Paddle since they're dead
 
-  const customerSubscription = await dbWrite.customerSubscription.findFirst({
-    where: {
-      userId,
-      status: {
-        in: ['active', 'trialing'],
-      },
-    },
-  });
+  // let customerId = '';
+  // const user = await dbWrite.user.findUnique({
+  //   where: { id: userId },
+  //   select: { paddleCustomerId: true, email: true, id: true },
+  // });
 
-  if (!user?.email && !user?.paddleCustomerId) {
-    throw throwBadRequestError('Email is required to create a customer');
-  }
+  // const customerSubscription = await dbWrite.customerSubscription.findFirst({
+  //   where: {
+  //     userId,
+  //     status: {
+  //       in: ['active', 'trialing'],
+  //     },
+  //   },
+  // });
 
-  if (!user?.paddleCustomerId) {
-    customerId = await createCustomer({ id: userId, email: user.email as string });
-  } else {
-    customerId = user.paddleCustomerId;
-  }
+  // if (!user?.email && !user?.paddleCustomerId) {
+  //   throw throwBadRequestError('Email is required to create a customer');
+  // }
 
-  const subscriptions = await getPaddleCustomerSubscriptions({ customerId });
+  // if (!user?.paddleCustomerId) {
+  //   customerId = await createCustomer({ id: userId, email: user.email as string });
+  // } else {
+  //   customerId = user.paddleCustomerId;
+  // }
 
-  if (subscriptions.length === 0) {
-    throwBadRequestError('No active subscriptions found on Paddle');
-  }
+  // const subscriptions = await getPaddleCustomerSubscriptions({ customerId });
 
-  const subscription = subscriptions[0];
+  // if (subscriptions.length === 0) {
+  //   throwBadRequestError('No active subscriptions found on Paddle');
+  // }
 
-  if (customerSubscription && customerSubscription.id !== subscription.id) {
-    // This is a different subscription, we should update the user.
-    await dbWrite.customerSubscription.delete({ where: { id: customerSubscription.id } });
-  }
-  try {
-    // This should trigger an update...
-    await updatePaddleSubscription({
-      subscriptionId: subscription.id,
-      customData: {
-        ...subscription.customData,
-        refreshed: new Date().toISOString(),
-      },
-    });
+  // const subscription = subscriptions[0];
 
-    await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
+  // if (customerSubscription && customerSubscription.id !== subscription.id) {
+  //   // This is a different subscription, we should update the user.
+  //   await dbWrite.customerSubscription.delete({ where: { id: customerSubscription.id } });
+  // }
+  // try {
+  //   // This should trigger an update...
+  //   await updatePaddleSubscription({
+  //     subscriptionId: subscription.id,
+  //     customData: {
+  //       ...subscription.customData,
+  //       refreshed: new Date().toISOString(),
+  //     },
+  //   });
 
-    await invalidateSession(userId);
-    await getMultipliersForUser(userId, true);
+  //   await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 
-    return true;
-  } catch (error) {
-    if (error instanceof ApiError) {
-      // Check if they are ok errors
-      const apiError = error as ApiError;
-      if (
-        apiError.code === 'subscription_locked_renewal' ||
-        apiError.code === 'subscription_locked_pending_changes'
-      ) {
-        // Not a bad error, we can ignore this.
-        return true;
-      }
-    }
+  //   await invalidateSession(userId);
+  //   await getMultipliersForUser(userId, true);
 
-    throw error;
-  }
+  //   return true;
+  // } catch (error) {
+  //   if (error instanceof ApiError) {
+  //     // Check if they are ok errors
+  //     const apiError = error as ApiError;
+  //     if (
+  //       apiError.code === 'subscription_locked_renewal' ||
+  //       apiError.code === 'subscription_locked_pending_changes'
+  //     ) {
+  //       // Not a bad error, we can ignore this.
+  //       return true;
+  //     }
+  //   }
+
+  //   throw error;
+  // }
 };
 
 export const cancelAllPaddleSubscriptions = async ({ customerId }: { customerId: string }) => {

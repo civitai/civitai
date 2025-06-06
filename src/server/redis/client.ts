@@ -356,6 +356,7 @@ export const REDIS_SYS_KEYS = {
     ENGINES: 'generation:engines',
     TOKENS: 'generation:tokens',
     EXPERIMENTAL: 'generation:experimental',
+    CUSTOM_CHALLENGE: 'generation:custom-challenge',
   },
   TRAINING: {
     STATUS: 'training:status',

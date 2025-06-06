@@ -379,8 +379,8 @@ export function PostDetailContent({ postId }: Props) {
                     hiddenExplained.hiddenByBrowsingSettings.length > 0 && (
                       <>
                         <Alert color="yellow" mb="md">
-                          Some of your images have been removed due to infringing on our Policies.
-                          If you believe this was a mistake, you may contact support.
+                          While browsing with X or XXX enabled, content tagged as minor or potential celebrity is not shown.
+                          Some images in this post have been hidden.
                         </Alert>
                       </>
                     )}
