@@ -8,6 +8,8 @@ import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 import { grantBuzzPurchase } from '~/server/services/buzz.service';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getWalletForUser } from '~/server/coinbase/coinbase';
+import { dbWrite } from '~/server/db/client';
+import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'coinbase-service', type: 'error', ...data }).catch();
@@ -60,24 +62,123 @@ export const createBuzzOrderOnramp = async (input: CreateBuzzCharge & { userId: 
   return onrampUrl;
 };
 
-export const getTransactionStatus = async ({
+export const getTransactionStatusByKey = async ({
   userId,
-  transactionId,
+  key,
 }: {
   userId: number;
-  transactionId: string;
+  key: string;
 }) => {
+  const transaction = await dbWrite.cryptoTransaction.findFirst({
+    where: {
+      userId,
+      key,
+    },
+  });
+
+  if (!transaction) {
+    throw new Error(`Transaction not found for userId: ${userId} and key: ${key}`);
+  }
+
   const wallet = await getWalletForUser(userId);
   if (!wallet) {
     throw new Error(`No wallet found for userId: ${userId}`);
   }
 
-  const onrampStatus = await wallet.checkOnrampStatus(transactionId);
-  if (!onrampStatus) {
-    throw new Error(`Failed to retrieve OnRamp status for transactionId: ${transactionId}`);
+  let nextTransactionStatus: CryptoTransactionStatus = transaction.status;
+
+  if (
+    [
+      CryptoTransactionStatus.WaitingForRamp,
+      CryptoTransactionStatus.RampFailed,
+      CryptoTransactionStatus.RampInProgress,
+      CryptoTransactionStatus.RampSuccess,
+    ].some((s) => s === transaction.status)
+  ) {
+    const onrampStatus = await wallet.checkOnrampStatus(key);
+    if (!onrampStatus) {
+      throw new Error(`Failed to retrieve OnRamp status for key: ${key}`);
+    }
+
+    nextTransactionStatus =
+      onrampStatus.status === 'ONRAMP_TRANSACTION_STATUS_IN_PROGRESS'
+        ? CryptoTransactionStatus.RampInProgress
+        : onrampStatus.status === 'ONRAMP_TRANSACTION_STATUS_SUCCESS'
+        ? CryptoTransactionStatus.RampSuccess
+        : onrampStatus.status === 'ONRAMP_TRANSACTION_STATUS_FAILED'
+        ? CryptoTransactionStatus.RampFailed
+        : nextTransactionStatus;
   }
 
-  return onrampStatus.status;
+  if (nextTransactionStatus !== transaction.status) {
+    await dbWrite.cryptoTransaction.update({
+      where: { userId, key },
+      data: {
+        status: nextTransactionStatus,
+        note: `Updated status to ${nextTransactionStatus}`,
+      },
+    });
+
+    if (nextTransactionStatus === CryptoTransactionStatus.RampSuccess) {
+      // Attempt to pay out buzz:
+      await completeCryptoTransaction({
+        userId,
+        key,
+      });
+    }
+  }
+
+  const updatedTransaction = await dbWrite.cryptoTransaction.findFirstOrThrow({
+    where: {
+      userId,
+      key,
+    },
+  });
+
+  return updatedTransaction.status;
+};
+
+export const completeCryptoTransaction = async ({
+  userId,
+  key,
+}: {
+  userId: number;
+  key: string;
+}) => {
+  const transaction = await dbWrite.cryptoTransaction.findFirst({
+    where: {
+      userId,
+      key,
+      status: CryptoTransactionStatus.RampSuccess,
+    },
+  });
+
+  if (!transaction) {
+    throw new Error(`Transaction not found for userId: ${userId} and key: ${key}`);
+  }
+
+  const wallet = await getWalletForUser(userId);
+  if (!wallet) {
+    throw new Error(`No wallet found for userId: ${userId}`);
+  }
+
+  if (CryptoTransactionStatus.RampSuccess === transaction.status) {
+    const isComplete = await wallet.sendUSDC(transaction.amount, key);
+    if (!isComplete) {
+      throw new Error(
+        `Failed to complete crypto transaction for userId: ${userId} and key: ${key}`
+      );
+    }
+  }
+
+  // Pay buzz:
+  await grantBuzzPurchase({
+    amount: Math.floor(transaction.amount * 1000),
+    userId,
+    externalTransactionId: transaction.key,
+    provider: 'coinbase-onramp',
+    transactionKey: transaction.key,
+  });
 };
 
 export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['event']['data']) => {

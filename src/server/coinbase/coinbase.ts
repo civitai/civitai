@@ -4,6 +4,8 @@ import { createPublicClient, erc20Abi, http, parseUnits } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { checkOnrampStatus, getOnrampUrl } from './onramp';
 import type { SendUserOperationReturnType } from '@coinbase/cdp-sdk/_types/actions/evm/sendUserOperation';
+import { dbWrite } from '~/server/db/client';
+import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
 
 // Initialize the CDP client, which automatically loads
 // the API Key and Wallet Secret from the environment
@@ -76,14 +78,13 @@ export async function getWalletForUser(userId: number) {
       });
     }
 
-    // TODO: Add address to database for user
-    /*
-    dbWrite.cryptoWallet.insert({
-      userId,
-      wallet: account.address,
-      smartAccount: smartAccount.address,
-    })
-    */
+    await dbWrite.cryptoWallet.create({
+      data: {
+        userId,
+        wallet: account.address,
+        smartAccount: smartAccount.address,
+      },
+    });
   }
 
   return new EasyWallet({ userId, account, smartAccount });
@@ -113,8 +114,7 @@ export class EasyWallet {
 
   async getOnrampUrl({
     value,
-    // TODO: Add correct redirect URL (page for monitoring tx completion)
-    redirectUrl = 'https://civitai.com',
+    redirectUrl = 'https://civitai.com/payment/coinbase',
   }: {
     value: number;
     redirectUrl?: string;
@@ -126,18 +126,15 @@ export class EasyWallet {
       redirectUrl,
     });
 
-    // TODO: write attempt to database, so we can check if they fall off
-    /*
-      await dbWrite.cryptoTransaction.create({
-        data: {
-          key,
-          userId,
-          status: 'WaitingForRamp',
-          amount: value,
-          currency: 'USDC',
-        }
-      })
-    */
+    await dbWrite.cryptoTransaction.create({
+      data: {
+        key,
+        userId: this.userId,
+        status: CryptoTransactionStatus.WaitingForRamp,
+        amount: value,
+        currency: 'USDC',
+      },
+    });
 
     return { url, key };
   }
@@ -203,28 +200,31 @@ export class EasyWallet {
       });
       console.log(`Sending ${value} USDC. Tx: ${result.userOpHash}`);
 
-      // TODO: write to database, so we can recover if we die here
-      /*
-        dbWrite.cryptoTransaction.update({
-          where: { userId, key },
+      if (key) {
+        await dbWrite.cryptoTransaction.update({
+          where: { userId: this.userId, key },
           data: {
-            status: 'WaitingForSweep',
+            status: CryptoTransactionStatus.WaitingForSweep,
             sweepTxHash: result.userOpHash,
-          }
-        })
-      */
+          },
+        });
+      }
     } catch (error) {
       console.error('Error sending USDC:', error);
-      // TODO: write to database, so we can recover if we die here
-      /*
-        dbWrite.cryptoTransaction.update({
-          where: { userId, key },
+
+      if (key) {
+        await dbWrite.cryptoTransaction.update({
+          where: { userId: this.userId, key },
           data: {
-            status: 'SweepFailed',
-            note: error.message,
-          }
-        })
-      */
+            status: CryptoTransactionStatus.SweepFailed,
+            note:
+              'message' in (error as Error)
+                ? ((error as Error).message as string)
+                : 'Unknown error occurred while sending USDC',
+          },
+        });
+      }
+
       throw new Error('Failed to send USDC');
     }
 
@@ -233,16 +233,18 @@ export class EasyWallet {
       userOpHash: result.userOpHash,
     });
 
-    // TODO: write to database updated status
-    /*
-      dbWrite.cryptoTransaction.update({
-        where: { userId, key },
+    if (key) {
+      await dbWrite.cryptoTransaction.update({
+        where: { userId: this.userId, key },
         data: {
-          status: userOp.status === 'complete'? 'Complete' : 'SweepFailed',
-          note: userOp.status === 'complete' ? '' : 'Transaction failed'
-        }
-      })
-    */
+          status:
+            userOp.status === 'complete'
+              ? CryptoTransactionStatus.Complete
+              : CryptoTransactionStatus.SweepFailed,
+          note: userOp.status === 'complete' ? '' : 'Transaction failed',
+        },
+      });
+    }
 
     return userOp.status === 'complete';
   }

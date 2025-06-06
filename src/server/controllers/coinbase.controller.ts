@@ -3,11 +3,11 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   createBuzzOrder,
   createBuzzOrderOnramp,
-  getTransactionStatus,
+  getTransactionStatusByKey,
 } from '~/server/services/coinbase.service';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
 import type { CreateBuzzCharge } from '~/server/schema/coinbase.schema';
-import { GetByIdStringInput } from '~/server/schema/base.schema';
+import type { GetByIdStringInput } from '~/server/schema/base.schema';
 
 export const getStatus = async () => {
   return coinbaseCaller.isAPIHealthy();
@@ -54,8 +54,8 @@ export const getTransactionStatusHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: GetByIdStringInput;
 }) => {
-  return getTransactionStatus({
+  return getTransactionStatusByKey({
     userId: ctx.user.id,
-    transactionId: id,
+    key: id,
   });
 };

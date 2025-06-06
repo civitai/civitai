@@ -4,6 +4,7 @@ export type OnrampStatus =
   | 'ONRAMP_TRANSACTION_STATUS_SUCCESS'
   | 'ONRAMP_TRANSACTION_STATUS_IN_PROGRESS'
   | 'ONRAMP_TRANSACTION_STATUS_FAILED';
+
 export type OnrampPaymentMethod =
   | 'CARD'
   | 'ACH_BANK_ACCOUNT'
