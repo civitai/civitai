@@ -3,7 +3,6 @@ import { IconBrandPython, IconFileText, IconMarkdown, IconTxt, IconZip } from '@
 
 import type { ArticleGetById } from '~/server/services/article.service';
 import { formatKBytes } from '~/utils/number-helpers';
-import classes from './AttachmentCard.module.scss';
 
 const fileCosmetics = {
   txt: {
@@ -34,7 +33,7 @@ export function AttachmentCard({ id, name, sizeKB, url }: Props) {
 
   return (
     <Card
-      className={classes.attachment}
+      className="hover:bg-gray-0/5 dark:hover:bg-dark-4/5"
       radius={0}
       py="xs"
       component="a"

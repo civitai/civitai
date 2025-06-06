@@ -1,4 +1,3 @@
-import type { MantineTheme } from '@mantine/core';
 import {
   Accordion,
   Anchor,
@@ -674,7 +673,6 @@ export function ModelVersionDetails({
   return (
     <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      {/* TODO: Mantine7: check ref type issues */}
       <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
         <Stack>
           {model.mode !== ModelModifier.TakenDown && mobile && (

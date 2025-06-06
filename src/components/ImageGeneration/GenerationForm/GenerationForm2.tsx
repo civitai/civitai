@@ -682,7 +682,7 @@ export function GenerationFormContent() {
                         )}
 
                         {unstableResources.length > 0 && (
-                          <Card.Section>
+                          <Card.Section m={0}>
                             <Alert color="yellow" title="Unstable Resources" radius={0}>
                               <Text size="xs">
                                 The following resources are experiencing a high generation failure
@@ -897,15 +897,15 @@ export function GenerationFormContent() {
 
                         return (
                           <Paper
-                            className={clsx(classes.promptPaper, {
-                              [classes.noFillForm]: !showFillForm,
-                              [classes.fillForm]: showFillForm,
-                              [classes.hasError]: errors.prompt,
-                            })}
-                            //   '&:has(textarea:focus)': {
-                            // TODO: Mantine7 - Figure out how this'd play out now.
-                            //     ...theme.focusRingStyles.inputStyles(theme),
-                            //   },
+                            className={clsx(
+                              classes.promptPaper,
+                              {
+                                [classes.noFillForm]: !showFillForm,
+                                [classes.fillForm]: showFillForm,
+                                [classes.hasError]: errors.prompt,
+                              },
+                              'mantine-focus-auto'
+                            )}
                             withBorder
                           >
                             <InputPrompt

@@ -1,12 +1,5 @@
 import type { InputWrapperProps } from '@mantine/core';
-import {
-  Group,
-  Input,
-  LoadingOverlay,
-  Paper,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { Group, Input, LoadingOverlay, Paper, Text, Tooltip } from '@mantine/core';
 import type { DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
@@ -131,7 +124,6 @@ export function SimpleImageUpload({
           </Tooltip>
 
           <div
-            // TODO: Mantine7: Not sure if this will work :^)
             style={
               aspectRatio
                 ? ({

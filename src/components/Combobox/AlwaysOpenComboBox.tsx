@@ -3,6 +3,7 @@ import { Divider, Input, Loader, ScrollArea, Text } from '@mantine/core';
 import type { Key } from 'react';
 import React, { useState } from 'react';
 import type { ComboboxOption as ComboboxOptionProps } from '~/components/Combobox/combobox.types';
+import classes from './AlwaysOpenCombobox.module.scss';
 
 type Props<T extends Key, TOption extends ComboboxOptionProps> = {
   value?: T[];
@@ -68,12 +69,8 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
         <ScrollArea.Autosize
           mah={maxScrollHeight}
           type="always"
+          classNames={classes}
           offsetScrollbars
-          styles={{
-            // TODO: Mantine7: move this to css module
-            scrollbar: { '&[data-orientation="horizontal"]': { display: 'none' } },
-            viewport: { paddingBottom: 0 },
-          }}
         >
           {loading ? (
             <div className="flex justify-center p-3">

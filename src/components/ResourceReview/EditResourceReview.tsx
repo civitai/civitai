@@ -8,6 +8,7 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
+import classes from './EditResourceReview.module.scss';
 
 type EditResourceReviewProps = {
   id?: number | null;
@@ -176,24 +177,7 @@ export function EditResourceReview({
                     includeControls={['formatting', 'link']}
                     editorSize="sm"
                     placeholder={`What did you think of ${modelName ?? 'this resource'}?`}
-                    styles={{
-                      content: {
-                        minHeight: 50,
-                        maxHeight: 500,
-                        padding: 0,
-                        fontSize: 12,
-
-                        // TODO: Mantine7: move this into css module
-                        '.ProseMirror': {
-                          padding: `6px 10px`,
-                          minHeight: 22,
-                          cursor: 'text',
-                        },
-                        '.ProseMirror p.is-editor-empty:first-of-type::before': {
-                          fontSize: 12,
-                        },
-                      },
-                    }}
+                    classNames={{ content: classes.richTextEditorContent }}
                     hideToolbar
                     autoFocus
                   />

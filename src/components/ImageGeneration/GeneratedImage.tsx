@@ -526,7 +526,6 @@ export function GeneratedImageLightbox({
               backgroundColor: colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
             },
           }}
-          upsideDown
         />
       </div>
     </Modal>

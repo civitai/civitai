@@ -8,7 +8,6 @@ import { getDisplayName, titleCase } from '~/utils/string-helpers';
 export function GenerationDetails({
   params,
   label,
-  upsideDown,
   controlProps,
   ...descriptionTableProps
 }: Props) {
@@ -39,14 +38,6 @@ export function GenerationDetails({
           paddingLeft: theme.spacing.md,
           paddingRight: theme.spacing.md,
         },
-
-        chevron: upsideDown
-          ? {
-              transform: 'rotate(180deg)',
-              // TODO: Mantine7: Move this to css module
-              '&[data-rotate]': { transform: 'rotate(0deg)' },
-            }
-          : undefined,
       })}
     >
       <Accordion.Item value="details">
@@ -66,6 +57,5 @@ export function GenerationDetails({
 type Props = Omit<DescriptionTableProps, 'items'> & {
   label: string;
   params: Record<string, unknown>;
-  upsideDown?: boolean;
   controlProps?: AccordionControlProps;
 };
