@@ -232,6 +232,16 @@ export const serverSchema = z.object({
   COINBASE_API_URL: z.string().optional(),
   COINBASE_API_KEY: z.string().optional(),
   COINBASE_WEBHOOK_SECRET: z.string().optional(),
+
+  // Coinbase developer related:
+  CDP_APP_ID: z.string().optional(),
+  CDP_API_KEY_ID: z.string().optional(),
+  CDP_API_KEY_SECRET: z.string().optional(),
+  CDP_WALLET_SECRET: z.string().optional(),
+  CDP_NETWORK: z.string().optional(),
+  CDP_USDC_ADDRESS: z.string().optional(),
+  CDP_PAYMASTER_URL: z.string().optional(),
+  CDP_CIVITAI_ADDRESS: z.string().optional(),
 });
 
 /**

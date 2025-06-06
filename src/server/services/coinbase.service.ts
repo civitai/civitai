@@ -7,6 +7,7 @@ import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
 import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 import { grantBuzzPurchase } from '~/server/services/buzz.service';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
+import { getWalletForUser } from '~/server/coinbase/coinbase';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'coinbase-service', type: 'error', ...data }).catch();
@@ -39,6 +40,44 @@ export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number
   }
 
   return charge;
+};
+
+export const createBuzzOrderOnramp = async (input: CreateBuzzCharge & { userId: number }) => {
+  // const orderId = `${input.userId}-${input.buzzAmount}-${new Date().getTime()}`;
+  const redirectUrl = `${env.NEXTAUTH_URL}/payment/coinbase`;
+
+  const dollarAmount = new Decimal(input.unitAmount + COINBASE_FIXED_FEE).dividedBy(100).toNumber();
+  const wallet = await getWalletForUser(input.userId);
+  const onrampUrl = await wallet.getOnrampUrl({
+    value: dollarAmount,
+    redirectUrl,
+  });
+
+  if (!onrampUrl) {
+    throw new Error('Failed to create OnRamp URL');
+  }
+
+  return onrampUrl;
+};
+
+export const getTransactionStatus = async ({
+  userId,
+  transactionId,
+}: {
+  userId: number;
+  transactionId: string;
+}) => {
+  const wallet = await getWalletForUser(userId);
+  if (!wallet) {
+    throw new Error(`No wallet found for userId: ${userId}`);
+  }
+
+  const onrampStatus = await wallet.checkOnrampStatus(transactionId);
+  if (!onrampStatus) {
+    throw new Error(`Failed to retrieve OnRamp status for transactionId: ${transactionId}`);
+  }
+
+  return onrampStatus.status;
 };
 
 export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['event']['data']) => {

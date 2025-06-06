@@ -8,4 +8,8 @@ export const coinbaseRouter = router({
     .input(createBuzzChargeSchema)
     .use(isFlagProtected('coinbasePayments'))
     .mutation(createBuzzOrderHandler),
+  createBuzzOrderOnramp: protectedProcedure
+    .input(createBuzzChargeSchema)
+    .use(isFlagProtected('coinbaseOnramp'))
+    .mutation(createBuzzOrderHandler),
 });

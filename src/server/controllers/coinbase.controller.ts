@@ -1,8 +1,13 @@
-import { Context } from '~/server/createContext';
+import type { Context } from '~/server/createContext';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { createBuzzOrder } from '~/server/services/coinbase.service';
+import {
+  createBuzzOrder,
+  createBuzzOrderOnramp,
+  getTransactionStatus,
+} from '~/server/services/coinbase.service';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
-import { CreateBuzzCharge } from '~/server/schema/coinbase.schema';
+import type { CreateBuzzCharge } from '~/server/schema/coinbase.schema';
+import { GetByIdStringInput } from '~/server/schema/base.schema';
 
 export const getStatus = async () => {
   return coinbaseCaller.isAPIHealthy();
@@ -22,5 +27,35 @@ export const createBuzzOrderHandler = async ({
   return createBuzzOrder({
     ...input,
     userId: ctx.user.id,
+  });
+};
+
+export const createBuzzOrderOnrampHandler = async ({
+  input,
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: CreateBuzzCharge;
+}) => {
+  if (!ctx.user.email) {
+    throw throwAuthorizationError('Email is required to create a transaction');
+  }
+
+  return createBuzzOrderOnramp({
+    ...input,
+    userId: ctx.user.id,
+  });
+};
+
+export const getTransactionStatusHandler = async ({
+  ctx,
+  input: { id },
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: GetByIdStringInput;
+}) => {
+  return getTransactionStatus({
+    userId: ctx.user.id,
+    transactionId: id,
   });
 };
