@@ -382,7 +382,9 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               />
             </ContainerGrid2.Col>
           </ContainerGrid2>
-          <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+          {article.id !== 13632 && (
+            <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+          )}
         </Container>
       </SensitiveShield>
     </>
