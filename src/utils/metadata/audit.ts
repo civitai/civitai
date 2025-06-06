@@ -1,4 +1,9 @@
+import pluralize from 'pluralize';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
+import wordsExtreme from '~/utils/metadata/lists/mod_extremism.json';
+import wordsHate from '~/utils/metadata/lists/mod_hate.json';
+import wordsIllegal from '~/utils/metadata/lists/mod_illegal.json';
+import urlsCsam from '~/utils/metadata/lists/mod_urls_csam.json';
 import { normalizeText } from '~/utils/normalize-text';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import blockedNSFW from './lists/blocklist-nsfw.json';
@@ -526,7 +531,11 @@ export function cleanPrompt({
 }
 // #endregion [highlight]
 
-/*
+// - Moderation
+
+const badWords = [...wordsIllegal, ...wordsHate, ...wordsExtreme];
+const badURLs = [...urlsCsam];
+
 const wordReplace = (word: string) => {
   return word
     .replace(/i/g, '[i|l|1]')
@@ -535,9 +544,8 @@ const wordReplace = (word: string) => {
     .replace(/e/g, '[e|3]');
 };
 
-export const chatBlocklist = (blockedWords as [string, boolean][])
-  .map(([word, isUrl]) => {
-    if (isUrl) return [{ re: new RegExp(`.*${word}.*`, 'i'), word }];
+export const modWordBlocklist = badWords
+  .map((word) => {
     const modWord = wordReplace(word);
     const pluralWord = pluralize(word);
     const pluralModWord = wordReplace(pluralize(word));
@@ -547,4 +555,9 @@ export const chatBlocklist = (blockedWords as [string, boolean][])
     ];
   })
   .flat();
- */
+
+export const modURLBlocklist = badURLs
+  .map((url) => {
+    return [{ re: new RegExp(`.*${url}.*`, 'i'), word: url }];
+  })
+  .flat();

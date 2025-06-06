@@ -418,6 +418,9 @@ export const REDIS_SYS_KEYS = {
       ACOLYTE_FAILED: 'new-order:judgments:acolyte-failed',
     },
   },
+  MODERATION: {
+    CLAVATA: 'moderation:clavata',
+  },
 } as const;
 
 // Cached data

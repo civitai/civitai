@@ -3185,6 +3185,12 @@ enum EntityType {
   ModelVersion
   Model
   Collection
+  Comment
+  CommentV2
+  User
+  UserProfile
+  ResourceReview
+  ChatMessage
 }
 
 enum JobQueueType {
@@ -3193,6 +3199,7 @@ enum JobQueueType {
   UpdateNsfwLevel
   UpdateSearchIndex
   CleanIfEmpty
+  ModerationRequest
 }
 
 model JobQueue {
@@ -3590,19 +3597,27 @@ model NewOrderSmite {
   cleansedReason String?
 }
 
-enum ClavataModeration_EntityType {
-  Chat
-  Comment
-  Username
+// enum ModerationRequest_EntityType {
+//   Chat
+//   Comment
+//   Username
+// }
+
+enum ModerationRequest_ExternalType {
+  Clavata
 }
 
-model ClavataModeration {
-  id         Int                          @id @default(autoincrement())
-  externalId String
-  entityType ClavataModeration_EntityType
-  entityId   Int
-  tags       Json                         @default("[]")
-  metadata   Json                         @default("{}")
+model ModerationRequest {
+  id           Int                             @id @default(autoincrement())
+  externalId   String?
+  externalType ModerationRequest_ExternalType?
+  entityType   EntityType
+  entityId     Int
+  tags         Json                            @default("[]")
+  metadata     Json                            @default("{}")
+
+  @@unique([externalId, externalType])
+  @@unique([externalType, entityType, entityId])
 }
 
 /// @view

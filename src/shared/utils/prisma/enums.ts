@@ -684,6 +684,12 @@ export const EntityType = {
   ModelVersion: 'ModelVersion',
   Model: 'Model',
   Collection: 'Collection',
+  Comment: 'Comment',
+  CommentV2: 'CommentV2',
+  User: 'User',
+  UserProfile: 'UserProfile',
+  ResourceReview: 'ResourceReview',
+  ChatMessage: 'ChatMessage',
 } as const;
 
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
@@ -694,6 +700,7 @@ export const JobQueueType = {
   UpdateNsfwLevel: 'UpdateNsfwLevel',
   UpdateSearchIndex: 'UpdateSearchIndex',
   CleanIfEmpty: 'CleanIfEmpty',
+  ModerationRequest: 'ModerationRequest',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
@@ -776,6 +783,12 @@ export const NewOrderRankType = {
 } as const;
 
 export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];
+
+export const ModerationRequest_ExternalType = {
+  Clavata: 'Clavata',
+} as const;
+
+export type ModerationRequest_ExternalType = (typeof ModerationRequest_ExternalType)[keyof typeof ModerationRequest_ExternalType];
 
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',

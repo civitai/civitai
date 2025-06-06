@@ -1,5 +1,41 @@
+import Clavata, { type EvaluateRequest, StreamError } from '@clavata/sdk';
 import { env } from '~/env/server';
-import { ClavataStreamingResponse, v1CreateJobRequest, v1Outcome } from '~/types/clavata';
+
+export const clavataSDK = env.CLAVATA_TOKEN
+  ? new Clavata({ apiKey: env.CLAVATA_TOKEN, server: env.CLAVATA_ENDPOINT })
+  : undefined;
+
+export const clavataEvaluate = async function* (
+  request: EvaluateRequest,
+  confidenceThreshold = 0.5
+) {
+  if (!clavataSDK) throw new Error('Clavata SDK not initialized');
+
+  const stream = clavataSDK.evaluate(request);
+
+  for await (const item of stream) {
+    if (item instanceof StreamError) throw item;
+    console.log(item);
+
+    const { metadata, report, jobUuid, result, score, matches } = item;
+
+    const reports = report?.sectionReports;
+
+    const tags = reports
+      ?.map((r) => ({
+        tag: r.name,
+        confidence: Math.round((r.score ?? 0) * 100),
+        outcome: r.result,
+        message: r.message,
+      }))
+      .filter((t) => t.confidence > confidenceThreshold * 100)
+      .sort((a, b) => b.confidence - a.confidence);
+
+    // TODO other data?
+
+    yield { externalId: jobUuid, tags, result, metadata, score, matches };
+  }
+};
 
 // clavata-api-client.ts
 export interface ClavataApiClientOptions {
@@ -16,7 +52,7 @@ export interface ClavataApiClientOptions {
 export interface ClavataTag {
   tag: string;
   confidence: number; // 0-100
-  outcome?: v1Outcome;
+  outcome?: string;
 }
 
 export class ClavataApiClient {
@@ -48,70 +84,6 @@ export class ClavataApiClient {
         : await this.imageUrlToBase64(image, signal);
 
     return this.runJobWithBase64(base64, policyId, signal);
-  }
-
-  async runTextJobAsync(
-    text: string,
-    policyId?: string
-  ): Promise<{ externalId: string; tags: ReadonlyArray<ClavataTag> }> {
-    if (!text || !text.length) return { externalId: '', tags: [] };
-
-    const body: v1CreateJobRequest = {
-      contentData: [{ text }],
-      policyId: policyId ?? this.opts.policyId,
-      threshold: this.opts.confidenceThreshold,
-    };
-
-    const res = await this.fetchFn(`${this.opts.baseUrl}/v1/jobs/stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.opts.token}`,
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Clavata request failed (${res.status} ${res.statusText}): ${text}`);
-    }
-
-    const json = (await res.json()) as ClavataStreamingResponse;
-    console.log(json);
-
-    // TODO make sure this is right
-    if (json.error && json.error.code && json.error.code !== 0) {
-      throw new Error(
-        `Clavata request failed: ${json.error.code}|${json.error.message}|${JSON.stringify(
-          json.error.details
-        )}`
-      );
-    }
-
-    if (!json.result) {
-      throw new Error('Expected JSON with result');
-    }
-    console.log(json.result);
-
-    const externalId: string | undefined = json?.result?.jobUuid;
-    if (!externalId) {
-      throw new Error('Expected JSON with result.jobUuid');
-    }
-
-    const sectionReports = json.result.policyEvaluationReport?.sectionEvaluationReports ?? [];
-
-    const tags = sectionReports
-      .map((r) => ({
-        tag: r.name as string,
-        confidence: Math.round((r.reviewResult?.score ?? 0) * 100),
-        outcome: r.reviewResult?.outcome,
-      }))
-      .filter((t) => t.tag && t.confidence > this.opts.confidenceThreshold * 100)
-      .sort((a, b) => b.confidence - a.confidence);
-
-    // TODO other data?
-
-    return { externalId, tags };
   }
 
   /* ---------- private helpers ---------- */
