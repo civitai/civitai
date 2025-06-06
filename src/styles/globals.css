@@ -93,6 +93,10 @@ button, input, optgroup, select, textarea {
   gap: 8px;
 }
 
+.mantine-Badge-root {
+  flex-shrink: 0;
+}
+
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
   input:focus,

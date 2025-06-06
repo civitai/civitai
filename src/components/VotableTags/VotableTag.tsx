@@ -242,6 +242,7 @@ export function VotableTag({
           data-activity="tag-click:image"
           title={!isVoting ? `Score: ${score}` : undefined}
           style={{ zIndex: 10 }}
+          inherit
         >
           {getTagDisplayName(name)}
         </Text>

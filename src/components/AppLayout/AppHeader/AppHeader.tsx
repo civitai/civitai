@@ -56,7 +56,7 @@ export function AppHeader({
   return (
     <header
       // fixed={fixed} TODO: Mantine7
-      className={clsx('z-[199] border-b', {
+      className={clsx('z-[199] border-b border-b-gray-2 dark:border-b-dark-5', {
         ['border-green-8 border-b-[3px]']: features.isGreen,
         ['border-red-8 border-b-[3px]']: features.isRed,
       })}

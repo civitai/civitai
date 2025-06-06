@@ -130,6 +130,7 @@ export function QueueSnackbar() {
             ) : includeQueueLink ? (
               <Text
                 c="blue.4"
+                size="sm"
                 className="cursor-pointer"
                 onClick={() => generationPanel.setView('queue')}
               >

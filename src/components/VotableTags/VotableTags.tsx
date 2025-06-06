@@ -101,7 +101,7 @@ export function VotableTags({
               ? openSetBrowsingLevelModal({ imageId: id, nsfwLevel: nsfwLevel ?? NsfwLevel.XXX })
               : undefined
           }
-          sfwClassName="bg-blue-9"
+          // sfwClassName="bg-blue-9"
         />
       )}
       {canAdd && (
