@@ -30,7 +30,7 @@ export const resourceGenerationAvailability = createJob(
             SELECT
               arrayJoin(resourcesUsed) as modelVersionId,
               0 AS failed
-            FROM orchestration.textToImageJobs
+            FROM orchestration.jobs
             WHERE createdAt > current_date() - interval '24 hours'
           )
           GROUP BY modelVersionId
