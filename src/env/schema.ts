@@ -131,7 +131,6 @@ export const serverSchema = z.object({
 
   CLAVATA_ENDPOINT: z.string().url().optional(),
   CLAVATA_TOKEN: z.string().optional(),
-  CLAVATA_POLICY: z.string().optional(),
 
   TOKEN_LOGINS: commaDelimitedStringObject().optional(),
 

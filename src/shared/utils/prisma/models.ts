@@ -144,9 +144,9 @@ export type ChatMessageType = "Markdown" | "Image" | "Video" | "Audio" | "Embed"
 
 export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
-export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection";
+export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -165,6 +165,8 @@ export type ModerationRuleAction = "Approve" | "Block" | "Hold";
 export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incident";
 
 export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
+
+export type ModerationRequest_ExternalType = "Clavata";
 
 export type EntityMetric_EntityType_Type = "Image";
 
@@ -2713,6 +2715,16 @@ export interface NewOrderSmite {
   createdAt: Date;
   cleansedAt: Date | null;
   cleansedReason: string | null;
+}
+
+export interface ModerationRequest {
+  id: number;
+  externalId: string | null;
+  externalType: ModerationRequest_ExternalType | null;
+  entityType: EntityType;
+  entityId: number;
+  tags: JsonValue;
+  metadata: JsonValue;
 }
 
 export interface QuestionRank {
