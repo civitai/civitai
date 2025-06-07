@@ -739,11 +739,10 @@ async function updateImageScanJobs({
   return getHasRequiredScans(result.scanJobs?.scans);
 }
 
+const requiredScans = imageScanTypes
+  .map((type) => ImageScanTypeTagSourceMap.get(type))
+  .filter(isDefined);
 function getHasRequiredScans(scans: Record<string, TagSource> = {}) {
-  const requiredScans = imageScanTypes
-    .map((type) => ImageScanTypeTagSourceMap.get(type))
-    .filter(isDefined);
-
   return requiredScans.every((scan) => scan in scans);
 }
 
