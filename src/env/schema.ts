@@ -1,6 +1,5 @@
 // @ts-check
 import { z } from 'zod';
-import { ClavataPolicyKey, clavataPolicyKeys } from '~/server/common/constants';
 import { zc } from '~/utils/schema-helpers';
 import {
   commaDelimitedStringArray,
@@ -132,21 +131,6 @@ export const serverSchema = z.object({
 
   CLAVATA_ENDPOINT: z.string().url().optional(),
   CLAVATA_TOKEN: z.string().optional(),
-  CLAVATA_POLICIES: z
-    .preprocess((value) => {
-      if (typeof value === 'string') {
-        const obj: Partial<Record<ClavataPolicyKey, string>> = {};
-        value.split(',').forEach((entry) => {
-          const [key, val] = entry.split(':');
-          if (clavataPolicyKeys.includes(key as ClavataPolicyKey)) {
-            obj[key as ClavataPolicyKey] = val;
-          }
-        });
-        return obj;
-      }
-      return value;
-    }, z.record(z.enum(clavataPolicyKeys), z.string()))
-    .optional(),
 
   TOKEN_LOGINS: commaDelimitedStringObject().optional(),
 

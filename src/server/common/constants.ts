@@ -1386,6 +1386,3 @@ export type LiveFeatureFlags = {
 export const DEFAULT_LIVE_FEATURE_FLAGS = {
   buzzGiftCards: true,
 };
-
-export const clavataPolicyKeys = ['imageUpload', 'chat', 'comment', 'username'] as const;
-export type ClavataPolicyKey = (typeof clavataPolicyKeys)[number];

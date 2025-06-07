@@ -153,7 +153,7 @@ export const clavata =
     ? new ClavataApiClient(fetch, {
         baseUrl: env.CLAVATA_ENDPOINT,
         token: env.CLAVATA_TOKEN,
-        policyId: env.CLAVATA_POLICIES?.imageUpload,
+        policyId: env.CLAVATA_POLICY,
         confidenceThreshold: 0.5,
       })
     : undefined;

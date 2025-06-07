@@ -1,5 +1,5 @@
 import { StreamError } from '@clavata/sdk';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { Tracker } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { clavataEvaluate } from '~/server/integrations/clavata';
@@ -165,8 +165,14 @@ const runClavata = async ({
           },
         });
       } catch (error) {
-        logAx({ message: 'Error creating moderation request', data: { error } });
-      } finally {
+        logAx({
+          message: 'Error creating moderation request',
+          data: { error, type, id: item.metadata.id },
+        });
+        continue;
+      }
+
+      try {
         await tracker.moderationRequest({
           entityType: type,
           entityId: Number(item.metadata.id),
@@ -175,6 +181,25 @@ const runClavata = async ({
           date: new Date(),
           // valid: item.result === '', // TODO
         });
+      } catch (error) {
+        logAx({
+          message: 'Error tracking moderation request',
+          data: { error, type, id: item.metadata.id },
+        });
+        continue;
+      }
+
+      try {
+        // TODO batching these would probably be better but this is fine for now
+        await dbWrite.jobQueue.deleteMany({
+          where: {
+            type: JobQueueType.ModerationRequest,
+            entityType: type,
+            entityId: Number(item.metadata.id),
+          },
+        });
+      } catch (error) {
+        logAx({ message: 'Error deleting job queue', data: { error, type, id: item.metadata.id } });
       }
     }
   } catch (error) {
@@ -311,40 +336,6 @@ async function modQueue() {
     prev[table].push(curr.entityId);
     return prev;
   }, {} as { [key in EntityType]?: number[] });
-
-  // let typ: EntityType;
-  // let ids: number[] | undefined;
-  //
-  // // - Comment
-  // typ = 'Comment';
-  // log(`Starting ${jobName}-${typ}`);
-  // ids = aggedRows[typ];
-  // if (ids && ids.length > 0) {
-  //   try {
-  //     const select = queues[typ];
-  //     const data = await dbRead.comment.findMany({
-  //       where: { id: { in: ids } },
-  //       select: { id: true, ...select },
-  //     });
-  //
-  //     for (const col of Object.keys(select) as (keyof typeof select)[]) {
-  //       const badData = data.filter((d) => hasIssue(d[col]));
-  //       if (badData.length > 0) {
-  //         await runClavata({
-  //           policyId: policyMap[typ]!,
-  //           type: typ,
-  //           data: badData.map((d) => ({ id: d.id, value: d[col]! })),
-  //         });
-  //       }
-  //     }
-  //
-  //     log(`Finished ${jobName}-${typ}, processed ${data.length} items`);
-  //   } catch (error) {
-  //     logAx({ message: `Error handling ${typ}`, data: { error } });
-  //   }
-  // } else {
-  //   log(`Finished ${jobName}-${typ}, no items`);
-  // }
 
   async function processEntityType<T extends keyof typeof queues>(entityType: T) {
     log(`Starting ${jobName}-${entityType}`);
