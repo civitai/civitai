@@ -15,7 +15,7 @@ export const clavataEvaluate = async function* (
 
   for await (const item of stream) {
     if (item instanceof StreamError) throw item;
-    console.log(item);
+    // console.log(JSON.stringify(item, null, 4));
 
     const { metadata, report, jobUuid, result, score, matches } = item;
 

@@ -91,3 +91,51 @@ export const generateRandomName = (count: number) => {
 
   return randomNames.join(' ');
 };
+
+/**
+ * Deletes a random percentage of rows from the JobQueue table
+ * @param percentage - The percentage of rows to delete (0-100)
+ * @returns The number of rows deleted
+ */
+export const deleteRandomJobQueueRows = async (percentage: number) => {
+  if (percentage < 0 || percentage > 100) {
+    throw new Error('Percentage must be between 0 and 100');
+  }
+
+  const totalRows = await pgDbWrite.query('SELECT COUNT(*) as cnt FROM "JobQueue"');
+  if (totalRows.rowCount === 0) {
+    console.log('No rows found in JobQueue table');
+    return 0;
+  }
+
+  try {
+    const query = `
+      WITH random_ordered AS (
+        SELECT 
+          type, 
+          "entityType", 
+          "entityId",
+          ROW_NUMBER() OVER (ORDER BY RANDOM()) as rn,
+          COUNT(*) OVER () as total_count
+        FROM "JobQueue"
+      )
+      DELETE FROM "JobQueue"
+      USING random_ordered
+      WHERE "JobQueue".type = random_ordered.type
+        AND "JobQueue"."entityType" = random_ordered."entityType"
+        AND "JobQueue"."entityId" = random_ordered."entityId"
+        AND random_ordered.rn <= (SELECT MAX(total_count) * $1 / 100.0 FROM random_ordered)
+      RETURNING *;
+    `;
+
+    const result = await pgDbWrite.query(query, [percentage]);
+    console.log(
+      `Deleted ${result.rowCount} / ${totalRows.rows[0].cnt} rows from JobQueue (${percentage}%)`
+    );
+    return result.rowCount;
+  } catch (error) {
+    const e = error as Error;
+    console.error('Error deleting random JobQueue rows:', e.message);
+    throw e;
+  }
+};

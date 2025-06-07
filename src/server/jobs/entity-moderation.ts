@@ -15,7 +15,7 @@ import { createLogger } from '~/utils/logging';
 import { modURLBlocklist, modWordBlocklist } from '~/utils/metadata/audit';
 import { createJob, getJobDate } from './job';
 
-const jobName = 'clavata-moderation';
+const jobName = 'entity-moderation';
 
 const log = createLogger(jobName, 'blue');
 const logAx = (data: MixedObject) => {
@@ -25,15 +25,19 @@ const logAx = (data: MixedObject) => {
 
 const tracker = new Tracker();
 
+// TODO pull wordlists out of code, put into somewhere else like redis
+// console.log({ modURLBlocklist, modWordBlocklist });
+
 function hasIssue(text: string | null) {
   // ahocorasick, but it's not good
 
-  if (!text) return false;
+  if (!text || text.trim().length === 0) return false;
+  const lower = text.trim().toLowerCase();
 
   // can return w.word if we want all of them
-  const hasBadWord = modWordBlocklist.some((w) => w.re.test(text));
+  const hasBadWord = modWordBlocklist.some((w) => w.re.test(lower));
   if (hasBadWord) return true;
-  const hasBadUrl = modURLBlocklist.some((w) => w.re.test(text));
+  const hasBadUrl = modURLBlocklist.some((w) => w.re.test(lower));
   if (hasBadUrl) return true;
 
   return false;
@@ -120,54 +124,95 @@ async function getPolicies() {
   return policies ? (JSON.parse(policies) as QueueValues) : ({} as QueueValues);
 }
 
+const deleteFromJobQueue = async (entityType: EntityType, ids: number[]) => {
+  try {
+    await dbWrite.jobQueue.deleteMany({
+      where: {
+        type: JobQueueType.ModerationRequest,
+        entityType,
+        entityId: { in: ids },
+      },
+    });
+  } catch (error) {
+    logAx({ message: 'Error deleting job queue', data: { error, entityType, ids } });
+  }
+};
+
+interface ContentItem {
+  id: number;
+  userId: number;
+  value: string;
+}
+
+type MetadataType = {
+  id: string;
+  type: keyof QueueValues;
+  userId: string;
+};
+
 const runClavata = async ({
   policyId,
   type,
   data,
+  deleteJob = true,
 }: {
   policyId: string;
   type: keyof QueueValues;
-  data: { id: number; userId: number; value: string }[];
+  data: ContentItem[];
+  deleteJob?: boolean;
 }) => {
   log(`Clavata processing ${data.length} ${type}s`);
 
   try {
     const stream = clavataEvaluate({
       policyId,
-      contentData: data.map(({ id, value, userId }) => ({
-        metadata: { id: id.toString(), type, userId: userId.toString() },
-        content: { value, $case: 'text' },
-        contentType: 'text',
-      })),
+      contentData: data.map(({ id, value, userId }) => {
+        const metadata: MetadataType = { id: id.toString(), type, userId: userId.toString() };
+        return {
+          metadata,
+          content: { value, $case: 'text' },
+          contentType: 'text',
+        };
+      }),
     });
 
     for await (const item of stream) {
       console.log(item);
 
-      // if (item.result === '') {
-      //  continue;
-      // }
+      if (item.result === 'FALSE') {
+        continue;
+      }
 
-      if (!item.metadata?.id) {
+      const _metadata = item.metadata as MetadataType | undefined;
+      if (!_metadata || !_metadata.id) {
         logAx({ message: 'No id found', data: { item } });
         continue;
       }
 
+      const metadata = {
+        ..._metadata,
+        id: Number(_metadata.id),
+        userId: Number(_metadata.userId),
+      };
+
+      const { id: metadataId, type: metadataType, ...restMetadata } = metadata;
+
+      // TODO try catch doesnt work here?
       try {
         await dbWrite.moderationRequest.create({
           data: {
             externalId: item.externalId,
             externalType: ModerationRequest_ExternalType.Clavata,
             entityType: type,
-            entityId: Number(item.metadata.id),
+            entityId: metadata.id,
             tags: item.tags,
-            // metadata
+            metadata: restMetadata,
           },
         });
       } catch (error) {
         logAx({
           message: 'Error creating moderation request',
-          data: { error, type, id: item.metadata.id },
+          data: { error, type, id: metadata.id },
         });
         continue;
       }
@@ -175,31 +220,23 @@ const runClavata = async ({
       try {
         await tracker.moderationRequest({
           entityType: type,
-          entityId: Number(item.metadata.id),
-          userId: Number(item.metadata.userId),
-          rules: item.tags?.map((t) => t.tag) ?? [], // TODO
+          entityId: metadata.id,
+          userId: metadata.userId,
+          rules: item.tags?.map((t) => t.tag) ?? [],
           date: new Date(),
           // valid: item.result === '', // TODO
         });
       } catch (error) {
         logAx({
           message: 'Error tracking moderation request',
-          data: { error, type, id: item.metadata.id },
+          data: { error, type, id: metadata.id },
         });
         continue;
       }
 
-      try {
+      if (deleteJob) {
         // TODO batching these would probably be better but this is fine for now
-        await dbWrite.jobQueue.deleteMany({
-          where: {
-            type: JobQueueType.ModerationRequest,
-            entityType: type,
-            entityId: Number(item.metadata.id),
-          },
-        });
-      } catch (error) {
-        logAx({ message: 'Error deleting job queue', data: { error, type, id: item.metadata.id } });
+        await deleteFromJobQueue(type, [metadata.id]);
       }
     }
   } catch (error) {
@@ -239,27 +276,26 @@ async function modChat() {
   // special case, not using JobQueue
 
   try {
-    const data = await dbRead.chatMessage
-      .findMany({
-        select: {
-          id: true,
-          userId: true,
-          chatId: true,
-          content: true,
-        },
-        where: {
-          createdAt: { gt: lastRun },
-          userId: { not: -1 },
-          contentType: ChatMessageType.Markdown,
-        },
-        orderBy: {
-          createdAt: 'asc',
-        },
-      })
-      .catch((error) => {
-        logAx({ message: 'Error getting chat messages', data: { error } });
-        return [];
-      });
+    const data = await dbRead.chatMessage.findMany({
+      select: {
+        id: true,
+        userId: true,
+        chatId: true,
+        content: true,
+      },
+      where: {
+        createdAt: { gt: lastRun },
+        userId: { not: -1 },
+        contentType: ChatMessageType.Markdown,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+    // .catch((error) => {
+    //   logAx({ message: 'Error getting chat messages', data: { error } });
+    //   return [];
+    // });
 
     console.log(data);
 
@@ -282,6 +318,7 @@ async function modChat() {
           userId: -1, // TODO how to get actual userId?
           value,
         })),
+        deleteJob: false,
       });
     }
 
@@ -313,6 +350,8 @@ async function modQueue() {
     return;
   }
 
+  const validQueues = Object.keys(policyMap) as EntityType[];
+
   // TODO do we want to refetch everything? add a status col to jobqueue? add metadata field?
   //  batch / paginate here?
   const queueRows = await dbRead.jobQueue.findMany({
@@ -322,20 +361,22 @@ async function modQueue() {
     },
     where: {
       type: JobQueueType.ModerationRequest,
-      entityType: { in: Object.keys(policyMap) as EntityType[] },
-      createdAt: { gt: lastRun }, // TODO maybe
+      entityType: { in: validQueues },
+      // createdAt: { gt: lastRun }, // TODO maybe not?
     },
     orderBy: {
       createdAt: 'asc',
     },
   });
 
-  const aggedRows: { [key in EntityType]?: number[] } = queueRows.reduce((prev, curr) => {
+  type EntityIdMap = { [key in EntityType]?: number[] };
+
+  const aggedRows: EntityIdMap = queueRows.reduce((prev, curr) => {
     const table = curr.entityType;
     if (!prev[table]) prev[table] = [];
     prev[table].push(curr.entityId);
     return prev;
-  }, {} as { [key in EntityType]?: number[] });
+  }, {} as EntityIdMap);
 
   async function processEntityType<T extends keyof typeof queues>(entityType: T) {
     log(`Starting ${jobName}-${entityType}`);
@@ -354,15 +395,32 @@ async function modQueue() {
         return;
       }
 
-      // TODO fix the dumb typing
-      const data: { [entityIdKey: string]: number } & { [key in keyof typeof fields]: string }[] =
+      const data: ({ [entityIdKey: string]: number } & { [key in keyof typeof fields]: string })[] =
         await (selector as any).findMany({
           where: { [idKey]: { in: ids } },
           select: { [idKey]: true, [userIdKey]: true, ...fields },
         });
 
       for (const col of Object.keys(fields) as (keyof typeof fields)[]) {
-        const badData = data.filter((d) => hasIssue(d[col]));
+        const { goodData, badData } = data.reduce(
+          (acc, d) => {
+            if (hasIssue(d[col])) {
+              acc.badData.push(d);
+            } else {
+              acc.goodData.push(d);
+            }
+            return acc;
+          },
+          { goodData: [], badData: [] } as { goodData: typeof data; badData: typeof data }
+        );
+
+        if (goodData.length > 0) {
+          await deleteFromJobQueue(
+            entityType,
+            goodData.map((d) => d[idKey] as unknown as number)
+          );
+        }
+
         if (badData.length > 0) {
           await runClavata({
             policyId: policyMap[entityType]!,
@@ -382,7 +440,7 @@ async function modQueue() {
     }
   }
 
-  for (const entityType of Object.keys(queues) as (keyof typeof queues)[]) {
+  for (const entityType of validQueues) {
     await processEntityType(entityType);
   }
 
@@ -395,4 +453,4 @@ async function modQueue() {
 const modChatJob = createJob(`${jobName}-chat`, '*/5 * * * *', modChat);
 const modQueueJob = createJob(`${jobName}-queues`, '*/5 * * * *', modQueue);
 
-export const clavataModerationJobs = [modChatJob, modQueueJob];
+export const entityModerationJobs = [modChatJob, modQueueJob];

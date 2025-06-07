@@ -3,7 +3,8 @@ import dayjs from 'dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
 import { clickhouse } from '~/server/clickhouse/client';
-import { BaseModelType, constants } from '~/server/common/constants';
+import type { BaseModelType } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { notifDbWrite } from '~/server/db/notifDb';
@@ -35,12 +36,14 @@ import {
   TrainingStatus,
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
-import { checkLocalDb, generateRandomName, insertRows } from './utils';
+import { checkLocalDb, deleteRandomJobQueueRows, generateRandomName, insertRows } from './utils';
 // import { fetchBlob } from '~/utils/file-utils';
 
 // Usage: npx tsx ./scripts/local-dev/gen_seed.ts --rows=1000
 // OR make bootstrap-db ROWS=1000
 const numRows = Number(process.argv.find((arg) => arg.startsWith('--rows='))?.split('=')[1]) || 500;
+const truncQueue =
+  process.argv.find((arg) => arg.startsWith('--trunc='))?.split('=')[1] !== 'false';
 
 faker.seed(1337);
 const randw = faker.helpers.weightedArrayElement;
@@ -3266,6 +3269,10 @@ const genRows = async (truncate = true) => {
 
   const changelogs = genChangelogs(Math.round(numRows / 4));
   await insertRows('Changelog', changelogs);
+
+  if (truncQueue) {
+    await deleteRandomJobQueueRows(99);
+  }
 };
 
 /**
@@ -3461,6 +3468,9 @@ const genRedisSystemFeatures = async () => {
       status: 'disabled',
     })
   );
+
+  // TODO fill these in
+  await sysRedis.set(REDIS_SYS_KEYS.MODERATION.CLAVATA, JSON.stringify({}));
 
   console.log(`\t-> ✔️ Inserted redis data`);
 };

@@ -129,6 +129,7 @@
     "circular-dependency-plugin": "^5.2.2",
     "cloudflare": "^2.9.1",
     "clsx": "^2.1.1",
+    "compromise": "^14.14.4",
     "cookies-next": "^2.1.1",
     "dayjs": "^1.11.12",
     "decimal.js": "^10.5.0",

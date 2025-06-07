@@ -30,10 +30,11 @@ burn:
 		&& docker-compose down --volumes
 
 ROWS ?= 1000
+TRUNC_QUEUE ?= true
 # Initialize the database and seed it with data
 .PHONY: bootstrap-db
 bootstrap-db:
-	npx cross-env NODE_ENV=development tsx ./scripts/local-dev/gen_seed.ts --rows=$(ROWS)
+	npx cross-env NODE_ENV=development tsx ./scripts/local-dev/gen_seed.ts --rows=$(ROWS) --trunc=$(TRUNC_QUEUE)
 
 # Run new migrations
 .PHONY: run-migrations

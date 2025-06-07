@@ -1,12 +1,11 @@
 ALTER TYPE "JobQueueType" ADD VALUE 'ModerationRequest';
 
-ALTER TYPE "EntityType"
-  ADD VALUE 'Comment',
-  ADD VALUE 'CommentV2',
-  ADD VALUE 'User',
-  ADD VALUE 'UserProfile',
-  ADD VALUE 'ResourceReview',
-  ADD VALUE 'ChatMessage';
+ALTER TYPE "EntityType" ADD VALUE 'Comment';
+ALTER TYPE "EntityType" ADD VALUE 'CommentV2';
+ALTER TYPE "EntityType" ADD VALUE 'User';
+ALTER TYPE "EntityType" ADD VALUE 'UserProfile';
+ALTER TYPE "EntityType" ADD VALUE 'ResourceReview';
+ALTER TYPE "EntityType" ADD VALUE 'ChatMessage';
 
 CREATE TYPE "ModerationRequest_ExternalType" AS ENUM (
   'Clavata'
@@ -35,7 +34,8 @@ DECLARE
   entityType text := TG_ARGV[0]::text;
 BEGIN
   IF entityType IS NULL THEN
-    RAISE EXCEPTION 'entityType is required';
+    RAISE NOTICE 'entityType is required but is null. SKipping.';
+    RETURN NEW;
   END IF;
 
   IF entityType = 'UserProfile' THEN
@@ -45,10 +45,11 @@ BEGIN
   end if;
 
   IF id IS NULL THEN
-    RAISE EXCEPTION 'ID is required';
+    RAISE NOTICE 'ID is required but is null. Skipping.';
+    RETURN NEW;
   END IF;
 
-  INSERT INTO "JobQueue" (type, "entityType", "entityId") VALUES ('ModerationRequest', entityType, id) ON CONFLICT DO NOTHING;
+  INSERT INTO "JobQueue" (type, "entityType", "entityId") VALUES ('ModerationRequest', entityType::"EntityType", id) ON CONFLICT DO NOTHING;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

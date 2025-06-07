@@ -1,4 +1,4 @@
-import pluralize from 'pluralize';
+import nlp from 'compromise';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import wordsExtreme from '~/utils/metadata/lists/mod_extremism.json';
 import wordsHate from '~/utils/metadata/lists/mod_hate.json';
@@ -541,20 +541,46 @@ const wordReplace = (word: string) => {
     .replace(/i/g, '[i|l|1]')
     .replace(/o/g, '[o|0]')
     .replace(/s/g, '[s|z]')
-    .replace(/e/g, '[e|3]');
+    .replace(/e/g, '[e|3]')
+    .replace(/a/g, '[a|@]');
 };
 
-export const modWordBlocklist = badWords
-  .map((word) => {
-    const modWord = wordReplace(word);
-    const pluralWord = pluralize(word);
-    const pluralModWord = wordReplace(pluralize(word));
+export function adjustModWordBlocklist(word: string) {
+  const doc = nlp(word); // this mutates apparently
+  // TODO handle sentences?
+
+  if (doc.nouns().length > 0) {
+    const plural = nlp(word).nouns().toPlural().text();
     return [
-      { re: new RegExp(`\\b${modWord}\\b`, 'i'), word },
-      { re: new RegExp(`\\b${pluralModWord}\\b`, 'i'), word: pluralWord },
+      { re: new RegExp(`\\b${wordReplace(word)}\\b`, 'i'), word },
+      { re: new RegExp(`\\b${wordReplace(plural)}\\b`, 'i'), word: plural },
     ];
-  })
-  .flat();
+  }
+
+  if (doc.verbs().length > 0) {
+    const past = nlp(word).verbs().toPastTense().text();
+    const present = nlp(word).verbs().toPresentTense().text();
+    // const future = nlp(word).verbs().toFutureTense().text();
+    const gerund = nlp(word).verbs().toGerund().text();
+    // @ts-ignore
+    const participle = nlp(word).verbs().toPastParticiple().text() as string; // this actually exists but is missing from ts definition in current release
+    // const actorForm = (word + 'er');
+
+    return [
+      { re: new RegExp(`\\b${wordReplace(word)}\\b`, 'i'), word },
+      { re: new RegExp(`\\b${wordReplace(past)}\\b`, 'i'), word: past },
+      { re: new RegExp(`\\b${wordReplace(present)}\\b`, 'i'), word: present },
+      // { re: new RegExp(`\\b${wordReplace(future)}\\b`, 'i'), word: future },
+      { re: new RegExp(`\\b${wordReplace(gerund)}\\b`, 'i'), word: gerund },
+      { re: new RegExp(`\\b${wordReplace(participle)}\\b`, 'i'), word: participle },
+      // { re: new RegExp(`\\b${wordReplace(actorForm)}\\b`, 'i'), word: actorForm },
+    ];
+  }
+
+  return [{ re: new RegExp(`\\b${wordReplace(word)}\\b`, 'i'), word }];
+}
+
+export const modWordBlocklist = badWords.map((word) => adjustModWordBlocklist(word)).flat();
 
 export const modURLBlocklist = badURLs
   .map((url) => {

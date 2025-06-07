@@ -26,7 +26,7 @@ import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 import { dummyJob } from '~/server/jobs/dummy-job';
-import { clavataModerationJobs } from '~/server/jobs/entity-moderation';
+import { entityModerationJobs } from '~/server/jobs/entity-moderation';
 import {
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
@@ -142,7 +142,7 @@ export const jobs: Job[] = [
   ...newOrderJobs,
   updateModelVersionNsfwLevelsJob,
   deliverAnnualSubscriptionBuzz,
-  ...clavataModerationJobs,
+  ...entityModerationJobs,
 ];
 
 const log = createLogger('jobs', 'green');
