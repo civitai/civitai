@@ -549,6 +549,7 @@ export class Tracker {
     entityId: number;
     userId: number;
     rules: string[];
+    value: string;
     date: Date;
     valid?: boolean;
   }) {

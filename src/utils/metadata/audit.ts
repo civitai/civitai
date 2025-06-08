@@ -1,9 +1,8 @@
 import nlp from 'compromise';
+import { logToAxiom } from '~/server/logging/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import wordsExtreme from '~/utils/metadata/lists/mod_extremism.json';
-import wordsHate from '~/utils/metadata/lists/mod_hate.json';
-import wordsIllegal from '~/utils/metadata/lists/mod_illegal.json';
-import urlsCsam from '~/utils/metadata/lists/mod_urls_csam.json';
+import { fromJson } from '~/utils/json-helpers';
 import { normalizeText } from '~/utils/normalize-text';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import blockedNSFW from './lists/blocklist-nsfw.json';
@@ -533,9 +532,6 @@ export function cleanPrompt({
 
 // - Moderation
 
-const badWords = [...wordsIllegal, ...wordsHate, ...wordsExtreme];
-const badURLs = [...urlsCsam];
-
 const wordReplace = (word: string) => {
   return word
     .replace(/i/g, '[i|l|1]')
@@ -580,10 +576,60 @@ export function adjustModWordBlocklist(word: string) {
   return [{ re: new RegExp(`\\b${wordReplace(word)}\\b`, 'i'), word }];
 }
 
-export const modWordBlocklist = badWords.map((word) => adjustModWordBlocklist(word)).flat();
+export type ModWordBlocklist = AsyncReturnType<typeof getModWordBlocklist>;
 
-export const modURLBlocklist = badURLs
-  .map((url) => {
-    return [{ re: new RegExp(`.*${url}.*`, 'i'), word: url }];
-  })
-  .flat();
+export async function getModWordBlocklist() {
+  const wordlists =
+    (await sysRedis
+      .hGet(REDIS_SYS_KEYS.ENTITY_MODERATION.BASE, REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.WORDLISTS)
+      .then((data) => (data ? fromJson<string[]>(data) : ([] as string[])))
+      .catch(() => [] as string[])) ?? ([] as string[]);
+
+  const blocklist = [] as ReturnType<typeof adjustModWordBlocklist>[];
+  for (const wordlist of wordlists) {
+    const words = await sysRedis.packed.hGet<string[]>(
+      REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.WORDS,
+      wordlist
+    );
+    if (words) {
+      for (const word of words) {
+        blocklist.push(adjustModWordBlocklist(word));
+      }
+    } else {
+      logToAxiom({
+        name: 'wordlists',
+        type: 'warning',
+        message: `wordlist ${wordlist} not found`,
+      }).catch();
+    }
+  }
+  return blocklist.flat();
+}
+
+export async function getModURLBlocklist() {
+  const urllists =
+    (await sysRedis
+      .hGet(REDIS_SYS_KEYS.ENTITY_MODERATION.BASE, REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.URLLISTS)
+      .then((data) => (data ? fromJson<string[]>(data) : ([] as string[])))
+      .catch(() => [] as string[])) ?? ([] as string[]);
+
+  const blocklist = [] as ReturnType<typeof adjustModWordBlocklist>[];
+  for (const urllist of urllists) {
+    const urls = await sysRedis.packed.hGet<string[]>(
+      REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.URLS,
+      urllist
+    );
+    if (urls) {
+      for (const url of urls) {
+        blocklist.push([{ re: new RegExp(`.*${url}.*`, 'i'), word: url }]);
+      }
+    } else {
+      logToAxiom({
+        name: 'wordlists',
+        type: 'warning',
+        message: `urllist ${urllist} not found`,
+      }).catch();
+    }
+  }
+  return blocklist.flat();
+}

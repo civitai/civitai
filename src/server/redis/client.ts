@@ -419,8 +419,37 @@ export const REDIS_SYS_KEYS = {
       ACOLYTE_FAILED: 'new-order:judgments:acolyte-failed',
     },
   },
-  MODERATION: {
-    CLAVATA: 'moderation:clavata',
+  ENTITY_MODERATION: {
+    // hset
+    BASE: 'system:entity-moderation',
+    KEYS: {
+      /*
+        Use: Specify a default policy and an optional override for each entity.
+        Structure: json ({"default": string, "overrides": { EntityType?: string } })
+       */
+      CLAVATA_POLICIES: 'clavata-policies',
+      /*
+        Use: Disable certain entities from running.
+        Structure: json ({ EntityType?: false })
+       */
+      ENTITIES: 'entities',
+      /*
+        Use: Specify which wordlists to use.
+        Structure: json (string[])
+       */
+      WORDLISTS: 'wordlists',
+      /*
+        Use: Specify which urllists to use.
+        Structure: json (string[])
+       */
+      URLLISTS: 'urllists',
+    },
+    WORDLISTS: {
+      // hset, dynamic keys with packed string[]
+      WORDS: 'packed:system:entity-moderation:words',
+      // hset, dynamic keys with packed string[]
+      URLS: 'packed:system:entity-moderation:urls',
+    },
   },
 } as const;
 

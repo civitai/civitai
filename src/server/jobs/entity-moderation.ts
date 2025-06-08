@@ -12,10 +12,14 @@ import {
   ModerationRequest_ExternalType,
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
-import { modURLBlocklist, modWordBlocklist } from '~/utils/metadata/audit';
+import type { ModWordBlocklist } from '~/utils/metadata/audit';
+import { getModURLBlocklist, getModWordBlocklist } from '~/utils/metadata/audit';
 import { createJob, getJobDate } from './job';
 
 const jobName = 'entity-moderation';
+
+// http://localhost:3000/api/webhooks/run-jobs?token=letsgethookie&run=entity-moderation-queues
+// http://localhost:3000/api/webhooks/run-jobs?token=letsgethookie&run=entity-moderation-chat
 
 const log = createLogger(jobName, 'blue');
 const logAx = (data: MixedObject) => {
@@ -25,10 +29,11 @@ const logAx = (data: MixedObject) => {
 
 const tracker = new Tracker();
 
-// TODO pull wordlists out of code, put into somewhere else like redis
-// console.log({ modURLBlocklist, modWordBlocklist });
-
-function hasIssue(text: string | null) {
+function hasIssue(
+  text: string | null,
+  modWordBlocklist: ModWordBlocklist,
+  modURLBlocklist: ModWordBlocklist
+) {
   // ahocorasick, but it's not good
 
   if (!text || text.trim().length === 0) return false;
@@ -61,6 +66,14 @@ type EntityQueueConfig<T extends Uncapitalize<Prisma.ModelName> = Uncapitalize<P
 type QueuesConfig = {
   [K in EntityType]?: EntityQueueConfig;
 };
+
+/*
+Adding a new entry:
+  - create a trigger or otherwise populate JobQueue
+  - add the type to EntityType enum
+  - add the fields below
+  - optionally update policy in redis config
+*/
 
 const queues: QueuesConfig = {
   // const queues = {
@@ -118,10 +131,31 @@ const special = {
   },
 };
 type QueueValues = { [K in keyof typeof queues | keyof typeof special]?: string };
+type RedisPolicyType = {
+  [K in keyof QueueValues | 'default']?: string;
+};
+type RedisDisabledType = {
+  [K in keyof QueueValues]?: boolean;
+};
 
 async function getPolicies() {
-  const policies = await sysRedis.get(REDIS_SYS_KEYS.MODERATION.CLAVATA);
-  return policies ? (JSON.parse(policies) as QueueValues) : ({} as QueueValues);
+  const policies = await sysRedis.hGet(
+    REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+    REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.CLAVATA_POLICIES
+  );
+  return policies ? (JSON.parse(policies) as RedisPolicyType) : ({} as RedisPolicyType);
+}
+
+async function getDisabledEntities() {
+  const policies = await sysRedis.hGet(
+    REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+    REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES
+  );
+  return policies ? (JSON.parse(policies) as RedisDisabledType) : ({} as RedisDisabledType);
+}
+
+function getPolicyFor(entity: EntityType, policies: RedisPolicyType) {
+  return policies[entity] || policies.default;
 }
 
 const deleteFromJobQueue = async (entityType: EntityType, ids: number[]) => {
@@ -148,6 +182,7 @@ type MetadataType = {
   id: string;
   type: keyof QueueValues;
   userId: string;
+  value: string;
 };
 
 const runClavata = async ({
@@ -167,7 +202,12 @@ const runClavata = async ({
     const stream = clavataEvaluate({
       policyId,
       contentData: data.map(({ id, value, userId }) => {
-        const metadata: MetadataType = { id: id.toString(), type, userId: userId.toString() };
+        const metadata: MetadataType = {
+          id: id.toString(),
+          type,
+          userId: userId.toString(),
+          value,
+        };
         return {
           metadata,
           content: { value, $case: 'text' },
@@ -195,6 +235,7 @@ const runClavata = async ({
         userId: Number(_metadata.userId),
       };
 
+      // TODO could pull out value here
       const { id: metadataId, type: metadataType, ...restMetadata } = metadata;
 
       // TODO try catch doesnt work here?
@@ -217,14 +258,16 @@ const runClavata = async ({
         continue;
       }
 
+      // TODO maybe hash offensive items
+      // TODO actually create this clickhouse table
       try {
         await tracker.moderationRequest({
           entityType: type,
           entityId: metadata.id,
           userId: metadata.userId,
           rules: item.tags?.map((t) => t.tag) ?? [],
+          value: metadata.value,
           date: new Date(),
-          // valid: item.result === '', // TODO
         });
       } catch (error) {
         logAx({
@@ -262,82 +305,96 @@ const runClavata = async ({
 
 //
 
-async function modChat() {
-  const [lastRun, setLastRun] = await getJobDate(`${jobName}-chatMessage`);
-  log(`Starting ${jobName}-chatMessage`);
+async function runModChat(lastRun: Date) {
+  const disallowed = await getDisabledEntities();
+  if (disallowed.ChatMessage === false) {
+    log('Skipping "chatMessage"');
+    return 0;
+  }
 
   const policies = await getPolicies();
-  const policyId = policies.ChatMessage;
+  const policyId = getPolicyFor('ChatMessage', policies);
   if (!policyId) {
     logAx({ message: 'No policy id found for "chatMessage"' });
-    return;
+    throw new Error('No policy id found for "chatMessage"');
   }
 
   // special case, not using JobQueue
 
-  try {
-    const data = await dbRead.chatMessage.findMany({
-      select: {
-        id: true,
-        userId: true,
-        chatId: true,
-        content: true,
-      },
-      where: {
-        createdAt: { gt: lastRun },
-        userId: { not: -1 },
-        contentType: ChatMessageType.Markdown,
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-    });
-    // .catch((error) => {
-    //   logAx({ message: 'Error getting chat messages', data: { error } });
-    //   return [];
-    // });
+  const data = await dbRead.chatMessage.findMany({
+    select: {
+      id: true,
+      userId: true,
+      chatId: true,
+      content: true,
+    },
+    where: {
+      createdAt: { gt: lastRun },
+      userId: { not: -1 },
+      contentType: ChatMessageType.Markdown,
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+  });
+  // .catch((error) => {
+  //   logAx({ message: 'Error getting chat messages', data: { error } });
+  //   return [];
+  // });
 
-    console.log(data);
+  console.log(data);
 
-    const badMessages = data.filter((d) => hasIssue(d.content));
-
-    if (badMessages.length > 0) {
-      const badMessagesByChat = badMessages.reduce((acc, cur) => {
-        const key = `${cur.chatId}`;
-        if (!acc[key]) acc[key] = '';
-        acc[key] += `${cur.userId}: ${cur.content}\n`;
-        return acc;
-      }, {} as Record<string, string>);
-
-      // note: id is actually chatId
-      await runClavata({
-        policyId,
-        type: 'ChatMessage',
-        data: Object.entries(badMessagesByChat).map(([key, value]) => ({
-          id: Number(key),
-          userId: -1, // TODO how to get actual userId?
-          value,
-        })),
-        deleteJob: false,
-      });
-    }
-
-    log(`Finished ${jobName}-chatMessage, processed ${data.length} items`);
-    await setLastRun();
-  } catch (error) {
-    logAx({ message: 'Error handling chatMessage', data: { error } });
+  if (!data || data.length === 0) {
+    log('No chat messages found');
+    return 0;
   }
+
+  const modWordBlocklist = await getModWordBlocklist();
+  const modURLBlocklist = await getModURLBlocklist();
+  console.log({ modURLBlocklist, modWordBlocklist });
+  if (!modWordBlocklist.length && !modURLBlocklist.length) {
+    logAx({ message: 'No blocklists found' });
+    throw new Error('No blocklists found');
+  }
+
+  const badMessages = data.filter((d) => hasIssue(d.content, modWordBlocklist, modURLBlocklist));
+
+  if (badMessages.length > 0) {
+    const badMessagesByChat = badMessages.reduce((acc, cur) => {
+      const key = `${cur.chatId}`;
+      if (!acc[key]) acc[key] = '';
+      acc[key] += `${cur.userId}: ${cur.content}\n`;
+      return acc;
+    }, {} as Record<string, string>);
+
+    // note: id is actually chatId
+    await runClavata({
+      policyId,
+      type: 'ChatMessage',
+      data: Object.entries(badMessagesByChat).map(([key, value]) => ({
+        id: Number(key),
+        userId: -1, // TODO how to get actual userId?
+        value,
+      })),
+      deleteJob: false,
+    });
+  }
+
+  return data.length;
 }
 
-async function modQueue() {
-  const [lastRun, setLastRun] = await getJobDate(`${jobName}-queues`);
-  log(`Starting ${jobName}-queues`);
-
+async function runModQueue() {
   const policies = await getPolicies();
+  const disallowed = await getDisabledEntities();
 
   const policyMap: { -readonly [key in keyof typeof queues]?: string } = {};
   for (const key of Object.keys(queues) as (keyof typeof queues)[]) {
-    const policy = policies[key];
+    if (disallowed[key] === false) {
+      log(`Skipping "${key}"`);
+      continue;
+    }
+
+    const policy = getPolicyFor(key, policies);
     if (policy) {
       policyMap[key] = policy;
     } else {
@@ -348,6 +405,14 @@ async function modQueue() {
   if (Object.keys(policyMap).length === 0) {
     logAx({ message: 'No policies found' });
     return;
+  }
+
+  const modWordBlocklist = await getModWordBlocklist();
+  const modURLBlocklist = await getModURLBlocklist();
+  console.log({ modURLBlocklist, modWordBlocklist });
+  if (!modWordBlocklist.length && !modURLBlocklist.length) {
+    logAx({ message: 'No blocklists found' });
+    throw new Error('No blocklists found');
   }
 
   const validQueues = Object.keys(policyMap) as EntityType[];
@@ -404,7 +469,7 @@ async function modQueue() {
       for (const col of Object.keys(fields) as (keyof typeof fields)[]) {
         const { goodData, badData } = data.reduce(
           (acc, d) => {
-            if (hasIssue(d[col])) {
+            if (hasIssue(d[col], modWordBlocklist, modURLBlocklist)) {
               acc.badData.push(d);
             } else {
               acc.goodData.push(d);
@@ -443,9 +508,30 @@ async function modQueue() {
   for (const entityType of validQueues) {
     await processEntityType(entityType);
   }
+}
 
-  log(`Finished ${jobName}-queues`);
-  await setLastRun();
+async function modChat() {
+  const [lastRun, setLastRun] = await getJobDate(`${jobName}-chatMessage`);
+  log(`Starting ${jobName}-chatMessage`);
+  try {
+    const handled = await runModChat(lastRun);
+    log(`Finished ${jobName}-chatMessage, processed ${handled} items`);
+    await setLastRun();
+  } catch (error) {
+    logAx({ message: 'Error handling chatMessage', data: { error } });
+  }
+}
+
+async function modQueue() {
+  const [, setLastRun] = await getJobDate(`${jobName}-queues`);
+  log(`Starting ${jobName}-queues`);
+  try {
+    await runModQueue();
+    log(`Finished ${jobName}-queues`);
+    await setLastRun();
+  } catch (error) {
+    logAx({ message: 'Error handling queues', data: { error } });
+  }
 }
 
 //

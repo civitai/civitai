@@ -3470,7 +3470,47 @@ const genRedisSystemFeatures = async () => {
   );
 
   // TODO fill these in
-  await sysRedis.set(REDIS_SYS_KEYS.MODERATION.CLAVATA, JSON.stringify({}));
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+    REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.CLAVATA_POLICIES,
+    JSON.stringify({})
+  );
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+    REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES,
+    JSON.stringify({
+      Comment: false,
+      CommentV2: true,
+      User: false,
+      UserProfile: false,
+      Model: false,
+      Post: false,
+      ResourceReview: false,
+      Article: false,
+      Bounty: false,
+      BountyEntry: false,
+      Collection: false,
+    })
+  );
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+    REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.WORDLISTS,
+    JSON.stringify(['illegal', 'hate', 'extremism'])
+  );
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+    REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.URLLISTS,
+    JSON.stringify(['csam'])
+  );
+
+  await sysRedis.packed.hSet(REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.WORDS, 'illegal', [
+    'child',
+  ]);
+  await sysRedis.packed.hSet(REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.WORDS, 'hate', ['hate']);
+  await sysRedis.packed.hSet(REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.WORDS, 'extremism', [
+    'kill',
+  ]);
+  await sysRedis.packed.hSet(REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.URLS, 'csam', ['kids.com']);
 
   console.log(`\t-> ✔️ Inserted redis data`);
 };
