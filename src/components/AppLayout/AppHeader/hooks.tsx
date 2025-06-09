@@ -162,7 +162,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconSword,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Knights of New',
-          newUntil: new Date('2025-05-18'),
+          newUntil: new Date('2025-06-15'),
         },
         {
           href: '/product/link',
