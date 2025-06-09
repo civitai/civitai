@@ -212,14 +212,15 @@ async function handleSuccess(args: BodyProps) {
     const { data, reviewKey, tagsForReview = [], flags } = await auditImageScanResults({ image });
 
     await dbWrite.image.update({ where: { id }, data });
-    if (reviewKey) {
-      await Promise.all([
-        createImageForReview({ imageId: id, reason: reviewKey }),
-        createImageTagsForReview({ imageId: id, tagIds: tagsForReview.map((x) => x.id) }),
-      ]);
-    }
 
     if (data.ingestion === 'Scanned') {
+      if (reviewKey) {
+        await Promise.all([
+          createImageForReview({ imageId: id, reason: reviewKey }),
+          createImageTagsForReview({ imageId: id, tagIds: tagsForReview.map((x) => x.id) }),
+        ]);
+      }
+
       await tagIdsForImagesCache.refresh(id);
 
       const isProfilePicture = image.metadata?.profilePicture === true;
