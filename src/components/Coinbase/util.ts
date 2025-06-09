@@ -59,10 +59,12 @@ export const useGetTransactionStatus = (key?: string | null) => {
     {
       enabled: !!key,
       // Every 5s.
-      // refetchInterval: 5000, // Refetch every 10 seconds
-      // refetchOnWindowFocus: false,
+      refetchInterval: 5000, // Refetch every 10 seconds
+      refetchOnWindowFocus: false,
     }
   );
+
+  console.log(!!status && status === CryptoTransactionStatus.Complete);
 
   return {
     isLoading,

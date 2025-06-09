@@ -11,6 +11,7 @@ import {
   Tooltip,
   Badge,
   Code,
+  Loader,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
@@ -46,7 +47,7 @@ export const getServerSideProps = createServerSideProps({
 export default function CoinbaseSuccess() {
   const router = useRouter();
   const { orderId, key } = router.query as { orderId?: string | null; key?: string | null };
-  const { isLoading, isFailed, isComplete } = useGetTransactionStatus(key);
+  const { isLoading, isFailed, isSuccess } = useGetTransactionStatus(key);
 
   return (
     <>
@@ -80,16 +81,20 @@ export default function CoinbaseSuccess() {
             through. Your buzz will be available in your account shortly after that.
           </Text>
           {key && (
-            <Alert>
+            <Alert color={isFailed ? 'red' : isSuccess ? 'green' : 'blue'} radius="sm">
               <Stack>
-                {!isFailed && !isComplete ? (
-                  <Text>
-                    Your transaction is being processed. Please wait a few minutes for it to
-                    complete.
-                  </Text>
-                ) : isComplete ? (
-                  <Text>
-                    Your transaction has been successfully completed! You can now use your buzz.
+                {!isFailed && !isSuccess ? (
+                  <Stack align="center">
+                    <Text className="text-center">
+                      Your transaction is being processed. Please wait a few minutes for it to
+                      complete.
+                    </Text>
+                    <Loader />
+                  </Stack>
+                ) : isSuccess ? (
+                  <Text className="text-center">
+                    Your transaction has been successfully completed! You should have recevied your
+                    Buzz!
                   </Text>
                 ) : (
                   <>

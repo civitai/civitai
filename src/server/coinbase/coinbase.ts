@@ -38,19 +38,44 @@ export async function getWalletForUser(userId: number) {
   let smartAccount: EvmSmartAccount | undefined;
 
   try {
+    const user = await dbWrite.cryptoWallet.findFirst({
+      where: {
+        userId,
+      },
+    });
+
+    // if (user) {
+    //   account = await cdp.evm.getAccount({
+    //     address: user.wallet as `0x${string}`,
+    //   });
+
+    //   smartAccount = await cdp.evm.getSmartAccount({
+    //     address: user.smartAccount as `0x${string}`,
+    //     owner: account,
+    //   });
+    // } else {
     account = await cdp.evm.getAccount({
       name: accountName,
     });
+
     const { accounts } = await cdp.evm.listSmartAccounts({
       name: accountName,
     });
+
+    const userSmartAccounts = accounts.filter((a) => a.owners.some((o) => o === account?.address));
+
+    console.log(
+      `Found ${userSmartAccounts.length} smart accounts for user ${userId} - Total accounts: ${accounts.length}`
+    );
+
     smartAccount =
-      accounts.length > 0
+      userSmartAccounts.length > 0
         ? await cdp.evm.getSmartAccount({
             owner: account,
-            address: accounts[0].address,
+            address: userSmartAccounts[0].address,
           })
         : undefined;
+    // }
   } catch (e) {
     // Account does not exist, create it
   }
@@ -227,6 +252,8 @@ export class EasyWallet {
       }
     } catch (error) {
       console.error('Error sending USDC:', error);
+      const balance = await this.getUSDCBalance();
+      console.log(`Current USDC balance: ${balance}, expected: ${value}`);
 
       if (key) {
         await dbWrite.cryptoTransaction.update({
