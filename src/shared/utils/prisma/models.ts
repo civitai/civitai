@@ -1116,7 +1116,21 @@ export interface Image {
   flags?: ImageFlag[];
   ratingRequests?: ImageRatingRequest[];
   tagsNew?: TagsOnImageNew[];
-  ImageResourceNew?: ImageResourceNew[];
+  imageResourceNew?: ImageResourceNew[];
+  imagesForReview?: ImageForReview[];
+  imageTagsForReview?: ImageTagForReview[];
+}
+
+export interface ImageForReview {
+  imageId: number;
+  image?: Image;
+  reason: string;
+}
+
+export interface ImageTagForReview {
+  imageId: number;
+  image?: Image;
+  tagId: number;
 }
 
 export interface ImageFlag {
