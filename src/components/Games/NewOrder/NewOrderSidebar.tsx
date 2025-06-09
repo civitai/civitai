@@ -1,4 +1,4 @@
-import { Group, Navbar, Popover, ThemeIcon } from '@mantine/core';
+import { Alert, Group, Navbar, Popover, ThemeIcon } from '@mantine/core';
 import {
   IconBubbleText,
   IconChevronDown,
@@ -187,7 +187,15 @@ export function NewOrderSidebar() {
           </Navbar.Section>
         </Navbar>
       )}
-      <NewOrderRulesModal opened={modalOpened} onClose={() => setModalOpened(false)} />
+      <NewOrderRulesModal
+        opened={modalOpened}
+        onClose={() => setModalOpened(false)}
+        footer={
+          <Alert color="blue" title="Pro Tip">
+            See an image you like? Check out the Judgement History and give the creator a follow.
+          </Alert>
+        }
+      />
     </>
   );
 }
