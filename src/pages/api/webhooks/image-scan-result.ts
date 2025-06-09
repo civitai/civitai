@@ -33,7 +33,10 @@ import {
 import { createNotification } from '~/server/services/notification.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
-import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import {
+  insertTagsOnImageNew,
+  upsertTagsOnImageNew,
+} from '~/server/services/tagsOnImageNew.service';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
@@ -216,8 +219,10 @@ async function handleSuccess(args: BodyProps) {
 
     await dbWrite.image.update({ where: { id }, data });
     if (reviewKey) {
-      await createImageForReview({ imageId: id, reason: reviewKey });
-      await createImageTagsForReview({ imageId: id, tagIds: tagsForReview.map((x) => x.id) });
+      await Promise.all([
+        createImageForReview({ imageId: id, reason: reviewKey }),
+        createImageTagsForReview({ imageId: id, tagIds: tagsForReview.map((x) => x.id) }),
+      ]);
     }
 
     if (data.ingestion === 'Scanned') {
@@ -300,8 +305,8 @@ async function logScanResultError({
     type: 'error',
     imageId: id,
     message,
-    stack: error.stack,
-    cause: error.cause,
+    stack: error?.stack,
+    cause: error?.cause,
   });
 }
 
@@ -513,7 +518,15 @@ async function getTagsFromIncomingTags({
   tags: BodyProps['tags'];
   source: BodyProps['source'];
 }) {
-  if (!incomingTags) return;
+  if (!incomingTags) {
+    await logToAxiom({
+      type: 'image-scan-result',
+      message: 'No tags found',
+      imageId: id,
+      source,
+    });
+    return;
+  }
 
   const image = await getImage(id);
   // Preprocess tags
@@ -626,6 +639,22 @@ async function getTagsFromIncomingTags({
     }
   }
 
+  if (tags.length > 0) {
+    const uniqTags = uniqBy(tags, (x) => x.id);
+    const toInsert = uniqTags
+      .filter((x) => x.id)
+      .map((x) => ({
+        imageId: id,
+        tagId: x.id!,
+        source: x.source ?? source,
+        automated: true,
+        confidence: x.confidence,
+        disabled: shouldIgnore(x.tag, x.source ?? source),
+      }));
+    const fn = source === TagSource.Clavata ? upsertTagsOnImageNew : insertTagsOnImageNew;
+    await fn(toInsert);
+  }
+
   return { image, tags, hasBlockedTag, blockedTags };
 }
 
@@ -722,9 +751,11 @@ async function updateImageScanJobs({
   nsfwLevel?: NsfwLevel;
   blockedFor?: string;
 }) {
-  const result = await dbWrite.$queryRawUnsafe<{
-    scanJobs: { scans?: Record<string, TagSource> };
-  }>(`
+  const result = await dbWrite.$queryRawUnsafe<
+    {
+      scanJobs: { scans?: Record<string, TagSource> };
+    }[]
+  >(`
       UPDATE "Image" SET
       ${pHash ? `"pHash" = ${pHash},` : ''}
       ${ingestion ? `"ingestion" = '${ingestion}',` : ''}
@@ -736,7 +767,7 @@ async function updateImageScanJobs({
       RETURNING "scanJobs";
     `);
 
-  return getHasRequiredScans(result.scanJobs?.scans);
+  return getHasRequiredScans(result[0]?.scanJobs?.scans);
 }
 
 const requiredScans = imageScanTypes
@@ -772,38 +803,7 @@ async function processScanResult({
     }
     case TagSource.WD14:
     case TagSource.Clavata: {
-      const response = await getTagsFromIncomingTags({ id, source, tags: incomingTags });
-      if (!response) {
-        await logToAxiom({
-          type: 'image-scan-result',
-          message: 'No tags found',
-          imageId: id,
-          source,
-        });
-        return await updateImageScanJobs({ id, source });
-      }
-      const { tags } = response;
-      if (tags.length > 0) {
-        const uniqTags = uniqBy(tags, (x) => x.id);
-        const toInsert = uniqTags
-          .filter((x) => x.id)
-          .map((x) => ({
-            imageId: id,
-            tagId: x.id!,
-            source: x.source ?? source,
-            automated: true,
-            confidence: x.confidence,
-            disabled: shouldIgnore(x.tag, x.source ?? source),
-          }));
-        await insertTagsOnImageNew(toInsert);
-      } else {
-        await logToAxiom({
-          type: 'image-scan-result',
-          message: 'No tags found',
-          imageId: id,
-          source,
-        });
-      }
+      await getTagsFromIncomingTags({ id, source, tags: incomingTags });
 
       // Add to scanJobs and update aiRating
       let aiRating: NsfwLevel | undefined;

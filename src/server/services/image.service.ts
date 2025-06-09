@@ -89,6 +89,10 @@ import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
+import {
+  deleteImagTagsForReviewByImageIds,
+  deleteImageForReviewMultiple,
+} from '~/server/services/image-review.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -411,6 +415,8 @@ export const moderateImages = async ({
 
     await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   }
+  await Promise.all([deleteImageForReviewMultiple(ids), deleteImagTagsForReviewByImageIds(ids)]);
+
   return null;
 };
 
