@@ -216,7 +216,7 @@ async function handleSuccess(args: BodyProps) {
     if (data.ingestion === 'Scanned') {
       if (reviewKey) {
         await Promise.all([
-          createImageForReview({ imageId: id, reason: reviewKey }),
+          // createImageForReview({ imageId: id, reason: reviewKey }),
           createImageTagsForReview({ imageId: id, tagIds: tagsForReview.map((x) => x.id) }),
         ]);
       }
@@ -978,7 +978,6 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   if (!image.nsfwLevelLocked) data.nsfwLevel = nsfwLevel;
   if (flags.poi) data.poi = true;
   if (flags.minor) data.minor = true;
-  if (reviewKey) data.needsReview = reviewKey;
 
   const validAiGeneration = isValidAIGeneration({
     ...image,
@@ -1003,6 +1002,9 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   }
 
   if (data.ingestion === ImageIngestionStatus.Scanned) {
+    // only set "needsReview" if the scan is successful
+    if (reviewKey) data.needsReview = reviewKey;
+
     const createdAtTime = new Date(image.createdAt).getTime();
     const now = new Date();
     const oneWeekAgo = decreaseDate(now, 7, 'days').getTime();
