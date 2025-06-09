@@ -148,7 +148,7 @@ const insertClickhouseRows = async (table: string, data: any[][]) => {
 const truncateRows = async () => {
   console.log('Truncating tables');
   await pgDbWrite.query(
-    `TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew", "EntityMetric", "JobQueue", "KeyValue", "ImageRank", "ModelVersionRank", "UserRank", "TagRank", "ArticleRank", "CollectionRank", "Changelog" RESTART IDENTITY CASCADE`
+    `TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew", "EntityMetric", "JobQueue", "KeyValue", "ImageRank", "ModelVersionRank", "UserRank", "TagRank", "ArticleRank", "CollectionRank", "Changelog", "Report" RESTART IDENTITY CASCADE`
   );
 };
 
@@ -3473,12 +3473,15 @@ const genRedisSystemFeatures = async () => {
   await sysRedis.hSet(
     REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
     REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.CLAVATA_POLICIES,
-    JSON.stringify({})
+    JSON.stringify({
+      default: '10fa5ce5-7a96-40ef-abf6-f5329ea85c6c',
+    })
   );
   await sysRedis.hSet(
     REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
     REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES,
     JSON.stringify({
+      Chat: true,
       Comment: false,
       CommentV2: true,
       User: false,
@@ -3491,6 +3494,11 @@ const genRedisSystemFeatures = async () => {
       BountyEntry: false,
       Collection: false,
     })
+  );
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+    REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.RUN_WORDLISTS,
+    JSON.stringify(false)
   );
   await sysRedis.hSet(
     REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,

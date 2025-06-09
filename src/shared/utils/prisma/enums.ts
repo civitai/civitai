@@ -785,12 +785,6 @@ export const NewOrderRankType = {
 
 export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];
 
-export const ModerationRequest_ExternalType = {
-  Clavata: 'Clavata',
-} as const;
-
-export type ModerationRequest_ExternalType = (typeof ModerationRequest_ExternalType)[keyof typeof ModerationRequest_ExternalType];
-
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;

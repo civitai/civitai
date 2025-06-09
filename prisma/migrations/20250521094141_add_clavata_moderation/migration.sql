@@ -9,23 +9,18 @@ ALTER TYPE "EntityType" ADD VALUE 'ChatMessage';
 
 ALTER TYPE "ReportReason" ADD VALUE 'Automated';
 
--- CREATE TYPE "ModerationRequest_ExternalType" AS ENUM (
---   'Clavata'
--- );
+CREATE TABLE "ReportAutomated" (
+  "id" SERIAL NOT NULL,
+  "reportId" INTEGER NOT NULL UNIQUE,
+  "metadata" JSONB NOT NULL DEFAULT '{}'::jsonb,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
--- CREATE TABLE "ModerationRequest" (
---   "id" serial NOT NULL,
---   "externalId" text,
---   "externalType" "ModerationRequest_ExternalType",
---   "entityType" "EntityType" NOT NULL,
---   "entityId" int NOT NULL,
---   "tags" jsonb NOT NULL DEFAULT '[]'::jsonb,
---   "metadata" jsonb NOT NULL DEFAULT '{}'::jsonb,
---
---   CONSTRAINT "ModerationRequest_pkey" PRIMARY KEY ("id"),
---   CONSTRAINT "ModerationRequest_uniq_externalId_externalType" UNIQUE NULLS NOT DISTINCT ("externalId", "externalType"),
---   CONSTRAINT "ModerationRequest_uniq_externalType_entityType_entityId" UNIQUE NULLS NOT DISTINCT ("externalType", "entityType", "entityId")
--- );
+  CONSTRAINT "ReportAutomated_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "ReportAutomated_reportId_fkey" FOREIGN KEY ("reportId") REFERENCES "Report"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE INDEX "ReportAutomated_createdAt_idx" ON "ReportAutomated"("createdAt");
+
 ---
 
 CREATE OR REPLACE FUNCTION create_job_queue_moderation()

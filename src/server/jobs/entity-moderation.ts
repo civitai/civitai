@@ -1,6 +1,7 @@
 import { StreamError } from '@clavata/sdk';
 import type { Prisma } from '@prisma/client';
 import nlp from 'compromise';
+import dayjs from 'dayjs';
 import { Tracker } from '~/server/clickhouse/client';
 import { ExternalModerationType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -133,14 +134,44 @@ async function getModURLBlocklist() {
   return blocklist.flat();
 }
 
+async function getBlocklists() {
+  const useBlocklist =
+    (await sysRedis
+      .hGet(
+        REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+        REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.RUN_WORDLISTS
+      )
+      .then((data) => (data ? (JSON.parse(data) as boolean) : false))
+      .catch(() => false)) ?? false;
+
+  if (useBlocklist) {
+    log('Using blocklists');
+    const modWordBlocklist = await getModWordBlocklist();
+    const modURLBlocklist = await getModURLBlocklist();
+    if (!modWordBlocklist.length && !modURLBlocklist.length) {
+      logAx({ message: 'No blocklists found' });
+      throw new Error('No blocklists found');
+    }
+    return { use: true, modWordBlocklist, modURLBlocklist };
+  } else {
+    log('Skipping blocklists');
+    return {
+      use: false,
+      modWordBlocklist: [] as ModWordBlocklist,
+      modURLBlocklist: [] as ModWordBlocklist,
+    };
+  }
+}
+
 function hasIssue(
   text: string | null,
   modWordBlocklist: ModWordBlocklist,
-  modURLBlocklist: ModWordBlocklist
+  modURLBlocklist: ModWordBlocklist,
+  useBlocklist: boolean
 ) {
-  // ahocorasick, but it's not good
-
   if (!text || text.trim().length === 0) return false;
+  if (!useBlocklist) return true; // scan everything
+
   const lower = text.trim().toLowerCase();
 
   // can return w.word if we want all of them
@@ -325,36 +356,25 @@ const runClavata = async ({
     for await (const item of stream) {
       console.log(item);
 
-      if (item.result === 'FALSE') {
-        continue;
-      }
-
       const _metadata = item.metadata as MetadataType | undefined;
       if (!_metadata || !_metadata.id) {
         logAx({ message: 'No id found', data: { item } });
         continue;
       }
-
       const metadata = {
         ..._metadata,
         id: Number(_metadata.id),
         userId: Number(_metadata.userId),
       };
 
+      if (item.result === 'FALSE') {
+        await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
+        continue;
+      }
+
       // TODO try catch doesnt work here?
       try {
-        // await dbWrite.moderationRequest.create({
-        //   data: {
-        //     externalId: item.externalId,
-        //     externalType: ModerationRequest_ExternalType.Clavata,
-        //     entityType: type,
-        //     entityId: metadata.id,
-        //     tags: item.tags,
-        //     metadata: restMetadata,
-        //   },
-        // });
-
-        await createReport({
+        const report = await createReport({
           type: ReportEntity[type === 'UserProfile' ? 'User' : type],
           id: metadata.id,
           userId: -1,
@@ -364,9 +384,25 @@ const runClavata = async ({
             externalId: item.externalId,
             externalType: ExternalModerationType.Clavata,
             entityId: metadata.id,
-            tags: item.tags ?? [],
+            // tags: item.tags ?? [],
+            tags: item.tags?.map((t) => t.tag) ?? [],
             userId: metadata.userId,
-            value: metadata.value,
+            // value: metadata.value, // value is too heavy to store here
+          },
+        });
+
+        if (!report) {
+          logAx({ message: 'Error creating report', data: { type, id: metadata.id } });
+          continue;
+        }
+
+        await dbWrite.reportAutomated.create({
+          data: {
+            reportId: report.id,
+            metadata: {
+              tags: item.tags ?? [],
+              value: metadata.value,
+            },
           },
         });
       } catch (error) {
@@ -377,15 +413,13 @@ const runClavata = async ({
         continue;
       }
 
-      // TODO maybe hash offensive items
-      // TODO actually create this clickhouse table
       try {
         await tracker.moderationRequest({
           entityType: type,
           entityId: metadata.id,
           userId: metadata.userId,
           rules: item.tags?.map((t) => t.tag) ?? [],
-          value: metadata.value,
+          // value: metadata.value,
           date: new Date(),
         });
       } catch (error) {
@@ -393,7 +427,7 @@ const runClavata = async ({
           message: 'Error tracking moderation request',
           data: { error, type, id: metadata.id },
         });
-        continue;
+        // continue; // we have enough logging, can proceed
       }
 
       if (deleteJob) {
@@ -468,15 +502,11 @@ async function runModChat(lastRun: Date) {
     return 0;
   }
 
-  const modWordBlocklist = await getModWordBlocklist();
-  const modURLBlocklist = await getModURLBlocklist();
-  console.log({ modURLBlocklist, modWordBlocklist });
-  if (!modWordBlocklist.length && !modURLBlocklist.length) {
-    logAx({ message: 'No blocklists found' });
-    throw new Error('No blocklists found');
-  }
+  const { use, modWordBlocklist, modURLBlocklist } = await getBlocklists();
 
-  const badMessages = data.filter((d) => hasIssue(d.content, modWordBlocklist, modURLBlocklist));
+  const badMessages = data.filter((d) =>
+    hasIssue(d.content, modWordBlocklist, modURLBlocklist, use)
+  );
 
   if (badMessages.length > 0) {
     const badMessagesByChat = badMessages.reduce((acc, cur) => {
@@ -486,13 +516,12 @@ async function runModChat(lastRun: Date) {
       return acc;
     }, {} as Record<string, string>);
 
-    // note: id is actually chatId
     await runClavata({
       policyId,
       type: 'Chat',
       data: Object.entries(badMessagesByChat).map(([key, value]) => ({
         id: Number(key),
-        userId: -1, // TODO how to get actual userId?
+        userId: -1, // we are parsing multiple chats at once, so we can't know who is responsible
         value,
       })),
       deleteJob: false,
@@ -526,13 +555,7 @@ async function runModQueue() {
     return;
   }
 
-  const modWordBlocklist = await getModWordBlocklist();
-  const modURLBlocklist = await getModURLBlocklist();
-  console.log({ modURLBlocklist, modWordBlocklist });
-  if (!modWordBlocklist.length && !modURLBlocklist.length) {
-    logAx({ message: 'No blocklists found' });
-    throw new Error('No blocklists found');
-  }
+  const { use, modWordBlocklist, modURLBlocklist } = await getBlocklists();
 
   const validQueues = Object.keys(policyMap) as QueueKeys[];
 
@@ -546,7 +569,7 @@ async function runModQueue() {
     where: {
       type: JobQueueType.ModerationRequest,
       entityType: { in: validQueues },
-      // createdAt: { gt: lastRun }, // TODO maybe not?
+      // createdAt: { gt: lastRun },
     },
     orderBy: {
       createdAt: 'asc',
@@ -593,7 +616,7 @@ async function runModQueue() {
       for (const col of Object.keys(fields) as (keyof typeof fields)[]) {
         const { goodData, badData } = data.reduce(
           (acc, d) => {
-            if (hasIssue(d[col], modWordBlocklist, modURLBlocklist)) {
+            if (hasIssue(d[col], modWordBlocklist, modURLBlocklist, use)) {
               acc.badData.push(d);
             } else {
               acc.goodData.push(d);
@@ -658,9 +681,31 @@ async function modQueue() {
   }
 }
 
+async function clearAutomatedReports() {
+  const [, setLastRun] = await getJobDate(`${jobName}-clear-automated`);
+  log(`Starting ${jobName}-clear-automated`);
+  try {
+    await dbWrite.reportAutomated.deleteMany({
+      where: {
+        createdAt: { lt: dayjs().subtract(14, 'day').toDate() },
+      },
+    });
+
+    log(`Finished ${jobName}-clear-automated`);
+    await setLastRun();
+  } catch (error) {
+    logAx({ message: 'Error deleting old reports', data: { error } });
+  }
+}
+
 //
 
 const modChatJob = createJob(`${jobName}-chat`, '*/5 * * * *', modChat);
 const modQueueJob = createJob(`${jobName}-queues`, '*/5 * * * *', modQueue);
+const clearAutomatedJob = createJob(
+  `${jobName}-clear-automated`,
+  '0 6 * * *',
+  clearAutomatedReports
+);
 
-export const entityModerationJobs = [modChatJob, modQueueJob];
+export const entityModerationJobs = [modChatJob, modQueueJob, clearAutomatedJob];

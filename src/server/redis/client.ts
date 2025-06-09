@@ -434,6 +434,11 @@ export const REDIS_SYS_KEYS = {
        */
       ENTITIES: 'entities',
       /*
+        Use: Toggle the wordlist check.
+        Structure: boolean
+       */
+      RUN_WORDLISTS: 'run-wordlists',
+      /*
         Use: Specify which wordlists to use.
         Structure: json (string[])
        */

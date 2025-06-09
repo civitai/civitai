@@ -51,16 +51,17 @@ export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
   externalId: z.string(),
   externalType: z.nativeEnum(ExternalModerationType),
   entityId: z.number(),
-  tags: z.array(
-    z.object({
-      tag: z.string(),
-      confidence: z.number(),
-      outcome: z.string(), // z.nativeEnum(Outcome), // but this causes errors
-      message: z.string().optional(),
-    })
-  ),
+  tags: z.array(z.string()),
+  // tags: z.array(
+  //   z.object({
+  //     tag: z.string(),
+  //     confidence: z.number(),
+  //     outcome: z.string(), // z.nativeEnum(Outcome), // but this causes errors
+  //     message: z.string().optional(),
+  //   })
+  // ),
   userId: z.number(),
-  value: z.string(),
+  value: z.string().optional(),
 });
 // #endregion
 

@@ -1067,6 +1067,7 @@ model Report {
   bounty         BountyReport?
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
+  automated      ReportAutomated?
 }
 
 model ResourceReviewReport {
@@ -3598,27 +3599,12 @@ model NewOrderSmite {
   cleansedReason String?
 }
 
-// enum ModerationRequest_EntityType {
-//   Chat
-//   Comment
-//   Username
-// }
-
-enum ModerationRequest_ExternalType {
-  Clavata
-}
-
-model ModerationRequest {
-  id           Int                             @id @default(autoincrement())
-  externalId   String?
-  externalType ModerationRequest_ExternalType?
-  entityType   EntityType
-  entityId     Int
-  tags         Json                            @default("[]")
-  metadata     Json                            @default("{}")
-
-  @@unique([externalId, externalType])
-  @@unique([externalType, entityType, entityId])
+model ReportAutomated {
+  id        Int      @id @default(autoincrement())
+  reportId  Int      @unique
+  report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
 }
 
 /// @view

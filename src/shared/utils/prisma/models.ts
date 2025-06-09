@@ -166,8 +166,6 @@ export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incide
 
 export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
 
-export type ModerationRequest_ExternalType = "Clavata";
-
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -880,6 +878,7 @@ export interface Report {
   bounty?: BountyReport | null;
   bountyEntry?: BountyEntryReport | null;
   chat?: ChatReport | null;
+  automated?: ReportAutomated | null;
 }
 
 export interface ResourceReviewReport {
@@ -2717,14 +2716,12 @@ export interface NewOrderSmite {
   cleansedReason: string | null;
 }
 
-export interface ModerationRequest {
+export interface ReportAutomated {
   id: number;
-  externalId: string | null;
-  externalType: ModerationRequest_ExternalType | null;
-  entityType: EntityType;
-  entityId: number;
-  tags: JsonValue;
+  reportId: number;
+  report?: Report;
   metadata: JsonValue;
+  createdAt: Date;
 }
 
 export interface QuestionRank {
