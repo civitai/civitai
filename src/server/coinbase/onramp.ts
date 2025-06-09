@@ -29,12 +29,13 @@ export async function getOnrampUrl({
   value,
   userId,
   redirectUrl = 'https://civitai.com',
+  ...passthrough
 }: {
   address: `0x${string}`;
   value: number;
   userId: number;
   redirectUrl?: string;
-}) {
+} & MixedObject) {
   const token = await createOnrampSessionToken(address);
   const key = `${userId}-${Date.now()}`;
 
@@ -42,6 +43,8 @@ export async function getOnrampUrl({
   const redirectUrlWithKey = new URL(redirectUrl);
   redirectUrlWithKey.searchParams.set('key', key);
   redirectUrl = redirectUrlWithKey.toString();
+
+  console.log(redirectUrl);
 
   const params = new URLSearchParams({
     sessionToken: token,
@@ -51,6 +54,7 @@ export async function getOnrampUrl({
     partnerUserId: key,
     endPartnerName: 'civitai',
     redirectUrl,
+    ...(passthrough ?? {}),
   });
 
   const url = `https://pay.coinbase.com/buy/select-asset?${params.toString()}`;

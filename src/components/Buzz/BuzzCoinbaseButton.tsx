@@ -1,6 +1,4 @@
-import { Anchor, Button, Stack, Text } from '@mantine/core';
-import { IconInfoCircle } from '@tabler/icons-react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { Button, Stack, Text } from '@mantine/core';
 import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
 import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -17,29 +15,41 @@ export const BuzzCoinbaseButton = ({
   buzzAmount: number;
 }) => {
   const features = useFeatureFlags();
-  const { createBuzzOrder, creatingBuzzOrder } = useMutateCoinbase();
-  const { isLoading, healthy } = useCoinbaseStatus();
+  const { createBuzzOrder, creatingBuzzOrder, createBuzzOrderOnramp, creatingBuzzOrderOnramp } =
+    useMutateCoinbase();
+  const { isLoading: checkingHealth, healthy } = useCoinbaseStatus();
 
-  if (!isLoading && !healthy) {
+  if (!checkingHealth && !healthy) {
     return null;
   }
 
   const handleClick = async () => {
-    const data = await createBuzzOrder({
-      unitAmount,
-      buzzAmount,
-    });
+    if (features.coinbaseOnramp) {
+      const data = await createBuzzOrderOnramp({
+        unitAmount,
+        buzzAmount,
+      });
 
-    if (data?.hosted_url) {
-      window.location.replace(data.hosted_url);
+      if (data?.url) {
+        window.location.replace(data.url);
+      }
+    } else {
+      const data = await createBuzzOrder({
+        unitAmount,
+        buzzAmount,
+      });
+
+      if (data?.hosted_url) {
+        window.location.replace(data.hosted_url);
+      }
     }
   };
 
   return (
     <Stack spacing={0} align="center">
       <Button
-        disabled={disabled || isLoading}
-        loading={creatingBuzzOrder}
+        disabled={disabled || checkingHealth}
+        loading={creatingBuzzOrder || creatingBuzzOrderOnramp}
         onClick={handleClick}
         radius="xl"
         fullWidth

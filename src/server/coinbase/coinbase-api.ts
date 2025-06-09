@@ -1,4 +1,5 @@
 import { getAuthHeaders } from '@coinbase/cdp-sdk/auth';
+import { env } from '~/env/server';
 
 const BASE_URL = 'api.developer.coinbase.com';
 
@@ -12,12 +13,13 @@ export async function fetchCoinbase({
   body?: object;
 }) {
   const headers = await getAuthHeaders({
-    apiKeyId: process.env.CDP_API_KEY_ID!,
-    apiKeySecret: process.env.CDP_API_KEY_SECRET!,
+    apiKeyId: env.CDP_API_KEY_ID!,
+    apiKeySecret: env.CDP_API_KEY_SECRET!,
     requestMethod: method,
     requestHost: BASE_URL,
     requestPath: path,
   });
+
   const response = await fetch(`https://${BASE_URL}${path}`, {
     method,
     headers,

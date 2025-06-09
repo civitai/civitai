@@ -27,6 +27,7 @@ import { enterFall, jelloVertical } from '~/libs/animations';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { useRouter } from 'next/router';
+import { useGetTransactionStatus } from '~/components/Coinbase/util';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -44,7 +45,8 @@ export const getServerSideProps = createServerSideProps({
 
 export default function CoinbaseSuccess() {
   const router = useRouter();
-  const { orderId } = router.query as { orderId?: string | null };
+  const { orderId, key } = router.query as { orderId?: string | null; key?: string | null };
+  const { isLoading, isFailed, isComplete } = useGetTransactionStatus(key);
 
   return (
     <>
@@ -77,6 +79,38 @@ export default function CoinbaseSuccess() {
             Thank you so much for your support! It might take a few minutes for your crypto to go
             through. Your buzz will be available in your account shortly after that.
           </Text>
+          {key && (
+            <Alert>
+              <Stack>
+                {!isFailed && !isComplete ? (
+                  <Text>
+                    Your transaction is being processed. Please wait a few minutes for it to
+                    complete.
+                  </Text>
+                ) : isComplete ? (
+                  <Text>
+                    Your transaction has been successfully completed! You can now use your buzz.
+                  </Text>
+                ) : (
+                  <>
+                    <Text>
+                      Your transaction has <span className="font-bold">failed to be processed</span>
+                      . You may contact support with the following ticket number:
+                    </Text>
+                    <CopyButton value={key}>
+                      {({ copy, copied }) => (
+                        <Tooltip label="Copied!" opened={copied}>
+                          <Code sx={{ cursor: 'pointer', height: 'auto' }} onClick={copy} pr={2}>
+                            {key}
+                          </Code>
+                        </Tooltip>
+                      )}
+                    </CopyButton>
+                  </>
+                )}
+              </Stack>
+            </Alert>
+          )}
           {orderId && (
             <Alert>
               <Stack>

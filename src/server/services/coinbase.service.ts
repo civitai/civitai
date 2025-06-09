@@ -53,6 +53,8 @@ export const createBuzzOrderOnramp = async (input: CreateBuzzCharge & { userId: 
   const onrampUrl = await wallet.getOnrampUrl({
     value: dollarAmount,
     redirectUrl,
+    buzzAmount: input.buzzAmount,
+    successUrl: redirectUrl,
   });
 
   if (!onrampUrl) {
@@ -128,6 +130,14 @@ export const getTransactionStatusByKey = async ({
     }
   }
 
+  if (transaction.status === CryptoTransactionStatus.SweepFailed) {
+    // Re-attempt:
+    await completeCryptoTransaction({
+      userId,
+      key,
+    });
+  }
+
   const updatedTransaction = await dbWrite.cryptoTransaction.findFirstOrThrow({
     where: {
       userId,
@@ -149,7 +159,7 @@ export const completeCryptoTransaction = async ({
     where: {
       userId,
       key,
-      status: CryptoTransactionStatus.RampSuccess,
+      // status: CryptoTransactionStatus.RampSuccess,
     },
   });
 
@@ -162,7 +172,11 @@ export const completeCryptoTransaction = async ({
     throw new Error(`No wallet found for userId: ${userId}`);
   }
 
-  if (CryptoTransactionStatus.RampSuccess === transaction.status) {
+  if (
+    [CryptoTransactionStatus.RampSuccess, CryptoTransactionStatus.SweepFailed].some(
+      (s) => s === transaction.status
+    )
+  ) {
     const isComplete = await wallet.sendUSDC(transaction.amount, key);
     if (!isComplete) {
       throw new Error(

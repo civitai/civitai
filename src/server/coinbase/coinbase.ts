@@ -6,10 +6,15 @@ import { checkOnrampStatus, getOnrampUrl } from './onramp';
 import type { SendUserOperationReturnType } from '@coinbase/cdp-sdk/_types/actions/evm/sendUserOperation';
 import { dbWrite } from '~/server/db/client';
 import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
+import { env } from '~/env/server';
 
 // Initialize the CDP client, which automatically loads
 // the API Key and Wallet Secret from the environment
-export const cdp = new CdpClient();
+export const cdp = new CdpClient({
+  apiKeyId: env.CDP_API_KEY_ID,
+  apiKeySecret: env.CDP_API_KEY_SECRET,
+  walletSecret: env.CDP_WALLET_SECRET,
+});
 
 // Initialize the public client
 // This is used to wait for the transaction receipt
@@ -19,11 +24,11 @@ const publicClient = createPublicClient({
 });
 
 const constants = {
-  usdcAddress: process.env.CDP_USDC_ADDRESS as `0x${string}`,
-  network: process.env.CDP_NETWORK! as 'base-sepolia' | 'base',
-  paymasterUrl: process.env.CDP_PAYMASTER_URL,
-  appId: process.env.CDP_APP_ID!,
-  civitaiAddress: process.env.CDP_CIVITAI_ADDRESS as `0x${string}`,
+  usdcAddress: env.CDP_USDC_ADDRESS as `0x${string}`,
+  network: env.CDP_NETWORK! as 'base-sepolia' | 'base',
+  paymasterUrl: env.CDP_PAYMASTER_URL,
+  appId: env.CDP_APP_ID!,
+  civitaiAddress: env.CDP_CIVITAI_ADDRESS as `0x${string}`,
 };
 
 export async function getWalletForUser(userId: number) {
@@ -77,7 +82,15 @@ export async function getWalletForUser(userId: number) {
         hash: faucetResponse.transactionHash,
       });
     }
+  }
 
+  const existingWallet = await dbWrite.cryptoWallet.findFirst({
+    where: {
+      userId,
+    },
+  });
+
+  if (!existingWallet) {
     await dbWrite.cryptoWallet.create({
       data: {
         userId,
@@ -115,15 +128,17 @@ export class EasyWallet {
   async getOnrampUrl({
     value,
     redirectUrl = 'https://civitai.com/payment/coinbase',
+    ...passthrough
   }: {
     value: number;
     redirectUrl?: string;
-  }) {
+  } & MixedObject) {
     const { url, key } = await getOnrampUrl({
       address: this.smartAccount.address,
       value,
       userId: this.userId,
       redirectUrl,
+      ...passthrough,
     });
 
     await dbWrite.cryptoTransaction.create({
@@ -198,6 +213,7 @@ export class EasyWallet {
           },
         ],
       });
+
       console.log(`Sending ${value} USDC. Tx: ${result.userOpHash}`);
 
       if (key) {
