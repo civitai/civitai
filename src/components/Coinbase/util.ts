@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -52,6 +53,7 @@ export const useMutateCoinbase = () => {
 };
 
 export const useGetTransactionStatus = (key?: string | null) => {
+  const [stopRefetch, setStopRefetch] = useState<boolean>(false);
   const { data: status, isLoading } = trpc.coinbase.getTransactionStatus.useQuery(
     {
       id: key ?? '',
@@ -59,12 +61,27 @@ export const useGetTransactionStatus = (key?: string | null) => {
     {
       enabled: !!key,
       // Every 5s.
-      refetchInterval: 5000, // Refetch every 10 seconds
-      refetchOnWindowFocus: false,
+      ...(stopRefetch
+        ? {
+            refetchInterval: false, // Stop refetching if status is set
+          }
+        : {
+            refetchInterval: 5000, // Refetch every 10 seconds
+            refetchOnWindowFocus: false,
+          }),
     }
   );
 
-  console.log(!!status && status === CryptoTransactionStatus.Complete);
+  useEffect(() => {
+    setStopRefetch(
+      !!status &&
+        [
+          CryptoTransactionStatus.Complete,
+          CryptoTransactionStatus.RampFailed,
+          CryptoTransactionStatus.SweepFailed,
+        ].some((s) => s === status)
+    );
+  }, [status]);
 
   return {
     isLoading,

@@ -47,7 +47,7 @@ export const getServerSideProps = createServerSideProps({
 export default function CoinbaseSuccess() {
   const router = useRouter();
   const { orderId, key } = router.query as { orderId?: string | null; key?: string | null };
-  const { isLoading, isFailed, isSuccess } = useGetTransactionStatus(key);
+  const { isFailed, isSuccess } = useGetTransactionStatus(key);
 
   return (
     <>
