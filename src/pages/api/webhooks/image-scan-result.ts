@@ -13,7 +13,7 @@ import {
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
@@ -209,13 +209,7 @@ async function handleSuccess(args: BodyProps) {
     const image = await getImage(id);
     if (image.ingestion === ImageIngestionStatus.Blocked) return;
 
-    const {
-      data,
-      reviewKey,
-      tagsForReview = [],
-      flags,
-      prompt,
-    } = await auditImageScanResults({ image });
+    const { data, reviewKey, tagsForReview = [], flags } = await auditImageScanResults({ image });
 
     await dbWrite.image.update({ where: { id }, data });
     if (reviewKey) {
@@ -227,14 +221,8 @@ async function handleSuccess(args: BodyProps) {
 
     if (data.ingestion === 'Scanned') {
       await tagIdsForImagesCache.refresh(id);
-      const appliedRule = await applyModerationRules({
-        ...image,
-        prompt,
-        metadata: image.metadata as ImageMetadata | VideoMetadata,
-      });
 
-      const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
-      const isProfilePicture = imageMetadata?.profilePicture === true;
+      const isProfilePicture = image.metadata?.profilePicture === true;
       if (isProfilePicture) {
         await deleteUserProfilePictureCache(image.userId);
       }
@@ -242,13 +230,7 @@ async function handleSuccess(args: BodyProps) {
       // await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
       if (image.postId) await updatePostNsfwLevel(image.postId);
 
-      // Update search index
-      const action =
-        appliedRule?.action === ModerationRuleAction.Block
-          ? SearchIndexUpdateQueueAction.Delete
-          : SearchIndexUpdateQueueAction.Update;
-
-      await queueImageSearchIndexUpdate({ ids: [id], action });
+      await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
 
       if (image.type === MediaType.image) {
         // #region [NewOrder]
@@ -276,6 +258,8 @@ async function handleSuccess(args: BodyProps) {
         }
         // #endregion
       }
+    } else if (data.ingestion === 'Blocked') {
+      await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
     }
 
     if (data.ingestion && data.ingestion !== 'Blocked') {
@@ -403,72 +387,55 @@ function processHiveTags(tags: IncomingTag[]) {
 
 // Moderation Rules
 // --------------------------------------------------
-type IngestedImage = {
-  id: number;
-  userId: number;
-  prompt: string | null;
-  metadata?: ImageMetadata | VideoMetadata | null;
-};
-
-async function applyModerationRules(image: IngestedImage) {
+async function checkModerationRules(image: GetImageReturn, tags: TagDetails[]) {
   const imageModRules = await getImagesModRules();
-  const tags = await getTagNamesForImages([image.id]);
+  if (!imageModRules.length) return;
 
-  if (imageModRules.length) {
-    const appliedRule = evaluateRules(imageModRules, { ...image, tags: tags[image.id] });
+  const tagNames = tags.map((x) => x.name);
+  const appliedRule = evaluateRules(imageModRules, { ...image.meta, tags: tagNames });
+  if (!appliedRule || appliedRule.action === ModerationRuleAction.Approve) return;
 
-    if (appliedRule) {
-      const data =
-        appliedRule.action === ModerationRuleAction.Block
-          ? {
-              ingestion: ImageIngestionStatus.Blocked,
-              nsfwLevel: NsfwLevel.Blocked,
-              blockedFor: BlockedReason.Moderated,
-              needsReview: null,
-            }
-          : appliedRule.action === ModerationRuleAction.Hold
-          ? { needsReview: 'modRule' }
-          : undefined;
-      if (data)
-        await dbWrite.image.update({
-          where: { id: image.id },
-          data: {
-            ...data,
-            metadata: { ...image.metadata, ruleId: appliedRule.id, ruleReason: appliedRule.reason },
-          },
-        });
-
-      // Send notification to user if auto blocked
-      if (appliedRule.action === ModerationRuleAction.Block) {
-        await createNotification({
-          category: NotificationCategory.System,
-          key: `image-block:${image.id}`,
-          type: 'system-message',
-          userId: image.userId,
-          details: {
-            message: `One of your images has been blocked due to a moderation rule violation${
-              appliedRule.reason ? ` by the following reason: ${appliedRule.reason}` : ''
-            }. If you believe this is a mistake, you can appeal this decision.`,
-            url: `/images/${image.id}`,
-          },
-        }).catch((error) =>
-          logToAxiom({
-            name: 'image-scan-result',
-            type: 'error',
-            message: 'Could not create notification when blocking image',
-            data: {
-              imageId: image.id,
-              error: error.message,
-              cause: error.cause,
-              stack: error.stack,
-            },
-          })
-        );
-      }
-
-      return appliedRule;
-    }
+  const data: Prisma.ImageUpdateInput = {
+    metadata: { ...image.metadata, ruleId: appliedRule.id, ruleReason: appliedRule.reason },
+  };
+  if (appliedRule.action === ModerationRuleAction.Block) {
+    data.ingestion = ImageIngestionStatus.Blocked;
+    data.nsfwLevel = NsfwLevel.Blocked;
+    data.blockedFor = BlockedReason.Moderated;
+    data.needsReview = null;
+  } else if (appliedRule.action === ModerationRuleAction.Hold) {
+    data.needsReview = 'modRule';
   }
+
+  // Send notification to user if auto blocked
+  if (appliedRule.action === ModerationRuleAction.Block) {
+    await createNotification({
+      category: NotificationCategory.System,
+      key: `image-block:${image.id}`,
+      type: 'system-message',
+      userId: image.userId,
+      details: {
+        message: `One of your images has been blocked due to a moderation rule violation${
+          appliedRule.reason ? ` by the following reason: ${appliedRule.reason}` : ''
+        }. If you believe this is a mistake, you can appeal this decision.`,
+        url: `/images/${image.id}`,
+      },
+    }).catch((error) =>
+      logToAxiom({
+        name: 'image-scan-result',
+        type: 'error',
+        message: 'Could not create notification when blocking image',
+        data: {
+          imageId: image.id,
+          error: error.message,
+          cause: error.cause,
+          stack: error.stack,
+        },
+      })
+    );
+  }
+
+  return data;
 }
 
 type GetImageReturn = AsyncReturnType<typeof getImage>;
@@ -850,6 +817,7 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     poiReview: false,
     tagReview: false,
     newUserReview: false,
+    modRuleReview: false,
   };
 
   const minorTags: TagDetails[] = [];
@@ -976,7 +944,7 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   if (!flags.minorReview && !flags.poiReview && !flags.tagReview && flags.nsfw) {
     // If user is new and image is NSFW send it for review
     const [{ isNewUser }] =
-      (await dbRead.$queryRaw<{ isNewUser: boolean }[]>`
+      (await dbWrite.$queryRaw<{ isNewUser: boolean }[]>`
         SELECT is_new_user(CAST(${image.userId} AS INT)) "isNewUser";
       `) ?? [];
     if (isNewUser) flags.newUserReview = true;
@@ -1042,9 +1010,13 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
       data.scannedAt = now;
   }
 
+  const moderationRulesImageData = await checkModerationRules(image, tags);
+  if (typeof moderationRulesImageData?.needsReview === 'string')
+    reviewKey = moderationRulesImageData?.needsReview;
+
   return {
     prompt,
-    data: removeEmpty(data),
+    data: removeEmpty({ ...data, ...moderationRulesImageData }),
     flags,
     reviewKey,
     tagsForReview:

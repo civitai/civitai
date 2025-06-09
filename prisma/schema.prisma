@@ -1405,6 +1405,8 @@ model ImageForReview {
   imageId Int    @id
   image   Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
   reason  String // minor, poi, blockedTags, newUser, reported, ruleViolations
+
+  @@index([reason])
 }
 
 model ImageTagForReview {
