@@ -89,6 +89,10 @@ import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
+import {
+  deleteImagTagsForReviewByImageIds,
+  deleteImageForReviewMultiple,
+} from '~/server/services/image-review.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -411,6 +415,8 @@ export const moderateImages = async ({
 
     await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   }
+  await Promise.all([deleteImageForReviewMultiple(ids), deleteImagTagsForReviewByImageIds(ids)]);
+
   return null;
 };
 
@@ -494,11 +500,13 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   return await ingestImage({ image: images[0] });
 };
 
-const scanner = env.EXTERNAL_IMAGE_SCANNER;
-const clavataScan = env.CLAVATA_SCAN;
-const scanTypes: ImageScanType[] = [ImageScanType.WD14, ImageScanType.Hash];
-if (clavataScan !== 'off' || scanner === 'clavata') scanTypes.push(ImageScanType.Clavata);
-if (scanner === 'hive') scanTypes.push(ImageScanType.Hive);
+// const scanner = env.EXTERNAL_IMAGE_SCANNER;
+// const clavataScan = env.CLAVATA_SCAN;
+export const imageScanTypes: ImageScanType[] = [
+  ImageScanType.WD14,
+  ImageScanType.Hash,
+  ImageScanType.Clavata,
+];
 
 export const ingestImage = async ({
   image,
@@ -556,7 +564,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: scanTypes,
+      scans: imageScanTypes,
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -638,7 +646,7 @@ export const ingestImageBulk = async ({
           width: image.width,
           height: image.height,
           prompt: image.prompt,
-          scans: scans ?? scanTypes,
+          scans: scans ?? imageScanTypes,
           callbackUrl,
         }))
       ),
