@@ -389,7 +389,7 @@ export const imageReviewQueueInputSchema = z.object({
   needsReview: z.string().nullish(),
   tagReview: z.boolean().optional(),
   reportReview: z.boolean().optional(),
-  tagIds: z.array(z.number()).optional(),
+  // tagIds: z.array(z.number()).optional(),
   browsingLevel: z.number().default(allBrowsingLevelsFlag),
 });
 

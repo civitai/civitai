@@ -9,13 +9,14 @@ import {
   Group,
   Loader,
   Paper,
-  SegmentedControl,
   Stack,
   Text,
   Textarea,
   Title,
   useMantineTheme,
+  Indicator,
 } from '@mantine/core';
+import { Radio, RadioGroup } from '@headlessui/react';
 import type { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { useMergedRef } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
@@ -71,6 +72,7 @@ import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import clsx from 'clsx';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -156,6 +158,8 @@ export default function Images() {
 
   useEffect(deselectAll, [type, deselectAll]);
 
+  const { data: counts } = trpc.image.getModeratorReviewQueueCounts.useQuery();
+
   const segments = Object.entries(ImageReviewType)
     // filter out csam and appeal if not enabled
     .filter(([key]) => {
@@ -166,6 +170,11 @@ export default function Images() {
     .map(([key, value]) => ({
       value: key,
       label: value,
+      // label: (
+      //   <Indicator label={counts?.[key]} showZero={false} dot={false} offset={-4}>
+      //     <span>{value}</span>
+      //   </Indicator>
+      // ),
     }));
 
   return (
@@ -193,18 +202,23 @@ export default function Images() {
           <div className="mb-4 flex flex-col items-start">
             <Group>
               <Title order={1}>Images Needing Review</Title>
-              <SegmentedControl
+              {/* <SegmentedControl
                 size="sm"
                 data={segments}
                 onChange={handleTypeChange}
                 value={type}
-              />
+              /> */}
             </Group>
             <Text color="dimmed">
               These are images that have been{' '}
               {viewingReported ? 'reported by users' : 'marked by our AI'} which needs further
               attention from the mods
             </Text>
+            <RadioGroup value={type} onChange={handleTypeChange} className="mt-2 flex gap-2">
+              {segments.map(({ label, value }) => (
+                <RadioInput key={value} value={value} label={label} indicator={counts?.[value]} />
+              ))}
+            </RadioGroup>
           </div>
 
           {type === 'poi' && nameTags && (
@@ -449,7 +463,18 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
             </PromptHighlight>
           </Stack>
         )}
-        {image.needsReview === 'poi' && !!image.names?.length && (
+        {image.reviewTags.length > 0 && (
+          <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
+            <Group spacing={4}>
+              {image.reviewTags.map((tag) => (
+                <Badge key={tag.id} size="sm">
+                  {tag.name}
+                </Badge>
+              ))}
+            </Group>
+          </Card.Section>
+        )}
+        {/* {image.needsReview === 'poi' && !!image.names?.length && (
           <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
             <Group spacing={4}>
               {image.names.map((name) => (
@@ -459,7 +484,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               ))}
             </Group>
           </Card.Section>
-        )}
+        )} */}
         {image.needsReview === 'tag' && !!image.tags && (
           <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
             <Group spacing={4}>
@@ -597,7 +622,7 @@ function ModerationControls({
     },
   });
 
-  const createCsamReport = useReportCsamImages({
+  const reportCsamImages = useReportCsamImages({
     async onSuccess() {
       await queryUtils.image.getModeratorReviewQueue.invalidate();
       deselectAll();
@@ -664,7 +689,7 @@ function ModerationControls({
       const userIds = Object.keys(userImages);
       router.push(`/moderator/csam/${userIds.join(',')}`);
     } else {
-      createCsamReport.mutate({ imageIds: selected });
+      reportCsamImages.mutate({ imageIds: selected });
     }
   };
 
@@ -964,5 +989,42 @@ function ConfirmResolvedAppeal({
         autosize
       />
     </Stack>
+  );
+}
+
+function RadioInput({
+  value,
+  label,
+  disabled,
+  indicator,
+}: {
+  value: any;
+  label: React.ReactNode;
+  disabled?: boolean;
+  indicator?: number;
+}) {
+  return (
+    <Indicator
+      label={indicator}
+      size={16}
+      zIndex={10}
+      showZero={false}
+      dot={false}
+      color="red"
+      overflowCount={999}
+    >
+      <Radio
+        value={value}
+        disabled={disabled}
+        className={clsx(
+          !disabled ? 'cursor-pointer focus:outline-none' : 'cursor-not-allowed opacity-25',
+          'flex flex-1 items-center justify-center rounded-md  p-2 text-sm font-semibold ring-1  data-[checked]:text-white   data-[checked]:ring-0 data-[focus]:data-[checked]:ring-2 data-[focus]:ring-2 data-[focus]:ring-offset-2  sm:flex-1  [&:not([data-focus])]:[&:not([data-checked])]:ring-inset  ',
+          'bg-white text-dark-9 ring-gray-4 hover:bg-gray-1 data-[checked]:bg-blue-5 data-[focus]:ring-blue-5 ',
+          'dark:bg-dark-5 dark:text-white dark:ring-dark-4 dark:hover:bg-dark-4 dark:data-[checked]:bg-blue-8 dark:data-[focus]:ring-blue-8 '
+        )}
+      >
+        {label}
+      </Radio>
+    </Indicator>
   );
 }
