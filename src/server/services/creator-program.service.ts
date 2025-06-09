@@ -226,7 +226,10 @@ async function getPoolValue(month?: Date) {
         SUM(amount) / 1000 AS balance
     FROM buzzTransactions
     WHERE toAccountType = 'user'
-    AND type = 'purchase'
+    AND (
+      type = 'purchase'
+      OR (type = 'redeemable' AND description LIKE 'Redeemed code SH-%')
+    )
     AND fromAccountId = 0
     AND externalTransactionId NOT LIKE 'renewalBonus:%'
     AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(${month}, 1));
