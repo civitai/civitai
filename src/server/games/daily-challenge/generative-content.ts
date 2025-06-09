@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import type { ChatCompletionMessageParam } from 'openai/resources';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import type {
   ChallengePrompts,
   Prize,

@@ -1,4 +1,3 @@
-import { Outcome } from '@clavata/sdk';
 import type { MantineColor } from '@mantine/core';
 import { z } from 'zod';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
@@ -56,7 +55,7 @@ export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
     z.object({
       tag: z.string(),
       confidence: z.number(),
-      outcome: z.nativeEnum(Outcome),
+      outcome: z.string(), // z.nativeEnum(Outcome), // but this causes errors
       message: z.string().optional(),
     })
   ),
