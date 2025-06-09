@@ -7,6 +7,7 @@ import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { NewOrderImageRatingStatus } from '~/server/common/enums';
+import type { AllModKeys } from '~/server/jobs/entity-moderation';
 import { logToAxiom } from '~/server/logging/client';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
@@ -111,16 +112,6 @@ export type ViewType =
   | 'CollectionView'
   | 'BountyView'
   | 'BountyEntryView';
-// export type EntityType =
-//   | 'User'
-//   | 'Image'
-//   | 'Post'
-//   | 'Model'
-//   | 'ModelVersion'
-//   | 'Article'
-//   | 'Collection'
-//   | 'Bounty'
-//   | 'BountyEntry';
 
 export type UserActivityType =
   | 'Registration'
@@ -545,7 +536,7 @@ export class Tracker {
   }
 
   public moderationRequest(values: {
-    entityType: EntityType;
+    entityType: AllModKeys;
     entityId: number;
     userId: number;
     rules: string[];

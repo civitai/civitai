@@ -278,6 +278,7 @@ export const ReportReason = {
   AdminAttention: 'AdminAttention',
   Claim: 'Claim',
   CSAM: 'CSAM',
+  Automated: 'Automated',
 } as const;
 
 export type ReportReason = (typeof ReportReason)[keyof typeof ReportReason];

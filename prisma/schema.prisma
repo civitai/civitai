@@ -1031,6 +1031,7 @@ enum ReportReason {
   AdminAttention
   Claim
   CSAM
+  Automated
 }
 
 enum ReportStatus {

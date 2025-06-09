@@ -99,7 +99,7 @@ export class ClavataApiClient {
       : btoa(String.fromCharCode(...new Uint8Array(buffer)));
   }
 
-  // TODO combine with above
+  // TODO switch to API
   private async runJobWithBase64(
     base64Image: string,
     policyId?: string,

@@ -56,7 +56,7 @@ export type MetricTimeframe = "Day" | "Week" | "Month" | "Year" | "AllTime";
 
 export type AssociationType = "Suggested";
 
-export type ReportReason = "TOSViolation" | "NSFW" | "Ownership" | "AdminAttention" | "Claim" | "CSAM";
+export type ReportReason = "TOSViolation" | "NSFW" | "Ownership" | "AdminAttention" | "Claim" | "CSAM" | "Automated";
 
 export type ReportStatus = "Pending" | "Processing" | "Actioned" | "Unactioned";
 

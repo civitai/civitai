@@ -1,19 +1,19 @@
 import { StreamError } from '@clavata/sdk';
 import type { Prisma } from '@prisma/client';
+import nlp from 'compromise';
 import { Tracker } from '~/server/clickhouse/client';
+import { ExternalModerationType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { clavataEvaluate } from '~/server/integrations/clavata';
 import { logToAxiom } from '~/server/logging/client';
+import { clavataCounter } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { createReport } from '~/server/services/report.service';
 import type { EntityType } from '~/shared/utils/prisma/enums';
-import {
-  ChatMessageType,
-  JobQueueType,
-  ModerationRequest_ExternalType,
-} from '~/shared/utils/prisma/enums';
+import { ChatMessageType, JobQueueType, ReportReason } from '~/shared/utils/prisma/enums';
+import { fromJson } from '~/utils/json-helpers';
 import { createLogger } from '~/utils/logging';
-import type { ModWordBlocklist } from '~/utils/metadata/audit';
-import { getModURLBlocklist, getModWordBlocklist } from '~/utils/metadata/audit';
 import { createJob, getJobDate } from './job';
 
 const jobName = 'entity-moderation';
@@ -28,6 +28,110 @@ const logAx = (data: MixedObject) => {
 };
 
 const tracker = new Tracker();
+
+// - Helpers
+
+const wordReplace = (word: string) => {
+  return word
+    .replace(/i/g, '[i|l|1]')
+    .replace(/o/g, '[o|0]')
+    .replace(/s/g, '[s|z]')
+    .replace(/e/g, '[e|3]')
+    .replace(/a/g, '[a|@]');
+};
+
+function adjustModWordBlocklist(word: string) {
+  const doc = nlp(word); // this mutates apparently
+  // TODO handle sentences?
+
+  if (doc.nouns().length > 0) {
+    const plural = nlp(word).nouns().toPlural().text();
+    return [
+      { re: new RegExp(`\\b${wordReplace(word)}\\b`, 'i'), word },
+      { re: new RegExp(`\\b${wordReplace(plural)}\\b`, 'i'), word: plural },
+    ];
+  }
+
+  if (doc.verbs().length > 0) {
+    const past = nlp(word).verbs().toPastTense().text();
+    const present = nlp(word).verbs().toPresentTense().text();
+    // const future = nlp(word).verbs().toFutureTense().text();
+    const gerund = nlp(word).verbs().toGerund().text();
+    // @ts-ignore
+    const participle = nlp(word).verbs().toPastParticiple().text() as string; // this actually exists but is missing from ts definition in current release
+    // const actorForm = (word + 'er');
+
+    return [
+      { re: new RegExp(`\\b${wordReplace(word)}\\b`, 'i'), word },
+      { re: new RegExp(`\\b${wordReplace(past)}\\b`, 'i'), word: past },
+      { re: new RegExp(`\\b${wordReplace(present)}\\b`, 'i'), word: present },
+      // { re: new RegExp(`\\b${wordReplace(future)}\\b`, 'i'), word: future },
+      { re: new RegExp(`\\b${wordReplace(gerund)}\\b`, 'i'), word: gerund },
+      { re: new RegExp(`\\b${wordReplace(participle)}\\b`, 'i'), word: participle },
+      // { re: new RegExp(`\\b${wordReplace(actorForm)}\\b`, 'i'), word: actorForm },
+    ];
+  }
+
+  return [{ re: new RegExp(`\\b${wordReplace(word)}\\b`, 'i'), word }];
+}
+
+type ModWordBlocklist = AsyncReturnType<typeof getModWordBlocklist>;
+
+async function getModWordBlocklist() {
+  const wordlists =
+    (await sysRedis
+      .hGet(REDIS_SYS_KEYS.ENTITY_MODERATION.BASE, REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.WORDLISTS)
+      .then((data) => (data ? fromJson<string[]>(data) : ([] as string[])))
+      .catch(() => [] as string[])) ?? ([] as string[]);
+
+  const blocklist = [] as ReturnType<typeof adjustModWordBlocklist>[];
+  for (const wordlist of wordlists) {
+    const words = await sysRedis.packed.hGet<string[]>(
+      REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.WORDS,
+      wordlist
+    );
+    if (words) {
+      for (const word of words) {
+        blocklist.push(adjustModWordBlocklist(word));
+      }
+    } else {
+      logToAxiom({
+        name: 'wordlists',
+        type: 'warning',
+        message: `wordlist ${wordlist} not found`,
+      }).catch();
+    }
+  }
+  return blocklist.flat();
+}
+
+async function getModURLBlocklist() {
+  const urllists =
+    (await sysRedis
+      .hGet(REDIS_SYS_KEYS.ENTITY_MODERATION.BASE, REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.URLLISTS)
+      .then((data) => (data ? fromJson<string[]>(data) : ([] as string[])))
+      .catch(() => [] as string[])) ?? ([] as string[]);
+
+  const blocklist = [] as ReturnType<typeof adjustModWordBlocklist>[];
+  for (const urllist of urllists) {
+    const urls = await sysRedis.packed.hGet<string[]>(
+      REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.URLS,
+      urllist
+    );
+    if (urls) {
+      for (const url of urls) {
+        blocklist.push([{ re: new RegExp(`.*${url}.*`, 'i'), word: url }]);
+      }
+    } else {
+      logToAxiom({
+        name: 'wordlists',
+        type: 'warning',
+        message: `urllist ${urllist} not found`,
+      }).catch();
+    }
+  }
+  return blocklist.flat();
+}
 
 function hasIssue(
   text: string | null,
@@ -75,8 +179,7 @@ Adding a new entry:
   - optionally update policy in redis config
 */
 
-const queues: QueuesConfig = {
-  // const queues = {
+const queues = {
   Comment: {
     fields: { content: true },
     selector: dbRead.comment,
@@ -123,19 +226,21 @@ const queues: QueuesConfig = {
     fields: { name: true, description: true },
     selector: dbRead.collection,
   },
-} as const;
+} as const satisfies QueuesConfig;
 const special = {
-  ChatMessage: {
+  Chat: {
     fields: { content: true },
     selector: dbRead.chatMessage,
   },
-};
-type QueueValues = { [K in keyof typeof queues | keyof typeof special]?: string };
+} as const;
+
+type QueueKeys = keyof typeof queues;
+export type AllModKeys = QueueKeys | keyof typeof special;
 type RedisPolicyType = {
-  [K in keyof QueueValues | 'default']?: string;
+  [K in AllModKeys | 'default']?: string;
 };
 type RedisDisabledType = {
-  [K in keyof QueueValues]?: boolean;
+  [K in AllModKeys]?: boolean;
 };
 
 async function getPolicies() {
@@ -154,11 +259,11 @@ async function getDisabledEntities() {
   return policies ? (JSON.parse(policies) as RedisDisabledType) : ({} as RedisDisabledType);
 }
 
-function getPolicyFor(entity: EntityType, policies: RedisPolicyType) {
+function getPolicyFor(entity: AllModKeys, policies: RedisPolicyType) {
   return policies[entity] || policies.default;
 }
 
-const deleteFromJobQueue = async (entityType: EntityType, ids: number[]) => {
+const deleteFromJobQueue = async (entityType: QueueKeys, ids: number[]) => {
   try {
     await dbWrite.jobQueue.deleteMany({
       where: {
@@ -180,7 +285,7 @@ interface ContentItem {
 
 type MetadataType = {
   id: string;
-  type: keyof QueueValues;
+  type: AllModKeys;
   userId: string;
   value: string;
 };
@@ -192,11 +297,12 @@ const runClavata = async ({
   deleteJob = true,
 }: {
   policyId: string;
-  type: keyof QueueValues;
+  type: AllModKeys;
   data: ContentItem[];
   deleteJob?: boolean;
 }) => {
   log(`Clavata processing ${data.length} ${type}s`);
+  clavataCounter?.inc(data.length);
 
   try {
     const stream = clavataEvaluate({
@@ -235,19 +341,32 @@ const runClavata = async ({
         userId: Number(_metadata.userId),
       };
 
-      // TODO could pull out value here
-      const { id: metadataId, type: metadataType, ...restMetadata } = metadata;
-
       // TODO try catch doesnt work here?
       try {
-        await dbWrite.moderationRequest.create({
-          data: {
+        // await dbWrite.moderationRequest.create({
+        //   data: {
+        //     externalId: item.externalId,
+        //     externalType: ModerationRequest_ExternalType.Clavata,
+        //     entityType: type,
+        //     entityId: metadata.id,
+        //     tags: item.tags,
+        //     metadata: restMetadata,
+        //   },
+        // });
+
+        await createReport({
+          type: ReportEntity[type === 'UserProfile' ? 'User' : type],
+          id: metadata.id,
+          userId: -1,
+          isModerator: true,
+          reason: ReportReason.Automated,
+          details: {
             externalId: item.externalId,
-            externalType: ModerationRequest_ExternalType.Clavata,
-            entityType: type,
+            externalType: ExternalModerationType.Clavata,
             entityId: metadata.id,
-            tags: item.tags,
-            metadata: restMetadata,
+            tags: item.tags ?? [],
+            userId: metadata.userId,
+            value: metadata.value,
           },
         });
       } catch (error) {
@@ -279,7 +398,7 @@ const runClavata = async ({
 
       if (deleteJob) {
         // TODO batching these would probably be better but this is fine for now
-        await deleteFromJobQueue(type, [metadata.id]);
+        await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
       }
     }
   } catch (error) {
@@ -307,16 +426,16 @@ const runClavata = async ({
 
 async function runModChat(lastRun: Date) {
   const disallowed = await getDisabledEntities();
-  if (disallowed.ChatMessage === false) {
-    log('Skipping "chatMessage"');
+  if (disallowed.Chat === false) {
+    log('Skipping "Chat"');
     return 0;
   }
 
   const policies = await getPolicies();
-  const policyId = getPolicyFor('ChatMessage', policies);
+  const policyId = getPolicyFor('Chat', policies);
   if (!policyId) {
-    logAx({ message: 'No policy id found for "chatMessage"' });
-    throw new Error('No policy id found for "chatMessage"');
+    logAx({ message: 'No policy id found for "Chat"' });
+    throw new Error('No policy id found for "Chat"');
   }
 
   // special case, not using JobQueue
@@ -370,7 +489,7 @@ async function runModChat(lastRun: Date) {
     // note: id is actually chatId
     await runClavata({
       policyId,
-      type: 'ChatMessage',
+      type: 'Chat',
       data: Object.entries(badMessagesByChat).map(([key, value]) => ({
         id: Number(key),
         userId: -1, // TODO how to get actual userId?
@@ -415,7 +534,7 @@ async function runModQueue() {
     throw new Error('No blocklists found');
   }
 
-  const validQueues = Object.keys(policyMap) as EntityType[];
+  const validQueues = Object.keys(policyMap) as QueueKeys[];
 
   // TODO do we want to refetch everything? add a status col to jobqueue? add metadata field?
   //  batch / paginate here?
@@ -443,7 +562,7 @@ async function runModQueue() {
     return prev;
   }, {} as EntityIdMap);
 
-  async function processEntityType<T extends keyof typeof queues>(entityType: T) {
+  async function processEntityType(entityType: keyof typeof queues) {
     log(`Starting ${jobName}-${entityType}`);
     const ids = aggedRows[entityType];
 
@@ -453,7 +572,12 @@ async function runModQueue() {
     }
 
     try {
-      const { fields, selector, idKey = 'id', userIdKey = 'userId' } = queues[entityType]!;
+      const {
+        fields,
+        selector,
+        idKey = 'id',
+        userIdKey = 'userId',
+      } = queues[entityType] as EntityQueueConfig;
 
       if (!selector || typeof selector.findMany !== 'function') {
         logAx({ message: `No model found for entity type: ${entityType}` });
@@ -511,14 +635,14 @@ async function runModQueue() {
 }
 
 async function modChat() {
-  const [lastRun, setLastRun] = await getJobDate(`${jobName}-chatMessage`);
-  log(`Starting ${jobName}-chatMessage`);
+  const [lastRun, setLastRun] = await getJobDate(`${jobName}-chat`);
+  log(`Starting ${jobName}-chat`);
   try {
     const handled = await runModChat(lastRun);
-    log(`Finished ${jobName}-chatMessage, processed ${handled} items`);
+    log(`Finished ${jobName}-chat, processed ${handled} items`);
     await setLastRun();
   } catch (error) {
-    logAx({ message: 'Error handling chatMessage', data: { error } });
+    logAx({ message: 'Error handling chat', data: { error } });
   }
 }
 

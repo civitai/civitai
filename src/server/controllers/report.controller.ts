@@ -1,6 +1,5 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
-import { NotificationCategory } from '~/server/common/enums';
 
 import type { Context } from '~/server/createContext';
 import type {
@@ -16,13 +15,11 @@ import type {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getImageById } from '~/server/services/image.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { createNotification } from '~/server/services/notification.service';
 import {
   bulkSetReportStatus,
   createEntityAppeal,
   createReport,
   getAppealCount,
-  getRecentAppealsByUserId,
   getReports,
   resolveEntityAppeal,
   updateReportById,

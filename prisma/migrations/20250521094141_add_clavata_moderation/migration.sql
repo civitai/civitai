@@ -7,23 +7,25 @@ ALTER TYPE "EntityType" ADD VALUE 'UserProfile';
 ALTER TYPE "EntityType" ADD VALUE 'ResourceReview';
 ALTER TYPE "EntityType" ADD VALUE 'ChatMessage';
 
-CREATE TYPE "ModerationRequest_ExternalType" AS ENUM (
-  'Clavata'
-);
+ALTER TYPE "ReportReason" ADD VALUE 'Automated';
 
-CREATE TABLE "ModerationRequest" (
-  "id" serial NOT NULL,
-  "externalId" text,
-  "externalType" "ModerationRequest_ExternalType",
-  "entityType" "EntityType" NOT NULL,
-  "entityId" int NOT NULL,
-  "tags" jsonb NOT NULL DEFAULT '[]'::jsonb,
-  "metadata" jsonb NOT NULL DEFAULT '{}'::jsonb,
+-- CREATE TYPE "ModerationRequest_ExternalType" AS ENUM (
+--   'Clavata'
+-- );
 
-  CONSTRAINT "ModerationRequest_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "ModerationRequest_uniq_externalId_externalType" UNIQUE NULLS NOT DISTINCT ("externalId", "externalType"),
-  CONSTRAINT "ModerationRequest_uniq_externalType_entityType_entityId" UNIQUE NULLS NOT DISTINCT ("externalType", "entityType", "entityId")
-);
+-- CREATE TABLE "ModerationRequest" (
+--   "id" serial NOT NULL,
+--   "externalId" text,
+--   "externalType" "ModerationRequest_ExternalType",
+--   "entityType" "EntityType" NOT NULL,
+--   "entityId" int NOT NULL,
+--   "tags" jsonb NOT NULL DEFAULT '[]'::jsonb,
+--   "metadata" jsonb NOT NULL DEFAULT '{}'::jsonb,
+--
+--   CONSTRAINT "ModerationRequest_pkey" PRIMARY KEY ("id"),
+--   CONSTRAINT "ModerationRequest_uniq_externalId_externalType" UNIQUE NULLS NOT DISTINCT ("externalId", "externalType"),
+--   CONSTRAINT "ModerationRequest_uniq_externalType_entityType_entityId" UNIQUE NULLS NOT DISTINCT ("externalType", "entityType", "entityId")
+-- );
 ---
 
 CREATE OR REPLACE FUNCTION create_job_queue_moderation()
