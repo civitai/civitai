@@ -103,6 +103,7 @@ import {
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
   getImageGenerationBaseModels,
+  fluxDraftAir,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
@@ -239,13 +240,6 @@ export function GenerationFormContent() {
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
-    delete params.engine;
-    if (model.model.id === fluxModelId && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
-      params.engine = 'flux-pro-raw';
-    if (model.id === generationConfig.OpenAI.checkpoint.id) {
-      params.engine = 'openai';
-    }
-
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
     if (isFlux && isFluxStandard) {
@@ -256,6 +250,13 @@ export function GenerationFormContent() {
     } else {
       delete params.fluxMode;
       delete params.fluxUltraAspectRatio;
+    }
+
+    delete params.engine;
+    if (isFluxStandard && fluxUltraRaw && params.fluxMode === fluxUltraAir)
+      params.engine = 'flux-pro-raw';
+    if (model.id === generationConfig.OpenAI.checkpoint.id) {
+      params.engine = 'openai';
     }
 
     if (workflowDefinition?.type === 'txt2img') params.sourceImage = null;
@@ -427,7 +428,7 @@ export function GenerationFormContent() {
           const isImg2Img = workflow?.startsWith('img') || (isOpenAI && sourceImage);
           const isFluxStandard = getIsFluxStandard(model.model.id);
           const isDraft = isFluxStandard
-            ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
+            ? fluxMode === fluxDraftAir
             : isSD3
             ? model.id === 983611
             : features.draft && !!draft && !isOpenAI && !isFlux;

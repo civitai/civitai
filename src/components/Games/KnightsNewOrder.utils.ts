@@ -284,7 +284,7 @@ export const damnedReasonOptions = [
   NewOrderDamnedReason.RealisticMinors,
   NewOrderDamnedReason.DepictsRealPerson,
   NewOrderDamnedReason.Bestiality,
-  NewOrderDamnedReason.GraphicViolence,
+  NewOrderDamnedReason.Other,
 ] as const;
 
 export const ratingPlayBackRates: Record<string, number> = {

@@ -89,6 +89,10 @@ import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
+import {
+  deleteImagTagsForReviewByImageIds,
+  deleteImageForReviewMultiple,
+} from '~/server/services/image-review.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -411,6 +415,11 @@ export const moderateImages = async ({
 
     await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   }
+  await Promise.all([
+    // deleteImageForReviewMultiple(ids),
+    deleteImagTagsForReviewByImageIds(ids),
+  ]);
+
   return null;
 };
 
@@ -494,11 +503,13 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   return await ingestImage({ image: images[0] });
 };
 
-const scanner = env.EXTERNAL_IMAGE_SCANNER;
-const clavataScan = env.CLAVATA_SCAN;
-const scanTypes: ImageScanType[] = [ImageScanType.WD14, ImageScanType.Hash];
-if (clavataScan !== 'off' || scanner === 'clavata') scanTypes.push(ImageScanType.Clavata);
-if (scanner === 'hive') scanTypes.push(ImageScanType.Hive);
+// const scanner = env.EXTERNAL_IMAGE_SCANNER;
+// const clavataScan = env.CLAVATA_SCAN;
+export const imageScanTypes: ImageScanType[] = [
+  ImageScanType.WD14,
+  ImageScanType.Hash,
+  ImageScanType.Clavata,
+];
 
 export const ingestImage = async ({
   image,
@@ -556,7 +567,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: scanTypes,
+      scans: imageScanTypes,
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -638,7 +649,7 @@ export const ingestImageBulk = async ({
           width: image.width,
           height: image.height,
           prompt: image.prompt,
-          scans: scans ?? scanTypes,
+          scans: scans ?? imageScanTypes,
           callbackUrl,
         }))
       ),
@@ -3580,8 +3591,8 @@ const imageReviewQueueJoinMap = {
         LIMIT 1
       ) appeal ON true
       JOIN "User" au ON au.id = appeal."userId"
-      JOIN "ModActivity" ma ON ma."entityId" = i.id AND ma."entityType" = 'image'
-      JOIN "User" mu ON mu.id = ma."userId"
+      LEFT JOIN "ModActivity" ma ON ma."entityId" = i.id AND ma."entityType" = 'image'
+      LEFT JOIN "User" mu ON mu.id = ma."userId"
     `,
   },
 } as const;
@@ -3639,13 +3650,13 @@ type GetImageModerationReviewQueueRaw = {
   acceptableMinor: boolean;
   poi?: boolean;
 };
+type ReviewTag = { id: number; name: string; nsfwLevel: number; imageId: number };
 export const getImageModerationReviewQueue = async ({
   limit,
   cursor,
   needsReview,
   tagReview,
   reportReview,
-  tagIds,
   browsingLevel,
 }: ImageReviewQueueInput) => {
   const AND: Prisma.Sql[] = [];
@@ -3655,14 +3666,9 @@ export const getImageModerationReviewQueue = async ({
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
   }
-
-  if (tagIds?.length) {
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "TagsOnImageDetails" toi
-      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tagIds)})
-    )`);
+  if (needsReview && needsReview !== 'appeal') {
+    AND.push(Prisma.sql`(i."ingestion" = 'Scanned')`);
   }
-
   // Order by oldest first. This is to ensure that images that have been in the queue the longest
   // are reviewed first.
   let orderBy = `i."id" DESC`;
@@ -3769,7 +3775,7 @@ export const getImageModerationReviewQueue = async ({
   const imageIds = rawImages.map((i) => i.id);
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
 
-  if (tagReview || needsReview === 'tag') {
+  if (tagReview) {
     const rawTags = await dbRead.imageTag.findMany({
       where: { imageId: { in: imageIds } },
       select: {
@@ -3795,24 +3801,19 @@ export const getImageModerationReviewQueue = async ({
     }));
   }
 
-  let namesMap: Map<number, string[]> | undefined;
-  if (needsReview === 'poi' && imageIds.length > 0) {
-    namesMap = new Map();
-    const names = await dbRead.$queryRaw<{ imageId: number; name: string }[]>`
-      SELECT
-        toi."imageId",
-        t.name
-      FROM "TagsOnImageNew" toi
-      JOIN "TagsOnTags" tot ON tot."toTagId" = toi."tagId"
-      JOIN "Tag" t ON t.id = tot."toTagId"
-      JOIN "Tag" f ON f.id = tot."fromTagId" AND f.name = 'real person'
-      WHERE toi."imageId" IN (${Prisma.join(imageIds)});
-    `;
-    for (const x of names) {
-      if (!namesMap.has(x.imageId)) namesMap.set(x.imageId, []);
-      namesMap.get(x.imageId)?.push(x.name);
-    }
-  }
+  const reviewTags =
+    needsReview && imageIds.length > 0
+      ? await dbWrite.$queryRaw<ReviewTag[]>`
+    SELECT
+      t.id,
+      t.name,
+      t."nsfwLevel",
+      itr."imageId"
+    FROM "ImageTagForReview" itr
+    JOIN "Tag" t ON itr."tagId" = t.id
+    WHERE itr."imageId" IN (${Prisma.join(imageIds)})
+  `
+      : [];
 
   let tosDetails: Map<number, { tosReason: string }> | undefined;
   if (clickhouse && needsReview === 'appeal' && imageIds.length > 0) {
@@ -3834,7 +3835,6 @@ export const getImageModerationReviewQueue = async ({
     Omit<ImageV2Model, 'stats' | 'metadata'> & {
       meta: ImageMetaProps | null;
       tags?: VotableTagModel[] | undefined;
-      names?: string[];
       report?:
         | {
             id: number;
@@ -3863,6 +3863,7 @@ export const getImageModerationReviewQueue = async ({
       tosReason?: string | null;
       minor: boolean;
       acceptableMinor: boolean;
+      reviewTags: ReviewTag[];
     }
   > = rawImages.map(
     ({
@@ -3900,7 +3901,7 @@ export const getImageModerationReviewQueue = async ({
       },
       reactions: [],
       tags: tagsVar?.filter((x) => x.imageId === i.id),
-      names: namesMap?.get(i.id) ?? undefined,
+      reviewTags: reviewTags.filter((x) => x.imageId === i.id),
       report: reportId
         ? {
             id: reportId,
@@ -3927,6 +3928,33 @@ export const getImageModerationReviewQueue = async ({
 
   return { nextCursor, items: images };
 };
+
+export async function getImageModerationCounts() {
+  const result = await dbWrite.$queryRaw<{ needsReview: string; count: number }[]>`
+    SELECT
+      "needsReview",
+      COUNT(*)
+    FROM (
+      SELECT "needsReview" FROM "Image"
+      WHERE "needsReview" IS NOT NULL AND (("needsReview" != 'appeal' AND "ingestion" = 'Scanned') OR "needsReview" = 'appeal')
+
+      UNION ALL
+
+      SELECT 'reported' AS "needsReview" FROM (
+        SELECT ir."imageId" FROM "Report" r
+        JOIN "ImageReport" ir ON ir."reportId" = r.id
+        WHERE r.status = 'Pending'
+        GROUP BY ir."imageId"
+      )
+    )
+    GROUP BY "needsReview";
+  `;
+
+  return result.reduce<Record<string, number>>(
+    (acc, { needsReview, count }) => ({ ...acc, [needsReview]: Number(count) }),
+    {}
+  );
+}
 
 export async function get404Images() {
   const imagesRaw = await dbRead.$queryRaw<

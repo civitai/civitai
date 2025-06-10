@@ -59,7 +59,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
 
     let modelId = model?.id ?? defaultModel.id;
     const isFlux = getIsFlux(params.baseModel);
-    const isFluxStandard = getIsFluxStandard(modelId);
+    const isFluxStandard = getIsFluxStandard(model?.model?.id ?? defaultModel.model.id);
     if (isFlux && params.fluxMode && isFluxStandard) {
       const { version } = parseAIR(params.fluxMode);
       modelId = version;
@@ -71,7 +71,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     // else params.engine = undefined;
 
     delete params.engine;
-    if (model?.model?.id === fluxModelId && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
+    if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
       params.engine = 'flux-pro-raw';
     if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
 

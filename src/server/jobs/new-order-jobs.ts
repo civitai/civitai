@@ -267,7 +267,7 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
     )
   );
 
-  const candidates = await fervorCounter.getAll({ limit: 12 });
+  const candidates = await fervorCounter.getAll({ limit: newOrderConfig.limits.templarPicks });
 
   log(`PickTemplars :: Candidates: ${candidates}`);
 

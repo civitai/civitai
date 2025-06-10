@@ -1367,8 +1367,9 @@ export const newOrderConfig = {
     badgeIds: { acolyte: 858, knight: 859, templar: 860 },
   },
   limits: {
-    knightVoteLimit: 5,
-    templarVoteLimit: 2,
+    knightVotes: 5,
+    templarVotes: 2,
+    templarPicks: 24,
   },
 };
 
@@ -1403,6 +1404,7 @@ export const specialCosmeticRewards = {
     866, // bulk buzz buy - badge
     872, // bulk buzz buy - background
   ],
+  crypto: [874],
 };
 
 export type LiveFeatureFlags = {
