@@ -30,7 +30,7 @@ const schema = baseVideoGenerationSchema.extend({
 
 export const klingGenerationConfig = VideoGenerationConfig2({
   label: 'Kling',
-  whatIfProps: ['mode', 'duration'],
+  whatIfProps: ['mode', 'duration', 'model'],
   metadataDisplayProps: ['process', 'cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
   schema,
   defaultValues: { aspectRatio: '1:1' },
