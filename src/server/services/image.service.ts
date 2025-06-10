@@ -240,10 +240,10 @@ export const deleteImageById = async ({
       // Ignore errors
     }
 
-    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    await imagesMetricsSearchIndex.queueUpdate([
-      { id, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
+    await queueImageSearchIndexUpdate({
+      ids: [id],
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
 
     // await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
     if (updatePost && image.postId) {
