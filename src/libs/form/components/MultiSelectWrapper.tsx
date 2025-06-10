@@ -1,7 +1,25 @@
-import type { MultiSelectProps, ComboboxItem, ScrollAreaProps } from '@mantine/core';
-import { MultiSelect, ScrollArea, Divider, Box, Loader } from '@mantine/core';
-import { IconSearch } from '@tabler/icons-react';
-import React, { useMemo, forwardRef } from 'react';
+import type {
+  MultiSelectProps,
+  ComboboxItem,
+  ScrollAreaProps,
+  PillsInputProps,
+} from '@mantine/core';
+import {
+  MultiSelect,
+  ScrollArea,
+  Divider,
+  Box,
+  Loader,
+  Combobox,
+  CheckIcon,
+  Group,
+  Pill,
+  PillsInput,
+  useCombobox,
+  ActionIcon,
+} from '@mantine/core';
+import { IconSearch, IconX } from '@tabler/icons-react';
+import React, { useMemo, forwardRef, useState } from 'react';
 
 type SelectItemProps<T extends string | number> = Omit<ComboboxItem, 'value'> & {
   value: T;
@@ -118,3 +136,157 @@ OverflowScrollArea.displayName = 'OverflowScrollArea';
 
 export const MultiSelectContext = React.createContext<{ limit?: number }>({});
 export const useMultiSelectContext = () => React.useContext(MultiSelectContext);
+
+type CreatableMultiSelectProps = Omit<PillsInputProps, 'onChange'> & {
+  value?: string[];
+  data?: string[];
+  onChange?: (value: string[]) => void;
+  loading?: boolean;
+  parsePaste?: boolean;
+  clearable?: boolean;
+  maxValues?: number;
+};
+
+export function CreatableMultiSelect({
+  value = [],
+  data = [],
+  onChange,
+  placeholder,
+  loading,
+  clearable,
+  parsePaste,
+  maxValues = Infinity,
+  ...props
+}: CreatableMultiSelectProps) {
+  const combobox = useCombobox({
+    onDropdownClose: () => combobox.resetSelectedOption(),
+    onDropdownOpen: () => combobox.updateSelectedOptionIndex('active'),
+  });
+
+  const [search, setSearch] = useState('');
+
+  const exactOptionMatch = data.some((item) => item === search);
+
+  const handleValueSelect = (val: string) => {
+    if (value.length >= maxValues) return;
+
+    setSearch('');
+    combobox.closeDropdown();
+
+    if (val === '$create') {
+      const cleanedSearch = search
+        .split(',')
+        .slice(0, maxValues)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const newValue = new Set([...value, ...cleanedSearch]);
+      onChange?.([...newValue]);
+    } else {
+      onChange?.(value.includes(val) ? value.filter((v) => v !== val) : [...value, val]);
+    }
+  };
+
+  const handleValueRemove = (val: string) => onChange?.(value.filter((item) => item !== val));
+
+  const handlePaste = (pastedText: string) => {
+    // Split pasted text by comma or new line
+    const pastedValues = pastedText
+      .split(/[\n,]/)
+      .slice(0, maxValues)
+      .map((x) => x.trim());
+    const newValue = new Set([...((value as string[]) ?? []), ...pastedValues]);
+    onChange?.([...newValue]);
+  };
+
+  const values = value.map((item) => (
+    <Pill key={item} withRemoveButton onRemove={() => handleValueRemove(item)}>
+      {item}
+    </Pill>
+  ));
+
+  const options = data
+    .filter((item) => item.toLowerCase().includes(search.trim().toLowerCase()))
+    .map((item) => (
+      <Combobox.Option value={item} key={item} active={value.includes(item)}>
+        <Group gap="sm">
+          {value.includes(item) ? <CheckIcon size={12} /> : null}
+          <span>{item}</span>
+        </Group>
+      </Combobox.Option>
+    ));
+
+  const reachedMaxValues = value.length >= maxValues;
+
+  return (
+    <Combobox store={combobox} onOptionSubmit={handleValueSelect} withinPortal={false}>
+      <Combobox.DropdownTarget>
+        <PillsInput
+          {...props}
+          rightSection={
+            loading ? (
+              <Loader />
+            ) : clearable && value.length ? (
+              <ActionIcon variant="transparent" size="sm" onClick={() => onChange?.([])}>
+                <IconX />
+              </ActionIcon>
+            ) : undefined
+          }
+          onClick={() => combobox.openDropdown()}
+        >
+          <Pill.Group>
+            {values}
+
+            {!reachedMaxValues && (
+              <Combobox.EventsTarget>
+                <PillsInput.Field
+                  onFocus={() => combobox.openDropdown()}
+                  onBlur={() => combobox.closeDropdown()}
+                  value={search}
+                  placeholder={placeholder ?? 'Search values'}
+                  onChange={(event) => {
+                    combobox.updateSelectedOptionIndex();
+                    setSearch(event.currentTarget.value);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Backspace' && search.length === 0 && value.length > 0) {
+                      event.preventDefault();
+                      handleValueRemove(value[value.length - 1]);
+                    }
+                  }}
+                  onPaste={
+                    parsePaste
+                      ? (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const pastedText = e.clipboardData.getData('text');
+                          handlePaste(pastedText);
+                        }
+                      : undefined
+                  }
+                />
+              </Combobox.EventsTarget>
+            )}
+          </Pill.Group>
+        </PillsInput>
+      </Combobox.DropdownTarget>
+
+      {!reachedMaxValues && (
+        <Combobox.Dropdown>
+          <Combobox.Options>
+            <ScrollArea.Autosize mah={200}>
+              {options}
+
+              {!exactOptionMatch && search.trim().length > 0 && (
+                <Combobox.Option value="$create">+ Create {search}</Combobox.Option>
+              )}
+
+              {exactOptionMatch && search.trim().length > 0 && options.length === 0 && (
+                <Combobox.Empty>Nothing found</Combobox.Empty>
+              )}
+            </ScrollArea.Autosize>
+          </Combobox.Options>
+        </Combobox.Dropdown>
+      )}
+    </Combobox>
+  );
+}

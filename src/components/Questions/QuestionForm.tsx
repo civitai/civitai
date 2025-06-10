@@ -9,7 +9,14 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { useForm, Form, InputText, InputMultiSelect, InputRTE } from '~/libs/form';
+import {
+  useForm,
+  Form,
+  InputText,
+  InputMultiSelect,
+  InputRTE,
+  InputCreatableMultiSelect,
+} from '~/libs/form';
 import type { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { upsertQuestionSchema } from '~/server/schema/question.schema';
 import { trpc } from '~/utils/trpc';
@@ -135,18 +142,13 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
           <ContainerGrid2.Col span={{ base: 12, lg: 4 }}>
             <Paper radius="md" p="xl" withBorder>
               <Stack>
-                <InputMultiSelect
+                <InputCreatableMultiSelect
                   data={tagsData}
                   name="tags"
                   label="Tags"
-                  limit={50}
                   placeholder="e.g.: portrait, sharp focus, etc."
                   description="Please add your tags"
-                  // TODO: Mantine7 - Don't have creatable.
-                  // creatable
-                  // getCreateLabel={(query) => `+ Create ${query}`}
                   clearable
-                  searchable
                 />
                 <Group justify="flex-end" wrap="nowrap">
                   <Button

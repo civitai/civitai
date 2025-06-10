@@ -30,6 +30,7 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
+  InputCreatableMultiSelect,
   InputMultiSelect,
   InputNumber,
   InputRTE,
@@ -748,7 +749,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           {acceptsTrainedWords && (
             <Stack gap="xs">
               {!skipTrainedWords && (
-                <InputMultiSelect
+                <InputCreatableMultiSelect
                   name="trainedWords"
                   label="Trigger Words"
                   placeholder="e.g.: Master Chief"
@@ -756,11 +757,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     isTextualInversion ? ' (max 1 word)' : ''
                   }`}
                   data={trainedWords}
-                  // TODO: Mantine7 - Figure this one out. We need this.
-                  // getCreateLabel={(query) => `+ Create ${query}`}
-                  max={isTextualInversion ? 1 : undefined}
+                  maxValues={isTextualInversion ? 1 : undefined}
                   clearable
-                  searchable
+                  parsePaste
                   required
                 />
               )}

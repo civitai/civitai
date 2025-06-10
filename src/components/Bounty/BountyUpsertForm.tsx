@@ -836,7 +836,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 <Anchor href="/content/tos" target="_blank" rel="nofollow" span inherit>
                   Terms of service
                 </Anchor>
-                .<br/>
+                .<br />
                 Illegal or exploitative content will be removed and reported.
               </Text>
               <List size="xs" spacing={8}>

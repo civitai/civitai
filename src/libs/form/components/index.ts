@@ -18,7 +18,10 @@ import {
   Textarea,
 } from '@mantine/core';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
-import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
+import {
+  CreatableMultiSelect,
+  MultiSelectWrapper,
+} from '~/libs/form/components/MultiSelectWrapper';
 import { DatePickerInput, TimeInput } from '@mantine/dates';
 import { FileInputUpload } from '~/components/FileInputUpload/FileInputUpload';
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
@@ -48,6 +51,7 @@ export const InputNumber = withController(NumberInputWrapper, ({ field }) => ({
 export const InputTextArea = withController(Textarea);
 export const InputSelect = withController(SelectWrapper);
 export const InputMultiSelect = withController(MultiSelectWrapper);
+export const InputCreatableMultiSelect = withController(CreatableMultiSelect);
 export const InputSegmentedControl = withController(SegmentedControlWrapper);
 export const InputRadioGroup = withController(Radio.Group);
 export const InputCheckboxGroup = withController(Checkbox.Group);

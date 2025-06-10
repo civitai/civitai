@@ -44,6 +44,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import {
   Form,
   InputCheckbox,
+  InputCreatableMultiSelect,
   InputDatePicker,
   InputMultiSelect,
   InputRTE,
@@ -463,18 +464,13 @@ const CreateChangelog = ({
                 withAsterisk
                 data={Object.values(ChangelogType)}
               />
-              <InputMultiSelect
+              <InputCreatableMultiSelect
                 name="tags"
                 label="Tags"
                 data={allTagData}
                 loading={loadingTagData}
-                limit={50}
                 placeholder="Tags..."
-                // TODO: Mantine7
-                // getCreateLabel={(query) => `+ Create ${query}`}
-                // creatable
                 clearable
-                searchable
               />
               <InputText name="link" label="Link" placeholder="Link to commit/article..." />
               <InputText name="cta" label="CTA" placeholder="Link for CTA..." />
