@@ -272,7 +272,7 @@ export const getUserWalletBalance = async (userId: number) => {
 
   return {
     userId,
-    balance: new Decimal(balance).dividedBy(1000000).toNumber(), // Convert from smallest unit to USDC
+    balance: new Decimal(balance).toNumber(), // Convert from smallest unit to USDC
   };
 };
 
@@ -320,7 +320,7 @@ export const processUserPendingTransactions = async (userId: number) => {
       },
     },
     orderBy: {
-      createdAt: 'asc',
+      createdAt: 'desc',
     },
   });
 
@@ -340,16 +340,20 @@ export const processUserPendingTransactions = async (userId: number) => {
     );
   });
 
-  const remainingBalance = new Decimal(balance.balance);
+  let remainingBalance = new Decimal(balance.balance);
 
   // Attempts to process each transaction in order
   for (const transaction of transactions) {
     // Check if the transaction can be completed
-    if (remainingBalance.greaterThan(transaction.amount)) {
+    if (remainingBalance.greaterThanOrEqualTo(transaction.amount)) {
       await getTransactionStatusByKey({ userId, key: transaction.key });
-      remainingBalance.sub(transaction.amount);
+      remainingBalance = remainingBalance.sub(transaction.amount);
     } else {
-      console.log(`Insufficient balance for transaction ${transaction.key}`);
+      console.log(
+        `Insufficient balance for transaction ${transaction.key}. Needed: ${
+          transaction.amount
+        }, Available: ${remainingBalance.toNumber()}`
+      );
     }
   }
 
