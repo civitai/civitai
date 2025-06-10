@@ -1,15 +1,20 @@
 import { env } from 'process';
 import { logToAxiom } from '../logging/client';
 import Decimal from 'decimal.js';
-import type { CreateBuzzCharge } from '~/server/schema/coinbase.schema';
+import type {
+  CreateBuzzCharge,
+  GetPaginatedUserTransactionHistorySchema,
+} from '~/server/schema/coinbase.schema';
 import { COINBASE_FIXED_FEE, specialCosmeticRewards } from '~/server/common/constants';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
 import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 import { grantBuzzPurchase } from '~/server/services/buzz.service';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getWalletForUser } from '~/server/coinbase/coinbase';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import type { Prisma } from '.prisma/client';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'coinbase-service', type: 'error', ...data }).catch();
@@ -252,4 +257,123 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
     console.error('Error processing Coinbase webhook event:', error);
     throw error; // Re-throw to handle it upstream if needed
   }
+};
+
+export const getUserWalletBalance = async (userId: number) => {
+  const wallet = await getWalletForUser(userId);
+  if (!wallet) {
+    throw new Error(`No wallet found for userId: ${userId}`);
+  }
+
+  const balance = await wallet.getUSDCBalance();
+  if (isNaN(balance) || balance < 0) {
+    throw new Error(`Failed to retrieve USDC balance for userId: ${userId}`);
+  }
+
+  return {
+    userId,
+    balance: new Decimal(balance).dividedBy(1000000).toNumber(), // Convert from smallest unit to USDC
+  };
+};
+
+export const getPaginatedUserTransactionHistory = async (
+  input: GetPaginatedUserTransactionHistorySchema & { userId: number }
+) => {
+  const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
+  const { take, skip } = getPagination(limit, page);
+
+  const where: Prisma.CryptoTransactionFindManyArgs['where'] = {};
+  if (input.statuses && input.statuses.length) where.status = { in: input.statuses };
+
+  const items = await dbRead.cryptoTransaction.findMany({
+    where,
+    take,
+    skip,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const count = await dbRead.cryptoTransaction.count({ where });
+
+  return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
+};
+
+export const processUserPendingTransactions = async (userId: number) => {
+  const balance = await getUserWalletBalance(userId);
+  const wallet = await getWalletForUser(userId);
+  if (!wallet) {
+    throw new Error(`No wallet found for userId: ${userId}`);
+  }
+  if (balance.balance <= 0) {
+    console.log(`No USDC balance for userId: ${userId}`);
+    return;
+  }
+
+  const transactions = await dbWrite.cryptoTransaction.findMany({
+    where: {
+      userId,
+      status: {
+        in: [
+          CryptoTransactionStatus.WaitingForRamp,
+          CryptoTransactionStatus.RampSuccess,
+          CryptoTransactionStatus.WaitingForSweep,
+        ],
+      },
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+  });
+
+  transactions.sort((a, b) => {
+    const statusOrder = [
+      CryptoTransactionStatus.WaitingForSweep,
+      CryptoTransactionStatus.RampSuccess,
+      CryptoTransactionStatus.WaitingForRamp,
+    ];
+
+    const aIndex = statusOrder.indexOf(a.status as any);
+    const bIndex = statusOrder.indexOf(b.status as any);
+
+    // If status is not found, put it at the end
+    return (
+      (aIndex === -1 ? statusOrder.length : aIndex) - (bIndex === -1 ? statusOrder.length : bIndex)
+    );
+  });
+
+  const remainingBalance = new Decimal(balance.balance);
+
+  // Attempts to process each transaction in order
+  for (const transaction of transactions) {
+    // Check if the transaction can be completed
+    if (remainingBalance.greaterThan(transaction.amount)) {
+      await getTransactionStatusByKey({ userId, key: transaction.key });
+      remainingBalance.sub(transaction.amount);
+    } else {
+      console.log(`Insufficient balance for transaction ${transaction.key}`);
+    }
+  }
+
+  if (remainingBalance.greaterThan(0)) {
+    console.log(`Remaining balance after processing transactions: ${remainingBalance.toString()}`);
+    const key = `remaining-${userId}-${new Date().getTime()}`;
+    // Add new transaction for remaining balance:
+    const transaction = await dbWrite.cryptoTransaction.create({
+      data: {
+        userId,
+        key,
+        amount: remainingBalance.toNumber(),
+        status: CryptoTransactionStatus.WaitingForSweep,
+        note: `Remaining balance after processing transactions: ${remainingBalance.toString()}`,
+      },
+    });
+
+    await getTransactionStatusByKey({ userId, key: transaction.key });
+  }
+
+  const updatedBalance = await getUserWalletBalance(userId);
+  return {
+    userId,
+    balance: updatedBalance.balance,
+    message: 'Processed user pending transactions successfully',
+  };
 };

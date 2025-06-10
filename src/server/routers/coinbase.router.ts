@@ -3,9 +3,15 @@ import {
   createBuzzOrderHandler,
   createBuzzOrderOnrampHandler,
   getTransactionStatusHandler,
+  getPaginatedUserTransactionsHandler,
+  getUserWalletBalanceHandler,
+  processUserPendingTransactionsHandler,
 } from '~/server/controllers/coinbase.controller';
 import { getByIdStringSchema } from '~/server/schema/base.schema';
-import { createBuzzChargeSchema } from '~/server/schema/coinbase.schema';
+import {
+  createBuzzChargeSchema,
+  getPaginatedUserTransactionHistorySchema,
+} from '~/server/schema/coinbase.schema';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 export const coinbaseRouter = router({
@@ -21,4 +27,11 @@ export const coinbaseRouter = router({
   getTransactionStatus: protectedProcedure
     .input(getByIdStringSchema)
     .query(getTransactionStatusHandler),
+  getUserWalletBalance: protectedProcedure.query(getUserWalletBalanceHandler),
+  getPaginatedUserTransactions: protectedProcedure
+    .input(getPaginatedUserTransactionHistorySchema)
+    .query(getPaginatedUserTransactionsHandler),
+  processUserPendingTransactions: protectedProcedure.mutation(
+    processUserPendingTransactionsHandler
+  ),
 });

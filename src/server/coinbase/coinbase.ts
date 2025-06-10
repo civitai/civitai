@@ -7,6 +7,11 @@ import type { SendUserOperationReturnType } from '@coinbase/cdp-sdk/_types/actio
 import { dbWrite } from '~/server/db/client';
 import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
+
+const log = (data: MixedObject) => {
+  return logToAxiom({ name: 'coinbase-onramp', type: 'error', ...data }).catch(() => null);
+};
 
 // Initialize the CDP client, which automatically loads
 // the API Key and Wallet Secret from the environment
@@ -36,46 +41,47 @@ export async function getWalletForUser(userId: number) {
   let createdAccount = false;
   let account: EvmServerAccount | undefined;
   let smartAccount: EvmSmartAccount | undefined;
+  const user = await dbWrite.cryptoWallet.findFirst({
+    where: {
+      userId,
+    },
+  });
 
   try {
-    const user = await dbWrite.cryptoWallet.findFirst({
-      where: {
-        userId,
-      },
-    });
+    if (user) {
+      account = await cdp.evm.getAccount({
+        address: user.wallet as `0x${string}`,
+      });
 
-    // if (user) {
-    //   account = await cdp.evm.getAccount({
-    //     address: user.wallet as `0x${string}`,
-    //   });
+      smartAccount = await cdp.evm.getSmartAccount({
+        address: user.smartAccount as `0x${string}`,
+        owner: account,
+      });
+    } else {
+      account = await cdp.evm.getAccount({
+        name: accountName,
+      });
 
-    //   smartAccount = await cdp.evm.getSmartAccount({
-    //     address: user.smartAccount as `0x${string}`,
-    //     owner: account,
-    //   });
-    // } else {
-    account = await cdp.evm.getAccount({
-      name: accountName,
-    });
+      const { accounts } = await cdp.evm.listSmartAccounts({
+        name: accountName,
+      });
 
-    const { accounts } = await cdp.evm.listSmartAccounts({
-      name: accountName,
-    });
+      const userSmartAccounts = accounts.filter((a) =>
+        a.owners.some((o) => o === account?.address)
+      );
 
-    const userSmartAccounts = accounts.filter((a) => a.owners.some((o) => o === account?.address));
+      console.log(
+        `Found ${userSmartAccounts.length} smart accounts for user ${userId} - Total accounts: ${accounts.length}`
+      );
 
-    console.log(
-      `Found ${userSmartAccounts.length} smart accounts for user ${userId} - Total accounts: ${accounts.length}`
-    );
-
-    smartAccount =
-      userSmartAccounts.length > 0
-        ? await cdp.evm.getSmartAccount({
-            owner: account,
-            address: userSmartAccounts[0].address,
-          })
-        : undefined;
-    // }
+      smartAccount =
+        userSmartAccounts.length > 0
+          ? await cdp.evm.getSmartAccount({
+              owner: account,
+              address: userSmartAccounts[0].address,
+            })
+          : undefined;
+    }
   } catch (e) {
     // Account does not exist, create it
   }
@@ -109,15 +115,14 @@ export async function getWalletForUser(userId: number) {
     }
   }
 
-  const existingWallet = await dbWrite.cryptoWallet.findFirst({
-    where: {
-      userId,
-    },
-  });
-
-  if (!existingWallet) {
-    await dbWrite.cryptoWallet.create({
-      data: {
+  if (!user || smartAccount.address !== user.smartAccount) {
+    await dbWrite.cryptoWallet.upsert({
+      where: { userId },
+      update: {
+        wallet: account.address,
+        smartAccount: smartAccount.address,
+      },
+      create: {
         userId,
         wallet: account.address,
         smartAccount: smartAccount.address,
