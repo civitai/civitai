@@ -538,7 +538,7 @@ export function GeneratedImageLightbox({
                   index={index}
                   className="flex flex-[0_0_100%] items-center justify-center"
                 >
-                  {image.url && (
+                  {image.url && slide === index && (
                     <GeneratedImage
                       image={image} // TODO - fix this
                       request={request}
