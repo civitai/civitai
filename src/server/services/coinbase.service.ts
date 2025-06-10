@@ -354,10 +354,16 @@ export const processUserPendingTransactions = async (userId: number) => {
           transaction.amount
         }, Available: ${remainingBalance.toNumber()}`
       );
+
+      if (remainingBalance.lessThanOrEqualTo(0)) {
+        console.log(`No remaining balance to process further transactions for userId: ${userId}`);
+        break; // No more balance to process further transactions
+      }
     }
   }
 
-  if (remainingBalance.greaterThan(0)) {
+  // We do greater than 2 because Coinbase has a minimum size of $2 for transactions
+  if (remainingBalance.greaterThan(2)) {
     console.log(`Remaining balance after processing transactions: ${remainingBalance.toString()}`);
     const key = `remaining-${userId}-${new Date().getTime()}`;
     // Add new transaction for remaining balance:

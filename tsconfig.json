@@ -27,7 +27,7 @@
       {
         "name": "next"
       }
-    ]
+    ], 
   },
   "include": [
     // "next-env.d.ts",
@@ -35,7 +35,7 @@
     // "**/*.tsx",
     // "**/*.cjs",
     // "**/*.mjs",
-    "scripts",
+    // "scripts",
     "src",
     "tests",
     ".next/types/**/*.ts"
