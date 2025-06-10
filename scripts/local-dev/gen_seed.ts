@@ -11,10 +11,13 @@ import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { getChatHash, getUsersFromHash } from '~/server/utils/chat';
 import {
   ArticleEngagementType,
   Availability,
   ChangelogType,
+  ChatMemberStatus,
+  ChatMessageType,
   CheckpointType,
   CollectionType,
   EntityMetric_MetricType_Type,
@@ -36,6 +39,7 @@ import {
   TrainingStatus,
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
+import { isDefined } from '~/utils/type-guards';
 import { checkLocalDb, deleteRandomJobQueueRows, generateRandomName, insertRows } from './utils';
 // import { fetchBlob } from '~/utils/file-utils';
 
@@ -2976,6 +2980,9 @@ const genFeaturedModelVersions = (num: number, mvIds: number[]) => {
   let usableMvIds = mvIds;
 
   for (let step = 1; step <= num; step++) {
+    if (!usableMvIds.length) {
+      continue;
+    }
     const mvId = rand(usableMvIds);
     usableMvIds = without(usableMvIds, mvId);
     const start = rand([dayjs(faker.date.recent({ days: 3 })), dayjs()]);
@@ -3033,6 +3040,131 @@ const genChangelogs = (num: number) => {
 
     ret.push(row);
   }
+  return ret;
+};
+
+/**
+ * Chat
+ */
+const genChats = (num: number, userIds: number[]) => {
+  const ret = [] as [number, string, string, number][];
+
+  for (let step = 1; step <= num; step++) {
+    const created = faker.date.past({ years: 3 }).toISOString();
+    const owner = rand(userIds);
+    const otherUsers = without(userIds, owner);
+    const members = [
+      owner,
+      rand(otherUsers),
+      randw([
+        { value: rand(otherUsers), weight: 1 },
+        { value: null, weight: 15 },
+      ]),
+    ].filter(isDefined);
+
+    const row = [
+      step, // id
+      created, // createdAt
+      getChatHash(members), // hash
+      owner, // ownerId
+    ] satisfies [number, string, string, number];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * ChatMember
+ */
+const genChatMembers = (chatData: { chatId: number; userIds: number[]; createdAt: string }[]) => {
+  const ret = [];
+
+  let i = 1;
+  for (const { chatId, userIds, createdAt } of chatData) {
+    let isOwner = true;
+    for (const userId of userIds) {
+      const status = !isOwner
+        ? randw([
+            { value: ChatMemberStatus.Joined, weight: 10 },
+            { value: ChatMemberStatus.Invited, weight: 6 },
+            {
+              value: rand(
+                Object.values(ChatMemberStatus).filter(
+                  (s) => s !== ChatMemberStatus.Joined && s !== ChatMemberStatus.Invited
+                )
+              ),
+              weight: 1,
+            },
+          ])
+        : ChatMemberStatus.Joined;
+
+      const row = [
+        i, // id
+        createdAt, // createdAt
+        userId, // userId
+        chatId, // chatId
+        isOwner, // isOwner
+        !isOwner ? fbool(0.02) : false, // isMuted
+        status, // status
+        null, // lastViewedMessageId
+        status === ChatMemberStatus.Joined
+          ? faker.date.between({ from: createdAt, to: Date.now() }).toISOString()
+          : null, // joinedAt
+        status === ChatMemberStatus.Left
+          ? faker.date.between({ from: createdAt, to: Date.now() }).toISOString()
+          : null, // leftAt
+        status === ChatMemberStatus.Kicked
+          ? faker.date.between({ from: createdAt, to: Date.now() }).toISOString()
+          : null, // kickedAt
+        null, // unkickedAt
+        status === ChatMemberStatus.Ignored
+          ? faker.date.between({ from: createdAt, to: Date.now() }).toISOString()
+          : null, // ignoredAt
+      ];
+      ret.push(row);
+
+      i++;
+      isOwner = false;
+    }
+  }
+
+  return ret;
+};
+
+/**
+ * ChatMessage
+ */
+const genChatMessages = (chatData: { chatId: number; userIds: number[]; createdAt: string }[]) => {
+  const ret = [];
+
+  let i = 1;
+  for (const { chatId, userIds, createdAt } of chatData) {
+    for (
+      let step = 0;
+      step <=
+      randw([
+        { value: 0, weight: 1 },
+        { value: faker.number.int({ min: 1, max: 20 }), weight: 10 },
+      ]);
+      step++
+    ) {
+      const row = [
+        i, // id
+        faker.date.between({ from: createdAt, to: Date.now() }).toISOString(), // createdAt
+        rand(userIds), // userId
+        chatId, // chatId
+        faker.lorem.sentence({ min: 1, max: 20 }), // content
+        ChatMessageType.Markdown, // contentType // TODO include embeds
+        null, // referenceMessageId
+        null, // editedAt
+      ];
+      ret.push(row);
+
+      i++;
+    }
+  }
+
   return ret;
 };
 
@@ -3269,6 +3401,23 @@ const genRows = async (truncate = true) => {
 
   const changelogs = genChangelogs(Math.round(numRows / 4));
   await insertRows('Changelog', changelogs);
+
+  const chats = genChats(
+    numRows,
+    userIds.filter((u) => u > 0)
+  );
+  await insertRows('Chat', chats);
+  const chatData = chats.map((c) => ({
+    chatId: c[0],
+    userIds: getUsersFromHash(c[2]),
+    createdAt: c[1],
+  }));
+
+  const chatMembers = genChatMembers(chatData);
+  await insertRows('ChatMember', chatMembers);
+
+  const chatMessages = genChatMessages(chatData);
+  await insertRows('ChatMessage', chatMessages);
 
   if (truncQueue) {
     await deleteRandomJobQueueRows(99);

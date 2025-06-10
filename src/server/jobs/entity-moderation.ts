@@ -354,8 +354,6 @@ const runClavata = async ({
     });
 
     for await (const item of stream) {
-      console.log(item);
-
       const _metadata = item.metadata as MetadataType | undefined;
       if (!_metadata || !_metadata.id) {
         logAx({ message: 'No id found', data: { item } });
@@ -494,8 +492,6 @@ async function runModChat(lastRun: Date) {
   //   logAx({ message: 'Error getting chat messages', data: { error } });
   //   return [];
   // });
-
-  console.log(data);
 
   if (!data || data.length === 0) {
     log('No chat messages found');

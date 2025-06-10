@@ -55,6 +55,8 @@ export const insertRows = async (table: string, data: any[][], hasId = true) => 
   let query = 'INSERT INTO %I VALUES %L ON CONFLICT DO NOTHING';
   if (hasId) query += ' RETURNING ID';
 
+  // console.log(`\t-> ${format(query, table, data)}`);
+
   try {
     const ret = await pgDbWrite.query<{ id: number }>(format(query, table, data));
 

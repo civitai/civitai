@@ -5,3 +5,7 @@ export const getChatHash = (userIds: number[]) => {
     .sort((a, b) => a - b)
     .join('-');
 };
+
+export const getUsersFromHash = (hash: string) => {
+  return hash.split('-').map((id) => parseInt(id, 10));
+};
