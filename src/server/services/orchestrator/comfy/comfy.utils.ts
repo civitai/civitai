@@ -129,8 +129,11 @@ export function applyResources(
       for (const node of Object.values(workflow)) {
         for (const [key, value] of Object.entries(node.inputs)) {
           if (typeof value === 'string' && value.includes(resource.triggerWord)) {
+            const negRegex = new RegExp(`\\b${resource.triggerWord}-neg\\b`, 'gi');
             const regex = new RegExp(`\\b${resource.triggerWord}\\b`, 'gi');
-            node.inputs[key] = value.replace(regex, `embedding:${resource.air}`);
+            node.inputs[key] = value
+              .replace(negRegex, '')
+              .replace(regex, `embedding:${resource.air}`);
           }
         }
       }
