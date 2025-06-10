@@ -3,6 +3,8 @@ import type {
   ComboboxItem,
   ScrollAreaProps,
   PillsInputProps,
+  ComboboxData,
+  ComboboxItemGroup,
 } from '@mantine/core';
 import {
   MultiSelect,
@@ -23,6 +25,7 @@ import React, { useMemo, forwardRef, useState } from 'react';
 
 type SelectItemProps<T extends string | number> = Omit<ComboboxItem, 'value'> & {
   value: T;
+  group?: string;
 };
 
 type MultiSelectWrapperProps<T extends string | number> = Omit<
@@ -51,13 +54,25 @@ export function MultiSelectWrapper<T extends string | number>({
   const initialType =
     !data.length || (typeof data[0] !== 'object' ? typeof data[0] : typeof data[0].value);
 
-  const parsedData = data.map((x): string | ComboboxItem => {
-    if (typeof x === 'string') return x;
-    return {
-      ...x,
-      value: String(x.value),
-    } as ComboboxItem;
-  });
+  const parsedData = data.reduce<Array<string | ComboboxItem | ComboboxItemGroup>>((acc, x) => {
+    if (typeof x === 'string') {
+      acc.push(x);
+    } else if (x.group) {
+      let group = acc.find(
+        (item): item is { group: string; items: { label: string; value: string }[] } =>
+          typeof item !== 'string' && 'group' in item && item.group === x.group
+      );
+      if (!group) {
+        group = { group: x.group, items: [] };
+        acc.push(group);
+      }
+      group.items.push({ label: x.label, value: String(x.value) });
+    } else {
+      acc.push({ ...x, value: String(x.value) });
+    }
+
+    return acc;
+  }, []);
 
   const parsedValue = useMemo(() => (value ? value?.map(String) : undefined), [value]);
   const parsedDefaultValue = useMemo(
@@ -80,7 +95,7 @@ export function MultiSelectWrapper<T extends string | number>({
   return (
     <MultiSelectContext.Provider value={{ limit: props.limit }}>
       <MultiSelect
-        data={parsedData as (string | ComboboxItem)[]}
+        data={parsedData as ComboboxData}
         value={parsedValue}
         onChange={handleChange}
         onPaste={
@@ -270,23 +285,18 @@ export function CreatableMultiSelect({
         </PillsInput>
       </Combobox.DropdownTarget>
 
-      {!reachedMaxValues && (
-        <Combobox.Dropdown>
-          <Combobox.Options>
-            <ScrollArea.Autosize mah={200}>
-              {options}
-
-              {!exactOptionMatch && search.trim().length > 0 && (
-                <Combobox.Option value="$create">+ Create {search}</Combobox.Option>
-              )}
-
-              {exactOptionMatch && search.trim().length > 0 && options.length === 0 && (
-                <Combobox.Empty>Nothing found</Combobox.Empty>
-              )}
-            </ScrollArea.Autosize>
-          </Combobox.Options>
-        </Combobox.Dropdown>
-      )}
+      <Combobox.Dropdown hidden={reachedMaxValues}>
+        <Combobox.Options>
+          <ScrollArea.Autosize mah={200}>
+            {options}
+            {!exactOptionMatch && search.trim().length > 0 ? (
+              <Combobox.Option value="$create">+ Create {search}</Combobox.Option>
+            ) : (
+              <Combobox.Empty>Nothing found. Type to create a new entry</Combobox.Empty>
+            )}
+          </ScrollArea.Autosize>
+        </Combobox.Options>
+      </Combobox.Dropdown>
     </Combobox>
   );
 }

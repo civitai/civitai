@@ -3,6 +3,7 @@ import { useQueryTools } from '~/components/Tool/tools.utils';
 import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { ToolSort } from '~/server/common/enums';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export function ToolMultiSelect({
   value,
@@ -27,7 +28,9 @@ export function ToolMultiSelect({
       loading={loading}
       placeholder={placeholder}
       data={tools.map(({ id, name, type }) =>
-        grouped ? { value: id, label: name, group: type } : { value: id, label: name }
+        grouped
+          ? { value: id, label: name, group: getDisplayName(type) }
+          : { value: id, label: name }
       )}
       searchable
       clearable
@@ -57,7 +60,9 @@ export function ToolSelect({
       loading={loading}
       placeholder={placeholder}
       data={tools.map(({ id, name, type }) =>
-        grouped ? { value: id, label: name, group: type } : { value: id, label: name }
+        grouped
+          ? { value: id, label: name, group: getDisplayName(type) }
+          : { value: id, label: name }
       )}
       searchable
       clearable

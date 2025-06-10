@@ -1,19 +1,9 @@
 import type { InputWrapperProps } from '@mantine/core';
-import {
-  ActionIcon,
-  Autocomplete,
-  Badge,
-  Center,
-  Group,
-  Input,
-  TextInput,
-  UnstyledButton,
-} from '@mantine/core';
-import { getHotkeyHandler, useDebouncedState, useDisclosure } from '@mantine/hooks';
+import { Badge, Center, Group, Input, TextInput } from '@mantine/core';
+import { getHotkeyHandler, useDisclosure } from '@mantine/hooks';
 import type { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconPlus, IconX } from '@tabler/icons-react';
 import { useCallback, useMemo, useState } from 'react';
-import { trpc } from '~/utils/trpc';
 import styles from './TagsInput.module.scss';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
@@ -27,36 +17,13 @@ type TagsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: TagProps[];
   onChange?: (value: TagProps[]) => void;
   filter?: (tag: TagProps) => boolean;
-  autosuggest?: boolean;
 };
 // !important - output must remain in the format {id, name}[]
-export function TagsInput({
-  value = [],
-  onChange,
-  target,
-  filter,
-  autosuggest,
-  ...props
-}: TagsInputProps) {
+export function TagsInput({ value = [], onChange, target, filter, ...props }: TagsInputProps) {
   value = Array.isArray(value) ? value : value ? [value] : [];
   const [search, setSearch] = useState('');
-  const [debouncedSearch] = useDebouncedState(search, 300);
   const [adding, { open, close }] = useDisclosure(false);
   const trimmedSearch = search.trim().toLowerCase();
-
-  const { data, isFetching } = trpc.tag.getAll.useQuery(
-    {
-      limit: 20,
-      entityType: target,
-      categories: false,
-      query: debouncedSearch.trim().toLowerCase(),
-    },
-    { enabled: autosuggest && debouncedSearch.trim().length > 0 }
-  );
-  const filteredItems = useMemo(
-    () => (filter ? data?.items?.filter(filter) ?? [] : data?.items ?? []),
-    [data?.items, filter]
-  );
 
   const selectedTags = useMemo(() => value.map((tag) => tag.name), [value]);
   const isNewTag =
@@ -140,63 +107,14 @@ export function TagsInput({
           }
         >
           {adding ? (
-            autosuggest ? (
-              <Autocomplete
-                variant="unstyled"
-                classNames={{ dropdown: styles.dropdown }}
-                data={
-                  filteredItems
-                    .filter((tag) => !selectedTags.includes(tag.name))
-                    .map((tag) => ({
-                      id: tag.id,
-                      value: tag.name,
-                      group: !search ? 'Trending tags' : undefined,
-                    })) ?? []
-                }
-                onChange={setSearch}
-                onKeyDown={getHotkeyHandler([
-                  [
-                    'Enter',
-                    () => {
-                      if (!isNewTag) return;
-                      const existing = filteredItems.find((tag) => tag.name === trimmedSearch);
-                      handleAddTag({ id: existing?.id, value: existing?.name ?? search });
-                    },
-                  ],
-                ])}
-                // TODO: Mantine7
-                // nothingFoundMessage={
-                //   isFetching ? (
-                //     'Searching...'
-                //   ) : isNewTag ? (
-                //     <UnstyledButton
-                //       className={styles.createOption}
-                //       onClick={() => handleAddTag({ value: search })}
-                //     >
-                //       {`+ Create tag "${search}"`}
-                //     </UnstyledButton>
-                //   ) : (
-                //     'Nothing found'
-                //   )
-                // }
-                placeholder="Type to search..."
-                onOptionSubmit={(value) => {
-                  const existing = filteredItems.find((tag) => tag.name === value);
-                  handleAddTag({ id: existing?.id, value: existing?.name ?? search });
-                }}
-                onBlur={handleClose}
-                autoFocus
-              />
-            ) : (
-              <TextInput
-                variant="unstyled"
-                onChange={(e) => setSearch(e.currentTarget.value)}
-                onKeyDown={getHotkeyHandler([['Enter', handleSubmit]])}
-                placeholder="Type your tag"
-                onBlur={handleSubmit}
-                autoFocus
-              />
-            )
+            <TextInput
+              variant="unstyled"
+              onChange={(e) => setSearch(e.currentTarget.value)}
+              onKeyDown={getHotkeyHandler([['Enter', handleSubmit]])}
+              placeholder="Type your tag"
+              onBlur={handleSubmit}
+              autoFocus
+            />
           ) : (
             <IconPlus size={16} />
           )}
