@@ -1,28 +1,28 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 
-/* ImageForReview */
-export async function createImageForReview({
-  imageId,
-  reason,
-}: {
-  imageId: number;
-  reason: string;
-}) {
-  await dbWrite.$queryRaw`
-    INSERT INTO "ImageForReview" ("imageId", "reason")
-    VALUES (${imageId}, ${reason})
-    ON CONFLICT DO NOTHING;
-  `;
-}
+// /* ImageForReview */
+// export async function createImageForReview({
+//   imageId,
+//   reason,
+// }: {
+//   imageId: number;
+//   reason: string;
+// }) {
+//   await dbWrite.$queryRaw`
+//     INSERT INTO "ImageForReview" ("imageId", "reason")
+//     VALUES (${imageId}, ${reason})
+//     ON CONFLICT DO NOTHING;
+//   `;
+// }
 
-export async function deleteImageForReviewMultiple(ids: number[]) {
-  if (!ids.length) return;
-  await dbWrite.$queryRaw`
-    DELETE FROM "ImageForReview"
-    WHERE "imageId" IN (${Prisma.join(ids)})
-  `;
-}
+// export async function deleteImageForReviewMultiple(ids: number[]) {
+//   if (!ids.length) return;
+//   await dbWrite.$queryRaw`
+//     DELETE FROM "ImageForReview"
+//     WHERE "imageId" IN (${Prisma.join(ids)})
+//   `;
+// }
 
 /* ImageTagForReview */
 export async function createImageTagsForReview({

@@ -89,10 +89,7 @@ import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
-import {
-  deleteImagTagsForReviewByImageIds,
-  deleteImageForReviewMultiple,
-} from '~/server/services/image-review.service';
+import { deleteImagTagsForReviewByImageIds } from '~/server/services/image-review.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';

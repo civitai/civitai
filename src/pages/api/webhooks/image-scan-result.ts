@@ -20,10 +20,7 @@ import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
-import {
-  createImageTagsForReview,
-  createImageForReview,
-} from '~/server/services/image-review.service';
+import { createImageTagsForReview } from '~/server/services/image-review.service';
 import {
   getImagesModRules,
   getTagNamesForImages,
