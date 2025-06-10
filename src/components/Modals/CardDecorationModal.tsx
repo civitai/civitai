@@ -99,7 +99,7 @@ export default function CardDecorationModal({
       onClose={handleClose}
       title="Content Decorations"
       closeButtonProps={{
-        children: 'Close content decorations modal',
+        'aria-label': 'Close content decorations modal',
       }}
       size="lg"
       closeOnClickOutside={!isLoading}

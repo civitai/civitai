@@ -48,7 +48,7 @@ export default function MigrateModelToCollection({ modelId }: { modelId: number 
       closeOnEscape={!migrateMutation.isLoading}
       withCloseButton={!migrateMutation.isLoading}
       closeButtonProps={{
-        children: 'Close migrate to collection modal',
+        'aria-label': 'Close migrate to collection modal',
       }}
       withinPortal
     >

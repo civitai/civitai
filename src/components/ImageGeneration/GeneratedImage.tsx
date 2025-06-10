@@ -470,7 +470,7 @@ export function GeneratedImageLightbox({
     <Modal
       {...dialog}
       closeButtonProps={{
-        children: 'Close lightbox',
+        'aria-label': 'Close lightbox',
       }}
       fullScreen
     >
