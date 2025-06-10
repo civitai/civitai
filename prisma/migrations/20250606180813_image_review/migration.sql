@@ -17,6 +17,9 @@ CREATE TABLE "ImageTagForReview" (
 );
 
 -- CreateIndex
+CREATE INDEX "ImageForReview_reason_idx" ON "ImageForReview"("reason");
+
+-- CreateIndex
 CREATE INDEX "ImageTagForReview_tagId_idx" ON "ImageTagForReview"("tagId");
 
 -- AddForeignKey

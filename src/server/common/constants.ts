@@ -1340,8 +1340,9 @@ export const newOrderConfig = {
     badgeIds: { acolyte: 858, knight: 859, templar: 860 },
   },
   limits: {
-    knightVoteLimit: 4,
-    templarVoteLimit: 2,
+    knightVotes: 5,
+    templarVotes: 2,
+    templarPicks: 24,
   },
 };
 

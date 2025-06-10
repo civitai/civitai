@@ -629,7 +629,6 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
       ingestion: 'Blocked',
       nsfwLevel: NsfwLevel.Blocked,
       blockedFor: BlockedReason.CSAM,
-      needsReview: 'blocked',
     },
   });
 

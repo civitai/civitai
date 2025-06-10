@@ -103,7 +103,7 @@ export const homeOptions: HomeOption[] = [
     key: 'shop',
     url: '/shop',
     icon: (props: IconProps) => <IconShoppingBag {...props} />,
-    classes: ['tabHighlight'],
+    classes: ['tabRainbow'],
   },
 ];
 
@@ -149,7 +149,7 @@ export function HomeTabs() {
               ['bg-gray-4 dark:bg-dark-4']:
                 activePath === key || (activePath === 'changelog' && key === 'updates'),
               [classes.groupedOptions]: value.grouped,
-              [classes.tabHighlight]: key === 'shop',
+              [classes.tabRainbow]: key === 'shop',
             })}
             classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
           >

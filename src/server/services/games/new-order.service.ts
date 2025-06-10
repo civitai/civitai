@@ -213,7 +213,7 @@ const damnedReasonToReviewType = {
   [NewOrderDamnedReason.RealisticMinors]: 'csam',
   [NewOrderDamnedReason.DepictsRealPerson]: 'poi',
   [NewOrderDamnedReason.Bestiality]: 'reported',
-  [NewOrderDamnedReason.GraphicViolence]: 'reported',
+  [NewOrderDamnedReason.Other]: 'reported',
 } as const;
 
 export async function addImageRating({
@@ -254,7 +254,7 @@ export async function addImageRating({
   }
 
   if (
-    valueInQueue.value >= newOrderConfig.limits.knightVoteLimit &&
+    valueInQueue.value >= newOrderConfig.limits.knightVotes &&
     valueInQueue.rank === NewOrderRankType.Knight
   ) {
     // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
@@ -271,7 +271,7 @@ export async function addImageRating({
   }
 
   if (
-    valueInQueue.value >= newOrderConfig.limits.templarVoteLimit &&
+    valueInQueue.value >= newOrderConfig.limits.templarVotes &&
     valueInQueue.rank === NewOrderRankType.Templar
   ) {
     // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
@@ -322,10 +322,10 @@ export async function addImageRating({
 
   const reachedKnightVoteLimit =
     valueInQueue.rank === NewOrderRankType.Knight &&
-    valueInQueue.value + 1 >= newOrderConfig.limits.knightVoteLimit;
+    valueInQueue.value + 1 >= newOrderConfig.limits.knightVotes;
   const reachedTemplarVoteLimit =
     valueInQueue.rank === NewOrderRankType.Templar &&
-    valueInQueue.value + 1 >= newOrderConfig.limits.templarVoteLimit;
+    valueInQueue.value + 1 >= newOrderConfig.limits.templarVotes;
 
   // Now, process what to do with the image:
   if (reachedKnightVoteLimit) {
@@ -849,7 +849,8 @@ export async function addImageToQueue({
   const pools = poolCounters[rankType];
   await Promise.all(
     images.map((image) => {
-      const pool = pools[priority - 1] ?? pools[0];
+      const pool = pools[priority - 1];
+      if (!pool) return Promise.resolve(0);
       return pool.getCount(image.id);
     })
   );
@@ -1073,7 +1074,7 @@ export async function getPlayerHistory({
 
   const imageIds = judgments.map((j) => j.imageId).sort();
   const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds } },
+    where: { id: { in: imageIds }, nsfwLevel: { notIn: [0, NsfwLevel.Blocked] } },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
 

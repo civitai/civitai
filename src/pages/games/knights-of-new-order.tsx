@@ -35,6 +35,7 @@ import { RankUp } from '~/components/Games/LevelProgress/RankUp';
 import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderBetaBanner } from '~/components/Games/NewOrder/NewOrderBetaBanner';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 let levelUpTimer: NodeJS.Timeout | null = null;
@@ -59,6 +60,7 @@ export default Page(
       defaultValue: false,
       getInitialValueInEffect: false,
     });
+    const { anotherTabOpen } = useDeviceFingerprint();
 
     const levelNoticeRef = useRef<HTMLDivElement>(null);
     const [isLevelingUp, setIsLevelingUp] = useState(false);

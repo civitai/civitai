@@ -31,6 +31,7 @@ import {
   updateImageNsfwLevel,
   updateImageTechniques,
   updateImageTools,
+  getImageModerationCounts,
 } from '~/server/services/image.service';
 import {
   middleware,
@@ -135,6 +136,7 @@ export const imageRouter = router({
   getModeratorReviewQueue: moderatorProcedure
     .input(imageReviewQueueInputSchema)
     .query(getModeratorReviewQueueHandler),
+  getModeratorReviewQueueCounts: moderatorProcedure.query(getImageModerationCounts),
   getModeratorPOITags: moderatorProcedure.query(() => getModeratorPOITags()),
   get404Images: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.month }))

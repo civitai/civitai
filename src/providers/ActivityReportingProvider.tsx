@@ -3,6 +3,7 @@ import { getCurrentBrowserFingerPrint } from '@rajesh896/broprint.js';
 import type { ReactNode } from 'react';
 import { createContext, useContext, useEffect } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsTabActive } from '~/hooks/useIsTabActive';
 import { trpc } from '~/utils/trpc';
 
 const SEND_INTERVAL = 10000;
@@ -48,7 +49,9 @@ function init() {
   initialized = true;
 }
 
-const ActivityReportingContext = createContext<{ fingerprint?: string }>({});
+const ActivityReportingContext = createContext<{ fingerprint?: string; anotherTabOpen?: boolean }>(
+  {}
+);
 export const useDeviceFingerprint = () => {
   const context = useContext(ActivityReportingContext);
   if (!context)
@@ -64,6 +67,7 @@ export function ActivityReportingProvider({ children }: { children: ReactNode })
     key: 'fingerprint',
     defaultValue: undefined,
   });
+  const anotherTabOpen = useIsTabActive();
 
   const computeFingerprintMutation = trpc.user.ingestFingerprint.useMutation({
     onSuccess(result) {
@@ -84,7 +88,7 @@ export function ActivityReportingProvider({ children }: { children: ReactNode })
   init();
 
   return (
-    <ActivityReportingContext.Provider value={{ fingerprint }}>
+    <ActivityReportingContext.Provider value={{ fingerprint, anotherTabOpen }}>
       {children}
     </ActivityReportingContext.Provider>
   );
