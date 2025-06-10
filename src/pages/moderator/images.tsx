@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   AspectRatio,
   Badge,
@@ -7,6 +6,7 @@ import {
   Center,
   Checkbox,
   Group,
+  Indicator,
   Loader,
   Paper,
   Stack,
@@ -469,7 +469,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         )}
         {image.reviewTags.length > 0 && (
           <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-            <Group spacing={4}>
+            <Group gap={4}>
               {image.reviewTags.map((tag) => (
                 <Badge key={tag.id} size="sm">
                   {tag.name}
@@ -1009,13 +1009,11 @@ function RadioInput({
 }) {
   return (
     <Indicator
-      label={indicator}
+      label={indicator ?? 0 > 999 ? '999+' : indicator}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
       color="red"
-      overflowCount={999}
+      disabled={!indicator}
     >
       <Radio
         value={value}
