@@ -29,6 +29,7 @@ import { MinimaxFormInput } from '~/components/Generation/Video/MinimaxFormInput
 import { HaiperFormInput } from '~/components/Generation/Video/HaiperFormInput';
 import { MochiFormInput } from '~/components/Generation/Video/MochiFormInput';
 import { LightricksFormInput } from '~/components/Generation/Video/LightrixFormInput';
+import { Veo3FormInput } from '~/components/Generation/Video/Veo3FormInput';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 
@@ -227,6 +228,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
 }
 
 const inputDictionary: Record<OrchestratorEngine2, () => JSX.Element> = {
+  veo3: Veo3FormInput,
   vidu: ViduFormInput,
   wan: WanFormInput,
   hunyuan: HunyuanFormInput,

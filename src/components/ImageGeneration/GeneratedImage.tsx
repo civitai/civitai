@@ -88,10 +88,12 @@ export function GeneratedImage({
   image,
   request,
   step,
+  isLightbox = false,
 }: {
   image: NormalizedGeneratedImage;
   request: NormalizedGeneratedImageResponse;
   step: NormalizedGeneratedImageStep;
+  isLightbox?: boolean;
 }) {
   const { classes } = useStyles();
   const [ref, inView] = useInViewDynamic({ id: image.id });
@@ -115,9 +117,6 @@ export function GeneratedImage({
       checked
     );
 
-  const isLightbox = useDialogStore((state) =>
-    state.dialogs.some((x) => x.id === 'generated-image')
-  );
   const handleImageClick = () => {
     if (!image || !available || isLightbox || nsfwLevelError) return;
 
@@ -273,6 +272,9 @@ export function GeneratedImage({
                     if (e.button === 1) return handleAuxClick(image.url);
                   },
                 }}
+                // controls={isLightbox}
+                muted={!isLightbox}
+                controls={isLightbox}
                 disableWebm
                 disablePoster
                 onLoad={handleLoad}
@@ -326,7 +328,8 @@ export function GeneratedImage({
             <div
               className={clsx(
                 classes.actionsWrapper,
-                'absolute bottom-1 left-1 flex flex-wrap items-center gap-1 p-1'
+                isLightbox && image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
+                'absolute flex flex-wrap items-center gap-1 p-1'
               )}
             >
               <ActionIcon
@@ -540,6 +543,7 @@ export function GeneratedImageLightbox({
                       image={image} // TODO - fix this
                       request={request}
                       step={image.step}
+                      isLightbox
                     />
                   )}
                 </Embla.Slide>

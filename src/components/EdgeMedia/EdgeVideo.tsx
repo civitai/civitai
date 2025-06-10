@@ -73,6 +73,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       disablePoster,
       onLoad,
       onError,
+      onLoadedData,
       ...props
     },
     forwardedRef
@@ -128,7 +129,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     }, []);
 
     const handleLoadedData = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
-      props.onLoadedData?.(e);
+      onLoadedData?.(e);
       setLoaded(true);
       e.currentTarget.style.opacity = '1';
     }, []);
