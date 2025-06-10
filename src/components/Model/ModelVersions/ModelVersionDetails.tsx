@@ -506,14 +506,9 @@ export function ModelVersionDetails({
     {
       label: 'Training Images',
       value: (
-        <Text
-          component="a"
-          href={`/api/download/training-data/${version.id}`}
-          target="_blank"
-          download
-        >
+        <Anchor href={`/api/download/training-data/${version.id}`} target="_blank" inherit download>
           Download
-        </Text>
+        </Anchor>
       ),
       visible:
         !!filesVisible.find((file) => (file.type as ModelFileType) === 'Training Data') &&

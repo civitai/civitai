@@ -33,6 +33,7 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from '~/components/Buzz/buzz.module.scss';
+import Link from 'next/link';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -284,12 +285,12 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                 { label: 'Blue', value: 'generation' },
               ]}
             />
-            <Text component="a" c="blue.4" href={`/user/transactions`} size="xs">
+            <Anchor component={Link} href="/user/transactions" size="xs">
               <Group gap={2}>
                 <IconArrowRight size={18} />
                 <span>View all</span>
               </Group>
-            </Text>
+            </Anchor>
             {transactions.length ? (
               <ScrollArea.Autosize mah={480} mt="md" key={transactionType}>
                 <Stack gap={8} mr={14}>
