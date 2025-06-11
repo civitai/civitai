@@ -1,4 +1,4 @@
-import { ActionIcon, Loader, Modal, Paper, Text, Title } from '@mantine/core';
+import { ActionIcon, Card, Loader, Modal, Paper, Text, Title } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
@@ -28,7 +28,7 @@ export default function NewOrderRulesModal() {
     <Modal
       {...dialog}
       onClose={handleClose}
-      size="lg"
+      size="80%"
       title="Rating Guide"
       classNames={{
         title: 'text-xl font-semibold text-gold-9',
@@ -36,16 +36,33 @@ export default function NewOrderRulesModal() {
       centered
     >
       <div className="flex flex-col gap-4">
+        <Text>
+          Below you&apos;ll find a list of example images that we have compiled as guide for you to
+          identify which images our system and the community have rated as each rating level.
+        </Text>
+        <ul className="pl-6">
+          <li>
+            The images are representative of the browsing level, but may not be the exact same image
+            you will see in the game.
+          </li>
+          <li>
+            They are not exhaustive, and there may be other images that fit the same browsing level.
+          </li>
+          <li>
+            They are not meant to be offensive or disturbing, but rather to provide a guide for the
+            community to identify which images are appropriate for each rating level.
+          </li>
+        </ul>
         {browsingLevels.map((level) => (
-          <div key={level} className="flex flex-col gap-2">
-            <div className="flex flex-col gap-1">
+          <Card key={level} className="flex flex-col gap-2">
+            <div className="flex flex-col gap-0">
               <Title order={3} className="text-lg font-semibold text-gold-9">
                 {browsingLevelLabels[level]}
               </Title>
               <Text>{browsingLevelDescriptions[level]}</Text>
             </div>
             <BrowsingLevelCarousel browsingLevel={level} />
-          </div>
+          </Card>
         ))}
       </div>
     </Modal>
@@ -63,7 +80,8 @@ function BrowsingLevelCarousel({
   const { images, isLoading } = useQueryImages({
     limit,
     browsingLevel,
-    collectionId: 110,
+    // Special collection for New Order rating guide
+    collectionId: 10615797,
   });
 
   if (isLoading)
@@ -99,7 +117,7 @@ function BrowsingLevelCarousel({
               <Embla.Slide
                 key={image.id}
                 index={index}
-                className="flex flex-[0_0_100%] items-center justify-center pl-3 md:flex-[0_0_50%] md:pl-6"
+                className="flex flex-[0_0_100%] items-center justify-center pl-3 md:flex-[0_0_25%] md:pl-6"
               >
                 <div className="relative w-full">
                   <ImageGuard2 image={image}>
