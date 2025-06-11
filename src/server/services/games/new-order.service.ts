@@ -351,20 +351,51 @@ export async function addImageRating({
     }
 
     if (ratings.length > 1 && !processed) {
-      // Means there are multiple entries for this image. We must raise this to the Templars:
-      // Add to templars queue:
       processed = true;
-      movedQueue = true;
-      await addImageToQueue({
-        imageIds: imageId,
-        rankType: NewOrderRankType.Templar,
-        priority: 1,
-      });
+
+      const majorityAgreeVote = (
+        await Promise.all(
+          ratings.map(async (r) => {
+            if (!r.startsWith(NewOrderRankType.Knight)) return null;
+
+            const amount = await getImageRatingsCounter(imageId).getCount(r);
+            return amount >= newOrderConfig.limits.minKnightVotes ? r : null;
+          })
+        )
+      ).filter(isDefined)[0];
+
+      let majorityAgreeRating: NsfwLevel | undefined;
+      if (majorityAgreeVote) {
+        // If majority agrees on a rating, we can update the image nsfw level:
+        majorityAgreeRating = Number(majorityAgreeVote.split('-')[1]) as NsfwLevel;
+      }
+
+      // There are multiple entries, so we either uptake to templars, or, if 4 knights agree, update:
+      // Add to templars queue:
+      if (
+        !majorityAgreeRating ||
+        (majorityAgreeRating < currentNsfwLevel &&
+          Flags.distance(majorityAgreeRating, currentNsfwLevel) > 1)
+      ) {
+        movedQueue = true;
+        await addImageToQueue({
+          imageIds: imageId,
+          rankType: NewOrderRankType.Templar,
+          priority: 1,
+        });
+      } else {
+        // Else, we're good :)
+        currentNsfwLevel = await updateImageNsfwLevel({
+          id: imageId,
+          nsfwLevel: majorityAgreeRating,
+          userId: playerId,
+        });
+      }
     }
 
     const rating = Number(ratings[0].split('-')[1]);
 
-    if (rating !== currentNsfwLevel && !processed) {
+    if (rating !== currentNsfwLevel && !processed && !!currentNsfwLevel) {
       // Raise to templars because the diff is more than 1 level down
       if (rating < currentNsfwLevel && Flags.distance(rating, currentNsfwLevel) > 1) {
         movedQueue = true;
