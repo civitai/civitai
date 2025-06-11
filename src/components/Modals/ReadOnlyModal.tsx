@@ -24,8 +24,8 @@ export default function ReadOnlyModal() {
           iconColor="yellow"
         >
           <p>
-            Due to a technical issue, we're temporarily in read-only mode. This means some features
-            will be limited or unavailable.
+            Due to a technical issue, we&apos;re temporarily in read-only mode. This means some
+            features will be limited or unavailable.
           </p>
         </AlertWithIcon>
         <div className="flex w-full flex-col justify-start gap-2">

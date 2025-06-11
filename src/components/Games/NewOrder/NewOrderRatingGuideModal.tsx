@@ -40,7 +40,7 @@ export default function NewOrderRulesModal() {
           Below you&apos;ll find a list of example images that we have compiled as guide for you to
           identify which images our system and the community have rated as each rating level.
         </Text>
-        <ul className="pl-6">
+        <ul className="list-disc pl-8">
           <li>
             The images are representative of the browsing level, but may not be the exact same image
             you will see in the game.
@@ -54,7 +54,7 @@ export default function NewOrderRulesModal() {
           </li>
         </ul>
         {browsingLevels.map((level) => (
-          <Card key={level} className="flex flex-col gap-2">
+          <Card key={level} className="flex flex-col gap-2 bg-gray-1 dark:bg-dark-6">
             <div className="flex flex-col gap-0">
               <Title order={3} className="text-lg font-semibold text-gold-9">
                 {browsingLevelLabels[level]}
