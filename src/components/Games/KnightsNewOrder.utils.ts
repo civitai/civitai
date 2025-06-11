@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import { useMemo } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStorage } from '~/hooks/useStorage';
 import { newOrderConfig } from '~/server/common/constants';
 import {
@@ -29,6 +30,7 @@ import { queryClient, trpc } from '~/utils/trpc';
 
 const JudgmentHistoryModal = dynamic(() => import('./NewOrder/JudgmentHistory'));
 const PlayersDirectoryModal = dynamic(() => import('./NewOrder/PlayersDirectoryModal'));
+const RatingGuideModal = dynamic(() => import('./NewOrder/NewOrderRatingGuideModal'));
 
 type PlayerUpdateStatsPayload = {
   action: NewOrderSignalActions.UpdateStats | NewOrderSignalActions.Reset;
@@ -71,7 +73,9 @@ export const useKnightsNewOrderListener = ({
       case NewOrderSignalActions.UpdateStats:
         queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
           if (!old) return old;
-          return { ...old, stats: { ...old.stats, ...data.stats } };
+
+          const { exp, ...updatedStats } = data.stats;
+          return { ...old, stats: { ...old.stats, ...updatedStats } };
         });
         break;
       case 'reset':
@@ -133,6 +137,12 @@ export const useJoinKnightsNewOrder = () => {
     defaultValue: false,
     getInitialValueInEffect: false,
   });
+  const [viewedRatingGuide, setViewedRatingGuide] = useStorage({
+    key: 'kono-rating-guide',
+    type: 'localStorage',
+    defaultValue: false,
+    getInitialValueInEffect: false,
+  });
 
   // Required to share loading state between components
   const joinKey = getQueryKey(trpc.games.newOrder.join);
@@ -178,6 +188,8 @@ export const useJoinKnightsNewOrder = () => {
     isLoading: isInitialLoading || !!joining,
     resetting: resetCareerMutation.isLoading,
     joined,
+    viewedRatingGuide,
+    setViewedRatingGuide,
   };
 };
 
@@ -302,6 +314,8 @@ export const openJudgmentHistoryModal = () =>
 export const openPlayersDirectoryModal = () =>
   dialogStore.trigger({ component: PlayersDirectoryModal });
 
+export const openRatingGuideModal = () => dialogStore.trigger({ component: RatingGuideModal });
+
 export const useInquisitorTools = () => {
   const queryUtils = trpc.useUtils();
 
@@ -400,7 +414,11 @@ export const useQueryPlayersInfinite = (
 };
 
 export const useQueryImageRaters = ({ imageId }: { imageId: number }) => {
-  const { data, ...rest } = trpc.games.newOrder.getImageRaters.useQuery({ imageId });
+  const currentUser = useCurrentUser();
+  const { data, ...rest } = trpc.games.newOrder.getImageRaters.useQuery(
+    { imageId },
+    { enabled: !!currentUser?.isModerator }
+  );
 
   return {
     raters: data ?? { [NewOrderRankType.Knight]: [], [NewOrderRankType.Templar]: [] },
