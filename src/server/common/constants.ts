@@ -68,6 +68,7 @@ export const constants = {
     'Pony',
     'Flux.1 S',
     'Flux.1 D',
+    'Flux.1 Kontext',
     'AuraFlow',
     'SDXL 1.0 LCM',
     'SDXL Distilled',
@@ -518,6 +519,11 @@ export const baseModelSets = {
     generation: true,
   }),
   Flux1: new BaseModelSet({ name: 'Flux', baseModels: ['Flux.1 S', 'Flux.1 D'], generation: true }),
+  Flux1Kontext: new BaseModelSet({
+    name: 'Flux Kontext',
+    baseModels: ['Flux.1 Kontext'],
+    generation: true,
+  }),
   SDXL: new BaseModelSet({
     name: 'Stable Diffusion XL',
     baseModels: [
@@ -767,6 +773,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   AuraFlow: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
   'Flux.1 D': baseLicenses['flux1D'],
+  'Flux.1 Kontext': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
   Illustrious: baseLicenses['illustrious license'],
@@ -970,6 +977,35 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  Flux1Kontext: {
+    aspectRatios: [
+      { label: '21:9', width: 21, height: 9 },
+      { label: '16:9', width: 16, height: 9 },
+      { label: '4:3', width: 4, height: 3 },
+      { label: '3:2', width: 3, height: 2 },
+      { label: '1:1', width: 1, height: 1 },
+      { label: '2:3', width: 2, height: 3 },
+      { label: '3:4', width: 3, height: 4 },
+      { label: '9:16', width: 9, height: 16 },
+      { label: '9:21', width: 9, height: 21 },
+    ],
+    checkpoint: {
+      id: 1892509,
+      name: 'Flux.1 Kontext [Pro]',
+      trainedWords: [],
+      baseModel: 'Flux.1 Kontext',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1672021,
+        name: 'FLUX.1 Kontext',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
   SD3: {
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
@@ -1116,6 +1152,7 @@ export const generation = {
     openAIQuality: 'medium',
     vae: null,
     resources: null,
+    safetyTolerance: '2',
   },
   maxValues: {
     seed: 4294967295,

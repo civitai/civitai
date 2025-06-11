@@ -255,6 +255,8 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3_5M')) return 'SD3_5M';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'OpenAI')) return 'OpenAI';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Imagen4')) return 'Imagen4';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1Kontext'))
+    return 'Flux1Kontext';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD1')) return 'SD1';
   // video base models
   for (const baseModelSet of videoBaseModelSetTypes) {
@@ -498,6 +500,7 @@ export const baseModelResourceTypes = {
     { type: ModelType.Checkpoint, baseModels: baseModelSets.Flux1.baseModels },
     { type: ModelType.LORA, baseModels: baseModelSets.Flux1.baseModels },
   ],
+  Flux1Kontext: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.Flux1Kontext.baseModels }],
   SD3: [
     { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3.baseModels },
     { type: ModelType.LORA, baseModels: baseModelSets.SD3.baseModels },
