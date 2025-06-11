@@ -1,9 +1,11 @@
 import { Priority } from '@civitai/client';
 import { z } from 'zod';
 
+import type { Sampler } from '~/server/common/constants';
 import { baseModelSets, generation } from '~/server/common/constants';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { generationSamplers } from '~/shared/constants/generation.constants';
 import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 // #region [step input]
@@ -15,11 +17,9 @@ export const textToImageParamsSchema = z.object({
   prompt: z.string().default(''),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.coerce.number().min(1).max(30).optional(),
-  sampler: z
-    .string()
-    .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
-      message: 'invalid sampler',
-    }),
+  sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
+    message: 'invalid sampler',
+  }),
   seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish(),
   clipSkip: z.coerce.number().max(3).optional(),
   steps: z.coerce.number().min(1).max(100).optional(),
@@ -28,7 +28,7 @@ export const textToImageParamsSchema = z.object({
     .max(20)
     .default(1)
     .transform((val) => (val <= 0 ? 1 : val)),
-  nsfw: z.boolean().default(false),
+  // nsfw: z.boolean().default(false),
   draft: z.boolean().default(false),
   aspectRatio: z.string().optional(),
   fluxUltraAspectRatio: z.string().optional(),
@@ -50,6 +50,8 @@ export const textToImageParamsSchema = z.object({
   disablePoi: z.boolean().default(false),
   openAIQuality: z.enum(['auto', 'high', 'medium', 'low']).optional(),
   openAITransparentBackground: z.boolean().optional(),
+  precision: z.string().nullable().default('fp8'),
+  variant: z.string().nullable().default('fast'),
   safetyTolerance: z.string().optional(), // flux kontext api
 });
 

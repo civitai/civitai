@@ -55,6 +55,7 @@ import type {
 } from '~/server/services/orchestrator';
 import {
   getIsFlux,
+  getIsHiDream,
   getIsSD3,
   getSourceImageFromUrl,
 } from '~/shared/constants/generation.constants';
@@ -607,8 +608,9 @@ function GeneratedImageWorkflowMenuItems({
     (x) => x.model.type === 'Checkpoint' && getModelVersionUsesImageGen(x.id)
   );
   const isFlux = !isVideo && getIsFlux(step.params.baseModel);
+  const isHiDream = !isVideo && getIsHiDream(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
-  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isImageGen;
+  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream;
   const img2imgWorkflows = !isVideo
     ? workflowDefinitions.filter(
         (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)

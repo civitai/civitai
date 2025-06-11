@@ -29,6 +29,7 @@ import {
   getBaseModelSetType,
   getBaseModelSetTypes,
   getIsFluxUltra,
+  getIsHiDream,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
@@ -46,6 +47,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import { promptSimilarity } from '~/utils/prompt-similarity';
 
 // #region [schemas]
 
@@ -65,7 +67,7 @@ const baseSchema = textToImageParamsSchema
     remixNegativePrompt: z.string().optional(),
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string().optional(),
-    fluxUltraRaw: z.boolean().optional(),
+    fluxUltraRaw: z.boolean().default(false).catch(false),
   });
 const partialSchema = baseSchema.partial();
 const formSchema = baseSchema
@@ -279,7 +281,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       form.setValue(
         'remixSimilarity',
         !!data.params.prompt && !!prompt
-          ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
+          ? promptSimilarity(data.params.prompt, prompt).adjustedCosine
           : undefined
       );
       form.setValue('remixPrompt', data.params.prompt);
@@ -433,7 +435,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         ...defaultValues,
         // ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
         fluxMode: fluxModeOptions[1].value,
-        nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
         // creatorTip: overrides.creatorTip ?? 0.25,
         experimental: overrides.experimental ?? false,
@@ -454,72 +455,3 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   );
 }
 // #endregion
-
-function cleanText(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/<(?:\/?p|img|src|=|"|:|\.|\-|_)>/g, ' ')
-    .replace(/[^a-zA-Z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .split(' ')
-    .filter((token) => token.length > 0);
-}
-
-function createVocabMap(tokens1: string[], tokens2: string[]): Map<string, number> {
-  const vocab = new Set([...tokens1, ...tokens2]);
-  const vocabMap = new Map<string, number>();
-  Array.from(vocab).forEach((token, index) => {
-    vocabMap.set(token, index + 1);
-  });
-  return vocabMap;
-}
-
-function getTokens(tokens: string[], vocabMap: Map<string, number>): number[] {
-  return tokens.map((token) => vocabMap.get(token) || -1);
-}
-
-function cosineSimilarity(vectorA: number[], vectorB: number[]): number {
-  let dotProduct = 0,
-    normA = 0,
-    normB = 0;
-  vectorA.forEach((value, index) => {
-    const vectorBIndex = vectorB[index] ?? 0;
-    dotProduct += value * vectorBIndex;
-    normA += value * value;
-    normB += vectorBIndex * vectorBIndex;
-  });
-  const normy = Math.sqrt(normA) * Math.sqrt(normB);
-  return normy > 0 ? dotProduct / normy : 0;
-}
-
-function calculateAdjustedCosineSimilarities(prompt1: string, prompt2: string): number {
-  const tokens1 = cleanText(prompt1);
-  const tokens2 = cleanText(prompt2);
-  const vocabMap = createVocabMap(tokens1, tokens2);
-
-  const promptTokens1 = getTokens(tokens1, vocabMap);
-  const promptTokens2 = getTokens(tokens2, vocabMap);
-  const setTokens1 = getTokens(Array.from(new Set(tokens1)), vocabMap);
-  const setTokens2 = getTokens(Array.from(new Set(tokens2)), vocabMap);
-
-  const cosSim = cosineSimilarity(promptTokens1, promptTokens2);
-  const setCosSim = cosineSimilarity(setTokens1, setTokens2);
-
-  const adjustedCosSim = (cosSim + 1) / 2;
-  const adjustedSetCosSim = (setCosSim + 1) / 2;
-
-  return 2 / (1 / adjustedCosSim + 1 / adjustedSetCosSim);
-}
-
-function objectSimilarity(obj1: Record<string, unknown>, obj2: Record<string, unknown>) {
-  // TODO
-}
-
-// Example usage
-// const prompt1 =
-//   'beautiful lady, (freckles), big smile, brown hazel eyes, Short hair, rainbow color hair, dark makeup, hyperdetailed photography, soft light, head and shoulders portrait, cover';
-// const prompt2 =
-//   'beautiful lady, (freckles), big smile, brown hazel eyes, Short hair, rainbow color hair, dark makeup, hyperdetailed photography';
-
-// const similarity = calculateAdjustedCosineSimilarities(prompt1, prompt2);
