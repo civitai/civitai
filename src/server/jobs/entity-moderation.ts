@@ -370,7 +370,7 @@ const runClavata = async ({
       };
 
       if (item.result === 'FALSE') {
-        await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
+        if (deleteJob) await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
         continue;
       }
 
@@ -491,7 +491,7 @@ async function runModChat(lastRun: Date) {
     orderBy: {
       createdAt: 'asc',
     },
-    take: 50, // TODO remove
+    take: 200, // TODO remove
   });
   // .catch((error) => {
   //   logAx({ message: 'Error getting chat messages', data: { error } });
@@ -512,8 +512,11 @@ async function runModChat(lastRun: Date) {
   if (badMessages.length > 0) {
     const badMessagesByChat = badMessages.reduce((acc, cur) => {
       const key = `${cur.chatId}`;
-      if (!acc[key]) acc[key] = '';
-      acc[key] += `${cur.userId}: ${cur.content}\n`;
+      if (!acc[key]) {
+        acc[key] = `[${cur.userId}]: ${cur.content}`;
+      } else {
+        acc[key] += ` | [${cur.userId}]: ${cur.content}`;
+      }
       return acc;
     }, {} as Record<string, string>);
 

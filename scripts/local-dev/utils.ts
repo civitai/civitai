@@ -96,11 +96,12 @@ export const generateRandomName = (count: number) => {
 
 /**
  * Deletes a random percentage of rows from the JobQueue table
- * @param percentage - The percentage of rows to delete (0-100)
+ * @param num - The percentage of rows to delete (0-100)
+ * @param type - How  to delete
  * @returns The number of rows deleted
  */
-export const deleteRandomJobQueueRows = async (percentage: number) => {
-  if (percentage < 0 || percentage > 100) {
+export const deleteRandomJobQueueRows = async (num: number, type: 'pct' | 'count') => {
+  if (type === 'pct' && (num < 0 || num > 100)) {
     throw new Error('Percentage must be between 0 and 100');
   }
 
@@ -126,13 +127,17 @@ export const deleteRandomJobQueueRows = async (percentage: number) => {
       WHERE "JobQueue".type = random_ordered.type
         AND "JobQueue"."entityType" = random_ordered."entityType"
         AND "JobQueue"."entityId" = random_ordered."entityId"
-        AND random_ordered.rn <= (SELECT MAX(total_count) * $1 / 100.0 FROM random_ordered)
+        AND random_ordered.rn ${
+          type === 'count'
+            ? '> $1'
+            : '<= (SELECT MAX(total_count) * $1 / 100.0 FROM random_ordered)'
+        }
       RETURNING *;
     `;
 
-    const result = await pgDbWrite.query(query, [percentage]);
+    const result = await pgDbWrite.query(query, [num]);
     console.log(
-      `Deleted ${result.rowCount} / ${totalRows.rows[0].cnt} rows from JobQueue (${percentage}%)`
+      `Deleted ${result.rowCount} / ${totalRows.rows[0].cnt} rows from JobQueue (${type})`
     );
     return result.rowCount;
   } catch (error) {
@@ -143,7 +148,7 @@ export const deleteRandomJobQueueRows = async (percentage: number) => {
 };
 
 const badWords = ['kill', 'underage', 'nazi'];
-export function randPrependBad(s: string, sep: string = ' ') {
+export function randPrependBad(s: string, sep = ' ') {
   return faker.helpers.weightedArrayElement([
     { value: s, weight: 20 },
     { value: `${badWords[Math.floor(Math.random() * badWords.length)]}${sep}${s}`, weight: 1 },

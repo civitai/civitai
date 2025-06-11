@@ -161,7 +161,11 @@ const insertClickhouseRows = async (table: string, data: any[][]) => {
 const truncateRows = async () => {
   console.log('Truncating tables');
   await pgDbWrite.query(
-    `TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew", "EntityMetric", "JobQueue", "KeyValue", "ImageRank", "ModelVersionRank", "UserRank", "TagRank", "ArticleRank", "CollectionRank", "Changelog", "Report" RESTART IDENTITY CASCADE`
+    `TRUNCATE TABLE
+      "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew", "EntityMetric", "JobQueue", "KeyValue",
+      "ImageRank", "ModelVersionRank", "UserRank", "TagRank", "ArticleRank", "CollectionRank",
+      "Changelog", "Report"
+      RESTART IDENTITY CASCADE;`
   );
 };
 
@@ -525,11 +529,11 @@ const genUsers = (num: number, includeCiv = false) => {
 /**
  * UserProfile
  */
-const genUserProfiles = (num: number, userIds: number[], imageIds: number[]) => {
-  const selectedUserIds = faker.helpers.arrayElements(userIds, num);
+const genUserProfiles = (userIds: number[], imageIds: number[]) => {
+  // const selectedUserIds = faker.helpers.arrayElements(userIds, num);
   const ret = [];
 
-  for (const userId of selectedUserIds) {
+  for (const userId of userIds) {
     const message = randw([
       { value: null, weight: 10 },
       { value: randPrependBad(faker.lorem.sentence()), weight: 1 },
@@ -3379,7 +3383,7 @@ const genRows = async (truncate = true) => {
   const images = genImages(Math.ceil(numRows * 8), userIds, postIds);
   const imageIds = await insertRows('Image', images);
 
-  const userProfiles = genUserProfiles(Math.ceil(numRows / 4), userIds, imageIds);
+  const userProfiles = genUserProfiles(userIds, imageIds);
   await insertRows('UserProfile', userProfiles, false);
 
   const articles = genArticles(numRows, userIds, imageIds);
@@ -3582,7 +3586,8 @@ const genRows = async (truncate = true) => {
   await insertRows('BountyEntry', bountyEntries);
 
   if (truncQueue) {
-    await deleteRandomJobQueueRows(99);
+    await deleteRandomJobQueueRows(98, 'pct');
+    // await deleteRandomJobQueueRows(200, 'count');
   }
 };
 
@@ -3785,25 +3790,25 @@ const genRedisSystemFeatures = async () => {
     REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
     REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.CLAVATA_POLICIES,
     JSON.stringify({
-      default: '10fa5ce5-7a96-40ef-abf6-f5329ea85c6c',
+      default: '6ac038b9-97e2-4ffb-84cb-be9e2ac93afd',
     })
   );
   await sysRedis.hSet(
     REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
     REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES,
     JSON.stringify({
-      Chat: true,
-      Comment: false,
-      CommentV2: true,
-      User: false,
-      UserProfile: false,
-      Model: false,
-      Post: false,
+      // Chat: true,
+      // Comment: false,
+      // CommentV2: true,
+      // User: false,
+      // UserProfile: false,
+      // Model: false,
+      // Post: false,
       ResourceReview: false,
-      Article: false,
-      Bounty: false,
-      BountyEntry: false,
-      Collection: false,
+      // Article: false,
+      // Bounty: false,
+      // BountyEntry: false,
+      // Collection: false,
     })
   );
   await sysRedis.hSet(
