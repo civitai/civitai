@@ -58,6 +58,7 @@ import { guardedProcedure, middleware, protectedProcedure, router } from '~/serv
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
+import { imageGenConfig } from '~/shared/orchestrator/ImageGen/imageGen.config';
 
 const TOKEN_STORE: 'redis' | 'cookie' = false ? 'cookie' : 'redis';
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
@@ -232,7 +233,9 @@ export const orchestratorRouter = router({
         let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
         // TODO - handle createImageGenStep
         if (args.params.engine && args.params.engine !== 'flux-pro-raw') {
-          step = await createImageGenStep(args);
+          const config = imageGenConfig[args.params.engine as keyof typeof imageGenConfig];
+          if (!config) throw new Error(`missing config for engine: ${args.params.engine}`);
+          step = await createImageGenStep(args, config);
         } else if (args.params.workflow === 'txt2img') {
           step = await createTextToImageStep({ ...args, whatIf: true });
         } else {

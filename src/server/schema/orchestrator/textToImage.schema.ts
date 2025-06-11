@@ -87,6 +87,7 @@ export const generatedImageStepMetadataSchema = z.object({
 });
 // #endregion
 
+export type GenerateImageSchema = z.infer<typeof generateImageSchema>;
 export const generateImageSchema = z.object({
   params: textToImageParamsSchema,
   resources: workflowResourceSchema.array().min(1, 'You must select at least one resource'),

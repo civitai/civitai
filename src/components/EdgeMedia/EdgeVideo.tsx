@@ -223,7 +223,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         className={cx(
           classes.iosScroll,
           wrapperProps?.className ? wrapperProps?.className : 'h-full',
-          'overflow-hidden relative flex items-center justify-center'
+          'overflow-hidden relative flex flex-col items-center justify-center'
         )}
       >
         <video

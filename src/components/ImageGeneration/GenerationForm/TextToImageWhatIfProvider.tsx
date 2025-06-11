@@ -23,6 +23,7 @@ import type { GenerationWhatIfResponse } from '~/server/services/orchestrator/ty
 import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { removeEmpty } from '~/utils/object-helpers';
+import { imageGenModelVersionMap } from '~/shared/orchestrator/ImageGen/imageGen.config';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
@@ -57,12 +58,12 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       }
     }
 
-    let modelId = model?.id ?? defaultModel.id;
+    let modelVersionId = model?.id ?? defaultModel.id;
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model?.model?.id ?? defaultModel.model.id);
     if (isFlux && params.fluxMode && isFluxStandard) {
       const { version } = parseAIR(params.fluxMode);
-      modelId = version;
+      modelVersionId = version;
       if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
@@ -73,7 +74,8 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     delete params.engine;
     if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
       params.engine = 'flux-pro-raw';
-    if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+    const imageGenEngine = imageGenModelVersionMap.get(modelVersionId);
+    if (imageGenEngine) params.engine = imageGenEngine;
 
     const additionalResources =
       resources?.map((x) => {
@@ -82,7 +84,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       }) ?? [];
 
     return {
-      resources: [{ id: modelId }, ...additionalResources],
+      resources: [{ id: modelVersionId }, ...additionalResources],
       params: removeEmpty({
         ...params,
         ...whatIfQueryOverrides,

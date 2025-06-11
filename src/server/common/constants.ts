@@ -96,6 +96,7 @@ export const constants = {
     'Wan Video 14B i2v 720p',
     'HiDream',
     'OpenAI',
+    'Imagen4',
     'Other',
   ],
   hiddenBaseModels: [
@@ -111,6 +112,7 @@ export const constants = {
     'Stable Cascade',
     'SDXL 1.0 LCM',
     'OpenAI',
+    'Imagen4',
     'Wan Video',
   ] as string[],
   modelFileTypes: [
@@ -556,6 +558,7 @@ export const baseModelSets = {
   WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
   HiDream: new BaseModelSet({ name: 'HiDream', baseModels: ['HiDream'] }),
   OpenAI: new BaseModelSet({ name: 'OpenAI', baseModels: ['OpenAI'] }),
+  Imagen4: new BaseModelSet({ name: 'Imagen4', baseModels: ['Imagen4'] }),
   WanVideo1_3B_T2V: new BaseModelSet({
     name: 'Wan Video 1.3B t2v',
     baseModels: ['Wan Video 1.3B t2v'],
@@ -722,6 +725,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://openai.com/policies/',
     name: 'OpenAI',
   },
+  imagen4: {
+    url: 'https://deepmind.google/about/responsibility-safety/',
+    name: 'Imagen4',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -769,6 +776,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],
   OpenAI: baseLicenses['openai'],
+  Imagen4: baseLicenses['imagen4'],
   'Wan Video': baseLicenses['apache 2.0'],
   'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
   'Wan Video 14B t2v': baseLicenses['apache 2.0'],
@@ -1027,6 +1035,32 @@ export const generationConfig = {
       model: {
         id: 1532032,
         name: `OpenAI's GPT-image-1`,
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+
+  Imagen4: {
+    aspectRatios: [
+      { label: '16:9', width: 16, height: 9 },
+      { label: '4:3', width: 4, height: 3 },
+      { label: '1:1', width: 1, height: 1 },
+      { label: '3:4', width: 3, height: 4 },
+      { label: '9:16', width: 9, height: 16 },
+    ],
+    checkpoint: {
+      id: 1889632,
+      name: 'Imagen 4',
+      trainedWords: [],
+      baseModel: 'Imagen4',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1669468,
+        name: `Google Imagen 4`,
         type: 'Checkpoint',
       },
     } as GenerationResource,

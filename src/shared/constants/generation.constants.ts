@@ -254,6 +254,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3')) return 'SD3';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3_5M')) return 'SD3_5M';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'OpenAI')) return 'OpenAI';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Imagen4')) return 'Imagen4';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD1')) return 'SD1';
   // video base models
   for (const baseModelSet of videoBaseModelSetTypes) {
@@ -507,6 +508,7 @@ export const baseModelResourceTypes = {
   ],
   HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
   OpenAI: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.OpenAI.baseModels }],
+  Imagen4: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.Imagen4.baseModels }],
   WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
   WanVideo1_3B_T2V: [
     { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },

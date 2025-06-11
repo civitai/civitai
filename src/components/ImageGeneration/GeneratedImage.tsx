@@ -240,59 +240,59 @@ export function GeneratedImage({
   return (
     <TwCard
       ref={ref}
-      className={clsx('max-h-full max-w-full', classes.imageWrapper)}
-      style={{ aspectRatio }}
+      className={clsx('max-h-full max-w-full items-center justify-center', classes.imageWrapper)}
+      style={!isLightbox ? { aspectRatio } : undefined}
     >
       {(isLightbox || inView) && (
         <>
-          <div className={clsx('relative flex flex-1 flex-col items-center justify-center ')}>
-            {nsfwLevelError ? (
-              <BlockedBlock
-                title="Blocked for Adult Content"
-                message="Private generation is limited to PG, PG-13 only."
-              />
-            ) : blockedReason ? (
-              <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
-            ) : (
-              <EdgeMedia2
-                src={image.url}
-                type={image.type}
-                alt=""
-                className={clsx('max-h-full w-auto max-w-full', {
-                  ['cursor-pointer']: !isLightbox,
-                  // ['pointer-events-none']: running,
-                })}
-                onClick={handleImageClick}
-                onMouseDown={(e) => {
+          {nsfwLevelError ? (
+            <BlockedBlock
+              title="Blocked for Adult Content"
+              message="Private generation is limited to PG, PG-13 only."
+            />
+          ) : blockedReason ? (
+            <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
+          ) : (
+            <EdgeMedia2
+              src={image.url}
+              type={image.type}
+              alt=""
+              className={clsx('max-h-full min-h-0 w-auto max-w-full', {
+                ['cursor-pointer']: !isLightbox,
+                // ['pointer-events-none']: running,
+              })}
+              onClick={handleImageClick}
+              onMouseDown={(e) => {
+                if (e.button === 1) return handleAuxClick(image.url);
+              }}
+              wrapperProps={{
+                // className: 'max-h-full min-h-0 w-auto max-w-full',
+                onClick: handleImageClick,
+                onMouseDown: (e) => {
                   if (e.button === 1) return handleAuxClick(image.url);
-                }}
-                wrapperProps={{
-                  onClick: handleImageClick,
-                  onMouseDown: (e) => {
-                    if (e.button === 1) return handleAuxClick(image.url);
-                  },
-                }}
-                // controls={isLightbox}
-                muted={!isLightbox}
-                controls={isLightbox}
-                disableWebm
-                disablePoster
-                onLoad={handleLoad}
-                onError={handleError}
-                imageProps={{
-                  onDragStart: handleDragImage,
-                }}
-                videoProps={{
-                  onLoadedData: handleLoad,
-                  onError: handleError,
-                  onDragStart: handleDragVideo,
-                  draggable: true,
-                  autoPlay: true,
-                }}
-              />
-            )}
-            <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
-          </div>
+                },
+              }}
+              // controls={isLightbox}
+              muted={!isLightbox}
+              controls={isLightbox}
+              disableWebm
+              disablePoster
+              onLoad={handleLoad}
+              onError={handleError}
+              imageProps={{
+                onDragStart: handleDragImage,
+              }}
+              videoProps={{
+                onLoadedData: handleLoad,
+                onError: handleError,
+                onDragStart: handleDragVideo,
+                draggable: true,
+                autoPlay: true,
+              }}
+            />
+          )}
+          <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
+
           {!isLightbox && !isBlocked && (
             <label className="absolute left-3 top-3" data-tour="gen:select">
               <Checkbox
@@ -536,7 +536,7 @@ export function GeneratedImageLightbox({
                 <Embla.Slide
                   key={`${image.workflowId}_${image.id}`}
                   index={index}
-                  className="flex flex-[0_0_100%] items-center justify-center"
+                  className="flex h-full flex-[0_0_100%] flex-col items-center justify-center"
                 >
                   {image.url && slide === index && (
                     <GeneratedImage

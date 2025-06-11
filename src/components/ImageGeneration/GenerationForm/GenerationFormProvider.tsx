@@ -387,7 +387,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         form.setValue('fluxMode', fluxStandardAir);
       }
 
-      if (watchedValues.model?.id === generationConfig.OpenAI.checkpoint.id) {
+      if (
+        watchedValues.model?.id === generationConfig.OpenAI.checkpoint.id ||
+        watchedValues.model?.id === generationConfig.Imagen4.checkpoint.id
+      ) {
         if (watchedValues.sourceImage && watchedValues.workflow !== 'img2img')
           form.setValue('workflow', 'img2img');
         else if (!watchedValues.sourceImage && watchedValues.workflow !== 'txt2img')

@@ -104,6 +104,7 @@ import {
   getImageGenerationBaseModels,
   fluxDraftAir,
 } from '~/shared/constants/generation.constants';
+import { imageGenModelVersionMap } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
@@ -229,7 +230,6 @@ export function GenerationFormContent() {
       vae,
       remixOfId,
       remixSimilarity,
-      aspectRatio,
       upscaleHeight,
       upscaleWidth,
       fluxUltraRaw,
@@ -254,9 +254,9 @@ export function GenerationFormContent() {
     delete params.engine;
     if (isFluxStandard && fluxUltraRaw && params.fluxMode === fluxUltraAir)
       params.engine = 'flux-pro-raw';
-    if (model.id === generationConfig.OpenAI.checkpoint.id) {
-      params.engine = 'openai';
-    }
+
+    const imageGenEngine = imageGenModelVersionMap.get(model.id);
+    if (imageGenEngine) params.engine = imageGenEngine;
 
     if (workflowDefinition?.type === 'txt2img') params.sourceImage = null;
 
@@ -1605,23 +1605,30 @@ const sharedNumberProps: NumberInputProps = {
 const getAspectRatioControls = (
   aspectRatios: { label: string; width: number; height: number }[]
 ) => {
-  return aspectRatios.map(({ label, width, height }, index) => ({
-    label: (
-      <Stack spacing={2}>
-        <Center>
-          <Paper
-            withBorder
-            sx={{ borderWidth: 2, aspectRatio: `${width}/${height}`, height: 20 }}
-          />
-        </Center>
-        <Stack spacing={0}>
-          <Text size="xs">{label}</Text>
-          <Text size={10} color="dimmed">{`${width}x${height}`}</Text>
+  return aspectRatios.map(({ label, width, height }, index) => {
+    const subLabel = `${width}x${height}`;
+    return {
+      label: (
+        <Stack spacing={2}>
+          <Center>
+            <Paper
+              withBorder
+              sx={{ borderWidth: 2, aspectRatio: `${width}/${height}`, height: 20 }}
+            />
+          </Center>
+          <Stack spacing={0}>
+            <Text size="xs">{label}</Text>
+            {label !== subLabel.replace('x', ':') && (
+              <Text size={10} color="dimmed">
+                {subLabel}
+              </Text>
+            )}
+          </Stack>
         </Stack>
-      </Stack>
-    ),
-    value: `${index}`,
-  }));
+      ),
+      value: `${index}`,
+    };
+  });
 };
 
 const clipSkipMarks = Array(10)
