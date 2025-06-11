@@ -71,7 +71,9 @@ export const useKnightsNewOrderListener = ({
       case NewOrderSignalActions.UpdateStats:
         queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
           if (!old) return old;
-          return { ...old, stats: { ...old.stats, ...data.stats } };
+
+          const { exp, ...updatedStats } = data.stats;
+          return { ...old, stats: { ...old.stats, ...updatedStats } };
         });
         break;
       case 'reset':
