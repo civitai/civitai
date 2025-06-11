@@ -796,11 +796,12 @@ export async function getEarnPotential({ userId, username }: GetEarnPotentialSch
       WHERE m.userId = ${userId}
     ), resource_jobs AS (
       SELECT
-      arrayJoin(resourcesUsed) AS modelVersionId, createdAt, jobCost, jobId, userId
-      FROM orchestration.textToImageJobs
-      WHERE arrayExists(x -> x IN (SELECT id FROM user_resources), resourcesUsed)
-      AND createdAt > subtractDays(now(), 30)
-      AND modelVersionId NOT IN (250708, 250712, 106916) -- Exclude models that are not eligible for compensation
+        arrayJoin(resourcesUsed) AS modelVersionId, createdAt, cost as jobCost, jobId, userId
+      FROM orchestration.jobs
+      WHERE jobType IN ('TextToImageV2', 'TextToImage', 'Comfy')
+        AND arrayExists(x -> x IN (SELECT id FROM user_resources), resourcesUsed)
+        AND createdAt > subtractDays(now(), 30)
+        AND modelVersionId NOT IN (250708, 250712, 106916) -- Exclude models that are not eligible for compensation
     ), resource_ownership AS (
       SELECT
         rj.*,
