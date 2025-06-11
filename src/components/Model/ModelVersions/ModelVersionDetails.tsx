@@ -202,9 +202,12 @@ export function ModelVersionDetails({
 
   const isEarlyAccess = !!version?.earlyAccessEndsAt && version.earlyAccessEndsAt > new Date();
   const earlyAccessConfig = version?.earlyAccessConfig;
+  // TODO - remove this after new generator integrations (hidream, imagen4, flux kontext)
+  const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
   const couldGenerate =
     isSelectableInGenerator &&
     features.imageGeneration &&
+    !shouldOmit &&
     (!isEarlyAccess ||
       !!earlyAccessConfig?.chargeForGeneration ||
       !!earlyAccessConfig?.freeGeneration ||
