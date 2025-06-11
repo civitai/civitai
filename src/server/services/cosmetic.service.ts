@@ -18,6 +18,7 @@ import {
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { number } from 'zod';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 
 export async function getCosmeticDetail({ id }: GetByIdInput) {
   const cosmetic = await dbRead.cosmetic.findUnique({
@@ -122,13 +123,10 @@ export async function equipCosmeticToEntity({
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
     ]);
   if (equippedToType === 'Image')
-    await imagesSearchIndex.queueUpdate([
-      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
-    ]);
-  // TODO maybe pull cosmetics out of the index and fetch later
-  await imagesMetricsSearchIndex.queueUpdate([
-    { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+    await queueImageSearchIndexUpdate({
+      ids: [equippedToId],
+      action: SearchIndexUpdateQueueAction.Update,
+    });
   if (equippedToType === 'Article')
     await articlesSearchIndex.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
@@ -161,9 +159,10 @@ export async function unequipCosmetic({
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
     ]);
   if (equippedToType === 'Image')
-    await imagesSearchIndex.queueUpdate([
-      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
-    ]);
+    await queueImageSearchIndexUpdate({
+      ids: [equippedToId],
+      action: SearchIndexUpdateQueueAction.Update,
+    });
   if (equippedToType === 'Article')
     await articlesSearchIndex.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },

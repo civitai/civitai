@@ -99,7 +99,7 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
   await updateImageNsfwLevels(args);
   await queueImageSearchIndexUpdate({
     ids: args.map((x) => x.imageId),
-    action: SearchIndexUpdateQueueAction.Delete,
+    action: SearchIndexUpdateQueueAction.Update,
   });
 }
 

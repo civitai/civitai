@@ -89,10 +89,7 @@ import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
-import {
-  deleteImagTagsForReviewByImageIds,
-  deleteImageForReviewMultiple,
-} from '~/server/services/image-review.service';
+import { deleteImagTagsForReviewByImageIds } from '~/server/services/image-review.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -243,10 +240,10 @@ export const deleteImageById = async ({
       // Ignore errors
     }
 
-    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    await imagesMetricsSearchIndex.queueUpdate([
-      { id, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
+    await queueImageSearchIndexUpdate({
+      ids: [id],
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
 
     // await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
     if (updatePost && image.postId) {

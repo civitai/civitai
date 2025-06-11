@@ -1392,21 +1392,12 @@ model Image {
   ratingRequests      ImageRatingRequest[]
   tagsNew             TagsOnImageNew[]
   imageResourceNew    ImageResourceNew[]
-  imagesForReview     ImageForReview[]
   imageTagsForReview  ImageTagForReview[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
   @@index([sortAt])
-}
-
-model ImageForReview {
-  imageId Int    @id
-  image   Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  reason  String // minor, poi, blockedTags, newUser, reported, ruleViolations
-
-  @@index([reason])
 }
 
 model ImageTagForReview {
