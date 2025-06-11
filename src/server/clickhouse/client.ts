@@ -22,7 +22,7 @@ import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 import type { Session } from 'next-auth';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
-import type { NewOrderImageRatingStatus } from '~/server/common/enums';
+import type { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -525,6 +525,7 @@ export class Tracker {
       grantedExp: number;
       multiplier: number;
       rank: NewOrderRankType;
+      originalLevel?: NsfwLevel;
     }
   ) {
     return this.track('knights_new_order_image_rating', { ...values, createdAt: new Date() });
