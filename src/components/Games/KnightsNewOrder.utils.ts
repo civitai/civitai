@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import { useMemo } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStorage } from '~/hooks/useStorage';
 import { newOrderConfig } from '~/server/common/constants';
 import {
@@ -411,7 +412,11 @@ export const useQueryPlayersInfinite = (
 };
 
 export const useQueryImageRaters = ({ imageId }: { imageId: number }) => {
-  const { data, ...rest } = trpc.games.newOrder.getImageRaters.useQuery({ imageId });
+  const currentUser = useCurrentUser();
+  const { data, ...rest } = trpc.games.newOrder.getImageRaters.useQuery(
+    { imageId },
+    { enabled: !!currentUser?.isModerator }
+  );
 
   return {
     raters: data ?? { [NewOrderRankType.Knight]: [], [NewOrderRankType.Templar]: [] },
