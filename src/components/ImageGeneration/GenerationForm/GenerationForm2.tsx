@@ -111,7 +111,7 @@ import { useTipStore } from '~/store/tip.store';
 import { fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser, parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { getRatio, numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -1626,7 +1626,7 @@ const getAspectRatioControls = (
           </Stack>
         </Stack>
       ),
-      value: `${index}`,
+      value: getRatio(width, height),
     };
   });
 };

@@ -1,6 +1,5 @@
 import type { Imagen4ImageGenInput } from '@civitai/client';
 import { z } from 'zod';
-import type { BaseModelSetType } from '~/server/common/constants';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 export const imagen4AspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'] as const;
@@ -8,9 +7,7 @@ export const imagen4AspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'] as cons
 type GoogleModel = (typeof googleModels)[number];
 export const googleModels = ['imagen4'] as const;
 
-const baseModelToModelMap = {
-  Imagen4: 'imagen4',
-} as Record<BaseModelSetType, GoogleModel>;
+const modelVersionToModelMap = new Map<number, GoogleModel>([[1889632, 'imagen4']]);
 
 const schema = z.object({
   engine: z.literal('google').catch('google'),
@@ -33,14 +30,21 @@ export const googleConfig = ImageGenConfig({
     seed: params.seed,
     baseModel: params.baseModel,
   }),
-  inputFn: ({ params }): Imagen4ImageGenInput =>
-    schema.parse({
+  inputFn: ({ params, resources }): Imagen4ImageGenInput => {
+    let model = 'imagen4';
+    for (const resource of resources) {
+      const match = modelVersionToModelMap.get(resource.id);
+      if (match) model = match;
+    }
+
+    return schema.parse({
       engine: params.engine,
       prompt: params.prompt,
       negativePrompt: params.negativePrompt,
-      aspectRatio: params.aspectRatio ? imagen4AspectRatios[Number(params.aspectRatio)] : undefined,
+      aspectRatio: params.aspectRatio,
       numImages: params.quantity,
       seed: params.seed,
-      model: baseModelToModelMap[params.baseModel],
-    }),
+      model,
+    });
+  },
 });

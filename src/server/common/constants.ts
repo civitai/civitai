@@ -832,6 +832,12 @@ export const samplerOffsets = {
   undefined: 4,
 } as const;
 
+const commonAspectRatios = [
+  { label: 'Square', width: 1024, height: 1024 },
+  { label: 'Landscape', width: 1216, height: 832 },
+  { label: 'Portrait', width: 832, height: 1216 },
+];
+
 export const generationConfig = {
   SD1: {
     aspectRatios: [
@@ -857,11 +863,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   SDXL: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 128078,
       name: 'v1.0 VAE fix',
@@ -880,11 +882,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Pony: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 290640,
       name: 'V6 (start with this one)',
@@ -903,11 +901,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Illustrious: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     // doesn't work for all illustrios models
     // aspectRatios: [
     //   { label: 'Square', width: 1536, height: 1536 },
@@ -932,11 +926,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   NoobAI: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 1190596,
       name: 'V-Pred-1.0-Version',
@@ -955,11 +945,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Flux1: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 691639,
       name: '',
@@ -1007,11 +993,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   SD3: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 983309,
       name: 'Large',
@@ -1030,11 +1012,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   SD3_5M: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 1003708,
       name: 'Medium',
@@ -1135,7 +1113,7 @@ export const generation = {
     seed: null,
     clipSkip: 2,
     quantity: 2,
-    aspectRatio: '0',
+    aspectRatio: '1:1',
     prompt: '',
     negativePrompt: '',
     nsfw: false,

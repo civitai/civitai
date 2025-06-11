@@ -15,7 +15,7 @@ import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { getImageDimensions } from '~/utils/image-utils';
-import { findClosest } from '~/utils/number-helpers';
+import { findClosest, getRatio } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
   GENERATION: 'gen',
@@ -301,7 +301,7 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
     if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
   }
 
-  if (!params.aspectRatio && params.width && params.height) {
+  if (!params.aspectRatio) {
     params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
     params.fluxUltraAspectRatio = getClosestFluxUltraAspectRatio(params.width, params.height);
   }
@@ -320,10 +320,12 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   return params;
 }
 
-export function getSizeFromAspectRatio(aspectRatio: number | string, baseModel?: string) {
-  const numberAspectRatio = typeof aspectRatio === 'string' ? Number(aspectRatio) : aspectRatio;
-  const config = getGenerationConfig(baseModel);
-  return config.aspectRatios[numberAspectRatio] ?? generationConfig.SD1.aspectRatios[0];
+export function getSizeFromAspectRatio(aspectRatio: string, baseModel?: string) {
+  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+  return (
+    aspectRatios.find((x) => getRatio(x.width, x.height) === aspectRatio) ??
+    generationConfig.SD1.aspectRatios[0]
+  );
 }
 
 export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
@@ -331,10 +333,14 @@ export const getClosestAspectRatio = (width?: number, height?: number, baseModel
   height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
   const ratios = aspectRatios.map((x) => x.width / x.height);
-  if (!ratios.length) return '0';
+
   const closest = findClosest(ratios, width / height);
   const index = ratios.indexOf(closest);
-  return `${index ?? 0}`;
+  if (index > -1) {
+    const { width, height } = aspectRatios[index];
+    return getRatio(width, height);
+  }
+  return aspectRatios[0] ? getRatio(aspectRatios[0].width, aspectRatios[0].height) : '1:1';
 };
 
 export function getWorkflowDefinitionFeatures(workflow?: {
@@ -610,7 +616,7 @@ export function getSizeFromFluxUltraAspectRatio(value: number) {
   return fluxUltraAspectRatios[value] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex];
 }
 
-export function getClosestFluxUltraAspectRatio(width: number, height: number) {
+export function getClosestFluxUltraAspectRatio(width = 1024, height = 1024) {
   const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
   const closest = findClosest(ratios, width / height);
   const index = ratios.indexOf(closest);

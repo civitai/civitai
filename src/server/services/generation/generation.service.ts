@@ -44,6 +44,7 @@ import {
   getBaseModelFromResourcesWithDefault,
   getBaseModelSet,
   getBaseModelSetType,
+  getClosestAspectRatio,
   getResourceGenerationType,
 } from '~/shared/constants/generation.constants';
 import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -326,10 +327,7 @@ async function getMediaGenerationData({
       let aspectRatio = '0';
       try {
         if (width && height) {
-          const config = getGenerationConfig(baseModel);
-          const ratios = config.aspectRatios.map((x) => x.width / x.height);
-          const closest = findClosest(ratios, width / height);
-          aspectRatio = `${ratios.indexOf(closest)}`;
+          aspectRatio = getClosestAspectRatio(width, height, baseModel);
         }
       } catch (e) {}
 

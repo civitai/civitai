@@ -45,6 +45,7 @@ import type { WorkflowDefinitionType } from '~/server/services/orchestrator/type
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
+import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 
 // #region [schemas]
 
@@ -264,7 +265,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
     partialSchema,
-    version: 1.3,
+    version: 1.4,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     defaultValues: getValues,
@@ -387,10 +388,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         form.setValue('fluxMode', fluxStandardAir);
       }
 
-      if (
-        watchedValues.model?.id === generationConfig.OpenAI.checkpoint.id ||
-        watchedValues.model?.id === generationConfig.Imagen4.checkpoint.id
-      ) {
+      if (watchedValues.model?.id && getModelVersionUsesImageGen(watchedValues.model.id)) {
         if (watchedValues.sourceImage && watchedValues.workflow !== 'img2img')
           form.setValue('workflow', 'img2img');
         else if (!watchedValues.sourceImage && watchedValues.workflow !== 'txt2img')

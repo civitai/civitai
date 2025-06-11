@@ -48,7 +48,6 @@ export function ImageGenConfig<
     const seed =
       !('seed' in result) || !result.seed ? Math.floor(Math.random() * maxRandomSeed) : result.seed;
 
-    console.log({ ...result, seed });
     return { ...result, seed };
   }
 

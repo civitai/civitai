@@ -51,7 +51,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
         ?.checkpoint ?? model;
 
     if (params.aspectRatio) {
-      const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
+      const size = getSizeFromAspectRatio(params.aspectRatio, params.baseModel);
       if (size) {
         params.width = size.width;
         params.height = size.height;
