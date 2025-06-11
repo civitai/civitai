@@ -104,7 +104,12 @@ import {
   getImageGenerationBaseModels,
   fluxDraftAir,
 } from '~/shared/constants/generation.constants';
-import { imageGenModelVersionMap } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1.config';
+import { getIsImagen4 } from '~/shared/orchestrator/ImageGen/google.config';
+import {
+  getModelVersionUsesImageGen,
+  imageGenModelVersionMap,
+} from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
@@ -158,6 +163,7 @@ export function GenerationFormContent() {
 
   const [workflow] = form.watch(['workflow']) ?? 'txt2img';
   const baseModel = form.watch('baseModel');
+  const model = form.watch('model');
   const [sourceImage] = form.watch(['sourceImage']);
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
@@ -404,10 +410,15 @@ export function GenerationFormContent() {
     else setMinDenoise(0);
   }, [sourceImage, form]);
 
-  const isOpenAI = baseModel === 'OpenAI';
   const isSDXL = getIsSdxl(baseModel);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
+  // ImageGen constants
+  const isImageGen = getModelVersionUsesImageGen(model.id);
+  const isOpenAI = baseModel === 'OpenAI';
+  const isImagen4 = getIsImagen4(model.id);
+  const isFluxKontext = getIsFluxKontext(model.id);
+
   const disablePriority = runsOnFalAI || isOpenAI;
 
   return (
@@ -417,13 +428,10 @@ export function GenerationFormContent() {
       onError={handleError}
       className="relative flex flex-1 flex-col justify-between gap-2"
     >
-      <Watch
-        {...form}
-        fields={['baseModel', 'fluxMode', 'draft', 'model', 'workflow', 'sourceImage']}
-      >
-        {({ baseModel, fluxMode, draft, model, workflow, sourceImage }) => {
+      <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'workflow', 'sourceImage']}>
+        {({ baseModel, fluxMode, draft, workflow, sourceImage }) => {
           // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
-          const isImg2Img = workflow?.startsWith('img') || (isOpenAI && sourceImage);
+          const isImg2Img = workflow?.startsWith('img') || (isImageGen && sourceImage);
           const isFluxStandard = getIsFluxStandard(model.model.id);
           const isDraft = isFluxStandard
             ? fluxMode === fluxDraftAir
@@ -452,11 +460,11 @@ export function GenerationFormContent() {
             cfgScaleMax = isDraft ? 1 : 20;
           }
           const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
-          const disableAdditionalResources = runsOnFalAI || isOpenAI;
-          const disableAdvanced = isFluxUltra || isOpenAI;
+          const disableAdditionalResources = runsOnFalAI || isOpenAI || isImagen4;
+          const disableAdvanced = isFluxUltra || isOpenAI || isImagen4;
           const disableNegativePrompt = isFlux || isOpenAI;
-          const disableWorkflowSelect = isFlux || isSD3 || isOpenAI;
-          const disableDraft = !features.draft || isOpenAI || isFlux || isSD3;
+          const disableWorkflowSelect = isFlux || isSD3 || isImageGen;
+          const disableDraft = !features.draft || isOpenAI || isFlux || isSD3 || isImagen4;
           const enableImageInput = (features.image && !isFlux && !isSD3) || isOpenAI;
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);

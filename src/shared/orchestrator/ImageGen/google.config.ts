@@ -7,7 +7,11 @@ export const imagen4AspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'] as cons
 type GoogleModel = (typeof googleModels)[number];
 export const googleModels = ['imagen4'] as const;
 
-const modelVersionToModelMap = new Map<number, GoogleModel>([[1889632, 'imagen4']]);
+export const googleModelVersionToModelMap = new Map<number, GoogleModel>([[1889632, 'imagen4']]);
+
+export function getIsImagen4(modelVersionId?: number) {
+  return modelVersionId ? !!googleModelVersionToModelMap.get(modelVersionId) : false;
+}
 
 const schema = z.object({
   engine: z.literal('google').catch('google'),
@@ -33,7 +37,7 @@ export const googleConfig = ImageGenConfig({
   inputFn: ({ params, resources }): Imagen4ImageGenInput => {
     let model = 'imagen4';
     for (const resource of resources) {
-      const match = modelVersionToModelMap.get(resource.id);
+      const match = googleModelVersionToModelMap.get(resource.id);
       if (match) model = match;
     }
 

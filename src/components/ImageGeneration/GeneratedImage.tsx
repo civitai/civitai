@@ -77,6 +77,7 @@ import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
 import { capitalize } from '~/utils/string-helpers';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -602,9 +603,12 @@ function GeneratedImageWorkflowMenuItems({
 
   const isVideo = step.$type === 'videoGen';
   const isOpenAI = !isVideo && step.params.engine === 'openai';
+  const isImageGen = step.resources.find(
+    (x) => x.model.type === 'Checkpoint' && getModelVersionUsesImageGen(x.id)
+  );
   const isFlux = !isVideo && getIsFlux(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
-  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isOpenAI;
+  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isImageGen;
   const img2imgWorkflows = !isVideo
     ? workflowDefinitions.filter(
         (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)

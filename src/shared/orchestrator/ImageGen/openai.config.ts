@@ -19,6 +19,13 @@ function getClosestOpenAISize(w: number, h: number) {
   return { width, height };
 }
 
+type OpenaiModel = (typeof openaiModels)[number];
+export const openaiModels = ['gpt-image-1'] as const;
+
+export const openaiModelVersionToModelMap = new Map<number, OpenaiModel>([
+  [1733399, 'gpt-image-1'],
+]);
+
 export const openaiConfig = ImageGenConfig({
   metadataFn: (params) => ({
     engine: 'openai',
