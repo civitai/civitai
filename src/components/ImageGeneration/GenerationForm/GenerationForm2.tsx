@@ -253,7 +253,7 @@ export function GenerationFormContent() {
     }
 
     delete params.engine;
-    if (isFluxStandard && fluxUltraRaw && params.fluxMode === fluxUltraAir)
+    if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
       params.engine = 'flux-pro-raw';
     if (model.id === generationConfig.OpenAI.checkpoint.id) {
       params.engine = 'openai';
