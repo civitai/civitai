@@ -359,7 +359,7 @@ export async function addImageRating({
             if (!r.startsWith(NewOrderRankType.Knight)) return null;
 
             const amount = await getImageRatingsCounter(imageId).getCount(r);
-            return amount >= newOrderConfig.limits.minKnightVotes;
+            return amount >= newOrderConfig.limits.minKnightVotes ? r : null;
           })
         )
       ).filter(isDefined)[0];
