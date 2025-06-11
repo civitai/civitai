@@ -15,6 +15,9 @@ import { getChatHash, getUsersFromHash } from '~/server/utils/chat';
 import {
   ArticleEngagementType,
   Availability,
+  BountyEntryMode,
+  BountyMode,
+  BountyType,
   ChangelogType,
   ChatMemberStatus,
   ChatMessageType,
@@ -40,7 +43,13 @@ import {
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { checkLocalDb, deleteRandomJobQueueRows, generateRandomName, insertRows } from './utils';
+import {
+  checkLocalDb,
+  deleteRandomJobQueueRows,
+  generateRandomName,
+  insertRows,
+  randPrependBad,
+} from './utils';
 // import { fetchBlob } from '~/utils/file-utils';
 
 // Usage: npx tsx ./scripts/local-dev/gen_seed.ts --rows=1000
@@ -423,8 +432,8 @@ const genUsers = (num: number, includeCiv = false) => {
   for (let step = extraUsers.length + (includeCiv ? 0 : 1); step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
     const isMuted = fbool(0.01);
-    let username = faker.internet.userName();
-    if (seenUserNames.includes(username)) username = `${username} ${faker.number.int(1_000)}`;
+    let username = randPrependBad(faker.internet.userName(), '.');
+    if (seenUserNames.includes(username)) username = `${username}_${faker.number.int(1_000)}`;
     seenUserNames.push(username);
 
     const row = [
@@ -514,6 +523,50 @@ const genUsers = (num: number, includeCiv = false) => {
 };
 
 /**
+ * UserProfile
+ */
+const genUserProfiles = (num: number, userIds: number[], imageIds: number[]) => {
+  const selectedUserIds = faker.helpers.arrayElements(userIds, num);
+  const ret = [];
+
+  for (const userId of selectedUserIds) {
+    const message = randw([
+      { value: null, weight: 10 },
+      { value: randPrependBad(faker.lorem.sentence()), weight: 1 },
+    ]);
+
+    const row = [
+      userId, // "userId"
+      randw([
+        { value: null, weight: 10 },
+        { value: rand(imageIds), weight: 1 },
+      ]), // coverImageId
+      randw([
+        { value: null, weight: 10 },
+        { value: randPrependBad(faker.lorem.sentences({ min: 1, max: 3 })), weight: 1 },
+      ]), // bio
+      message, // message
+      !!message ? faker.date.past({ years: 3 }).toISOString() : null, // messageAddedAt
+      '{}', // privacySettings
+      '[{"key": "showcase", "enabled": true}, {"key": "popularModels", "enabled": true}, {"key": "popularArticles", "enabled": true}, {"key": "modelsOverview", "enabled": true}, {"key": "imagesOverview", "enabled": true}, {"key": "recentReviews", "enabled": true}]', // profileSectionsSettings
+      randw([
+        { value: null, weight: 10 },
+        { value: `${faker.location.city()}, ${faker.location.country()}`, weight: 1 },
+      ]), // location
+      fbool(0.01), // nsfw
+      randw([
+        { value: '[]', weight: 10 },
+        { value: `[{"entityId": ${rand(imageIds)}, "entityType": "Image"}]`, weight: 1 }, // TODO need to get users images
+      ]), // showcaseItems
+    ];
+
+    ret.push(row);
+  }
+
+  return ret;
+};
+
+/**
  * Model
  */
 const genModels = (num: number, userIds: number[]) => {
@@ -528,8 +581,8 @@ const genModels = (num: number, userIds: number[]) => {
     const isEa = fbool(0.05);
 
     const row = [
-      generateRandomName(faker.number.int({ min: 1, max: 6 })), // name
-      rand([null, `<p>${faker.lorem.paragraph({ min: 1, max: 8 })}</p>`]), // description
+      randPrependBad(generateRandomName(faker.number.int({ min: 1, max: 6 }))), // name
+      rand([null, `<p>${randPrependBad(faker.lorem.paragraph({ min: 1, max: 8 }))}</p>`]), // description
       isCheckpoint
         ? 'Checkpoint'
         : isLora
@@ -882,7 +935,7 @@ const genReviews = (num: number, userIds: number[], mvData: { id: number; modelI
       isGood ? 5 : 1, // rating
       randw([
         { value: null, weight: 10 },
-        { value: faker.lorem.sentence(), weight: 1 },
+        { value: randPrependBad(faker.lorem.sentence()), weight: 1 },
       ]), // details
       rand(without(userIds, ...existUsers)), // userId
       created, // createdAt
@@ -977,8 +1030,8 @@ const genCollections = (num: number, userIds: number[], imageIds: number[]) => {
       step, // id
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
-      `${rand(['My', 'Some'])} ${faker.word.adjective()} ${faker.word.noun()}s`, // name
-      rand([null, '', faker.lorem.sentence()]), // description
+      `${rand(['My', 'Some'])} ${randPrependBad(faker.word.adjective())} ${faker.word.noun()}s`, // name
+      rand([null, '', randPrependBad(faker.lorem.sentence())]), // description
       rand(userIds), // userId
       fbool(0.95) ? 'Private' : rand(['Public', 'Review']), // write
       fbool(0.05) ? 'Unlisted' : rand(['Public', 'Private']), // read
@@ -1090,8 +1143,11 @@ const genPosts = (
     const row = [
       step, // id
       fbool(0.4), // nsfw // 40% actually seems fair :/
-      rand([null, `${faker.word.adjective()} ${faker.word.adjective()} ${faker.word.noun()}`]), // title
-      rand([null, `<p>${faker.lorem.sentence()}</p>`]), // detail
+      rand([
+        null,
+        `${randPrependBad(faker.word.adjective())} ${faker.word.adjective()} ${faker.word.noun()}`,
+      ]), // title
+      rand([null, `<p>${randPrependBad(faker.lorem.sentence())}</p>`]), // detail
       userId, // userId
       mvId, // modelVersionId
       created, // createdAt
@@ -1263,8 +1319,8 @@ const genArticles = (num: number, userIds: number[], imageIds: number[]) => {
       fbool(0.2), // nsfw
       fbool(0.01), // tosViolation
       null, // metadata
-      faker.lorem.sentence(), // title
-      `<p>${faker.lorem.paragraphs({ min: 1, max: 10 }, '<br/>')}</p>`, // content
+      randPrependBad(faker.lorem.sentence()), // title
+      `<p>${randPrependBad(faker.lorem.paragraphs({ min: 1, max: 10 }, '<br/>'))}</p>`, // content
       rand([null, '']), // cover // TODO with images
       status === 'Published'
         ? faker.date.between({ from: created, to: Date.now() }).toISOString()
@@ -1978,7 +2034,7 @@ const genCommentsModel = (
 
     const row = [
       step, // id
-      `<p>${faker.lorem.paragraph({ min: 1, max: 8 })}</p>`, // content
+      `<p>${randPrependBad(faker.lorem.paragraph({ min: 1, max: 8 }))}</p>`, // content
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
       fbool(0.01), // nsfw
@@ -2073,7 +2129,7 @@ const genCommentsV2 = (num: number, userIds: number[], threadIds: number[], star
 
     const row = [
       step, // id
-      `<p>${faker.lorem.paragraph({ min: 1, max: 8 })}</p>`, // content
+      `<p>${randPrependBad(faker.lorem.paragraph({ min: 1, max: 8 }))}</p>`, // content
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
       fbool(0.01), // nsfw
@@ -3154,7 +3210,7 @@ const genChatMessages = (chatData: { chatId: number; userIds: number[]; createdA
         faker.date.between({ from: createdAt, to: Date.now() }).toISOString(), // createdAt
         rand(userIds), // userId
         chatId, // chatId
-        faker.lorem.sentence({ min: 1, max: 20 }), // content
+        randPrependBad(faker.lorem.sentence({ min: 1, max: 20 })), // content
         ChatMessageType.Markdown, // contentType // TODO include embeds
         null, // referenceMessageId
         null, // editedAt
@@ -3165,6 +3221,95 @@ const genChatMessages = (chatData: { chatId: number; userIds: number[]; createdA
     }
   }
 
+  return ret;
+};
+
+/**
+ * Bounty
+ */
+const genBounties = (num: number, userIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const created = faker.date.recent({ days: 30 }).toISOString();
+    const startsAt = dayjs(created).add(faker.number.int({ min: 0, max: 10 }), 'day');
+    const expiresAt = startsAt.add(faker.number.int({ min: 1, max: 30 }), 'day');
+
+    const row = [
+      step, // id
+      rand(userIds), // userId
+      randPrependBad(generateRandomName(faker.number.int({ min: 1, max: 6 }))), // name
+      `<p>${randPrependBad(faker.lorem.paragraph({ min: 1, max: 8 }))}</p>`, // description
+      startsAt.format('YYYY-MM-DD'), // startsAt
+      expiresAt.format('YYYY-MM-DD'), // expiresAt
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+      rand([null, `{"baseModel": "${rand(constants.baseModels)}"}`]), // details
+      rand(Object.values(BountyMode)), // mode
+      rand(Object.values(BountyEntryMode)), // entryMode
+      rand(Object.values(BountyType)), // type
+      500, // minBenefactorUnitAmount
+      null, // maxBenefactorUnitAmount
+      faker.number.int({ min: 1, max: 999 }), // entryLimit
+      fbool(), // nsfw
+      expiresAt < dayjs(), // complete
+      fbool(0.1), // poi
+      fbool(0.2), // refunded
+      randw([
+        { value: 'Public', weight: 30 },
+        {
+          value: rand(Object.values(Availability).filter((v) => !['Public'].includes(v))),
+          weight: 1,
+        },
+      ]), // availability
+      randw([
+        { value: 0, weight: 1 },
+        { value: 1, weight: 4 },
+        { value: 28, weight: 3 },
+        { value: 15, weight: 2 },
+        { value: 31, weight: 2 },
+      ]), // nsfwLevel
+      '{}', // lockedProperties
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * BountyEntry
+ */
+const genBountyEntries = (
+  num: number,
+  userIds: number[],
+  bountyData: { id: number; createdAt: string }[]
+) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const bounty = rand(bountyData);
+    const created = faker.date.between({ from: bounty.createdAt, to: Date.now() }).toISOString();
+
+    const row = [
+      step, // id
+      rand(userIds), // userId
+      bounty.id, // bountyId
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+      fbool(0.01), // locked
+      rand([null, `<p>${randPrependBad(faker.lorem.paragraph({ min: 1, max: 8 }))}</p>`]), // description
+      randw([
+        { value: 0, weight: 1 },
+        { value: 1, weight: 4 },
+        { value: 28, weight: 3 },
+        { value: 15, weight: 2 },
+        { value: 31, weight: 2 },
+      ]), // nsfwLevel
+    ];
+
+    ret.push(row);
+  }
   return ret;
 };
 
@@ -3233,6 +3378,9 @@ const genRows = async (truncate = true) => {
 
   const images = genImages(Math.ceil(numRows * 8), userIds, postIds);
   const imageIds = await insertRows('Image', images);
+
+  const userProfiles = genUserProfiles(Math.ceil(numRows / 4), userIds, imageIds);
+  await insertRows('UserProfile', userProfiles, false);
 
   const articles = genArticles(numRows, userIds, imageIds);
   const articleIds = await insertRows('Article', articles);
@@ -3406,18 +3554,32 @@ const genRows = async (truncate = true) => {
     numRows,
     userIds.filter((u) => u > 0)
   );
-  await insertRows('Chat', chats);
-  const chatData = chats.map((c) => ({
-    chatId: c[0],
-    userIds: getUsersFromHash(c[2]),
-    createdAt: c[1],
-  }));
+  const chatIds = await insertRows('Chat', chats);
+  const chatData = chats
+    .map((c) => ({
+      chatId: c[0],
+      userIds: getUsersFromHash(c[2]),
+      createdAt: c[1],
+    }))
+    .filter((c) => chatIds.includes(c.chatId));
 
   const chatMembers = genChatMembers(chatData);
   await insertRows('ChatMember', chatMembers);
 
   const chatMessages = genChatMessages(chatData);
   await insertRows('ChatMessage', chatMessages);
+
+  const bounties = genBounties(numRows, userIds);
+  const bountyIds = await insertRows('Bounty', bounties);
+
+  const bountyEntries = genBountyEntries(
+    numRows * 4,
+    userIds,
+    bounties
+      .map((b) => ({ id: b[0] as number, createdAt: b[6] as string }))
+      .filter((b) => bountyIds.includes(b.id))
+  );
+  await insertRows('BountyEntry', bountyEntries);
 
   if (truncQueue) {
     await deleteRandomJobQueueRows(99);

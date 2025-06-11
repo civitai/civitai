@@ -18,6 +18,9 @@ import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate } from './job';
 
 const jobName = 'entity-moderation';
+const jobNameQueues = 'queues';
+const jobNameChat = 'chat';
+const jobNameClear = 'clear-automated';
 
 // http://localhost:3000/api/webhooks/run-jobs?token=letsgethookie&run=entity-moderation-queues
 // http://localhost:3000/api/webhooks/run-jobs?token=letsgethookie&run=entity-moderation-chat
@@ -205,8 +208,9 @@ type QueuesConfig = {
 /*
 Adding a new entry:
   - create a trigger or otherwise populate JobQueue
-  - add the type to EntityType enum
+  - add the type to EntityType enum (if missing)
   - add the fields below
+  - update relevant columns in gen_seed
   - optionally update policy in redis config
 */
 
@@ -383,7 +387,7 @@ const runClavata = async ({
             externalType: ExternalModerationType.Clavata,
             entityId: metadata.id,
             // tags: item.tags ?? [],
-            tags: item.tags?.map((t) => t.tag) ?? [],
+            tags: item.matches ?? [],
             userId: metadata.userId,
             // value: metadata.value, // value is too heavy to store here
           },
@@ -416,7 +420,7 @@ const runClavata = async ({
           entityType: type,
           entityId: metadata.id,
           userId: metadata.userId,
-          rules: item.tags?.map((t) => t.tag) ?? [],
+          rules: item.matches ?? [],
           // value: metadata.value,
           date: new Date(),
         });
@@ -487,6 +491,7 @@ async function runModChat(lastRun: Date) {
     orderBy: {
       createdAt: 'asc',
     },
+    take: 50, // TODO remove
   });
   // .catch((error) => {
   //   logAx({ message: 'Error getting chat messages', data: { error } });
@@ -654,11 +659,11 @@ async function runModQueue() {
 }
 
 async function modChat() {
-  const [lastRun, setLastRun] = await getJobDate(`${jobName}-chat`);
-  log(`Starting ${jobName}-chat`);
+  const [lastRun, setLastRun] = await getJobDate(`${jobName}-${jobNameChat}`);
+  log(`Starting ${jobName}-${jobNameChat}`);
   try {
     const handled = await runModChat(lastRun);
-    log(`Finished ${jobName}-chat, processed ${handled} items`);
+    log(`Finished ${jobName}-${jobNameChat}, processed ${handled} items`);
     await setLastRun();
   } catch (error) {
     logAx({ message: 'Error handling chat', data: { error } });
@@ -666,11 +671,11 @@ async function modChat() {
 }
 
 async function modQueue() {
-  const [, setLastRun] = await getJobDate(`${jobName}-queues`);
-  log(`Starting ${jobName}-queues`);
+  const [, setLastRun] = await getJobDate(`${jobName}-${jobNameQueues}`);
+  log(`Starting ${jobName}-${jobNameQueues}`);
   try {
     await runModQueue();
-    log(`Finished ${jobName}-queues`);
+    log(`Finished ${jobName}-${jobNameQueues}`);
     await setLastRun();
   } catch (error) {
     logAx({ message: 'Error handling queues', data: { error } });
@@ -678,8 +683,8 @@ async function modQueue() {
 }
 
 async function clearAutomatedReports() {
-  const [, setLastRun] = await getJobDate(`${jobName}-clear-automated`);
-  log(`Starting ${jobName}-clear-automated`);
+  const [, setLastRun] = await getJobDate(`${jobName}-${jobNameClear}`);
+  log(`Starting ${jobName}-${jobNameClear}`);
   try {
     await dbWrite.reportAutomated.deleteMany({
       where: {
@@ -687,7 +692,7 @@ async function clearAutomatedReports() {
       },
     });
 
-    log(`Finished ${jobName}-clear-automated`);
+    log(`Finished ${jobName}-${jobNameClear}`);
     await setLastRun();
   } catch (error) {
     logAx({ message: 'Error deleting old reports', data: { error } });
@@ -696,10 +701,10 @@ async function clearAutomatedReports() {
 
 //
 
-const modChatJob = createJob(`${jobName}-chat`, '*/5 * * * *', modChat);
-const modQueueJob = createJob(`${jobName}-queues`, '*/5 * * * *', modQueue);
+const modChatJob = createJob(`${jobName}-${jobNameChat}`, '*/5 * * * *', modChat);
+const modQueueJob = createJob(`${jobName}-${jobNameQueues}`, '*/5 * * * *', modQueue);
 const clearAutomatedJob = createJob(
-  `${jobName}-clear-automated`,
+  `${jobName}-${jobNameClear}`,
   '0 6 * * *',
   clearAutomatedReports
 );

@@ -141,3 +141,11 @@ export const deleteRandomJobQueueRows = async (percentage: number) => {
     throw e;
   }
 };
+
+const badWords = ['kill', 'underage', 'nazi'];
+export function randPrependBad(s: string, sep: string = ' ') {
+  return faker.helpers.weightedArrayElement([
+    { value: s, weight: 20 },
+    { value: `${badWords[Math.floor(Math.random() * badWords.length)]}${sep}${s}`, weight: 1 },
+  ]);
+}
