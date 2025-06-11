@@ -99,12 +99,11 @@ function BrowsingLevelCarousel({
     );
 
   const totalItems = images.length;
-  const slidesToShow = mobile ? 1 : 2;
+  const slidesToShow = mobile ? 1 : 4;
 
   return (
     <Embla
       align={totalItems > slidesToShow ? 'start' : 'center'}
-      slidesToScroll={slidesToShow}
       withControls={totalItems > slidesToShow ? true : false}
       controlSize={32}
       initialHeight={300}
