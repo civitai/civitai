@@ -1,5 +1,5 @@
 import type { TabsProps } from '@mantine/core';
-import { Badge, Tabs, Text } from '@mantine/core';
+import { Badge, Group, Tabs, Text } from '@mantine/core';
 import {
   getCategoryDisplayName,
   useNotificationSettings,
@@ -54,6 +54,10 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
                 key={tab}
                 value={tab}
                 className="flex px-3 py-2"
+                classNames={{
+                  tabLabel: 'flex items-center gap-2 capitalize font-semibold',
+                  tabSection: 'shrink-0',
+                }}
                 rightSection={
                   !!countValue ? (
                     <Badge
@@ -61,18 +65,15 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
                       size="xs"
                       variant="filled"
                       radius="xl"
-                      classNames={{ label: 'flex' }}
+                      px={4}
+                      classNames={{ label: 'flex text-[11px] font-medium' }}
                     >
-                      <Text fz={12} fw={500} lh={1} span>
-                        {abbreviateNumber(countValue)}
-                      </Text>
+                      {abbreviateNumber(countValue)}
                     </Badge>
                   ) : undefined
                 }
               >
-                <Text tt="capitalize" fw={590} inline>
-                  {getCategoryDisplayName(tab as NotificationCategory)}
-                </Text>
+                {getCategoryDisplayName(tab as NotificationCategory)}
               </Tabs.Tab>
             );
           })}

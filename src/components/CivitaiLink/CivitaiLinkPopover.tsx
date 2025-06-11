@@ -1,7 +1,5 @@
-/* eslint-disable react/jsx-no-undef */
 import type { GroupProps, StackProps } from '@mantine/core';
 import {
-  ActionIcon,
   Group,
   Popover,
   Stack,
@@ -19,8 +17,6 @@ import {
   ColorSwatch,
   useMantineTheme,
   List,
-  Box,
-  Badge,
   defaultVariantColorsResolver,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

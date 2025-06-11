@@ -1,16 +1,25 @@
 .root {
   >button {
     &:hover {
-      background: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-2));
+      background: light-dark(
+        var(--mantine-color-gray-2),
+        var(--mantine-color-dark-6)
+      );
       cursor: pointer;
     }
 
     &:not(:last-child) {
-      border-bottom: 1px solid light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-3));
+      border-bottom: 1px solid light-dark(
+        var(--mantine-color-gray-3),
+        var(--mantine-color-dark-4)
+      );
     }
   }
 }
 
 .active {
-  background: light-dark(var(--mantine-color-dark-5), var(--mantine-color-gray-1));
+  background: light-dark(
+    var(--mantine-color-gray-1),
+    var(--mantine-color-dark-5)
+  );
 }

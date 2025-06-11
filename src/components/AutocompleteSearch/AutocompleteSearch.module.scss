@@ -49,7 +49,10 @@
 .targetSelectorInput {
   border-top-right-radius: 0 !important;
   border-bottom-right-radius: 0 !important;
-  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-gray-8));
+  background-color: light-dark(
+    var(--mantine-color-gray-3),
+    var(--mantine-color-gray-8)
+  );
   padding-right: 18px;
 
   &:not(:focus) {
@@ -68,13 +71,25 @@
 .searchButton {
   border-top-left-radius: 0 !important;
   border-bottom-left-radius: 0 !important;
-  border-color: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4)) !important;
+  border-color: light-dark(
+    var(--mantine-color-gray-4),
+    var(--mantine-color-dark-4)
+  ) !important;
   border-left: none !important;
-  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-gray-8)) !important;
-  color: light-dark(var(--mantine-color-black), var(--mantine-color-white));
+  background-color: light-dark(
+    var(--mantine-color-gray-3),
+    var(--mantine-color-gray-8)
+  ) !important;
+  color: light-dark(
+    var(--mantine-color-black),
+    var(--mantine-color-white)
+  );
 
   &:hover {
-    background-color: light-dark(var(--mantine-color-gray-4), var(--mantine-color-gray-7)) !important;
+    background-color: light-dark(
+      var(--mantine-color-gray-4),
+      var(--mantine-color-gray-7)
+    ) !important;
   }
 
   @container (max-width: theme('screens.md')) {

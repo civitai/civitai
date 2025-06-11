@@ -561,7 +561,7 @@ const FAQ = () => {
         <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
           Frequently asked questions
         </Title>
-        <Accordion variant="default">
+        <Accordion variant="default" classNames={{ control: 'py-4' }}>
           {faq.map(({ q, a }, index) => (
             <Accordion.Item key={index} value={`q${index}`}>
               <Accordion.Control>
