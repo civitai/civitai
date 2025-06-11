@@ -1343,7 +1343,7 @@ export const newOrderConfig = {
     knightVotes: 5,
     templarVotes: 2,
     templarPicks: 24,
-    minKnightVotes: 1,
+    minKnightVotes: 4,
   },
 };
 

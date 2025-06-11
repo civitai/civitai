@@ -353,12 +353,16 @@ export async function addImageRating({
     if (ratings.length > 1 && !processed) {
       processed = true;
 
-      const majorityAgreeVote = await ratings.find(async (r) => {
-        if (!r.startsWith(NewOrderRankType.Knight)) return false;
+      const majorityAgreeVote = (
+        await Promise.all(
+          ratings.map(async (r) => {
+            if (!r.startsWith(NewOrderRankType.Knight)) return null;
 
-        const amount = await getImageRatingsCounter(imageId).getCount(r);
-        return amount >= newOrderConfig.limits.minKnightVotes;
-      });
+            const amount = await getImageRatingsCounter(imageId).getCount(r);
+            return amount >= newOrderConfig.limits.minKnightVotes;
+          })
+        )
+      ).filter(isDefined)[0];
 
       let majorityAgreeRating: NsfwLevel | undefined;
       if (majorityAgreeVote) {
