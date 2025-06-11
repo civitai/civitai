@@ -14,6 +14,7 @@ import {
   List,
   Notification,
   Paper,
+  SegmentedControl,
   Stack,
   Text,
 } from '@mantine/core';
@@ -121,7 +122,12 @@ import { getRatio, numberWithCommas } from '~/utils/number-helpers';
 import { capitalize, getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { hiDreamPrecisions, hiDreamVariants } from '~/shared/orchestrator/hidream.config';
+import {
+  getHiDreamResourceFromPrecisionAndVariant,
+  getHiDreamResourceFromVersionId,
+  hiDreamPrecisions,
+  hiDreamVariants,
+} from '~/shared/orchestrator/hidream.config';
 
 let total = 0;
 const tips = {
@@ -414,7 +420,11 @@ export function GenerationFormContent() {
   const isSDXL = getIsSdxl(baseModel);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
+
+  // HiDream
   const isHiDream = getIsHiDream(baseModel);
+  const hiDreamResource = getHiDreamResourceFromVersionId(model.id);
+
   // ImageGen constants
   const isImageGen = getModelVersionUsesImageGen(model.id);
   const isOpenAI = baseModel === 'OpenAI';
@@ -430,8 +440,8 @@ export function GenerationFormContent() {
       onError={handleError}
       className="relative flex flex-1 flex-col justify-between gap-2"
     >
-      <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage', 'variant']}>
-        {({ fluxMode, draft, workflow, sourceImage, variant }) => {
+      <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage']}>
+        {({ fluxMode, draft, workflow, sourceImage }) => {
           // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
           const isImg2Img = workflow?.startsWith('img') || (isImageGen && sourceImage);
           const isFluxStandard = getIsFluxStandard(model.model.id);
@@ -465,7 +475,8 @@ export function GenerationFormContent() {
           const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
           const disableAdditionalResources = runsOnFalAI || isOpenAI || isImagen4;
           const disableAdvanced = isFluxUltra || isOpenAI || isImagen4 || isHiDream;
-          const disableNegativePrompt = isFlux || isOpenAI || (isHiDream && variant !== 'full');
+          const disableNegativePrompt =
+            isFlux || isOpenAI || (isHiDream && hiDreamResource?.variant !== 'full');
           const disableWorkflowSelect = isFlux || isSD3 || isImageGen || isHiDream;
           const disableDraft =
             !features.draft || isOpenAI || isFlux || isSD3 || isImagen4 || isHiDream;
@@ -580,7 +591,7 @@ export function GenerationFormContent() {
                                     : getImageGenerationBaseModels(),
                               })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                           }}
-                          hideVersion={isFluxStandard || isHiDream}
+                          hideVersion={isFluxStandard || isHiDream || isImageGen}
                           pb={
                             unstableResources.length ||
                             minorFlaggedResources.length ||
@@ -742,20 +753,39 @@ export function GenerationFormContent() {
                   </Alert>
                 )}
 
-                {isHiDream && (
+                {isHiDream && hiDreamResource && (
                   <>
                     <div className="flex flex-col gap-0.5">
                       <Input.Label>Precision</Input.Label>
-                      <InputSegmentedControl name="precision" data={[...hiDreamPrecisions]} />
+                      <SegmentedControl
+                        value={hiDreamResource.precision}
+                        data={[...hiDreamPrecisions]}
+                        onChange={(precision) => {
+                          const versionId = getHiDreamResourceFromPrecisionAndVariant({
+                            ...hiDreamResource,
+                            precision,
+                          })?.id;
+                          if (versionId && model.id !== versionId)
+                            form.setValue('model', { ...model, id: versionId });
+                        }}
+                      />
                     </div>
                     <div className="flex flex-col gap-0.5">
                       <Input.Label>Variant</Input.Label>
-                      <InputSegmentedControl
-                        name="variant"
+                      <SegmentedControl
+                        value={hiDreamResource.variant}
                         data={[...hiDreamVariants].map((value) => ({
                           label: capitalize(value),
                           value,
                         }))}
+                        onChange={(variant) => {
+                          const versionId = getHiDreamResourceFromPrecisionAndVariant({
+                            ...hiDreamResource,
+                            variant,
+                          })?.id;
+                          if (versionId && model.id !== versionId)
+                            form.setValue('model', { ...model, id: versionId });
+                        }}
                       />
                     </div>
                   </>

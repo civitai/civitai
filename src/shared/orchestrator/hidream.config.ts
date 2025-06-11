@@ -1,15 +1,10 @@
-import type { TextToImageInput } from '@civitai/client';
-import { Scheduler } from '@civitai/client';
 import { z } from 'zod';
 import {
   negativePromptSchema,
   promptSchema,
-  resourceSchema,
   seedSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { samplersToSchedulers } from '~/shared/constants/generation.constants';
-import { parseAIR } from '~/utils/string-helpers';
 
 type HiDreamPrecision = (typeof hiDreamPrecisions)[number];
 type HiDreamVariant = (typeof hiDreamVariants)[number];
@@ -72,15 +67,18 @@ const valueOverrides = {
   },
 };
 
-// TODO - get values for variant and precesion when creating from specific resources
-// export function getHiDreamInputFromResourceId(resourceId: number) {
+export function getHiDreamResourceFromVersionId(modelVersionId: number) {
+  return hiDreamResources.find((x) => x.id === modelVersionId);
+}
 
-// }
-
-function getResourceId(precision: string, variant: string) {
-  const resource = hiDreamResources.find((x) => x.precision === precision && x.variant === variant);
-  if (!resource) throw new Error('incompatible HiDream model variant');
-  return resource.id;
+export function getHiDreamResourceFromPrecisionAndVariant({
+  precision,
+  variant,
+}: {
+  precision: string;
+  variant: string;
+}) {
+  return hiDreamResources.find((x) => x.precision === precision && x.variant === variant);
 }
 
 const schema = z.object({
@@ -99,21 +97,17 @@ const schema = z.object({
   // model: resourceSchema,
   // resources: resourceSchema.array().default([]),
   resources: workflowResourceSchema.array().default([]),
-  precision: z.string(),
-  variant: z.string(),
+  // precision: z.string(),
+  // variant: z.string(),
 });
 
 export function getHiDreamInput(data: Record<string, unknown>) {
   const { resources, ...params } = schema.parse(data);
-  const resourceId = getResourceId(params.precision, params.variant);
-  const overrides = valueOverrides[params.variant as keyof typeof valueOverrides];
-  for (const { id: hiDreamResourceId } of hiDreamResources) {
-    const index = resources.findIndex((x) => x.id === hiDreamResourceId);
-    if (index > -1) {
-      resources[index].id = resourceId;
-      break;
-    }
-  }
+  const hiDreamResource = resources
+    .map((r) => getHiDreamResourceFromVersionId(r.id))
+    .find((x) => !!x);
+  const variant = hiDreamResource?.variant ?? 'fast';
+  const overrides = valueOverrides[variant as keyof typeof valueOverrides];
 
   return {
     resources,
@@ -123,28 +117,3 @@ export function getHiDreamInput(data: Record<string, unknown>) {
     },
   };
 }
-
-// export const hiDreamConfig = VideoGenerationConfig2({
-//   label: 'HiDream',
-//   whatIfProps: ['steps', 'model', 'cfgScale'],
-//   metadataDisplayProps: [],
-//   schema,
-//   processes: ['txt2img'],
-//   transformFn: (data) => {
-//     const variant = getModelVariant(data.model.air);
-//     const overrides = valueOverrides[variant];
-
-//     return {
-//       baseModel: data.baseModel,
-//       model: data.model,
-//       prompt: data.prompt,
-//       ...overrides,
-//     };
-//   },
-//   inputFn: ({ model, ...args }): TextToImageInput => {
-//     return {
-//       model: model.air,
-//       ...args,
-//     };
-//   },
-// });

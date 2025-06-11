@@ -23,7 +23,6 @@ import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
-import { getHiDreamInput } from '~/shared/orchestrator/hidream.config';
 import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
@@ -206,15 +205,6 @@ export async function parseGenerateImageInput({
   workflowDefinition: WorkflowDefinition;
   whatIf?: boolean;
 }) {
-  // if (originalParams.baseModel === 'HiDream') {
-  //   const hiDreamResult = getHiDreamInput({ resources: originalResources, ...originalParams });
-  //   originalResources = hiDreamResult.resources;
-  //   originalParams = hiDreamResult.params as any;
-  // } else {
-  //   originalParams.precision = null;
-  //   originalParams.variant = null;
-  // }
-
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
   if (originalParams.workflow.startsWith('txt2img')) originalParams.sourceImage = null;

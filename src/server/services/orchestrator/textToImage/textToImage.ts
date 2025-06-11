@@ -35,9 +35,6 @@ export async function createTextToImageStep(
     const hiDreamResult = getHiDreamInput({ resources: input.resources, ...inputParams });
     input.resources = hiDreamResult.resources;
     inputParams = hiDreamResult.params as any;
-  } else {
-    inputParams.precision = null;
-    inputParams.variant = null;
   }
 
   const workflowDefinition = await getWorkflowDefinition(inputParams.workflow);

@@ -964,11 +964,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   HiDream: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 1771369,
       name: '',
@@ -1155,8 +1151,6 @@ export const generation = {
     openAIQuality: 'medium',
     vae: null,
     resources: null,
-    precision: 'fp8',
-    variant: 'fast',
     safetyTolerance: '2',
   },
   maxValues: {

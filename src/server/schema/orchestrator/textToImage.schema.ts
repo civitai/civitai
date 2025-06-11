@@ -50,8 +50,6 @@ export const textToImageParamsSchema = z.object({
   disablePoi: z.boolean().default(false),
   openAIQuality: z.enum(['auto', 'high', 'medium', 'low']).optional(),
   openAITransparentBackground: z.boolean().optional(),
-  precision: z.string().nullable().default('fp8'),
-  variant: z.string().nullable().default('fast'),
   safetyTolerance: z.string().optional(), // flux kontext api
 });
 
