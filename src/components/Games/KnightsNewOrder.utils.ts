@@ -29,6 +29,7 @@ import { queryClient, trpc } from '~/utils/trpc';
 
 const JudgmentHistoryModal = dynamic(() => import('./NewOrder/JudgmentHistory'));
 const PlayersDirectoryModal = dynamic(() => import('./NewOrder/PlayersDirectoryModal'));
+const RatingGuideModal = dynamic(() => import('./NewOrder/NewOrderRatingGuideModal'));
 
 type PlayerUpdateStatsPayload = {
   action: NewOrderSignalActions.UpdateStats | NewOrderSignalActions.Reset;
@@ -133,6 +134,12 @@ export const useJoinKnightsNewOrder = () => {
     defaultValue: false,
     getInitialValueInEffect: false,
   });
+  const [viewedRatingGuide, setViewedRatingGuide] = useStorage({
+    key: 'kono-rating-guide',
+    type: 'localStorage',
+    defaultValue: false,
+    getInitialValueInEffect: false,
+  });
 
   // Required to share loading state between components
   const joinKey = getQueryKey(trpc.games.newOrder.join);
@@ -178,6 +185,8 @@ export const useJoinKnightsNewOrder = () => {
     isLoading: isInitialLoading || !!joining,
     resetting: resetCareerMutation.isLoading,
     joined,
+    viewedRatingGuide,
+    setViewedRatingGuide,
   };
 };
 
@@ -301,6 +310,8 @@ export const openJudgmentHistoryModal = () =>
 
 export const openPlayersDirectoryModal = () =>
   dialogStore.trigger({ component: PlayersDirectoryModal });
+
+export const openRatingGuideModal = () => dialogStore.trigger({ component: RatingGuideModal });
 
 export const useInquisitorTools = () => {
   const queryUtils = trpc.useUtils();
