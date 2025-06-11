@@ -117,7 +117,7 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
   const { ref: inViewRef, inView } = useInView();
   const theme = useMantineTheme();
 
-  const { image, rating, grantedExp, multiplier, status } = data;
+  const { image, rating, grantedExp, multiplier, status, originalLevel } = data;
   const totalExp = Math.floor(grantedExp * (multiplier ?? 1));
   const isPending = status === NewOrderImageRatingStatus.Pending;
   const isCorrect =
@@ -172,7 +172,7 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
               </Badge>
               {!isPending && !isCorrect && (
                 <Badge className="mx-2 border border-blue-5" variant="filled" color="gray">
-                  {browsingLevelLabels[image.nsfwLevel as NsfwLevel]}
+                  {browsingLevelLabels[originalLevel ?? (image.nsfwLevel as NsfwLevel)]}
                 </Badge>
               )}
             </div>

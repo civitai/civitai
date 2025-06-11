@@ -25,6 +25,7 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
+import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
@@ -4805,6 +4806,16 @@ export async function queueImageSearchIndexUpdate({
 }) {
   await imagesSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
+
+  if (action === SearchIndexUpdateQueueAction.Delete) {
+    // Bust the thumbnail cache for deleted images
+    await thumbnailCache.bust(ids);
+    // Remove the image from the knights of new order pool counters
+    await Promise.all([
+      ...poolCounters.Knight.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Templar.map((queue) => queue.reset({ id: ids })),
+    ]);
+  }
 }
 
 export async function getPostDetailByImageId({ imageId }: { imageId: number }) {

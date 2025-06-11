@@ -31,11 +31,13 @@ export const browsingLevelLabels = {
 
 export const browsingLevelDescriptions = {
   [NsfwLevel.PG]: 'Safe for work. No naughty stuff',
-  [NsfwLevel.PG13]: 'Revealing clothing, violence, or light gore',
+  [NsfwLevel.PG13]:
+    'Revealing clothing, small bulges, subtle nipple outline, posing/sexualized bare chested men, light gore, violence',
   [NsfwLevel.R]:
-    'Adult themes and situations, partial nudity, female nipples, graphic violence, or death',
+    'Adult themes and situations, partial nudity, bikinis, big bulges, sexual situations, graphic violence',
   [NsfwLevel.X]: 'Graphic nudity, genitalia, adult objects, or settings',
-  [NsfwLevel.XXX]: 'Overtly sexual or disturbing graphic content',
+  [NsfwLevel.XXX]:
+    'Sexual Acts, masturbation, ejaculation, cum, vore, anal gape, extremely disturbing content',
   [NsfwLevel.Blocked]: 'Violates our terms of service',
 } as const;
 
