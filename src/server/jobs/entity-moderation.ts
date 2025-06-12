@@ -2,6 +2,7 @@ import { StreamError } from '@clavata/sdk';
 import type { Prisma } from '@prisma/client';
 import nlp from 'compromise';
 import dayjs from 'dayjs';
+import { chunk } from 'lodash-es';
 import { Tracker } from '~/server/clickhouse/client';
 import { ExternalModerationType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -17,13 +18,17 @@ import { fromJson } from '~/utils/json-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate } from './job';
 
+// http://localhost:3000/api/webhooks/run-jobs?token=letsgethookie&run=entity-moderation-queues
+// http://localhost:3000/api/webhooks/run-jobs?token=letsgethookie&run=entity-moderation-chat
+
 const jobName = 'entity-moderation';
 const jobNameQueues = 'queues';
 const jobNameChat = 'chat';
 const jobNameClear = 'clear-automated';
 
-// http://localhost:3000/api/webhooks/run-jobs?token=letsgethookie&run=entity-moderation-queues
-// http://localhost:3000/api/webhooks/run-jobs?token=letsgethookie&run=entity-moderation-chat
+const chunkSize = 1000;
+const minDate = '2025-06-13';
+const reportRetention = 14;
 
 const log = createLogger(jobName, 'blue');
 const logAx = (data: MixedObject) => {
@@ -337,123 +342,124 @@ const runClavata = async ({
   deleteJob?: boolean;
 }) => {
   log(`Clavata processing ${data.length} ${type}s`);
-  clavataCounter?.inc(data.length);
 
-  try {
-    const stream = clavataEvaluate({
-      policyId,
-      contentData: data.map(({ id, value, userId }) => {
-        const metadata: MetadataType = {
-          id: id.toString(),
-          type,
-          userId: userId.toString(),
-          value,
+  const batches = chunk(data, chunkSize);
+  for (const batch of batches) {
+    clavataCounter?.inc(batch.length);
+    try {
+      const stream = clavataEvaluate({
+        policyId,
+        contentData: batch.map(({ id, value, userId }) => {
+          const metadata: MetadataType = {
+            id: id.toString(),
+            type,
+            userId: userId.toString(),
+            value,
+          };
+          return {
+            metadata,
+            content: { value, $case: 'text' },
+            contentType: 'text',
+          };
+        }),
+      });
+
+      for await (const item of stream) {
+        const _metadata = item.metadata as MetadataType | undefined;
+        if (!_metadata || !_metadata.id) {
+          logAx({ message: 'No id found', data: { item } });
+          continue;
+        }
+        const metadata = {
+          ..._metadata,
+          id: Number(_metadata.id),
+          userId: Number(_metadata.userId),
         };
-        return {
-          metadata,
-          content: { value, $case: 'text' },
-          contentType: 'text',
-        };
-      }),
-    });
 
-    for await (const item of stream) {
-      const _metadata = item.metadata as MetadataType | undefined;
-      if (!_metadata || !_metadata.id) {
-        logAx({ message: 'No id found', data: { item } });
-        continue;
-      }
-      const metadata = {
-        ..._metadata,
-        id: Number(_metadata.id),
-        userId: Number(_metadata.userId),
-      };
-
-      if (item.result === 'FALSE') {
-        if (deleteJob) await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
-        continue;
-      }
-
-      // TODO try catch doesnt work here?
-      try {
-        const report = await createReport({
-          type: ReportEntity[type === 'UserProfile' ? 'User' : type],
-          id: metadata.id,
-          userId: -1,
-          isModerator: true,
-          reason: ReportReason.Automated,
-          details: {
-            externalId: item.externalId,
-            externalType: ExternalModerationType.Clavata,
-            entityId: metadata.id,
-            // tags: item.tags ?? [],
-            tags: item.matches ?? [],
-            userId: metadata.userId,
-            // value: metadata.value, // value is too heavy to store here
-          },
-        });
-
-        if (!report) {
-          logAx({ message: 'Error creating report', data: { type, id: metadata.id } });
+        if (item.result === 'FALSE') {
+          if (deleteJob) await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
           continue;
         }
 
-        await dbWrite.reportAutomated.create({
-          data: {
-            reportId: report.id,
-            metadata: {
-              tags: item.tags ?? [],
-              value: metadata.value,
+        // TODO try catch doesnt work here?
+        try {
+          const report = await createReport({
+            type: ReportEntity[type === 'UserProfile' ? 'User' : type],
+            id: metadata.id,
+            userId: -1,
+            isModerator: true,
+            reason: ReportReason.Automated,
+            details: {
+              externalId: item.externalId,
+              externalType: ExternalModerationType.Clavata,
+              entityId: metadata.id,
+              // tags: item.tags ?? [],
+              tags: item.matches ?? [],
+              userId: metadata.userId,
+              // value: metadata.value, // value is too heavy to store here
             },
+          });
+
+          if (!report) {
+            logAx({ message: 'Error creating report', data: { type, id: metadata.id } });
+            continue;
+          }
+
+          await dbWrite.reportAutomated.create({
+            data: {
+              reportId: report.id,
+              metadata: {
+                tags: item.tags ?? [],
+                value: metadata.value,
+              },
+            },
+          });
+        } catch (error) {
+          logAx({
+            message: 'Error creating moderation request',
+            data: { error, type, id: metadata.id },
+          });
+          continue;
+        }
+
+        try {
+          await tracker.moderationRequest({
+            entityType: type,
+            entityId: metadata.id,
+            userId: metadata.userId,
+            rules: item.matches ?? [],
+            // value: metadata.value,
+            date: new Date(),
+          });
+        } catch (error) {
+          logAx({
+            message: 'Error tracking moderation request',
+            data: { error, type, id: metadata.id },
+          });
+          // continue; // we have enough logging, can proceed
+        }
+
+        if (deleteJob) {
+          // TODO batching these would probably be better but this is fine for now
+          await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
+        }
+      }
+    } catch (error) {
+      if (error instanceof StreamError) {
+        // should we be returning data like the ID instead?
+        logAx({
+          message: 'Error running clavata moderation',
+          data: {
+            error: error.message,
+            name: error.name,
+            cause: error.cause,
+            stack: error.stack,
+            code: error.code,
           },
         });
-      } catch (error) {
-        logAx({
-          message: 'Error creating moderation request',
-          data: { error, type, id: metadata.id },
-        });
-        continue;
+      } else {
+        logAx({ message: 'Error with clavata SDK', data: { error } });
       }
-
-      try {
-        await tracker.moderationRequest({
-          entityType: type,
-          entityId: metadata.id,
-          userId: metadata.userId,
-          rules: item.matches ?? [],
-          // value: metadata.value,
-          date: new Date(),
-        });
-      } catch (error) {
-        logAx({
-          message: 'Error tracking moderation request',
-          data: { error, type, id: metadata.id },
-        });
-        // continue; // we have enough logging, can proceed
-      }
-
-      if (deleteJob) {
-        // TODO batching these would probably be better but this is fine for now
-        await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
-      }
-    }
-  } catch (error) {
-    if (error instanceof StreamError) {
-      // should we be returning data like the ID instead?
-      logAx({
-        message: 'Error running clavata moderation',
-        data: {
-          error: error.message,
-          name: error.name,
-          cause: error.cause,
-          stack: error.stack,
-          code: error.code,
-        },
-      });
-    } else if (error instanceof Error) {
-      logAx({ message: 'Error with clavata SDK', data: { error: error.message } });
-    } else {
-      logAx({ message: 'Error with clavata SDK', data: { error } });
     }
   }
 };
@@ -563,8 +569,7 @@ async function runModQueue() {
 
   const validQueues = Object.keys(policyMap) as QueueKeys[];
 
-  // TODO do we want to refetch everything? add a status col to jobqueue? add metadata field?
-  //  batch / paginate here?
+  // TODO we should periodically check if any jobQueues get "stuck" for a while
   const queueRows = await dbRead.jobQueue.findMany({
     select: {
       entityType: true,
@@ -574,9 +579,6 @@ async function runModQueue() {
       type: JobQueueType.ModerationRequest,
       entityType: { in: validQueues },
       // createdAt: { gt: lastRun },
-    },
-    orderBy: {
-      createdAt: 'asc',
     },
   });
 
@@ -665,7 +667,9 @@ async function modChat() {
   const [lastRun, setLastRun] = await getJobDate(`${jobName}-${jobNameChat}`);
   log(`Starting ${jobName}-${jobNameChat}`);
   try {
-    const handled = await runModChat(lastRun);
+    const handled = await runModChat(
+      new Date(Math.max(lastRun.getTime(), new Date(minDate).getTime())) // avoid fetching all old messages
+    );
     log(`Finished ${jobName}-${jobNameChat}, processed ${handled} items`);
     await setLastRun();
   } catch (error) {
@@ -691,7 +695,7 @@ async function clearAutomatedReports() {
   try {
     await dbWrite.reportAutomated.deleteMany({
       where: {
-        createdAt: { lt: dayjs().subtract(14, 'day').toDate() },
+        createdAt: { lt: dayjs().subtract(reportRetention, 'day').toDate() },
       },
     });
 
