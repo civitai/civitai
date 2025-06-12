@@ -16,10 +16,14 @@ import { z } from 'zod';
 import { useSession } from 'next-auth/react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';
-import { profilePictureSchema, usernameInputSchema } from '~/server/schema/user.schema';
+import { usernameInputSchema } from '~/server/schema/user.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { CryptoTransactions } from '~/components/Account/CryptoTransactions';
+import { features } from 'process';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = z.object({
   id: z.number(),
@@ -30,6 +34,7 @@ export function ProfileCard() {
   const queryUtils = trpc.useUtils();
   const session = useCurrentUser();
   const { data } = useSession();
+  const features = useFeatureFlags();
 
   const currentUser = data?.user;
 
@@ -124,14 +129,29 @@ export function ProfileCard() {
               />
             </Grid.Col>
             <Grid.Col span={12}>
-              <Button
-                type="submit"
-                loading={isLoading}
-                disabled={!form.formState.isDirty}
-                fullWidth
-              >
-                Save
-              </Button>
+              <Stack>
+                <Button
+                  type="submit"
+                  loading={isLoading}
+                  disabled={!form.formState.isDirty}
+                  fullWidth
+                >
+                  Save
+                </Button>
+                {features.coinbaseOnramp && (
+                  <Button
+                    color="teal"
+                    compact
+                    onClick={() => {
+                      dialogStore.trigger({
+                        component: CryptoTransactions,
+                      });
+                    }}
+                  >
+                    View Crypto Transactions
+                  </Button>
+                )}
+              </Stack>
             </Grid.Col>
           </Grid>
         </Stack>
