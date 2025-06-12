@@ -390,6 +390,8 @@ export async function addImageRating({
           id: imageId,
           nsfwLevel: majorityAgreeRating,
           userId: playerId,
+          isModerator: true,
+          activity: 'setNsfwLevelKono',
         });
       }
     }
@@ -411,6 +413,8 @@ export async function addImageRating({
           id: imageId,
           nsfwLevel: rating,
           userId: playerId,
+          isModerator: true,
+          activity: 'setNsfwLevelKono',
         });
       }
     }
@@ -464,6 +468,8 @@ export async function addImageRating({
         id: imageId,
         nsfwLevel: rating,
         userId: playerId,
+        isModerator: true,
+        activity: 'setNsfwLevelKono',
       });
     }
 

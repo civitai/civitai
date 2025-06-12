@@ -17,9 +17,9 @@ type ImageTagModActivity = {
   activity: TagActivities;
 };
 
-type ImageModActivity = {
+export type ImageModActivity = {
   entityType: 'image';
-  activity: TagActivities | 'review' | 'setNsfwLevel' | 'resolveAppeal';
+  activity: TagActivities | 'review' | 'setNsfwLevel' | 'resolveAppeal' | 'setNsfwLevelKono';
 };
 
 type ArticleModActivity = {
