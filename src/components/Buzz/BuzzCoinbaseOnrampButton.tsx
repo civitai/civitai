@@ -70,7 +70,7 @@ export const BuzzCoinbaseOnrampButton = ({
   };
 
   return (
-    <Stack spacing={0} align="center">
+    <Stack gap={0} align="center">
       <Button
         disabled={disabled || checkingHealth}
         loading={creatingBuzzOrderOnramp}
@@ -78,7 +78,7 @@ export const BuzzCoinbaseOnrampButton = ({
         radius="xl"
         fullWidth
       >
-        <Group spacing="xs" noWrap>
+        <Group gap="xs" wrap="nowrap">
           <IconCreditCard size={20} />
           <span>Debit Card</span>
         </Group>

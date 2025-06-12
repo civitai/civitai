@@ -202,7 +202,7 @@ const BuzzPurchasePaymentButton = ({
       radius="xl"
     >
       {features.disablePayments ? (
-        <Group spacing="xs" noWrap>
+        <Group gap="xs" wrap="nowrap">
           <IconCreditCard size={20} />
           <span>Credit Card</span>
         </Group>
@@ -579,7 +579,7 @@ export const BuzzPurchase = ({
                 decimals: false,
               })} USD`}
               labelPosition="center"
-              labelProps={{ className: 'font-bold' }}
+              classNames={{ label: 'text-sm font-bold' }}
             />
             <div className="flex flex-col gap-3 md:flex-row">
               {features.coinbasePayments && (
@@ -622,7 +622,7 @@ export const BuzzPurchase = ({
                 purchaseSuccessMessage={purchaseSuccessMessage}
               />
               <Button disabled radius="xl">
-                <Group spacing="xs" noWrap>
+                <Group gap="xs" wrap="nowrap">
                   <IconBuildingBank size={20} />
                   <span>Bank Account</span>
                 </Group>

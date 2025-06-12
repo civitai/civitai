@@ -89,7 +89,7 @@ export default function CoinbaseSuccess() {
                     <CopyButton value={key}>
                       {({ copy, copied }) => (
                         <Tooltip label="Copied!" opened={copied}>
-                          <Code sx={{ cursor: 'pointer', height: 'auto' }} onClick={copy} pr={2}>
+                          <Code style={{ cursor: 'pointer', height: 'auto' }} onClick={copy} pr={2}>
                             {key}
                           </Code>
                         </Tooltip>

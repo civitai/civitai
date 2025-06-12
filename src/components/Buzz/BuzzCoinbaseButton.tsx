@@ -43,7 +43,7 @@ export const BuzzCoinbaseButton = ({
         radius="xl"
         fullWidth
       >
-        <Group spacing="xs" noWrap>
+        <Group gap="xs" wrap="nowrap">
           <IconCoinBitcoin size={20} />
           <span>Crypto</span>
         </Group>
