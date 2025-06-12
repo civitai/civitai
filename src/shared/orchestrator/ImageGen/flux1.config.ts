@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
+import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 
 export const flux1AspectRatios = [
   '21:9',
@@ -25,6 +26,11 @@ export function getIsFluxKontext(modelVersionId?: number) {
   return modelVersionId ? !!fluxKontextModelVersionToModelMap.get(modelVersionId) : false;
 }
 
+export const flux1ModelModeOptions = [
+  { label: 'Pro', value: '1892509' },
+  { label: 'Max', value: '1892523' },
+];
+
 const schema = z.object({
   engine: z.literal('flux1').catch('flux1'),
   model: z.enum(flux1Models),
@@ -38,17 +44,24 @@ const schema = z.object({
 });
 
 export const flux1Config = ImageGenConfig({
-  metadataFn: (params) => ({
-    engine: 'flux1',
-    process: 'img2img',
-    prompt: params.prompt,
-    sourceImage: params.sourceImage,
-    aspectRatio: params.aspectRatio,
-    quantity: params.quantity,
-    cfgScale: params.cfgScale,
-    safetyTolerance: params.safetyTolerance,
-    seed: params.seed,
-  }),
+  metadataFn: (params) => {
+    if (params.sourceImage) {
+      params.aspectRatio = findClosestAspectRatio(params.sourceImage, [...flux1AspectRatios]);
+    }
+
+    return {
+      engine: 'flux1',
+      process: 'img2img',
+      baseModel: params.baseModel,
+      prompt: params.prompt,
+      sourceImage: params.sourceImage,
+      aspectRatio: params.aspectRatio,
+      safetyTolerance: params.safetyTolerance,
+      cfgScale: params.cfgScale,
+      quantity: params.quantity,
+      seed: params.seed,
+    };
+  },
   inputFn: ({ params, resources, whatIf }) => {
     let model = 'pro-kontext';
     for (const resource of resources) {
@@ -68,7 +81,7 @@ export const flux1Config = ImageGenConfig({
       imageUrl,
       aspectRatio: params.aspectRatio,
       numImages: params.quantity,
-      safetyTolerance: params.safetyTolerance,
+      safetyTolerance: params.safetyTolerance?.toString(),
       guidanceScale: params.cfgScale,
       seed: params.seed,
     });

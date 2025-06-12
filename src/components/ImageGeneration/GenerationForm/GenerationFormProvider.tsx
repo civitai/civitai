@@ -9,12 +9,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import type { BaseModelSetType } from '~/server/common/constants';
-import {
-  constants,
-  generation,
-  generationConfig,
-  getGenerationConfig,
-} from '~/server/common/constants';
+import { constants, generation, getGenerationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import type {
   GenerationData,
@@ -29,7 +24,6 @@ import {
   getBaseModelSetType,
   getBaseModelSetTypes,
   getIsFluxUltra,
-  getIsHiDream,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
@@ -348,6 +342,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
+      const baseModel = watchedValues.baseModel;
+      const prevBaseModel = prevBaseModelRef.current;
       // handle model change to update baseModel value
       if (name !== 'baseModel') {
         if (
@@ -362,11 +358,15 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         if (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') {
           form.setValue('workflow', 'txt2img');
         }
-        if (watchedValues.baseModel === 'Flux1' && prevBaseModelRef.current !== 'Flux1') {
-          form.setValue('cfgScale', 3.5);
+        const fluxBaseModels: BaseModelSetType[] = ['Flux1', 'Flux1Kontext'];
+        if (!!baseModel && !!prevBaseModel) {
+          if (fluxBaseModels.includes(baseModel) && !fluxBaseModels.includes(prevBaseModel))
+            form.setValue('cfgScale', 3.5);
+          else if (!fluxBaseModels.includes(baseModel) && fluxBaseModels.includes(prevBaseModel))
+            form.setValue('cfgScale', 7);
         }
 
-        if (prevBaseModelRef.current === 'Flux1' && watchedValues.baseModel !== 'Flux1') {
+        if (prevBaseModel === 'Flux1' && baseModel !== 'Flux1') {
           form.setValue('sampler', 'Euler a');
         }
         prevBaseModelRef.current = watchedValues.baseModel;

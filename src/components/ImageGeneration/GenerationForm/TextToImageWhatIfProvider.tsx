@@ -10,10 +10,8 @@ import {
   getBaseModelSetType,
   getIsFlux,
   getIsFluxStandard,
-  getIsSD3,
   getSizeFromAspectRatio,
   whatIfQueryOverrides,
-  fluxModelId,
 } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -21,7 +19,6 @@ import type { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
-import { isDefined } from '~/utils/type-guards';
 import { removeEmpty } from '~/utils/object-helpers';
 import { imageGenModelVersionMap } from '~/shared/orchestrator/ImageGen/imageGen.config';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -75,7 +72,9 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
       params.engine = 'flux-pro-raw';
     const imageGenEngine = imageGenModelVersionMap.get(modelVersionId);
-    if (imageGenEngine) params.engine = imageGenEngine;
+    if (imageGenEngine) {
+      params.engine = imageGenEngine;
+    }
 
     const additionalResources =
       resources?.map((x) => {
@@ -88,7 +87,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       params: removeEmpty({
         ...params,
         ...whatIfQueryOverrides,
-      } as TextToImageInput),
+      } satisfies TextToImageInput),
     };
   }, [watched]);
 

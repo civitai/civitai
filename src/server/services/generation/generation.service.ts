@@ -48,11 +48,9 @@ import {
   getResourceGenerationType,
 } from '~/shared/constants/generation.constants';
 import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
-import { isFutureDate } from '~/utils/date-helpers';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
-import { findClosest } from '~/utils/number-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';

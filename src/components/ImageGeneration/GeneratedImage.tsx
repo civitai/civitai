@@ -79,6 +79,7 @@ import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerat
 import { capitalize } from '~/utils/string-helpers';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1.config';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -604,6 +605,7 @@ function GeneratedImageWorkflowMenuItems({
 
   const isVideo = step.$type === 'videoGen';
   const isOpenAI = !isVideo && step.params.engine === 'openai';
+  const isFluxKontext = !isVideo && step.params.engine === 'flux1';
   const isImageGen = step.resources.find(
     (x) => x.model.type === 'Checkpoint' && getModelVersionUsesImageGen(x.id)
   );
@@ -809,7 +811,7 @@ function GeneratedImageWorkflowMenuItems({
             </WithMemberMenuItem>
           );
         })}
-      {!isBlocked && isOpenAI && (
+      {!isBlocked && (isOpenAI || isFluxKontext) && (
         <WithMemberMenuItem onClick={handleImg2ImgNoWorkflow}>Image To Image</WithMemberMenuItem>
       )}
       {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}

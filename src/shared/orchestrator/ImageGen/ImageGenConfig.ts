@@ -1,5 +1,4 @@
 import type { ImageGenInput } from '@civitai/client';
-import type { z } from 'zod';
 import { maxRandomSeed } from '~/server/common/constants';
 import type { GenerateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
@@ -7,7 +6,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export function ImageGenConfig<
-  TMetadataParams extends { process: string; engine: string; baseModel?: string },
+  TMetadataParams extends { process: string; engine: string; baseModel: string; quantity: number },
   TOutput extends ImageGenInput = ImageGenInput
 >({
   metadataFn,
@@ -16,7 +15,7 @@ export function ImageGenConfig<
   metadataFn: (params: Omit<GenerateImageSchema['params'], 'priority'>) => TMetadataParams;
   inputFn: (args: Omit<GenerateImageSchema, 'params'> & { params: TMetadataParams }) => TOutput;
 }) {
-  function getParamsMetadata({ params }: GenerateImageSchema) {
+  function getParamsMetadata({ params }: { params: GenerateImageSchema['params'] }) {
     const { priority, ...rest } = params;
     return metadataFn(rest);
   }

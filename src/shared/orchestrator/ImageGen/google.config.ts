@@ -26,13 +26,13 @@ const schema = z.object({
 export const googleConfig = ImageGenConfig({
   metadataFn: (params) => ({
     engine: 'google',
+    baseModel: params.baseModel,
     process: 'txt2img',
     prompt: params.prompt,
     negativePrompt: params.negativePrompt,
     aspectRatio: params.aspectRatio,
     quantity: params.quantity,
     seed: params.seed,
-    baseModel: params.baseModel,
   }),
   inputFn: ({ params, resources }): Imagen4ImageGenInput => {
     let model = 'imagen4';

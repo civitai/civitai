@@ -15,6 +15,7 @@ import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { getImageDimensions } from '~/utils/image-utils';
 import { findClosest, getRatio } from '~/utils/number-helpers';
 
@@ -341,15 +342,8 @@ export const getClosestAspectRatio = (width?: number, height?: number, baseModel
   width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
   height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  const ratios = aspectRatios.map((x) => x.width / x.height);
-
-  const closest = findClosest(ratios, width / height);
-  const index = ratios.indexOf(closest);
-  if (index > -1) {
-    const { width, height } = aspectRatios[index];
-    return getRatio(width, height);
-  }
-  return aspectRatios[0] ? getRatio(aspectRatios[0].width, aspectRatios[0].height) : '1:1';
+  const result = findClosestAspectRatio({ width, height }, aspectRatios) ?? aspectRatios[0];
+  return result ? getRatio(result.width, result.height) : '1:1';
 };
 
 export function getWorkflowDefinitionFeatures(workflow?: {

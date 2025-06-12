@@ -106,7 +106,11 @@ import {
   getImageGenerationBaseModels,
   fluxDraftAir,
 } from '~/shared/constants/generation.constants';
-import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1.config';
+import {
+  flux1ModelModeOptions,
+  flux1SafetyTolerance,
+  getIsFluxKontext,
+} from '~/shared/orchestrator/ImageGen/flux1.config';
 import { getIsImagen4 } from '~/shared/orchestrator/ImageGen/google.config';
 import {
   getModelVersionUsesImageGen,
@@ -443,13 +447,14 @@ export function GenerationFormContent() {
       <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage']}>
         {({ fluxMode, draft, workflow, sourceImage }) => {
           // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
-          const isImg2Img = workflow?.startsWith('img') || (isImageGen && sourceImage);
+          const isImg2Img =
+            workflow?.startsWith('img') || (isImageGen && sourceImage) || isFluxKontext;
           const isFluxStandard = getIsFluxStandard(model.model.id);
           const isDraft = isFluxStandard
             ? fluxMode === fluxDraftAir
             : isSD3
             ? model.id === 983611
-            : features.draft && !!draft && !isOpenAI && !isFlux;
+            : features.draft && !!draft && !isImageGen && !isFlux;
           const minQuantity = !!isDraft ? 4 : 1;
           const maxQuantity = isOpenAI
             ? 10
@@ -467,20 +472,37 @@ export function GenerationFormContent() {
           }
           let cfgScaleMin = 1;
           let cfgScaleMax = isSDXL ? 10 : 30;
-          if (isFlux || isSD3) {
+          if (isFlux || isSD3 || isFluxKontext) {
             cfgScaleMin = isDraft ? 1 : 2;
             cfgScaleMax = isDraft ? 1 : 20;
           }
 
           const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
-          const disableAdditionalResources = runsOnFalAI || isOpenAI || isImagen4;
+          const disableAdditionalResources = runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext;
           const disableAdvanced = isFluxUltra || isOpenAI || isImagen4 || isHiDream;
           const disableNegativePrompt =
-            isFlux || isOpenAI || (isHiDream && hiDreamResource?.variant !== 'full');
-          const disableWorkflowSelect = isFlux || isSD3 || isImageGen || isHiDream;
+            isFlux ||
+            isOpenAI ||
+            isFluxKontext ||
+            (isHiDream && hiDreamResource?.variant !== 'full');
+          const disableWorkflowSelect = isFlux || isSD3 || isImageGen || isHiDream || isFluxKontext;
           const disableDraft =
-            !features.draft || isOpenAI || isFlux || isSD3 || isImagen4 || isHiDream;
-          const enableImageInput = (features.image && !isFlux && !isSD3) || isOpenAI;
+            !features.draft ||
+            isOpenAI ||
+            isFlux ||
+            isSD3 ||
+            isImagen4 ||
+            isHiDream ||
+            isFluxKontext;
+          const enableImageInput =
+            (features.image && !isFlux && !isSD3) || isOpenAI || isFluxKontext;
+          const disableCfgScale = isFluxUltra;
+          const disableSampler = isFlux || isSD3 || isFluxKontext;
+          const disableSteps = isFluxUltra || isFluxKontext;
+          const disableClipSkip = isSDXL || isFlux || isSD3 || isFluxKontext;
+          const disableVae = isFlux || isSD3 || isFluxKontext;
+          const disableDenoise = !features.denoise || isFluxKontext;
+          const disableSafetyTolerance = !isFluxKontext;
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
           if (!resourceTypes) return <></>;
@@ -751,6 +773,21 @@ export function GenerationFormContent() {
                   <Alert className="overflow-visible">
                     This is an experimental build, as such pricing and results are subject to change
                   </Alert>
+                )}
+
+                {isFluxKontext && (
+                  <div className="flex flex-col gap-0.5">
+                    <Input.Label>Model Mode</Input.Label>
+                    <SegmentedControl
+                      value={String(model.id)}
+                      data={flux1ModelModeOptions}
+                      onChange={(value) => {
+                        const modelVersionId = Number(value);
+                        if (model.id !== modelVersionId)
+                          form.setValue('model', { ...model, id: modelVersionId });
+                      }}
+                    />
+                  </div>
                 )}
 
                 {isHiDream && hiDreamResource && (
@@ -1158,7 +1195,7 @@ export function GenerationFormContent() {
                             zIndex={2}
                             visible={isDraft}
                           /> */}
-                              {!isFluxUltra && (
+                              {!disableCfgScale && (
                                 <InputNumberSlider
                                   name="cfgScale"
                                   label={
@@ -1186,7 +1223,7 @@ export function GenerationFormContent() {
                                   sliderProps={sharedSliderProps}
                                   numberProps={sharedNumberProps}
                                   presets={
-                                    isFlux || isSD3
+                                    isFlux || isFluxKontext || isSD3
                                       ? undefined
                                       : [
                                           { label: 'Creative', value: '4' },
@@ -1199,7 +1236,7 @@ export function GenerationFormContent() {
                                   data-testid="gen-cfg-scale"
                                 />
                               )}
-                              {!isFlux && !isSD3 && (
+                              {!disableSampler && (
                                 <InputSelect
                                   name="sampler"
                                   disabled={samplerDisabled}
@@ -1228,7 +1265,7 @@ export function GenerationFormContent() {
                                   ]}
                                 />
                               )}
-                              {!isFluxUltra && (
+                              {!disableSteps && (
                                 <Watch {...form} fields={['cfgScale', 'sampler']}>
                                   {({ cfgScale, sampler }) => {
                                     const castedSampler = sampler as keyof typeof samplerOffsets;
@@ -1294,8 +1331,23 @@ export function GenerationFormContent() {
                               )}
                             </div>
                           )}
+                          {!disableSafetyTolerance && (
+                            <InputNumberSlider
+                              name="safetyTolerance"
+                              label="Safety Tolerance"
+                              min={1}
+                              max={6}
+                              sliderProps={{
+                                ...sharedSliderProps,
+                                marks: flux1SafetyTolerance.map((_, index) => ({
+                                  value: index + 1,
+                                })),
+                              }}
+                              numberProps={sharedNumberProps}
+                            />
+                          )}
                           <InputSeed name="seed" label="Seed" />
-                          {!isSDXL && !isFlux && !isSD3 && (
+                          {!disableClipSkip && (
                             <InputNumberSlider
                               name="clipSkip"
                               label="Clip Skip"
@@ -1308,7 +1360,7 @@ export function GenerationFormContent() {
                               numberProps={sharedNumberProps}
                             />
                           )}
-                          {features.denoise && (
+                          {!disableDenoise && (
                             <InputNumberSlider
                               name="denoise"
                               label="Denoise"
@@ -1317,7 +1369,7 @@ export function GenerationFormContent() {
                               step={0.05}
                             />
                           )}
-                          {!isFlux && !isSD3 && (
+                          {!disableVae && (
                             <InputResourceSelect
                               name="vae"
                               label={
