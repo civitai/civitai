@@ -576,8 +576,16 @@ export async function addImageRating({
   bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
 
   // Failsafe to clear the image from the queue if it was rated by enough players
-  if (reachedKnightVoteLimit || reachedTemplarVoteLimit)
+  if (reachedKnightVoteLimit || reachedTemplarVoteLimit) {
     await valueInQueue.pool.reset({ id: imageId });
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.NewOrderQueue}:${player.rankType}`,
+        target: SignalMessages.NewOrderQueueUpdate,
+        data: { imageId, action: NewOrderSignalActions.RemoveImage },
+      })
+      .catch();
+  }
 
   // Increase all counters
   const stats = await updatePlayerStats({
@@ -935,24 +943,30 @@ export async function getImagesQueue({
   const seenImageIds = isModerator ? new Set<number>() : new Set<number>(ratedImages);
   const rankTypeKey = player.rankType.toLowerCase() as 'knight' | 'templar';
   const knightOrTemplar = ['knight', 'templar'].includes(rankTypeKey);
+  const overflowLimit = imageCount * 10; // We fetch more images to ensure we have enough to choose from
 
   for (const pool of rankPools) {
     let offset = 0;
 
-    while (validatedImages.length < imageCount) {
+    while (validatedImages.length < overflowLimit) {
       // Fetch images with offset to ensure we get enough images in case some are already rated.
-      const poolImages = await pool.getAll({ limit: imageCount * 10, offset, withCount: true });
+      const poolImages = await pool.getAll({
+        limit: overflowLimit,
+        offset,
+        withCount: true,
+      });
+      if (poolImages.length === 0) break;
+
       const imageIds = poolImages
         .filter(({ score }) =>
           knightOrTemplar ? score < newOrderConfig.limits[`${rankTypeKey}Votes`] : true
         )
         .map(({ value }) => Number(value));
-      if (imageIds.length === 0) break;
 
       // Filter out already rated images and previously seen images before doing the DB query
       const unratedImageIds = imageIds.filter((id) => !seenImageIds.has(id));
       if (unratedImageIds.length === 0) {
-        offset += imageCount * 10;
+        offset += overflowLimit;
         continue;
       }
 
@@ -977,12 +991,12 @@ export async function getImagesQueue({
         }))
       );
 
-      if (validatedImages.length >= imageCount) break;
+      if (validatedImages.length >= overflowLimit) break;
 
-      offset += imageCount * 10; // Increment offset for the next batch
+      offset += overflowLimit; // Increment offset for the next batch
     }
 
-    if (validatedImages.length >= imageCount) break;
+    if (validatedImages.length >= overflowLimit) break;
   }
 
   return shuffle(validatedImages).slice(0, imageCount);
