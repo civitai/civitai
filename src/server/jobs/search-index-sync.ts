@@ -20,7 +20,7 @@ const cronTimeMap: Record<SearchIndexSetKey, string> = {
   models: '*/2 * * * *',
   users: '*/10 * * * *',
   articles: '*/5 * * * *',
-  images: '*/20 * * * *',
+  images: '5 */1 * * *',
   collections: '*/10 * * * *',
   bounties: '*/5 * * * *',
   imageMetrics: '*/1 * * * *',
