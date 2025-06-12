@@ -3,7 +3,7 @@ import { isArray, isNil, isNull, isObject, isString, omitBy } from 'lodash-es';
 export function removeEmpty<T extends Record<string, unknown>>(
   obj: T,
   removeEmptyStrings = false
-): MakeUndefinedOptional<T> {
+): T {
   return omitBy<T>(
     obj,
     (value) =>

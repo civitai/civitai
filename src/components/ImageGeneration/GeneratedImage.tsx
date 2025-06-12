@@ -55,6 +55,7 @@ import type {
 } from '~/server/services/orchestrator';
 import {
   getIsFlux,
+  getIsHiDream,
   getIsSD3,
   getSourceImageFromUrl,
 } from '~/shared/constants/generation.constants';
@@ -77,6 +78,8 @@ import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
 import { capitalize } from '~/utils/string-helpers';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1.config';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -88,10 +91,12 @@ export function GeneratedImage({
   image,
   request,
   step,
+  isLightbox = false,
 }: {
   image: NormalizedGeneratedImage;
   request: NormalizedGeneratedImageResponse;
   step: NormalizedGeneratedImageStep;
+  isLightbox?: boolean;
 }) {
   const { classes } = useStyles();
   const [ref, inView] = useInViewDynamic({ id: image.id });
@@ -115,9 +120,6 @@ export function GeneratedImage({
       checked
     );
 
-  const isLightbox = useDialogStore((state) =>
-    state.dialogs.some((x) => x.id === 'generated-image')
-  );
   const handleImageClick = () => {
     if (!image || !available || isLightbox || nsfwLevelError) return;
 
@@ -241,56 +243,59 @@ export function GeneratedImage({
   return (
     <TwCard
       ref={ref}
-      className={clsx('max-h-full max-w-full', classes.imageWrapper)}
-      style={{ aspectRatio }}
+      className={clsx('max-h-full max-w-full items-center justify-center', classes.imageWrapper)}
+      style={!isLightbox ? { aspectRatio } : undefined}
     >
       {(isLightbox || inView) && (
         <>
-          <div className={clsx('relative flex flex-1 flex-col items-center justify-center ')}>
-            {nsfwLevelError ? (
-              <BlockedBlock
-                title="Blocked for Adult Content"
-                message="Private generation is limited to PG, PG-13 only."
-              />
-            ) : blockedReason ? (
-              <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
-            ) : (
-              <EdgeMedia2
-                src={image.url}
-                type={image.type}
-                alt=""
-                className={clsx('max-h-full w-auto max-w-full', {
-                  ['cursor-pointer']: !isLightbox,
-                  // ['pointer-events-none']: running,
-                })}
-                onClick={handleImageClick}
-                onMouseDown={(e) => {
+          {nsfwLevelError ? (
+            <BlockedBlock
+              title="Blocked for Adult Content"
+              message="Private generation is limited to PG, PG-13 only."
+            />
+          ) : blockedReason ? (
+            <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
+          ) : (
+            <EdgeMedia2
+              src={image.url}
+              type={image.type}
+              alt=""
+              className={clsx('max-h-full min-h-0 w-auto max-w-full', {
+                ['cursor-pointer']: !isLightbox,
+                // ['pointer-events-none']: running,
+              })}
+              onClick={handleImageClick}
+              onMouseDown={(e) => {
+                if (e.button === 1) return handleAuxClick(image.url);
+              }}
+              wrapperProps={{
+                // className: 'max-h-full min-h-0 w-auto max-w-full',
+                onClick: handleImageClick,
+                onMouseDown: (e) => {
                   if (e.button === 1) return handleAuxClick(image.url);
-                }}
-                wrapperProps={{
-                  onClick: handleImageClick,
-                  onMouseDown: (e) => {
-                    if (e.button === 1) return handleAuxClick(image.url);
-                  },
-                }}
-                disableWebm
-                disablePoster
-                onLoad={handleLoad}
-                onError={handleError}
-                imageProps={{
-                  onDragStart: handleDragImage,
-                }}
-                videoProps={{
-                  onLoadedData: handleLoad,
-                  onError: handleError,
-                  onDragStart: handleDragVideo,
-                  draggable: true,
-                  autoPlay: true,
-                }}
-              />
-            )}
-            <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
-          </div>
+                },
+              }}
+              // controls={isLightbox}
+              muted={!isLightbox}
+              controls={isLightbox}
+              disableWebm
+              disablePoster
+              onLoad={handleLoad}
+              onError={handleError}
+              imageProps={{
+                onDragStart: handleDragImage,
+              }}
+              videoProps={{
+                onLoadedData: handleLoad,
+                onError: handleError,
+                onDragStart: handleDragVideo,
+                draggable: true,
+                autoPlay: true,
+              }}
+            />
+          )}
+          <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
+
           {!isLightbox && !isBlocked && (
             <label className="absolute left-3 top-3" data-tour="gen:select">
               <Checkbox
@@ -326,7 +331,8 @@ export function GeneratedImage({
             <div
               className={clsx(
                 classes.actionsWrapper,
-                'absolute bottom-1 left-1 flex flex-wrap items-center gap-1 p-1'
+                isLightbox && image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
+                'absolute flex flex-wrap items-center gap-1 p-1'
               )}
             >
               <ActionIcon
@@ -533,13 +539,14 @@ export function GeneratedImageLightbox({
                 <Embla.Slide
                   key={`${image.workflowId}_${image.id}`}
                   index={index}
-                  className="flex flex-[0_0_100%] items-center justify-center"
+                  className="flex h-full flex-[0_0_100%] flex-col items-center justify-center"
                 >
-                  {image.url && (
+                  {image.url && slide === index && (
                     <GeneratedImage
                       image={image} // TODO - fix this
                       request={request}
                       step={image.step}
+                      isLightbox
                     />
                   )}
                 </Embla.Slide>
@@ -598,9 +605,14 @@ function GeneratedImageWorkflowMenuItems({
 
   const isVideo = step.$type === 'videoGen';
   const isOpenAI = !isVideo && step.params.engine === 'openai';
+  const isFluxKontext = !isVideo && step.params.engine === 'flux1';
+  const isImageGen = step.resources.find(
+    (x) => x.model.type === 'Checkpoint' && getModelVersionUsesImageGen(x.id)
+  );
   const isFlux = !isVideo && getIsFlux(step.params.baseModel);
+  const isHiDream = !isVideo && getIsHiDream(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
-  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isOpenAI;
+  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream;
   const img2imgWorkflows = !isVideo
     ? workflowDefinitions.filter(
         (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)
@@ -799,7 +811,7 @@ function GeneratedImageWorkflowMenuItems({
             </WithMemberMenuItem>
           );
         })}
-      {!isBlocked && isOpenAI && (
+      {!isBlocked && (isOpenAI || isFluxKontext) && (
         <WithMemberMenuItem onClick={handleImg2ImgNoWorkflow}>Image To Image</WithMemberMenuItem>
       )}
       {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}

@@ -73,6 +73,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       disablePoster,
       onLoad,
       onError,
+      onLoadedData,
       ...props
     },
     forwardedRef
@@ -128,7 +129,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     }, []);
 
     const handleLoadedData = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
-      props.onLoadedData?.(e);
+      onLoadedData?.(e);
       setLoaded(true);
       e.currentTarget.style.opacity = '1';
     }, []);
@@ -222,7 +223,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         className={cx(
           classes.iosScroll,
           wrapperProps?.className ? wrapperProps?.className : 'h-full',
-          'overflow-hidden relative flex items-center justify-center'
+          'overflow-hidden relative flex flex-col items-center justify-center'
         )}
       >
         <video
