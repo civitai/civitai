@@ -211,6 +211,11 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
     return baseModelSetKeys.includes(baseModel as SupportedBaseModel);
   });
 
+  if (checkpoint?.id && getModelVersionUsesImageGen(checkpoint.id)) {
+    if (params.sourceImage && params.workflow !== 'img2img') params.workflow = 'img2img';
+    else if (!params.sourceImage && params.workflow !== 'txt2img') params.workflow = 'txt2img';
+  }
+
   return {
     ...params,
     baseModel,
