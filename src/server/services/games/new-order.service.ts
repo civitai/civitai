@@ -259,7 +259,8 @@ export async function addImageRating({
   ) {
     // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
     await valueInQueue.pool.reset({ id: imageId });
-    signalClient
+
+    await signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Knight`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -276,7 +277,7 @@ export async function addImageRating({
   ) {
     // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
     await valueInQueue.pool.reset({ id: imageId });
-    signalClient
+    await signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Templar`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -301,7 +302,7 @@ export async function addImageRating({
       });
     }
 
-    signalClient
+    await signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -418,7 +419,7 @@ export async function addImageRating({
     // Clear image from the pool:
     await valueInQueue.pool.reset({ id: imageId });
 
-    signalClient
+    await signalClient
       .topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Knight`,
         target: SignalMessages.NewOrderQueueUpdate,
@@ -891,7 +892,7 @@ export async function addImageToQueue({
     })
   );
 
-  signalClient
+  await signalClient
     .topicSend({
       topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
       target: SignalMessages.NewOrderQueueUpdate,
