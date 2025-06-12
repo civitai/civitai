@@ -155,6 +155,7 @@ const imageWhere = [
   Prisma.sql`i."tosViolation" = false`,
   Prisma.sql`i."needsReview" IS NULL`,
   Prisma.sql`i."minor" = false`,
+  Prisma.sql`i."poi" = false`,
   Prisma.sql`p."publishedAt" IS NOT NULL`,
   Prisma.sql`p."availability" != 'Private'::"Availability"`,
   Prisma.sql`p."availability" != 'Unsearchable'::"Availability"`,
@@ -269,47 +270,46 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   setup: onIndexSetup,
   maxQueueSize: 100, // Avoids hogging too much memory.
   pullSteps: 7,
-  queues: ['delete'], // Makes it so we don't process updates but deletes only.
   prepareBatches: async ({ pg, jobContext }, lastUpdatedAt) => {
-    // const lastUpdateIso = lastUpdatedAt?.toISOString();
+    const lastUpdateIso = lastUpdatedAt?.toISOString();
 
-    // const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
+    const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
 
-    // SELECT (
-    //   SELECT
-    //   i.id FROM "Image" i
-    //   ${lastUpdatedAt ? `WHERE i."createdAt" >= '${lastUpdateIso}'` : ``}
-    //   ORDER BY "createdAt" LIMIT 1
-    // ) as "startId", (
-    //   SELECT MAX (id) FROM "Image"
-    // ) as "endId";
-    // `);
+    SELECT (
+      SELECT
+      i.id FROM "Image" i
+      ${lastUpdatedAt ? `WHERE i."createdAt" >= '${lastUpdateIso}'` : ``}
+      ORDER BY "createdAt" LIMIT 1
+    ) as "startId", (
+      SELECT MAX (id) FROM "Image"
+    ) as "endId";
+    `);
 
-    // jobContext?.on('cancel', newItemsQuery.cancel);
-    // const newItems = await newItemsQuery.result();
-    // const { startId, endId } = newItems[0];
+    jobContext?.on('cancel', newItemsQuery.cancel);
+    const newItems = await newItemsQuery.result();
+    const { startId, endId } = newItems[0];
 
-    // let updateIds: number[] = [];
-    // // TODO remove createdAt clause below?
-    // if (lastUpdatedAt) {
-    //   const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
-    //     SELECT id
-    //     FROM "Image"
-    //     WHERE "updatedAt" > '${lastUpdateIso}'
-    //       AND "postId" IS NOT NULL
-    //     ORDER BY id;
-    //   `);
-    //   const results = await updatedIdItemsQuery.result();
-    //   updateIds = results.map((x) => x.id);
-    // }
+    let updateIds: number[] = [];
+    // TODO remove createdAt clause below?
+    if (lastUpdatedAt) {
+      const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
+        SELECT id
+        FROM "Image"
+        WHERE "updatedAt" > '${lastUpdateIso}'
+          AND "postId" IS NOT NULL
+        ORDER BY id;
+      `);
+      const results = await updatedIdItemsQuery.result();
+      updateIds = results.map((x) => x.id);
+    }
 
     // For the time being, we'll keep this index running solely for the purpose
     // of managing deletes / queued updates.
     return {
       batchSize: READ_BATCH_SIZE,
-      startId: 0,
-      endId: 0,
-      updateIds: [],
+      startId,
+      endId,
+      updateIds: updateIds,
     };
   },
   pullData: async ({ db, logger, indexName }, batch, step, prevData) => {
@@ -403,28 +403,28 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       const images = (result.images as BaseImage[]).filter((i) => batch.includes(i.id));
 
       // Metrics:
-      // if (step === 1) {
-      //   logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
-      //   const metrics = await db.$queryRaw<Metrics[]>`
-      //     SELECT
-      //       im."imageId" as id,
-      //       im."collectedCount" as "collectedCount",
-      //       im."reactionCount" as "reactionCount",
-      //       im."commentCount" as "commentCount",
-      //       im."likeCount" as "likeCount",
-      //       im."cryCount" as "cryCount",
-      //       im."laughCount" as "laughCount",
-      //       im."tippedAmountCount" as "tippedAmountCount",
-      //       im."heartCount" as "heartCount"
-      //     FROM "ImageMetric" im
-      //     WHERE im."imageId" IN (${Prisma.join(batch)})
-      //       AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-      // `;
+      if (step === 1) {
+        logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
+        const metrics = await db.$queryRaw<Metrics[]>`
+          SELECT
+            im."imageId" as id,
+            im."collectedCount" as "collectedCount",
+            im."reactionCount" as "reactionCount",
+            im."commentCount" as "commentCount",
+            im."likeCount" as "likeCount",
+            im."cryCount" as "cryCount",
+            im."laughCount" as "laughCount",
+            im."tippedAmountCount" as "tippedAmountCount",
+            im."heartCount" as "heartCount"
+          FROM "ImageMetric" im
+          WHERE im."imageId" IN (${Prisma.join(batch)})
+            AND im."timeframe" = 'AllTime'::"MetricTimeframe"
+      `;
 
-      //   result.metrics ??= [];
-      //   result.metrics.push(...(metrics ?? []));
-      //   continue;
-      // }
+        result.metrics ??= [];
+        result.metrics.push(...(metrics ?? []));
+        continue;
+      }
 
       // Get modelVersionIds
       if (step === 2) {

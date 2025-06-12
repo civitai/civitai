@@ -37,7 +37,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { activeBaseModels, constants } from '~/server/common/constants';
+import { activeBaseModels, constants, EARLY_ACCESS_CONFIG } from '~/server/common/constants';
 import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
@@ -74,7 +74,7 @@ const schema = modelVersionUpsertSchema2
       .extend({
         timeframe: z
           .number()
-          .refine((v) => constants.earlyAccess.timeframeValues.some((x) => x === v), {
+          .refine((v) => EARLY_ACCESS_CONFIG.timeframeValues.some((x) => x === v), {
             message: 'Invalid value',
           }),
       })
@@ -83,7 +83,7 @@ const schema = modelVersionUpsertSchema2
     recommendedResources: generationResourceSchema
       .merge(recommendedSettingsSchema)
       .array()
-      .optional(),
+      .nullish(),
   })
   .refine((data) => (!data.skipTrainedWords ? (data.trainedWords ?? []).length > 0 : true), {
     message: 'You need to specify at least one trained word',
@@ -150,7 +150,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     version?.status === 'Published' &&
     (!version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt));
 
-  const MAX_EARLY_ACCCESS = 15;
+  const MAX_EARLY_ACCCESS = 30;
 
   // Get VAE options
   const { data: vaes } = trpc.modelVersion.getModelVersionsByModelType.useQuery(
@@ -184,7 +184,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         ? {
             ...(version?.earlyAccessConfig ?? {}),
             timeframe:
-              version.earlyAccessConfig?.timeframe ?? constants.earlyAccess.timeframeValues[0],
+              version.earlyAccessConfig?.timeframe ?? EARLY_ACCESS_CONFIG.timeframeValues[0],
           }
         : null,
     modelId: model?.id ?? -1,
@@ -306,15 +306,18 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
-  const maxEarlyAccessModels = getMaxEarlyAccessModels({ userMeta: currentUser?.meta });
-  const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
+  const maxEarlyAccessModels = getMaxEarlyAccessModels({ userMeta: currentUser?.meta, features });
+  const earlyAccessUnlockedDays = EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock
     // TODO: Update to model scores.
-    .map(([, days]) =>
-      currentUser?.isModerator || days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta })
+    .map((data) => {
+      const [_, days] = data;
+      return currentUser?.isModerator ||
+        days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta, features })
         ? days
-        : null
-    )
+        : null;
+    })
     .filter(isDefined);
+
   const atEarlyAccess = !!version?.earlyAccessEndsAt;
   const isPublished = version?.status === 'Published';
   const isPrivateModel = model?.availability === Availability.Private;
@@ -451,7 +454,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     'earlyAccessConfig',
                     e.target.checked
                       ? {
-                          timeframe: constants.earlyAccess.timeframeValues[0],
+                          timeframe: EARLY_ACCESS_CONFIG.timeframeValues[0],
                           chargeForDownload: modelDownloadEnabled ? true : false,
                           downloadPrice: modelDownloadEnabled ? 5000 : undefined,
                           chargeForGeneration: !modelDownloadEnabled ? true : false,
@@ -497,7 +500,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       }
                       value={
                         earlyAccessConfig?.timeframe?.toString() ??
-                        constants.earlyAccess.timeframeValues[0]
+                        EARLY_ACCESS_CONFIG.timeframeValues[0]
                       }
                       data={earlyAccessUnlockedDays.map((v) => ({
                         label: `${v} days`,
@@ -521,7 +524,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       disabled={isEarlyAccessOver}
                     />
                     {earlyAccessUnlockedDays.length !==
-                      constants.earlyAccess.timeframeValues.length && (
+                      EARLY_ACCESS_CONFIG.timeframeValues.length && (
                       <Group noWrap>
                         <Text size="xs" color="yellow">
                           You will unlock more early access day over time by posting models to the
@@ -729,7 +732,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   td="underline"
                   component="a"
                   target="_blank"
-                  href={`/articles/${constants.earlyAccess.article}`}
+                  href={`/articles/${EARLY_ACCESS_CONFIG.article}`}
                 >
                   Learn more
                 </Text>
