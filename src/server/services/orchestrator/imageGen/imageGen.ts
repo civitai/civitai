@@ -1,28 +1,16 @@
 import type { ImageGenStepTemplate } from '@civitai/client';
-import {
-  Scheduler,
-  TextToImageStepTemplate,
-  TimeSpan,
-  type ImageJobNetworkParams,
-} from '@civitai/client';
+import { TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type { z } from 'zod';
 import { env } from '~/env/server';
-import { maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
-import { getWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
-import {
-  formatGenerationResponse,
-  parseGenerateImageInput,
-} from '~/server/services/orchestrator/common';
+import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
-import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
-import { Availability } from '~/shared/utils/prisma/enums';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { findClosest, getRandomInt } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export async function createImageGenStep(
