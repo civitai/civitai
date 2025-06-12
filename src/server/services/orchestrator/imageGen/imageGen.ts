@@ -12,28 +12,34 @@ import type { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConf
 import { imageGenConfig } from '~/shared/orchestrator/ImageGen/imageGen.config';
 
 export async function createImageGenStep(
-  input: z.infer<typeof generateImageSchema> & {
+  args: z.infer<typeof generateImageSchema> & {
     user: SessionUser;
   },
   config?: ReturnType<typeof ImageGenConfig>
 ) {
-  const { priority } = input.params;
+  const { priority } = args.params;
   const timeSpan = new TimeSpan(0, 10, 0);
 
   if (!config) {
-    config = imageGenConfig[input.params.engine as keyof typeof imageGenConfig];
-    if (!config) throw new Error(`missing config for engine: ${input.params.engine}`);
+    config = imageGenConfig[args.params.engine as keyof typeof imageGenConfig];
+    if (!config) throw new Error(`missing config for engine: ${args.params.engine}`);
   }
+
+  const input = args.whatIf
+    ? config.getStepInput(args)
+    : ({
+        ...config.getStepInput(args),
+        imageMetadata: config.getImageMetadata(args),
+      } as ReturnType<typeof config.getStepInput>);
+
+  const metadata = args.whatIf ? {} : config.getStepMetadata(args);
 
   return {
     $type: 'imageGen',
     priority,
-    input: {
-      ...config.getStepInput(input),
-      imageMetadata: config.getImageMetadata(input),
-    } as ReturnType<typeof config.getStepInput>,
+    input,
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
-    metadata: config.getStepMetadata(input),
+    metadata,
   } as ImageGenStepTemplate;
 }
 
