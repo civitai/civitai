@@ -49,6 +49,7 @@ function BountiesPage() {
                 data={[...constants.bounties.engagementTypes]}
                 value={query.engagement as string}
                 onChange={handleEngagementChange}
+                withItemsBorders={false}
               />
             </Stack>
           )}

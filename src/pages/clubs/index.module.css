@@ -1,11 +1,10 @@
 .label {
   padding: 6px 16px;
   text-transform: capitalize;
-  background-color: alpha(var(--mantine-color-gray-9), 0.06);
-
-  @mixin dark {
-    background-color: alpha(var(--mantine-color-gray-3), 0.06);
-  }
+  background-color: light-dark(
+    alpha(var(--mantine-color-gray-9), 0.06),
+    alpha(var(--mantine-color-gray-3), 0.06)
+  );
 }
 
 .labelActive {

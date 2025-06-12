@@ -296,7 +296,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
             }
 
             return (
-              <Table.Tr key={cap.tier} className="*:p-1">
+              <Table.Tr key={cap.tier}>
                 <Table.Td className="font-bold">{capitalize(cap.tier)} Member</Table.Td>
                 <Table.Td>
                   <p className="flex">

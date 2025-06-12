@@ -28,7 +28,6 @@
       rgba(186, 12, 248, 1) 80%,
       rgba(251, 7, 217, 1) 90%,
       rgba(255, 0, 0, 1) 100%) 0/200%;
-  animation: rainbow-text-animation 10s linear infinite;
 
   &:hover {
     background: linear-gradient(90deg,

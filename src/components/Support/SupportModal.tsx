@@ -8,8 +8,8 @@ export default function SupportModal() {
   return (
     <Modal
       {...dialog}
-      size="xl"
-      classNames={{ content: 'p-10', inner: 'py-6' }}
+      size="auto"
+      classNames={{ content: 'p-10', inner: 'py-6', body: 'p-0' }}
       withCloseButton={false}
       centered
     >

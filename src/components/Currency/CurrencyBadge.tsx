@@ -1,5 +1,12 @@
 import type { BadgeProps, MantineSize } from '@mantine/core';
-import { Badge, Loader, Text, Tooltip, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import {
+  Badge,
+  Loader,
+  Text,
+  Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import NumberFlow from '@number-flow/react';
 import type { IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
@@ -9,7 +16,6 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import classes from './CurrencyBadge.module.scss';
 import clsx from 'clsx';
-import { label } from 'motion/dist/react-m';
 
 type Props = BadgeProps & {
   currency: Currency;

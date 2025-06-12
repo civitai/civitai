@@ -72,8 +72,6 @@ import {
   getForecastedValue,
 } from '~/server/utils/creator-program.utils';
 import {
-  CAP_DEFINITIONS,
-  MIN_CAP,
   MIN_WITHDRAWAL_AMOUNT,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
@@ -264,15 +262,15 @@ const JoinCreatorProgramCard = () => {
                     current membership does not apply to join the Creator Program. Consider
                     upgrading to one our supported memberships.
                     <br />
-                    <NextLink href="/pricing">
-                      <Anchor>Upgrade Membership</Anchor>
-                    </NextLink>
+                    <Anchor component={NextLink} href="/pricing">
+                      Upgrade Membership
+                    </Anchor>
                   </p>
                 </>
               ) : (
-                <NextLink href="/pricing">
-                  <Anchor>Become a Civitai Member Now!</Anchor>
-                </NextLink>
+                <Anchor component={NextLink} href="/pricing">
+                  Become a Civitai Member Now!
+                </Anchor>
               )
             }
           />
@@ -370,7 +368,7 @@ const BankBuzzCard = () => {
   const [toBank, setToBank] = React.useState<number>(10000);
   const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
   const isLoading = isLoadingCompensationPool || buzzAccount.balanceLoading || isLoadingBanked;
-  const [_, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
+  const [, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
   const endDate = formatDate(roundMinutes(end), DATE_FORMAT, false);
   const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
 

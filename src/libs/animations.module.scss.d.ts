@@ -6,3 +6,4 @@ export declare const jelloFall: string;
 export declare const jelloVertical: string;
 export declare const vibrate: string;
 export declare const wiggle: string;
+export declare const rainbowBackground: string;

@@ -17,6 +17,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import classes from './ProfileHeader.module.scss';
 import clsx from 'clsx';
+import { constants } from '~/server/common/constants';
 
 export function ProfileHeader({ username }: { username: string }) {
   const { data: user } = trpc.userProfile.get.useQuery({
@@ -51,7 +52,15 @@ export function ProfileHeader({ username }: { username: string }) {
     }
 
     return (
-      <div className={classes.coverImageWrapper}>
+      <div
+        className={classes.coverImageWrapper}
+        style={
+          {
+            '--cover-image-size-desktop': `${constants.profile.coverImageAspectRatio * 100}%`,
+            '--cover-image-size-mobile': `${constants.profile.mobileCoverImageAspectRatio * 100}%`,
+          } as React.CSSProperties
+        }
+      >
         <div className={classes.coverImage}>
           <ImageGuard2 image={image}>
             {(safe) => (

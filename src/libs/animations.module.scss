@@ -33,6 +33,10 @@
   animation-iteration-count: 1, 1;
 }
 
+.rainbowBackground {
+  animation: movingRainbow 10s linear infinite;
+}
+
 @keyframes wiggle {
   0% {
     transform: rotate(0deg);
@@ -219,5 +223,19 @@
 
   100% {
     opacity: 0.25;
+  }
+}
+
+@keyframes movingRainbow {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
   }
 }

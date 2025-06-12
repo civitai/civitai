@@ -27,6 +27,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './HomeContentToggle.module.css';
+import animationClasses from '~/libs/animations.module.scss';
 
 type HomeOption = {
   key: string;
@@ -150,6 +151,7 @@ export function HomeTabs() {
                 activePath === key || (activePath === 'changelog' && key === 'updates'),
               [classes.groupedOptions]: value.grouped,
               [classes.tabRainbow]: key === 'shop',
+              [animationClasses.rainbowBackground]: key === 'shop',
             })}
             classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
           >

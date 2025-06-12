@@ -68,11 +68,11 @@ export const ShopItem = ({
         <Badge color="grape" className={classes.availability} px={6}>
           <Group justify="space-between" wrap="nowrap" gap={4}>
             {remaining === 0 ? (
-              <Text>Out of Stock</Text>
+              <Text inherit>Out of Stock</Text>
             ) : (
               <>
                 {isUpcoming ? (
-                  <Text>
+                  <Text inherit>
                     Available in{' '}
                     <Countdown
                       endTime={item.availableFrom!}
@@ -82,7 +82,7 @@ export const ShopItem = ({
                   </Text>
                 ) : availableTo ? (
                   leavingSoon ? (
-                    <Text>
+                    <Text inherit>
                       Leaves in{' '}
                       <Countdown
                         endTime={item.availableTo!}
@@ -91,12 +91,12 @@ export const ShopItem = ({
                       />
                     </Text>
                   ) : (
-                    <Text>Until {availableTo}</Text>
+                    <Text inherit>Until {availableTo}</Text>
                   )
                 ) : null}
                 {hasDate && remaining && <Divider orientation="vertical" color="grape.3" />}
                 {remaining && available && (
-                  <Text>
+                  <Text inherit>
                     {remaining}/{available} remaining
                   </Text>
                 )}
@@ -132,9 +132,8 @@ export const ShopItem = ({
             <CurrencyBadge
               currency={Currency.BUZZ}
               unitAmount={item.unitAmount}
-              // @ts-ignore
               variant="transparent"
-              px={0}
+              className="!px-0"
             />
             <Title order={3}>{item.title}</Title>
           </Stack>

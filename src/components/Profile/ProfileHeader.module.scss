@@ -9,7 +9,7 @@
   }
 }
 
-.coverImageNSFWActions {
+.coverImageNsfwActions {
   height: 100%;
   width: 100%;
 }
@@ -37,23 +37,19 @@
   width: 100%;
   overflow: hidden;
   height: 0;
-  /* The padding-bottom for aspect ratio should be set inline via style prop:
-     style={{ paddingBottom: `${constants.profile.coverImageAspectRatio * 100}%` }}
-  */
+  padding-bottom: var(--cover-image-size-desktop);
 
   @container (max-width: theme('screens.sm')) {
     width: auto;
     border-radius: 0;
-    /* The padding-bottom for mobile aspect ratio should be set inline via style prop:
-       style={{ paddingBottom: `${constants.profile.mobileCoverImageAspectRatio * 100}%` }}
-    */
+    padding-bottom: var(--cover-image-size-mobile);
 
     div {
       border-radius: 0;
     }
   }
 
-  >div {
+  & > div {
     position: absolute;
     top: 50%;
     left: 50%;

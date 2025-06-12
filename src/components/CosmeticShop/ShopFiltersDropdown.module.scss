@@ -6,7 +6,7 @@
 
     &,
     &:hover {
-      color: light-dark(var(--mantine-color-white), var(--mantine-color-black));
+      color: var(--mantine-color-white);
       border: 1px solid var(--mantine-color-primary);
     }
 

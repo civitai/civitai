@@ -8,7 +8,6 @@ import {
   Chip,
   Button,
   Drawer,
-  useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
@@ -23,7 +22,6 @@ import clsx from 'clsx';
 type Filters = GetShopInput;
 
 export function ShopFiltersDropdown({ filters, setFilters, ...buttonProps }: Props) {
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
 

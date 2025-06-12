@@ -28,6 +28,12 @@
   },
   "github.copilot.chat.codeGeneration.instructions": [
     {
+      "file": ".vscode/rules/global.md"
+    },
+    {
+      "file": ".vscode/rules/nextjs.md"
+    },
+    {
       "file": ".vscode/rules/mantine-migration.md"
     },
     {

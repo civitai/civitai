@@ -248,7 +248,7 @@ const FunStatsSection = () => {
         </Title>
       </Stack>
       <Paper withBorder className={classes.card} h="100%">
-        <Table className="-mt-2 w-full table-auto">
+        <Table className="-mt-2 w-full table-auto text-base">
           <Table.Tbody>
             <Table.Tr className="font-bold">
               <Table.Td colSpan={2} className="border-0 border-b border-solid">

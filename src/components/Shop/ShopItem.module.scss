@@ -1,13 +1,19 @@
 .card {
   height: 100%;
-  background: var(--mantine-color-dark-6);
+  background: light-dark(
+    var(--mantine-color-gray-1),
+    var(--mantine-color-dark-6)
+  );
   border-radius: var(--mantine-radius-md);
   padding: var(--mantine-spacing-md);
   position: relative;
 }
 
 .cardHeader {
-  background: var(--mantine-color-dark-9);
+  background: light-dark(
+    var(--mantine-color-gray-2),
+    var(--mantine-color-dark-9)
+  );
   margin: calc(-1 * var(--mantine-spacing-md));
   padding: var(--mantine-spacing-md);
   margin-bottom: var(--mantine-spacing-md);
@@ -29,6 +35,7 @@
   top: var(--mantine-spacing-md);
   display: flex;
   align-items: stretch;
+  width: auto;
   z-index: 2;
   
   .mantine-Badge-label {

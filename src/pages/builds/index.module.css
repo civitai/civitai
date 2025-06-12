@@ -1,7 +1,8 @@
 .section {
-  @mixin dark {
-    background-color: var(--mantine-color-dark-6);
-  }
+  background-color: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-6),
+  );
   
   @container (max-width: theme('screens.sm')) {
     padding: var(--mantine-spacing-md, 16px);

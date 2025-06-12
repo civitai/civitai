@@ -42,7 +42,7 @@ const SUPPORT_OPTIONS = [
 
 export function SupportContent() {
   return (
-    <Grid gutter="xl">
+    <Grid gutter={24}>
       <Grid.Col span={{ base: 12, md: 6 }}>
         <Stack gap="lg">
           {SUPPORT_OPTIONS.map((option) => (
