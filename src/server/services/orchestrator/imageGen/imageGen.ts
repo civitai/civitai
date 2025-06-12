@@ -40,9 +40,10 @@ export async function createImageGen(
   }
 ) {
   const { tips, user, experimental } = args;
-  if (!args.params.engine) return;
+  if (!args.params.engine)
+    throw new Error(`cannot generate with $type:'imageGen' without specifying an engine`);
   const config = imageGenConfig[args.params.engine as keyof typeof imageGenConfig];
-  if (!config) return;
+  if (!config) throw new Error(`missing 'imageGen' config for engine: '${args.params.engine}'`);
 
   const step = await createImageGenStep(args, config);
   const tags = config.getTags(args);

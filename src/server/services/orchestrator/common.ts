@@ -22,7 +22,7 @@ import { env } from '~/env/server';
 import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
+import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
@@ -403,7 +403,7 @@ function getResources(step: WorkflowStep) {
 function combineResourcesWithInputResource(
   allResources: GenerationResource[],
   resources: { id: number; strength?: number | null }[]
-) {
+): GenerationResource[] {
   return allResources
     .map((resource) => {
       const original = resources.find((x) => x.id === resource.id);
@@ -672,7 +672,7 @@ function formatVideoGenStep({
       sourceImage: sourceImage,
       // workflow: videoMetadata.params?.workflow,
       quantity: 1,
-    }),
+    }) as typeof params,
     images: videos,
     status: step.status,
     metadata,
