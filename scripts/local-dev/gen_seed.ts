@@ -3317,6 +3317,51 @@ const genBountyEntries = (
   return ret;
 };
 
+const genBountyImageConnections = (
+  bountyIds: number[],
+  bountyEntryIds: number[],
+  imageIds: number[]
+) => {
+  const ret = [];
+  const remainingImageIds = [...imageIds];
+
+  for (const bountyId of bountyIds) {
+    for (let step = 1; step <= faker.number.int({ min: 0, max: 2 }); step++) {
+      if (remainingImageIds.length === 0) break;
+
+      const imageId = rand(remainingImageIds);
+      const index = remainingImageIds.indexOf(imageId);
+      if (index !== -1) remainingImageIds.splice(index, 1);
+
+      const row = [
+        imageId, // imageId
+        bountyId, // entityId
+        'Bounty', // entityType
+      ];
+      ret.push(row);
+    }
+  }
+
+  for (const bountyEntryId of bountyEntryIds) {
+    for (let step = 1; step <= faker.number.int({ min: 0, max: 3 }); step++) {
+      if (remainingImageIds.length === 0) break;
+
+      const imageId = rand(remainingImageIds);
+      const index = remainingImageIds.indexOf(imageId);
+      if (index !== -1) remainingImageIds.splice(index, 1);
+
+      const row = [
+        imageId, // imageId
+        bountyEntryId, // entityId
+        'BountyEntry', // entityType
+      ];
+      ret.push(row);
+    }
+  }
+
+  return ret;
+};
+
 // ---
 // Data end
 // ---
@@ -3583,7 +3628,10 @@ const genRows = async (truncate = true) => {
       .map((b) => ({ id: b[0] as number, createdAt: b[6] as string }))
       .filter((b) => bountyIds.includes(b.id))
   );
-  await insertRows('BountyEntry', bountyEntries);
+  const bountyEntryIds = await insertRows('BountyEntry', bountyEntries);
+
+  const imageConnections = genBountyImageConnections(bountyIds, bountyEntryIds, imageIds);
+  await insertRows('ImageConnection', imageConnections, false);
 
   if (truncQueue) {
     await deleteRandomJobQueueRows(98, 'pct');

@@ -26,7 +26,7 @@ const jobNameQueues = 'queues';
 const jobNameChat = 'chat';
 const jobNameClear = 'clear-automated';
 
-const chunkSize = 1000;
+const chunkSize = 100; // keep an eye on this
 const minDate = '2025-06-13';
 const reportRetention = 14;
 
@@ -186,6 +186,7 @@ function hasIssue(
   const hasBadWord = modWordBlocklist.some((w) => w.re.test(lower));
   if (hasBadWord) return true;
   const hasBadUrl = modURLBlocklist.some((w) => w.re.test(lower));
+  // noinspection RedundantIfStatementJS
   if (hasBadUrl) return true;
 
   return false;
@@ -218,6 +219,8 @@ Adding a new entry:
   - update relevant columns in gen_seed
   - optionally update policy in redis config
 */
+
+// TODO possibly add modelVersion
 
 const queues = {
   Comment: {
@@ -344,7 +347,10 @@ const runClavata = async ({
   log(`Clavata processing ${data.length} ${type}s`);
 
   const batches = chunk(data, chunkSize);
+  let i = 0;
   for (const batch of batches) {
+    i++;
+    log(`Clavata processing batch ${i}/${batches.length} for ${type}s`);
     clavataCounter?.inc(batch.length);
     try {
       const stream = clavataEvaluate({
@@ -497,7 +503,7 @@ async function runModChat(lastRun: Date) {
     orderBy: {
       createdAt: 'asc',
     },
-    take: 200, // TODO remove
+    // take: 200,
   });
   // .catch((error) => {
   //   logAx({ message: 'Error getting chat messages', data: { error } });
@@ -614,6 +620,7 @@ async function runModQueue() {
       }
 
       const data: ({ [entityIdKey: string]: number } & { [key in keyof typeof fields]: string })[] =
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (selector as any).findMany({
           where: { [idKey]: { in: ids } },
           select: { [idKey]: true, [userIdKey]: true, ...fields },
