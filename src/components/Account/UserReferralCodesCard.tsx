@@ -6,7 +6,6 @@ import {
   Button,
   Group,
   Code,
-  ActionIcon,
   Tooltip,
   Paper,
   Loader,
@@ -23,6 +22,7 @@ import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function UserReferralCodesCard() {
   const { copied, copy } = useClipboard();
@@ -31,7 +31,7 @@ export function UserReferralCodesCard() {
   const { data: userReferralCodes = [], isLoading } = trpc.userReferralCode.getAll.useQuery({
     includeCount: true,
   });
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { mutate: upsertUserReferralCode, isLoading: upsertingCode } =
     trpc.userReferralCode.upsert.useMutation({
       onSuccess: async (_, req) => {
@@ -60,13 +60,13 @@ export function UserReferralCodesCard() {
   return (
     <Card id="referrals" withBorder>
       <Stack>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Title order={2}>Referral Codes</Title>
           {features.buzz && (
-            <Text color="dimmed" size="sm">
+            <Text c="dimmed" size="sm">
               You can use referral codes to invite your friends to join the platform. Referring
               accounts will grant you and your friend{' '}
-              <Text color="accent.5" span inline>
+              <Text c="accent.5" span inline>
                 <CurrencyBadge
                   currency={Currency.BUZZ}
                   unitAmount={constants.buzz.referralBonusAmount}
@@ -84,32 +84,32 @@ export function UserReferralCodesCard() {
           ) : (
             <>
               {userReferralCodes.length === 0 ? (
-                <Paper radius="md" p="lg" sx={{ position: 'relative' }} withBorder>
+                <Paper radius="md" p="lg" style={{ position: 'relative' }} withBorder>
                   <Center>
-                    <Stack spacing={2}>
-                      <Text weight="bold">You have not created any referral codes</Text>
-                      <Text size="sm" color="dimmed">
+                    <Stack gap={2}>
+                      <Text fw="bold">You have not created any referral codes</Text>
+                      <Text size="sm" c="dimmed">
                         Start by creating your first referral code to invite friends.
                       </Text>
                     </Stack>
                   </Center>
                 </Paper>
               ) : (
-                <Stack spacing="xs">
+                <Stack gap="xs">
                   {userReferralCodes.map((referralCode) => (
                     <Paper withBorder p="sm" key={referralCode.id}>
-                      <Group position="apart">
-                        <Stack spacing={0}>
+                      <Group justify="space-between">
+                        <Stack gap={0}>
                           <Code color="blue" style={{ textAlign: 'center' }}>
                             {referralCode.code}
                           </Code>
                           {referralCode.note && (
-                            <Text color="dimmed" size="xs">
+                            <Text c="dimmed" size="xs">
                               {referralCode.note}
                             </Text>
                           )}
                           {referralCode._count && (
-                            <Text color="dimmed" size="xs">
+                            <Text c="dimmed" size="xs">
                               Referees: {referralCode._count.referees}
                             </Text>
                           )}
@@ -121,7 +121,7 @@ export function UserReferralCodesCard() {
                             withArrow
                             withinPortal
                           >
-                            <ActionIcon
+                            <LegacyActionIcon
                               size="md"
                               color="blue"
                               radius="xl"
@@ -129,10 +129,10 @@ export function UserReferralCodesCard() {
                               onClick={() => copy(`${referralUrl}${referralCode.code}`)}
                             >
                               <IconClipboardCopy size={20} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </Tooltip>
                           <Tooltip label="Delete" withArrow withinPortal>
-                            <ActionIcon
+                            <LegacyActionIcon
                               size="md"
                               color="red"
                               radius="xl"
@@ -140,7 +140,7 @@ export function UserReferralCodesCard() {
                               onClick={() => deleteUserReferralCode({ id: referralCode.id })}
                             >
                               <IconTrash size={20} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </Tooltip>
                         </Group>
                       </Group>

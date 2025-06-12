@@ -1,4 +1,4 @@
-import { Badge, Button, createStyles, Group, keyframes, Menu, Text } from '@mantine/core';
+import { Badge, Button, Group, Menu, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import type { IconProps } from '@tabler/icons-react';
 import {
@@ -26,6 +26,8 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import classes from './HomeContentToggle.module.css';
+import animationClasses from '~/libs/animations.module.scss';
 
 type HomeOption = {
   key: string;
@@ -119,118 +121,10 @@ export function filterHomeOptions(features: FeatureAccess) {
   );
 }
 
-const rainbowTextAnimation = keyframes({
-  '0%': {
-    backgroundPosition: '0% 50%',
-  },
-  '50%': {
-    backgroundPosition: '100% 50%',
-  },
-  '100%': {
-    backgroundPosition: '0% 50%',
-  },
-});
-
-const useTabsStyles = createStyles((theme) => ({
-  tabHighlight: {
-    backgroundColor: theme.fn.rgba(
-      theme.colors.yellow[3],
-      theme.colorScheme === 'dark' ? 0.1 : 0.3
-    ),
-    backgroundImage: `linear-gradient(90deg, ${theme.fn.rgba(
-      theme.colors.yellow[4],
-      0
-    )}, ${theme.fn.rgba(
-      theme.colors.yellow[4],
-      theme.colorScheme === 'dark' ? 0.1 : 0.2
-    )}, ${theme.fn.rgba(theme.colors.yellow[4], 0)})`,
-    backgroundSize: '50px',
-    backgroundPosition: '-300% 50%',
-    backgroundRepeat: 'no-repeat',
-    color: theme.colorScheme === 'dark' ? theme.colors.yellow[3] : theme.colors.yellow[8],
-    animation: 'button-highlight 5s linear infinite',
-    willChange: 'background-position',
-  },
-
-  tabRainbow: {
-    background: `linear-gradient(
-        90deg,
-        rgba(255, 0, 0, 1) 0%,
-        rgba(255, 154, 0, 1) 10%,
-        rgba(208, 222, 33, 1) 20%,
-        rgba(79, 220, 74, 1) 30%,
-        rgba(63, 218, 216, 1) 40%,
-        rgba(47, 201, 226, 1) 50%,
-        rgba(28, 127, 238, 1) 60%,
-        rgba(95, 21, 242, 1) 70%,
-        rgba(186, 12, 248, 1) 80%,
-        rgba(251, 7, 217, 1) 90%,
-        rgba(255, 0, 0, 1) 100%
-    ) 0/200%`,
-    animation: `${rainbowTextAnimation} 10s linear infinite`,
-    ':hover': {
-      background: `linear-gradient(
-        90deg,
-        rgba(255, 0, 0, 1) 0%,
-        rgba(255, 154, 0, 1) 10%,
-        rgba(208, 222, 33, 1) 20%,
-        rgba(79, 220, 74, 1) 30%,
-        rgba(63, 218, 216, 1) 40%,
-        rgba(47, 201, 226, 1) 50%,
-        rgba(28, 127, 238, 1) 60%,
-        rgba(95, 21, 242, 1) 70%,
-        rgba(186, 12, 248, 1) 80%,
-        rgba(251, 7, 217, 1) 90%,
-        rgba(255, 0, 0, 1) 100%
-    ) 0/200%`,
-    },
-    '&[data-active]': {
-      background: `linear-gradient(
-        90deg,
-        rgba(255, 0, 0, 1) 0%,
-        rgba(255, 154, 0, 1) 10%,
-        rgba(208, 222, 33, 1) 20%,
-        rgba(79, 220, 74, 1) 30%,
-        rgba(63, 218, 216, 1) 40%,
-        rgba(47, 201, 226, 1) 50%,
-        rgba(28, 127, 238, 1) 60%,
-        rgba(95, 21, 242, 1) 70%,
-        rgba(186, 12, 248, 1) 80%,
-        rgba(251, 7, 217, 1) 90%,
-        rgba(255, 0, 0, 1) 100%
-    ) 0/200%`,
-    },
-  },
-  moreButton: {
-    padding: '8px 10px 8px 16px',
-    fontSize: 16,
-    fontWeight: 500,
-    display: 'none',
-
-    [`&[data-active="true"]`]: {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4],
-      color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[8],
-    },
-
-    ['@container (min-width: 992px) and (max-width: 1440px)']: {
-      display: 'block',
-    },
-  },
-
-  groupedOptions: {
-    display: 'block',
-
-    ['@container (min-width: 992px) and (max-width: 1440px)']: {
-      display: 'none',
-    },
-  },
-}));
-
 export function HomeTabs() {
   const router = useRouter();
   const features = useFeatureFlags();
   const activePath = router.pathname.split('/')[1] || 'home';
-  const { classes, cx } = useTabsStyles();
 
   const [moreOpened, setMoreOpened] = useState(false);
   const [lastSeenChangelog] = useLocalStorage<number>({
@@ -244,7 +138,7 @@ export function HomeTabs() {
   const options = filterHomeOptions(features);
 
   return (
-    <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden">
+    <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden text-black @md:overflow-visible dark:text-white">
       {options.map(({ key, ...value }) => {
         return (
           <Button
@@ -252,11 +146,12 @@ export function HomeTabs() {
             variant="default"
             component={Link}
             href={value.url}
-            className={clsx('h-8 rounded-full border-none py-2 pl-3 pr-4', {
+            className={clsx('h-8 overflow-visible rounded-full border-none py-2 pl-3 pr-4', {
               ['bg-gray-4 dark:bg-dark-4']:
                 activePath === key || (activePath === 'changelog' && key === 'updates'),
               [classes.groupedOptions]: value.grouped,
               [classes.tabRainbow]: key === 'shop',
+              [animationClasses.rainbowBackground]: key === 'shop',
             })}
             classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
           >
@@ -279,7 +174,7 @@ export function HomeTabs() {
             data-active={moreOpened}
             className={classes.moreButton}
           >
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               More
               <IconCaretDown size={16} fill="currentColor" />
             </Group>
@@ -292,8 +187,8 @@ export function HomeTabs() {
               <Link legacyBehavior key={value.key} href={value.url} passHref>
                 <Menu.Item
                   component="a"
-                  icon={value.icon({ size: 16 })}
-                  className={cx(
+                  leftSection={value.icon({ size: 16 })}
+                  className={clsx(
                     value.classes
                       ?.map((c) => {
                         if (classes.hasOwnProperty(c)) return classes[c as keyof typeof classes];
@@ -302,7 +197,7 @@ export function HomeTabs() {
                       .filter(isDefined)
                   )}
                 >
-                  <Group spacing={8} noWrap>
+                  <Group gap={8} wrap="nowrap">
                     <Text tt="capitalize">{getDisplayName(value.key)}</Text>
                     {value.key === 'updates' && (latestChangelog ?? 0) > lastSeenChangelog && (
                       <IconPointFilled color="green" size={20} />

@@ -1,6 +1,6 @@
 import {
+  Anchor,
   Center,
-  createStyles,
   Divider,
   Group,
   List,
@@ -9,7 +9,6 @@ import {
   ThemeIcon,
   Tooltip,
   UnstyledButton,
-  Anchor,
 } from '@mantine/core';
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
@@ -17,13 +16,13 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import Link from 'next/link';
 import { env } from '~/env/client';
 import type { SearchIndex } from '~/components/Search/parsers/base';
 import type { InstantSearchProps } from 'react-instantsearch';
 import { Configure, InstantSearch } from 'react-instantsearch';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { z } from 'zod';
@@ -35,8 +34,8 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
 import type { UiState } from 'instantsearch.js';
 import { includesInappropriate } from '~/utils/metadata/audit';
-
-const SIDEBAR_SIZE = 377;
+import classes from './SearchLayout.module.scss';
+import clsx from 'clsx';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -63,46 +62,6 @@ export const useSearchLayout = () => {
   if (!context) throw new Error('useSearchLayoutIdx can only be used inside SearchLayoutCtx');
   return context;
 };
-
-const useStyles = createStyles((theme) => {
-  return {
-    sidebar: {
-      height: '100%',
-      marginLeft: `-${SIDEBAR_SIZE}px`,
-      width: `${SIDEBAR_SIZE}px`,
-
-      transition: 'margin 200ms ease',
-      borderRight: '1px solid',
-      borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-      display: 'flex',
-      flexDirection: 'column',
-
-      [containerQuery.smallerThan('sm')]: {
-        top: 0,
-        left: 0,
-        zIndex: 200,
-        height: '100%',
-        width: '100%',
-        marginLeft: `-100%`,
-        position: 'absolute',
-        border: 'none',
-      },
-    },
-
-    scrollable: {
-      padding: theme.spacing.md,
-      overflowY: 'auto',
-      flex: 1,
-    },
-
-    root: { height: '100%', width: '100%', display: 'flex' },
-
-    active: {
-      marginLeft: '0 !important',
-    },
-  };
-});
 
 function renderSearchComponent(props: RenderSearchComponentProps) {
   return <CustomSearchBox {...props} />;
@@ -188,7 +147,7 @@ export function SearchLayout({
               <SearchLayout.Content>
                 <Center>
                   <Stack maw={750} align="center" justify="center" className="h-full">
-                    <Stack align="center" spacing={0}>
+                    <Stack align="center" gap={0}>
                       <IconAlertTriangle size={42} color="red" />
                       <Text weight={700} size="xl" color="red">
                         Warning
@@ -222,7 +181,7 @@ export function SearchLayout({
                           0808 1000 900
                         </Text>
                         <br />
-                        <Text size="xs" color="dimmed">
+                        <Text size="xs" c="dimmed">
                           (24/7, no caller ID saved)
                         </Text>
                       </List.Item>
@@ -240,7 +199,7 @@ export function SearchLayout({
                         – self-help tools, live chat, and secure email
                       </List.Item>
                     </List>
-                    <Text align="center" color="dimmed" size="sm" mt="md">
+                    <Text align="center" c="dimmed" size="sm" mt="md">
                       We strictly enforce our{' '}
                       <Anchor href="/content/tos#content-policies" target="_blank">
                         Terms of Service
@@ -251,7 +210,7 @@ export function SearchLayout({
                       </Anchor>{' '}
                       for more information.
                     </Text>
-                    <Anchor href="/" mt="md">
+                    <Anchor component={Link} href="/" mt="md">
                       <Text size="md">Go Back ↩︎</Text>
                     </Anchor>
                   </Stack>
@@ -268,27 +227,22 @@ export function SearchLayout({
 }
 
 SearchLayout.Root = function Root({ children }: { children: React.ReactNode }) {
-  const { classes } = useStyles();
-
   return <div className={classes.root}>{children}</div>;
 };
 
 SearchLayout.Filters = function Filters({ children }: { children: React.ReactNode }) {
-  const { classes, cx } = useStyles();
   const { sidebarOpen, setSidebarOpen } = useSearchLayout();
-  const { classes: searchLayoutClasses } = useSearchLayoutStyles();
 
   return (
-    <aside className={cx(classes.sidebar, { [classes.active]: sidebarOpen })}>
+    <aside className={clsx(classes.sidebar, { [classes.active]: sidebarOpen })}>
       <Group px="md" py="xs">
         <Tooltip label="Filters & sorting" position="bottom" withArrow>
           <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
             <ThemeIcon
               size={42}
-              color="gray"
+              className="bg-gray-1 text-black dark:bg-dark-6 dark:text-white"
               radius="xl"
               p={11}
-              className={searchLayoutClasses.filterButton}
             >
               <IconChevronsLeft />
             </ThemeIcon>
@@ -317,25 +271,3 @@ SearchLayout.Content = function Content({ children }: { children: React.ReactNod
     </MasonryProvider>
   );
 };
-
-export const useSearchLayoutStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: `repeat(auto-fill, minmax(250px, 1fr))`,
-    gap: theme.spacing.md,
-    gridTemplateRows: `auto 1fr`,
-    overflow: 'hidden',
-    // marginTop: -theme.spacing.md,
-
-    // '& > *': {
-    //   marginTop: theme.spacing.md,
-    // },
-  },
-
-  filterButton: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-    svg: {
-      color: theme.colorScheme === 'dark' ? undefined : theme.colors.dark[6],
-    },
-  },
-}));

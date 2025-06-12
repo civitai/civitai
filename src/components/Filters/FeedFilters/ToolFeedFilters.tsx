@@ -2,15 +2,13 @@ import type { GroupProps } from '@mantine/core';
 import { Group } from '@mantine/core';
 import { ToolFiltersDropdown } from '~/components/Tool/ToolFiltersDropdown';
 import { SortFilter } from '../SortFilter';
-import { useFeedFiltersStyles } from './FeedFilters.styles';
+import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 
 export function ToolFeedFilters({ ...groupProps }: GroupProps) {
-  const { classes } = useFeedFiltersStyles();
-
   return (
-    <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
-      <SortFilter type="tools" className={classes.subnavDropdown} />
-      <ToolFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
+    <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
+      <SortFilter type="tools" />
+      <ToolFiltersDropdown w="100%" size="compact-sm" />
     </Group>
   );
 }

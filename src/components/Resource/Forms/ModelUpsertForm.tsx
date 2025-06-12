@@ -6,6 +6,7 @@ import {
   Checkbox,
   Chip,
   Divider,
+  getPrimaryShade,
   Group,
   Input,
   Modal,
@@ -14,6 +15,8 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -21,7 +24,7 @@ import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
 import { z } from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -124,6 +127,8 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const defaultCategory = result.success ? result.data.category ?? 0 : 0;
   const defaultValues: ModelUpsertSchema = {
@@ -279,12 +284,12 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <ContainerGrid gutter="xl">
-        <ContainerGrid.Col span={12}>
+      <ContainerGrid2 gutter="xl">
+        <ContainerGrid2.Col span={12}>
           <Stack>
             <InputText name="name" label="Name" placeholder="Name" withAsterisk />
-            <Stack spacing={5}>
-              <Group spacing="sm" grow>
+            <Stack gap={5}>
+              <Group gap="sm" grow>
                 <InputSelect
                   name="type"
                   label="Type"
@@ -306,12 +311,12 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                         value: type,
                       }))}
                       color="blue"
-                      styles={(theme) => ({
+                      styles={{
                         root: {
                           border: `1px solid ${
                             errors.checkpointType
-                              ? theme.colors.red[theme.fn.primaryShade()]
-                              : theme.colorScheme === 'dark'
+                              ? theme.colors.red[getPrimaryShade(theme, colorScheme)]
+                              : colorScheme === 'dark'
                               ? theme.colors.dark[4]
                               : theme.colors.gray[4]
                           }`,
@@ -321,7 +326,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                         label: {
                           padding: '2px 10px',
                         },
-                      })}
+                      }}
                       fullWidth
                     />
                   </Input.Wrapper>
@@ -339,7 +344,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               )}
               withAsterisk
               placeholder="Select a Category"
-              nothingFound="Nothing found"
+              nothingFoundMessage="Nothing found"
               data={categories}
               loading={loadingCategories}
               searchable
@@ -347,7 +352,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
             <InputTags
               name="tagsOnModels"
               label={
-                <Group spacing={4} noWrap>
+                <Group gap={4} wrap="nowrap">
                   <Input.Label>Tags</Input.Label>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                     <Text>
@@ -389,14 +394,14 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               />
             )}
           </Stack>
-        </ContainerGrid.Col>
-        <ContainerGrid.Col span={12}>
+        </ContainerGrid2.Col>
+        <ContainerGrid2.Col span={12}>
           <Stack>
             <Paper radius="md" p="xl" withBorder>
-              <ContainerGrid gutter="xs">
-                <ContainerGrid.Col xs={12} sm={6}>
-                  <Stack spacing="xs">
-                    <Text size="md" weight={500} sx={{ lineHeight: 1.2 }} mb="xs">
+              <ContainerGrid2 gutter="xs">
+                <ContainerGrid2.Col span={{ base: 12, xs: 6 }}>
+                  <Stack gap="xs">
+                    <Text size="md" fw={500} style={{ lineHeight: 1.2 }} mb="xs">
                       {`When using this model, I give permission for users to:`}
                     </Text>
                     <InputCheckbox name="allowNoCredit" label="Use without crediting me" />
@@ -407,24 +412,25 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                         label="Use different permissions on merges"
                       />
                     )}
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       Learn more about how licensing works by reading our{' '}
                       <Anchor
                         href="https://education.civitai.com/guide-to-licensing-options-on-civitai/ "
                         target="_blank"
                         rel="nofollow noreferrer"
+                        inherit
                       >
                         Licensing Guide
                       </Anchor>
                       .
                     </Text>
                   </Stack>
-                </ContainerGrid.Col>
-                <ContainerGrid.Col xs={12} sm={6}>
-                  <Stack spacing="xs">
-                    <Stack spacing={4}>
-                      <Group spacing={4} noWrap>
-                        <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
+                </ContainerGrid2.Col>
+                <ContainerGrid2.Col span={{ base: 12, xs: 6 }}>
+                  <Stack gap="xs">
+                    <Stack gap={4}>
+                      <Group gap={4} wrap="nowrap">
+                        <Text size="md" fw={500} style={{ lineHeight: 1.2 }}>
                           Commercial Use
                         </Text>
                         <InfoPopover size="xs" iconProps={{ size: 14 }}>
@@ -434,18 +440,17 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                           </Text>
                         </InfoPopover>
                       </Group>
-                      <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                      <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
                         Select all permissions you would like to apply to your model.
                       </Text>
                     </Stack>
                     <Checkbox.Group
-                      spacing="xs"
                       value={allowCommercialUse}
                       defaultValue={defaultValues.allowCommercialUse}
-                      onChange={(v: CommercialUse[]) => {
+                      onChange={(v) => {
                         if (v.includes(CommercialUse.Sell)) {
                           const deduped = new Set([
-                            ...v,
+                            ...(v as CommercialUse[]),
                             CommercialUse.RentCivit,
                             CommercialUse.Rent,
                           ]);
@@ -453,37 +458,44 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                             shouldDirty: true,
                           });
                         } else if (v.includes(CommercialUse.Rent)) {
-                          const deduped = new Set([...v, CommercialUse.RentCivit]);
+                          const deduped = new Set([
+                            ...(v as CommercialUse[]),
+                            CommercialUse.RentCivit,
+                          ]);
                           form.setValue('allowCommercialUse', Array.from(deduped), {
                             shouldDirty: true,
                           });
                         } else {
-                          form.setValue('allowCommercialUse', v, { shouldDirty: true });
+                          form.setValue('allowCommercialUse', v as CommercialUse[], {
+                            shouldDirty: true,
+                          });
                         }
                       }}
                     >
-                      {commercialUseOptions.map(({ value, label }) => (
-                        <Checkbox
-                          key={value}
-                          value={value}
-                          label={label}
-                          disabled={
-                            (value === CommercialUse.RentCivit &&
-                              (allowCommercialUse?.includes(CommercialUse.Sell) ||
-                                allowCommercialUse?.includes(CommercialUse.Rent))) ||
-                            (value === CommercialUse.Rent &&
-                              allowCommercialUse?.includes(CommercialUse.Sell))
-                          }
-                        />
-                      ))}
+                      <Group gap="xs">
+                        {commercialUseOptions.map(({ value, label }) => (
+                          <Checkbox
+                            key={value}
+                            value={value}
+                            label={label}
+                            disabled={
+                              (value === CommercialUse.RentCivit &&
+                                (allowCommercialUse?.includes(CommercialUse.Sell) ||
+                                  allowCommercialUse?.includes(CommercialUse.Rent))) ||
+                              (value === CommercialUse.Rent &&
+                                allowCommercialUse?.includes(CommercialUse.Sell))
+                            }
+                          />
+                        ))}
+                      </Group>
                     </Checkbox.Group>
                   </Stack>
-                </ContainerGrid.Col>
-              </ContainerGrid>
+                </ContainerGrid2.Col>
+              </ContainerGrid2>
             </Paper>
             <Paper radius="md" p="xl" withBorder>
-              <Stack spacing="xs">
-                <Text size="md" weight={500}>
+              <Stack gap="xs">
+                <Text size="md" fw={500}>
                   This resource:
                 </Text>
                 <InputRadioGroup
@@ -498,8 +510,10 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                     form.setValue('sfwOnly', minor ? true : value === 'true');
                   }}
                 >
-                  <Radio value="true" label="Yes" disabled={isLocked('poi')} />
-                  <Radio value="false" label="No" disabled={isLocked('poi')} />
+                  <Group mt="xs">
+                    <Radio value="true" label="Yes" disabled={isLocked('poi')} />
+                    <Radio value="false" label="No" disabled={isLocked('poi')} />
+                  </Group>
                 </InputRadioGroup>
                 {/* TODO more clarification here. disable? */}
                 {poi === 'true' && (
@@ -555,16 +569,16 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
             {hasPoiInNsfw && (
               <>
                 <Alert color="red" pl={10}>
-                  <Group noWrap spacing={10}>
+                  <Group wrap="nowrap" gap={10}>
                     <ThemeIcon color="red">
                       <IconExclamationMark />
                     </ThemeIcon>
-                    <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                    <Text size="xs" style={{ lineHeight: 1.2 }}>
                       Mature content depicting actual people is not permitted.
                     </Text>
                   </Group>
                 </Alert>
-                <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
                   Please revise the content of this listing to ensure no actual person is depicted
                   in an mature context out of respect for the individual.
                 </Text>
@@ -573,17 +587,17 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
             {hasSfwOnlyNsfw && (
               <>
                 <Alert color="red" pl={10}>
-                  <Group noWrap spacing={10}>
+                  <Group wrap="nowrap" gap={10}>
                     <ThemeIcon color="red">
                       <IconExclamationMark />
                     </ThemeIcon>
-                    <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                    <Text size="xs" style={{ lineHeight: 1.2 }}>
                       This resource is intended to produce mature themes and cannot be used for NSFW
                       generation. These options are mutually exclusive.
                     </Text>
                   </Group>
                 </Alert>
-                <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
                   Please revise the content of this listing.
                 </Text>
               </>
@@ -597,16 +611,14 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
 
             {isTrained && isDraft && features.privateModels && (
               <InputChipGroup
-                grow
-                spacing="sm"
                 name="availability"
-                onChangeCapture={async (event) => {
+                onChange={async (v) => {
                   // @ts-ignore eslint-disable-next-line
-                  const value = event.target.value as Availability;
+                  const value = v as Availability;
                   if (value === Availability.Private) {
                     // Open automatic configurator modal:
-                    event.preventDefault();
-                    event.stopPropagation();
+                    // event.preventDefault();
+                    // event.stopPropagation();
 
                     const { attestation } = form.getValues();
 
@@ -645,34 +657,36 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   }
                 }}
               >
-                {Object.keys(availabilityDetails).map((type) => {
-                  const details = availabilityDetails[type as keyof typeof availabilityDetails];
-                  const Wrap = ({ children }: { children: React.ReactNode }) =>
-                    type === 'Private' ? (
-                      <SubscriptionRequiredBlock feature="private-models">
-                        {children}
-                      </SubscriptionRequiredBlock>
-                    ) : (
-                      <>{children}</>
-                    );
+                <Group grow gap="sm">
+                  {Object.keys(availabilityDetails).map((type) => {
+                    const details = availabilityDetails[type as keyof typeof availabilityDetails];
+                    const Wrap = ({ children }: { children: React.ReactNode }) =>
+                      type === 'Private' ? (
+                        <SubscriptionRequiredBlock feature="private-models">
+                          {children}
+                        </SubscriptionRequiredBlock>
+                      ) : (
+                        <>{children}</>
+                      );
 
-                  return (
-                    <Wrap key={type}>
-                      <Chip value={type} {...chipProps}>
-                        <Stack spacing={4} align="center" w="100%" px="sm">
-                          {details.icon}
-                          <Text weight="bold">{details.label}</Text>
-                          <Text className="text-wrap text-center">{details.description}</Text>
-                        </Stack>
-                      </Chip>
-                    </Wrap>
-                  );
-                })}
+                    return (
+                      <Wrap key={type}>
+                        <Chip value={type} {...chipProps}>
+                          <Stack gap={4} align="center" w="100%" px="sm">
+                            {details.icon}
+                            <Text fw="bold">{details.label}</Text>
+                            <Text className="text-wrap text-center">{details.description}</Text>
+                          </Stack>
+                        </Chip>
+                      </Wrap>
+                    );
+                  })}
+                </Group>
               </InputChipGroup>
             )}
           </Stack>
-        </ContainerGrid.Col>
-      </ContainerGrid>
+        </ContainerGrid2.Col>
+      </ContainerGrid2>
       {typeof children === 'function'
         ? children({ loading: upsertModelMutation.isLoading })
         : children}
@@ -692,7 +706,7 @@ export const PrivateModelAutomaticSetup = ({
   ...form
 }: ModelUpsertSchema & { modelVersionId?: number }) => {
   const dialog = useDialogContext();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const handleClose = dialog.onClose;
   const router = useRouter();
   const privateModelFromTrainingMutation = trpc.model.privateModelFromTraining.useMutation();
@@ -727,13 +741,13 @@ export const PrivateModelAutomaticSetup = ({
 
   return (
     <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
-      <Group position="apart" mb="md">
-        <Text size="lg" weight="bold">
+      <Group justify="space-between" mb="md">
+        <Text size="lg" fw="bold">
           You are about to create a private model
         </Text>
       </Group>
       <Divider mx="-lg" mb="md" />
-      <Stack spacing="md">
+      <Stack gap="md">
         <Text>
           Private models are only visible to you and are not publicly accessible. You can Publish a
           private model at any time. By continuing, the model setup wizard will complete, and you

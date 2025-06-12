@@ -90,7 +90,7 @@ export default function ManageClubMembers({
   if (loading) return <PageLoader />;
 
   return (
-    <Stack spacing="md">
+    <Stack gap="md">
       <Title order={2}>Manage Club Resources</Title>
       <Text>
         You can manage your club resources here. You can manage resource tiers, edit, and delete

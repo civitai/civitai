@@ -89,7 +89,7 @@ export default function TrainWizard() {
         <NotFound />
       ) : (
         <Stack pb="xl">
-          <Group spacing={8} noWrap>
+          <Group gap={8} wrap="nowrap">
             <Title order={2}>Train a LoRA</Title>
             <FeatureIntroductionHelpButton
               feature="model-training"

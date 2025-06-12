@@ -1,7 +1,16 @@
-import { Badge, Group, HoverCard, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
+import {
+  Badge,
+  Group,
+  HoverCard,
+  Stack,
+  Text,
+  ThemeIcon,
+  UnstyledButton,
+  useComputedColorScheme,
+} from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
@@ -12,17 +21,18 @@ import { abbreviateNumber } from '../../utils/number-helpers';
 import { IconBadge } from '../IconBadge/IconBadge';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
+import clsx from 'clsx';
 
 const IMAGE_CARD_WIDTH = 450;
 
 export function ClubCard({ data }: Props) {
-  const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { id, name, coverImage, user, stats } = data;
+  const colorScheme = useComputedColorScheme('dark');
 
   return (
     <FeedCard href={`/clubs/${id}`} aspectRatio="square">
-      <div className={classes.root}>
+      <div className={cardClasses.root}>
         {/* <ImageGuard
           images={coverImage ? [coverImage] : []}
           connect={{ entityId: id, entityType: 'club' }}
@@ -31,12 +41,12 @@ export function ClubCard({ data }: Props) {
               {({ safe }) => (
                 <>
                   <Group
-                    spacing={4}
-                    position="apart"
-                    className={cx(classes.contentOverlay, classes.top)}
-                    noWrap
+                    gap={4}
+                    justify="space-between"
+                    className={cx(cardClasses.contentOverlay, cardClasses.top)}
+                    wrap="nowrap"
                   >
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <ImageGuard.ToggleConnect position="static" />
                     </Group>
                     {data.nsfw && (
@@ -57,13 +67,13 @@ export function ClubCard({ data }: Props) {
                         }
                         type={image.type}
                         width={IMAGE_CARD_WIDTH}
-                        className={classes.image}
+                        className={cardClasses.image}
                       />
                     ) : (
                       <MediaHash {...coverImage} />
                     )
                   ) : (
-                    <Text color="dimmed">This club has no cover image</Text>
+                    <Text c="dimmed">This club has no cover image</Text>
                   )}
                 </>
               )}
@@ -71,14 +81,14 @@ export function ClubCard({ data }: Props) {
           )}
         /> */}
         <Stack
-          className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
-          spacing="sm"
+          className={clsx(cardClasses.contentOverlay, cardClasses.bottom, cardClasses.fullOverlay)}
+          gap="sm"
         >
           {user ? (
             user?.id !== -1 && (
               <UnstyledButton
-                sx={{ color: 'white', alignSelf: 'flex-start' }}
-                onClick={(e) => {
+                style={{ color: 'white', alignSelf: 'flex-start' }}
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
 
@@ -92,8 +102,8 @@ export function ClubCard({ data }: Props) {
             <UserAvatar user={user} />
           )}
 
-          <Group position="apart" align="start" spacing={8}>
-            <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+          <Group justify="space-between" align="start" gap={8}>
+            <Text size="xl" fw={700} lineClamp={2} lh={1.2}>
               {name}
             </Text>
 
@@ -105,8 +115,8 @@ export function ClubCard({ data }: Props) {
                   </ThemeIcon>
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
-                  <Stack spacing={0}>
-                    <Text color="yellow" weight={590}>
+                  <Stack gap={0}>
+                    <Text c="yellow" fw={590}>
                       Pending scan
                     </Text>
                     <Text size="sm">
@@ -118,18 +128,20 @@ export function ClubCard({ data }: Props) {
               </HoverCard>
             )}
           </Group>
-          <Group spacing={8} position="apart">
+          <Group gap={8} justify="space-between">
             <Badge
-              className={classes.chip}
-              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+              className={cardClasses.chip}
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.31)',
+              }}
               radius="xl"
               px={8}
               variant="filled"
             >
-              <Group spacing="xs" noWrap>
+              <Group gap="xs" wrap="nowrap">
                 <IconBadge
                   icon={<IconUsers size={14} />}
-                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore
@@ -139,7 +151,7 @@ export function ClubCard({ data }: Props) {
                 </IconBadge>
                 <IconBadge
                   icon={<IconArticle size={14} />}
-                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore
@@ -149,7 +161,7 @@ export function ClubCard({ data }: Props) {
                 </IconBadge>
                 <IconBadge
                   icon={<IconFiles size={14} />}
-                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={colorScheme === 'dark' ? 'dark' : 'gray.0'}
                   p={0}
                   size="lg"
                   // @ts-ignore

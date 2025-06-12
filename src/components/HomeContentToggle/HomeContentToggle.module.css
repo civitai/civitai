@@ -1,0 +1,85 @@
+.tabHighlight {
+  background-color: light-dark(
+    alpha(var(--mantine-color-yellow-3), 0.3),
+    alpha(var(--mantine-color-yellow-3), 0.1)
+  );
+  background-image: linear-gradient(90deg,
+      alpha(var(--mantine-color-yellow-4), 0),
+      alpha(var(--mantine-color-yellow-4), 0.1),
+      alpha(var(--mantine-color-yellow-4), 0));
+  background-size: 50px;
+  background-position: -300% 50%;
+  background-repeat: no-repeat;
+  color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3));
+  animation: global(button-highlight) 5s linear infinite;
+  will-change: background-position;
+}
+
+.tabRainbow {
+  background: linear-gradient(90deg,
+      rgba(255, 0, 0, 1) 0%,
+      rgba(255, 154, 0, 1) 10%,
+      rgba(208, 222, 33, 1) 20%,
+      rgba(79, 220, 74, 1) 30%,
+      rgba(63, 218, 216, 1) 40%,
+      rgba(47, 201, 226, 1) 50%,
+      rgba(28, 127, 238, 1) 60%,
+      rgba(95, 21, 242, 1) 70%,
+      rgba(186, 12, 248, 1) 80%,
+      rgba(251, 7, 217, 1) 90%,
+      rgba(255, 0, 0, 1) 100%) 0/200%;
+
+  &:hover {
+    background: linear-gradient(90deg,
+        rgba(255, 0, 0, 1) 0%,
+        rgba(255, 154, 0, 1) 10%,
+        rgba(208, 222, 33, 1) 20%,
+        rgba(79, 220, 74, 1) 30%,
+        rgba(63, 218, 216, 1) 40%,
+        rgba(47, 201, 226, 1) 50%,
+        rgba(28, 127, 238, 1) 60%,
+        rgba(95, 21, 242, 1) 70%,
+        rgba(186, 12, 248, 1) 80%,
+        rgba(251, 7, 217, 1) 90%,
+        rgba(255, 0, 0, 1) 100%) 0/200%;
+  }
+
+  &[data-active] {
+    background: linear-gradient(90deg,
+        rgba(255, 0, 0, 1) 0%,
+        rgba(255, 154, 0, 1) 10%,
+        rgba(208, 222, 33, 1) 20%,
+        rgba(79, 220, 74, 1) 30%,
+        rgba(63, 218, 216, 1) 40%,
+        rgba(47, 201, 226, 1) 50%,
+        rgba(28, 127, 238, 1) 60%,
+        rgba(95, 21, 242, 1) 70%,
+        rgba(186, 12, 248, 1) 80%,
+        rgba(251, 7, 217, 1) 90%,
+        rgba(255, 0, 0, 1) 100%) 0/200%;
+  }
+}
+
+.moreButton {
+  padding: 8px 10px 8px 16px;
+  font-size: 16px;
+  font-weight: 500;
+  display: none !important;
+
+  &[data-active="true"] {
+    background: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4));
+    color: light-dark(var(--mantine-color-gray-8), var(--mantine-color-white));
+  }
+
+  @container (min-width: theme('screens.md')) and (max-width: theme('screens.xl')) {
+    display: block !important;
+  }
+}
+
+.groupedOptions {
+  display: block !important;
+
+  @container (min-width: theme('screens.md')) and (max-width: theme('screens.xl')) {
+    display: none !important;
+  }
+}

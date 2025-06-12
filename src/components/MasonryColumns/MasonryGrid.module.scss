@@ -1,0 +1,13 @@
+.empty {
+  // The height will be set inline via style={{ height: columnWidth }}
+}
+
+.grid {
+  display: grid;
+  justify-content: center;
+  /* The following will be set inline via style:
+     grid-template-columns,
+     column-gap,
+     row-gap
+  */
+}

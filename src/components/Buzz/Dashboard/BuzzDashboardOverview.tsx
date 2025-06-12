@@ -12,6 +12,7 @@ import {
   Stack,
   Text,
   Title,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconArrowRight, IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import {
@@ -31,7 +32,8 @@ import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
-import { useBuzzDashboardStyles } from '../buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
+import Link from 'next/link';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -47,7 +49,7 @@ const options = {
 const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 
 export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
-  const { classes, theme } = useBuzzDashboardStyles();
+  const theme = useMantineTheme();
   // Right now, sadly, we neeed to use two separate queries for user and generation transactions.
   // If this ever changes, that'd be awesome. But for now, we need to do this.
   const [transactionType, setTransactionType] = React.useState<'user' | 'generation'>('user');
@@ -134,11 +136,17 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
 
   return (
     <Grid>
-      <Grid.Col xs={12} md={7} sm={6}>
+      <Grid.Col
+        span={{
+          base: 12,
+          sm: 6,
+          md: 7,
+        }}
+      >
         <Stack h="100%">
-          <Paper withBorder p="lg" radius="md" className={classes.tileCard} h="100%">
-            <Stack spacing="xl" h="100%">
-              <Stack spacing={0} mb="auto">
+          <Paper p="lg" radius="md" className={classes.tileCard} h="100%">
+            <Stack gap="xl" h="100%">
+              <Stack gap={0} mb="auto">
                 <Title order={3}>Current Buzz</Title>
                 <Group>
                   <UserBuzz
@@ -160,9 +168,9 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                     </Popover.Target>
                     <Popover.Dropdown>
                       <Stack>
-                        <Group noWrap>
+                        <Group wrap="nowrap">
                           <Text>
-                            <Text component="span" weight="bold" color="yellow.7">
+                            <Text component="span" fw="bold" color="yellow.7">
                               <IconBolt
                                 color="yellow.7"
                                 style={{ fill: theme.colors.yellow[7], display: 'inline' }}
@@ -182,7 +190,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                           <List.Item>Bounties</List.Item>
                         </List>
                         <Text>
-                          <Text component="span" weight="bold" color="blue.4">
+                          <Text component="span" fw="bold" color="blue.4">
                             <IconBolt
                               color="blue.4"
                               style={{ fill: theme.colors.blue[4], display: 'inline' }}
@@ -199,7 +207,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                         </List>
 
                         <Anchor
-                          target="blank"
+                          target="_blank"
                           href="https://education.civitai.com/civitais-guide-to-on-site-currency-buzz-⚡/#types-of-buzz"
                           size="xs"
                         >
@@ -234,7 +242,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
 
                 {!isLoadingReport && !report.length && (
                   <Center>
-                    <Text color="dimmed" mt="md">
+                    <Text c="dimmed" mt="md">
                       We found no data on the provided timeframe.
                     </Text>
                   </Center>
@@ -250,7 +258,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                       datasets,
                     }}
                   />
-                  <Text color="yellow.7" size="xs">
+                  <Text c="yellow.7" size="xs">
                     All times are UTC
                   </Text>
                 </>
@@ -259,16 +267,15 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
           </Paper>
         </Stack>
       </Grid.Col>
-      <Grid.Col xs={12} md={5} sm={6}>
-        <Paper
-          withBorder
-          p="lg"
-          radius="md"
-          h="100%"
-          className={classes.tileCard}
-          style={{ flex: 1 }}
-        >
-          <Stack spacing="xs">
+      <Grid.Col
+        span={{
+          base: 12,
+          sm: 6,
+          md: 5,
+        }}
+      >
+        <Paper p="lg" radius="md" h="100%" className={classes.tileCard} style={{ flex: 1 }}>
+          <Stack gap="xs">
             <Title order={3}>Recent Transactions</Title>
             <SegmentedControl
               value={transactionType}
@@ -278,24 +285,24 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                 { label: 'Blue', value: 'generation' },
               ]}
             />
-            <Text component="a" variant="link" href={`/user/transactions`} size="xs">
-              <Group spacing={2}>
+            <Anchor component={Link} href="/user/transactions" size="xs">
+              <Group gap={2}>
                 <IconArrowRight size={18} />
                 <span>View all</span>
               </Group>
-            </Text>
+            </Anchor>
             {transactions.length ? (
-              <ScrollArea.Autosize maxHeight={480} mt="md" key={transactionType}>
-                <Stack spacing={8} mr={14}>
+              <ScrollArea.Autosize mah={480} mt="md" key={transactionType}>
+                <Stack gap={8} mr={14}>
                   {transactions.map((transaction, index) => {
                     const { amount, date } = transaction;
                     const isDebit = amount < 0;
 
                     return (
-                      <Stack key={index + '@' + date.toISOString()} spacing={4}>
-                        <Group position="apart" noWrap align="flex-start">
-                          <Stack spacing={0}>
-                            <Text size="sm" weight="500" lh={1.2}>
+                      <Stack key={index + '@' + date.toISOString()} gap={4}>
+                        <Group justify="space-between" wrap="nowrap" align="flex-start">
+                          <Stack gap={0}>
+                            <Text size="sm" fw="500" lh={1.2}>
                               {INCLUDE_DESCRIPTION.includes(transaction.type) &&
                               transaction.description ? (
                                 <>{transaction.description}</>
@@ -303,14 +310,14 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                                 <>{getDisplayName(TransactionType[transaction.type])}</>
                               )}
                             </Text>
-                            <Text size="xs" color="dimmed">
+                            <Text size="xs" c="dimmed">
                               <DaysFromNow date={date} />
                             </Text>
                           </Stack>
-                          <Text color={isDebit ? 'red' : 'green'}>
-                            <Group spacing={2} noWrap>
+                          <Text c={isDebit ? 'red' : 'green'}>
+                            <Group gap={2} wrap="nowrap">
                               <IconBolt size={16} fill="currentColor" />
-                              <Text size="lg" sx={{ fontVariantNumeric: 'tabular-nums' }} span>
+                              <Text size="lg" style={{ fontVariantNumeric: 'tabular-nums' }} span>
                                 {amount.toLocaleString()}
                               </Text>
                             </Group>
@@ -326,7 +333,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                 <Loader />
               </Center>
             ) : (
-              <Text color="dimmed" mt="md">
+              <Text c="dimmed" mt="md">
                 No transactions yet.
               </Text>
             )}

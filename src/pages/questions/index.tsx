@@ -48,8 +48,8 @@ export default function QuestionsList() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/questions`, rel: 'canonical' }]}
       />
       <Container pb="xl">
-        <Stack spacing="md">
-          <Group position="apart">
+        <Stack gap="md">
+          <Group justify="space-between">
             <Title style={{ position: 'relative' }}>
               Questions{' '}
               <Badge color="yellow" size="xs" style={{ position: 'absolute', top: 5, right: -45 }}>
@@ -67,15 +67,15 @@ export default function QuestionsList() {
               Have a question about stable diffusion, fine tuning models, or just how best to
               utilize a prompt? Ask it here! Clever people in the community can help you get the
               most out of your creations! Lost?{' '}
-              <Text variant="link" style={{ cursor: 'pointer' }} onClick={openModal} span>
+              <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={openModal} span>
                 {`Here's how this works...`}
               </Text>
             </Text>
           </Alert>
           <Questions>
-            <Group position="apart">
+            <Group justify="space-between">
               <Questions.Sort />
-              <Group spacing="xs">
+              <Group gap="xs">
                 <Questions.Period />
                 <Questions.Filter />
               </Group>

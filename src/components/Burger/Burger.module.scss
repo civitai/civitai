@@ -12,7 +12,7 @@ $down: round(calc($sizeValue / -3));
   align-items: center;
 }
 
-:global(.dark) {
+:global([data-mantine-color-scheme="dark"]) {
   .burger {
     &, &::before, &::after {
       background-color: theme('colors.white');

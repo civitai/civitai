@@ -1,4 +1,13 @@
-import { Text, Stack, Collapse, ScrollArea, Anchor } from '@mantine/core';
+import {
+  Text,
+  Stack,
+  Collapse,
+  ScrollArea,
+  Anchor,
+  useMantineTheme,
+  useComputedColorScheme,
+  rgba,
+} from '@mantine/core';
 import { useState } from 'react';
 
 import type { NestedHeading } from '~/hooks/useHeadingsData';
@@ -29,23 +38,30 @@ function Heading({
   const isActive = !!activeId && activeId === heading.id; // || heading.items.some((item) => item.id === activeId);
   const isFirstLevel = parentIndex === 1;
   const labelSize = isFirstLevel ? 'md' : 'sm';
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   return (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       <Anchor
         href={`#${heading.id}`}
+        underline="never"
         variant="text"
-        sx={(theme) => ({
+        style={{
           padding: theme.spacing.sm,
-          paddingLeft: isFirstLevel ? theme.spacing.sm : `${parentIndex * theme.spacing.md}px`,
-          backgroundColor: isActive ? theme.fn.rgba(theme.colors.blue[5], 0.2) : 'transparent',
+          paddingLeft: isFirstLevel
+            ? theme.spacing.sm
+            : `calc(${parentIndex} * ${theme.spacing.sm})`,
+          backgroundColor: isActive ? rgba(theme.colors.blue[5], 0.2) : 'transparent',
           color: isActive
-            ? theme.colorScheme === 'dark'
+            ? colorScheme === 'dark'
               ? theme.colors.blue[2]
               : theme.colors.blue[6]
-            : undefined,
-        })}
-        onClick={(event) => {
+            : colorScheme === 'dark'
+            ? theme.colors.dark[0]
+            : theme.black,
+        }}
+        onClick={(event: React.MouseEvent) => {
           event.preventDefault();
 
           document.getElementById(heading.id)?.scrollIntoView({

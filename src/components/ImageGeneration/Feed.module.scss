@@ -1,0 +1,22 @@
+.grid {
+  display: grid;
+  grid-template-rows: masonry;
+  gap: var(--mantine-spacing-xs);
+  grid-template-columns: 1fr;
+
+  @container (min-width: 290px) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  @container (min-width: 650px) {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  @container (min-width: 900px) {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  @container (min-width: 1200px) {
+    grid-template-columns: repeat(auto-fill, minmax(256px, 1fr));
+  }
+}

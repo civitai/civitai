@@ -1,0 +1,54 @@
+.chatMessage {
+  border-radius: var(--mantine-spacing-xs);
+  padding: calc(var(--mantine-spacing-xs) / 2) var(--mantine-spacing-xs);
+  width: max-content;
+  max-width: 70%;
+  white-space: pre-line;
+}
+
+.replyMessage {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  overflow-wrap: normal;
+  background-color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-7));
+  font-size: var(--mantine-spacing-sm);
+}
+
+.myDetails {
+  flex-direction: row-reverse;
+}
+
+.myMessage {
+  background-color: light-dark(var(--mantine-color-blue-4), var(--mantine-color-blue-8));
+}
+
+.otherMessage {
+  background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-3));
+}
+
+.highlightRow {
+  &:hover {
+    >button {
+      display: initial;
+    }
+  }
+}
+
+.chatInput {
+  border-radius: 0;
+  border-left: 0;
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.isTypingBox {
+  position: sticky;
+  bottom: 0;
+  display: inline-flex;
+  // Uncomment the following lines if needed:
+  // backdrop-filter: blur(16px);
+  // background-color: light-dark(
+  //   rgba(var(--mantine-color-green-7), 0.1),
+  //   rgba(var(--mantine-color-green-2), 0.1)
+  // );
+}

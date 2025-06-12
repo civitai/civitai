@@ -1,56 +1,56 @@
 import type { GroupProps } from '@mantine/core';
 import {
+  Box,
+  Button,
+  Center,
+  Divider,
   Group,
-  ActionIcon,
+  Loader,
   Menu,
   Stack,
   Text,
-  Button,
-  Box,
-  createStyles,
-  UnstyledButton,
-  Divider,
   ThemeIcon,
-  Center,
-  Loader,
+  UnstyledButton,
 } from '@mantine/core';
-import { useEffect, useState } from 'react';
-import { CreateComment } from './CreateComment';
-import { CommentForm } from './CommentForm';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
-  IconDotsVertical,
-  IconTrash,
-  IconEdit,
-  IconFlag,
   IconArrowBackUp,
+  IconDotsVertical,
+  IconEdit,
   IconEye,
   IconEyeOff,
+  IconFlag,
   IconPinned,
   IconPinnedOff,
+  IconTrash,
 } from '@tabler/icons-react';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ReportEntity } from '~/server/schema/report.schema';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import clsx from 'clsx';
+import React, { useEffect, useState } from 'react';
 import { create } from 'zustand';
-import React from 'react';
-import { CommentReactions } from './CommentReactions';
-import { DeleteComment } from './DeleteComment';
-import { CommentProvider, useCommentV2Context } from './CommentProvider';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
-import { useMutateComment } from '../commentv2.utils';
-import { constants } from '../../../server/common/constants';
-import { LineClamp } from '~/components/LineClamp/LineClamp';
+import {
+  CommentsProvider,
+  useCommentsContext,
+  useRootThreadContext,
+} from '~/components/CommentsV2/CommentsProvider';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { LineClamp } from '~/components/LineClamp/LineClamp';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { type Comment } from '~/server/services/commentsv2.service';
 import { trpc } from '~/utils/trpc';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  useRootThreadContext,
-  useCommentsContext,
-  CommentsProvider,
-} from '~/components/CommentsV2/CommentsProvider';
+import { constants } from '../../../server/common/constants';
+import { useMutateComment } from '../commentv2.utils';
+import classes from './Comment.module.css';
+import { CommentForm } from './CommentForm';
+import { CommentProvider, useCommentV2Context } from './CommentProvider';
+import { CommentReactions } from './CommentReactions';
+import { CreateComment } from './CreateComment';
+import { DeleteComment } from './DeleteComment';
 
 type Store = {
   id?: number;
@@ -94,8 +94,6 @@ export function CommentContent({
     entityType: 'comment',
   });
 
-  const { classes, cx } = useCommentStyles();
-
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
 
@@ -134,14 +132,14 @@ export function CommentContent({
     <Group
       id={`comment-${comment.id}`}
       align="flex-start"
-      noWrap
+      wrap="nowrap"
       {...groupProps}
-      spacing="sm"
-      className={cx(groupProps.className, classes.groupWrap, {
+      gap="sm"
+      className={clsx(groupProps.className, classes.groupWrap, {
         [classes.highlightedComment]: highlightProp || isHighlighted,
       })}
     >
-      <Group spacing="xs">
+      <Group gap="xs">
         {/* {replyCount > 0 && !viewOnly && !isExpanded && (
           <UnstyledButton onClick={onToggleReplies}>
             <IconArrowsMaximize size={16} />
@@ -150,10 +148,10 @@ export function CommentContent({
         <UserAvatar user={comment.user} size="sm" linkToProfile />
       </Group>
 
-      <Stack spacing={0} style={{ flex: 1 }}>
-        <Group position="apart">
+      <Stack gap={0} style={{ flex: 1 }}>
+        <Group justify="space-between">
           {/* AVATAR */}
-          <Group spacing={8} align="center">
+          <Group gap={8} align="center">
             <UserAvatar
               user={comment.user}
               size="md"
@@ -162,7 +160,7 @@ export function CommentContent({
               withUsername
               badge={badge ? <CommentBadge {...badge} /> : null}
             />
-            <Text color="dimmed" size="xs" mt={2}>
+            <Text c="dimmed" size="xs" mt={2}>
               <DaysFromNow date={comment.createdAt} />
             </Text>
             {comment.pinnedAt && (
@@ -175,9 +173,9 @@ export function CommentContent({
           {/* CONTROLS */}
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
-              <ActionIcon size="xs" variant="subtle">
+              <LegacyActionIcon size="xs" variant="subtle">
                 <IconDotsVertical size={14} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
               {canDelete && (
@@ -185,7 +183,7 @@ export function CommentContent({
                   <DeleteComment id={comment.id} entityId={entityId} entityType={entityType}>
                     {({ onClick }) => (
                       <Menu.Item
-                        icon={<IconTrash size={14} stroke={1.5} />}
+                        leftSection={<IconTrash size={14} stroke={1.5} />}
                         color="red"
                         onClick={onClick}
                       >
@@ -195,7 +193,7 @@ export function CommentContent({
                   </DeleteComment>
                   {canEdit && (
                     <Menu.Item
-                      icon={<IconEdit size={14} stroke={1.5} />}
+                      leftSection={<IconEdit size={14} stroke={1.5} />}
                       onClick={() => setId(comment.id)}
                     >
                       Edit comment
@@ -205,7 +203,7 @@ export function CommentContent({
               )}
               {canHide && (
                 <Menu.Item
-                  icon={
+                  leftSection={
                     comment.hidden ? (
                       <IconEye size={14} stroke={1.5} />
                     ) : (
@@ -219,7 +217,7 @@ export function CommentContent({
               )}
               {currentUser?.isModerator && (
                 <Menu.Item
-                  icon={
+                  leftSection={
                     comment.pinnedAt ? (
                       <IconPinnedOff size={14} stroke={1.5} />
                     ) : (
@@ -234,7 +232,7 @@ export function CommentContent({
               {canReport && (
                 <LoginRedirect reason="report-model">
                   <Menu.Item
-                    icon={<IconFlag size={14} stroke={1.5} />}
+                    leftSection={<IconFlag size={14} stroke={1.5} />}
                     onClick={() =>
                       openReportModal({
                         entityType: ReportEntity.CommentV2,
@@ -250,31 +248,30 @@ export function CommentContent({
           </Menu>
         </Group>
         {/* COMMENT / EDIT COMMENT */}
-        <Stack style={{ flex: 1 }} spacing={4}>
+        <Stack style={{ flex: 1 }} gap={4}>
           {!editing ? (
             <>
               <Box my={5}>
                 <LineClamp lineClamp={3}>
                   <RenderHtml
                     html={comment.content}
-                    sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                    className="text-sm"
                     allowCustomStyles={false}
                   />
                 </LineClamp>
               </Box>
               {/* COMMENT INTERACTION */}
-              <Group spacing={4}>
+              <Group gap={4}>
                 <CommentReactions comment={comment} />
                 {canReply && !viewOnly && (
                   <Button
                     variant="subtle"
-                    size="xs"
                     radius="xl"
                     onClick={() => setReplying(true)}
-                    compact
+                    size="compact-xs"
                     color="gray"
                   >
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <IconArrowBackUp size={14} />
                       Reply
                     </Group>
@@ -301,8 +298,8 @@ export function CommentContent({
         {replyCount > 0 && !viewOnly && !isExpanded && (
           <Divider
             label={
-              <Group spacing="xs" align="center">
-                <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onToggleReplies}>
+              <Group gap="xs" align="center">
+                <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={onToggleReplies}>
                   Show {replyCount} More
                 </Text>
               </Group>
@@ -319,40 +316,8 @@ export function CommentContent({
   );
 }
 
-export const useCommentStyles = createStyles((theme) => ({
-  highlightedComment: {
-    background: theme.fn.rgba(theme.colors.blue[5], 0.2),
-    margin: `-${theme.spacing.xs}px`,
-    padding: `${theme.spacing.xs}px`,
-    borderRadius: theme.radius.sm,
-  },
-  groupWrap: {
-    position: 'relative',
-  },
-  repliesIndicator: {
-    position: 'absolute',
-    top: 26 + 8,
-    width: 2,
-    height: 'calc(100% - 26px - 8px)',
-    background: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.31)',
-    // Size of the image / 2, minus the size of the border / 2
-    left: 26 / 2 - 2 / 2,
-    '&:hover': {
-      background: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)',
-    },
-  },
-  replyInset: {
-    // Size of the image / 2, minus the size of the border / 2
-    marginLeft: -12,
-  },
-  rootCommentReplyInset: {
-    paddingLeft: 46,
-  },
-}));
-
 function CommentReplies({ commentId, userId }: { commentId: number; userId?: number }) {
   const { level, badges } = useCommentsContext();
-  const { classes } = useCommentStyles();
 
   return (
     <Stack mt="md" className={classes.replyInset}>
@@ -365,7 +330,7 @@ function CommentReplies({ commentId, userId }: { commentId: number; userId?: num
         {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
           isLoading ? (
             <Center>
-              <Loader variant="bars" />
+              <Loader type="bars" />
             </Center>
           ) : (
             <Stack>
@@ -375,8 +340,8 @@ function CommentReplies({ commentId, userId }: { commentId: number; userId?: num
               {!!remaining && !showMore && (
                 <Divider
                   label={
-                    <Group spacing="xs" align="center">
-                      <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                    <Group gap="xs" align="center">
+                      <Text c="blue.4" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                         Show {remaining} More
                       </Text>
                     </Group>

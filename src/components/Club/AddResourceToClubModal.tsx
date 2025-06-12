@@ -37,7 +37,7 @@ type Props = {
 };
 
 export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const { upsertClubResource, upsertingResource } = useMutateClub();
   const [resource, setResource] = React.useState<
     SearchIndexDataMap['models'] | SearchIndexDataMap['articles'] | null
@@ -129,7 +129,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
         }
 
         return (
-          <Stack spacing="xs">
+          <Stack gap="xs">
             {/* <Select
               label="Select model version"
               onClick={(e) => {
@@ -202,7 +202,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
 
           {entityId && entityType && isLoadingResourceDetails && (
             <Center>
-              <Loader variant="bars" />
+              <Loader type="bars" />
             </Center>
           )}
 
@@ -210,7 +210,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
             <InputClubResourceManagementInput name="clubs" />
           )}
           {clubId && (
-            <Stack spacing="sm">
+            <Stack gap="sm">
               <Divider mx="-lg" mb="md" />
               <Checkbox
                 checked={createClubPost}

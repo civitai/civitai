@@ -11,7 +11,7 @@ export function SocialLabel({ type }: Props) {
   const { Icon, label } = socialItems[type] ?? {};
 
   return (
-    <Group spacing="xs">
+    <Group gap="xs">
       {Icon && <Icon size={16} />}
       {label}
     </Group>

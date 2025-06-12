@@ -12,9 +12,8 @@ import {
   Stack,
   Textarea,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
-import type { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
+import type { TooltipProps } from '@mantine/core';
 import {
   IconExternalLink,
   IconPlus,
@@ -41,6 +40,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import type { SanityImage } from '~/server/routers/research.router';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -94,7 +94,7 @@ export default function RaterSanity() {
               shadow="lg"
               p={0}
               pr="xs"
-              sx={{
+              style={{
                 display: 'inline-flex',
                 float: 'right',
                 alignSelf: 'flex-end',
@@ -155,7 +155,6 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const selected = useStore(useCallback((state) => state.selected[image.id] ?? false, [image.id]));
   const toggleSelected = useStore((state) => state.toggleSelected);
 
-  const theme = useMantineTheme();
   const entityUrl = getImageEntityUrl(image);
 
   const { ref: inViewRef, inView } = useInView();
@@ -167,27 +166,28 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
       shadow="sm"
       withBorder
       ref={mergedRef as any}
-      style={{
+      style={(theme) => ({
         minHeight: height,
         outline: selected
-          ? `3px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`
+          ? `3px solid ${
+              theme.colors[theme.primaryColor][
+                typeof theme.primaryShade === 'number'
+                  ? theme.primaryShade
+                  : theme.primaryShade.dark
+              ]
+            }`
           : undefined,
-      }}
+      })}
       onClick={() => toggleSelected(image.id)}
     >
       <>
-        <Card.Section sx={{ height: `${height}px` }}>
+        <Card.Section style={{ height: `${height}px` }}>
           {inView && (
             <>
               <Checkbox
                 checked={selected}
                 size="lg"
-                sx={{
-                  position: 'absolute',
-                  top: 5,
-                  right: 5,
-                  zIndex: 9,
-                }}
+                className="absolute left-[5px] top-[5px] z-10"
               />
               <EdgeMedia
                 src={image.url}
@@ -198,13 +198,13 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               />
               {!!entityUrl && (
                 <Link legacyBehavior href={entityUrl} passHref>
-                  <ActionIcon
+                  <LegacyActionIcon
                     component="a"
                     variant="transparent"
                     style={{ position: 'absolute', bottom: '5px', left: '5px' }}
                     size="lg"
                     target="_blank"
-                    onClick={(e) => {
+                    onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
                       e.stopPropagation();
                     }}
                   >
@@ -215,7 +215,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                       strokeWidth={2.5}
                       size={26}
                     />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Link>
               )}
             </>
@@ -296,20 +296,20 @@ function Controls({ images }: { images: SanityImage[] }) {
   const handleClearAll = () => deselectAll();
 
   return (
-    <Group noWrap spacing="xs">
+    <Group wrap="nowrap" gap="xs">
       <ButtonTooltip label="Select all" {...tooltipProps}>
-        <ActionIcon
+        <LegacyActionIcon
           variant="outline"
           onClick={handleSelectAll}
           disabled={selected.length === images.length}
         >
           <IconSquareCheck size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <ButtonTooltip label="Clear selection" {...tooltipProps}>
-        <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+        <LegacyActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
           <IconSquareOff size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <PopConfirm
         message={`Are you sure you want to delete ${selected.length} image(s)?`}
@@ -318,19 +318,23 @@ function Controls({ images }: { images: SanityImage[] }) {
         withArrow
       >
         <ButtonTooltip label="Delete" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
             <IconTrash size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <Popover position="bottom-end" width={300} opened={addPopoverOpen}>
         <Popover.Target>
-          <ActionIcon variant="outline" color="green" onClick={() => setAddPopoverOpen((x) => !x)}>
+          <LegacyActionIcon
+            variant="outline"
+            color="green"
+            onClick={() => setAddPopoverOpen((x) => !x)}
+          >
             <IconPlus size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Popover.Target>
         <Popover.Dropdown px="xs">
-          <Stack spacing={4}>
+          <Stack gap={4}>
             <Textarea ref={textareaRef} placeholder="Add a link or id per line" autosize />
             <Button fullWidth onClick={() => handleAdd()}>
               Add to Sanity Images

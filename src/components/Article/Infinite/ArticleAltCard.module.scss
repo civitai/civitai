@@ -1,0 +1,48 @@
+.image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.info {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  left: 0;
+  z-index: 10;
+}
+
+.content {
+  background: linear-gradient(0deg, rgba(37, 38, 43, 0.8), rgba(37, 38, 43, 0));
+  box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
+}
+
+.statBadge {
+  background: rgba(212, 212, 212, 0.2);
+  color: white;
+}
+
+.userAvatar {
+  opacity: 0.8;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0px 8px 15px -5px rgba(0, 0, 0, 0.5);
+  transition: opacity 0.25s ease;
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: var(--mantine-radius-xl);
+    box-shadow: inset 0 0 0px 1px rgba(255, 255, 255, 0.8);
+  }
+
+  &:hover {
+    opacity: 1;
+  }
+}

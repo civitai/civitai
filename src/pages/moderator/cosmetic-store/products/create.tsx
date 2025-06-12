@@ -37,7 +37,7 @@ export default function ProductsCreate() {
   return (
     <Container size="md">
       <Stack>
-        <Group spacing="md" noWrap>
+        <Group gap="md" wrap="nowrap">
           <BackButton url="/moderator/cosmetic-store/products" />
           <Title>Create new cosmetic shop product</Title>
         </Group>

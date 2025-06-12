@@ -9,7 +9,7 @@ export function ToggleLockModel({
   locked?: boolean;
   children: (args: { onClick: () => void; isLoading: boolean }) => React.ReactElement;
 }) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { mutate, isLoading } = trpc.model.toggleLock.useMutation({
     onSuccess: (response, request) => {
       queryUtils.model.getById.setData({ id: modelId }, (old) => {

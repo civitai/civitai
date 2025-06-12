@@ -1,5 +1,5 @@
-import type { BoxProps } from '@mantine/core';
-import { createStyles, ContainerProps, Box } from '@mantine/core';
+import type { BoxProps, ContainerProps } from '@mantine/core';
+import { Box } from '@mantine/core';
 import React, { CSSProperties } from 'react';
 import type { MasonryContextState } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryProvider, useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';

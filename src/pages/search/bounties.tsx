@@ -1,4 +1,4 @@
-import { Stack, Text, Box, Center, Loader, Title, ThemeIcon } from '@mantine/core';
+import { Stack, Text, Center, Loader, Title, ThemeIcon } from '@mantine/core';
 import { useInstantSearch } from 'react-instantsearch';
 
 import {
@@ -10,13 +10,14 @@ import {
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
-import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { SearchLayout } from '~/components/Search/SearchLayout';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { BountiesSearchIndexSortBy } from '~/components/Search/parsers/bounties.parser';
 import { BountyCard } from '~/components/Cards/BountyCard';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import classes from '~/components/Search/SearchLayout.module.scss';
 
 export default function BountySearch() {
   return (
@@ -58,7 +59,6 @@ const RenderFilters = () => {
 export function BountyHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'bounties'>();
   const { status } = useInstantSearch();
-  const { classes, cx } = useSearchLayoutStyles();
 
   const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
     type: 'bounties',
@@ -67,28 +67,26 @@ export function BountyHitList() {
 
   if (loadingPreferences) {
     return (
-      <Box>
+      <div>
         <Center mt="md">
           <Loader />
         </Center>
-      </Box>
+      </div>
     );
   }
 
   if (hits.length === 0) {
     const NotFound = (
-      <Box>
+      <div>
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
-              <Text color="dimmed">
-                {hiddenCount} bounties have been hidden due to your settings.
-              </Text>
+              <Text c="dimmed">{hiddenCount} bounties have been hidden due to your settings.</Text>
             )}
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <ThemeIcon size={128} radius={100} className="opacity-50">
               <IconCloudOff size={80} />
             </ThemeIcon>
-            <Title order={1} inline>
+            <Title order={1} lh={1}>
               No bounties found
             </Title>
             <Text align="center">
@@ -97,38 +95,38 @@ export function BountyHitList() {
             </Text>
           </Stack>
         </Center>
-      </Box>
+      </div>
     );
 
     const loading = status === 'loading' || status === 'stalled';
 
     if (loading) {
       return (
-        <Box>
+        <div>
           <Center mt="md">
             <Loader />
           </Center>
-        </Box>
+        </div>
       );
     }
 
     return (
-      <Box>
+      <div>
         <Center mt="md">
           {/* Just enough time to avoid blank random page */}
           <TimeoutLoader renderTimeout={() => <>{NotFound}</>} delay={150} />
         </Center>
-      </Box>
+      </div>
     );
   }
 
   return (
     <Stack>
       {hiddenCount > 0 && (
-        <Text color="dimmed">{hiddenCount} bounties have been hidden due to your settings.</Text>
+        <Text c="dimmed">{hiddenCount} bounties have been hidden due to your settings.</Text>
       )}
-      <Box
-        className={cx(classes.grid)}
+      <div
+        className={classes.grid}
         style={{
           // Overwrite default sizing here.
           gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
@@ -138,14 +136,14 @@ export function BountyHitList() {
           // TODO - fix type
           return <BountyCard key={hit.id} data={hit as any} />;
         })}
-      </Box>
+      </div>
       {hits.length > 0 && !isLastPage && (
         <InViewLoader
           loadFn={showMore}
           loadCondition={status === 'idle'}
           style={{ gridColumn: '1/-1' }}
         >
-          <Center p="xl" sx={{ height: 36 }} mt="md">
+          <Center p="xl" style={{ height: 36 }} mt="md">
             <Loader />
           </Center>
         </InViewLoader>

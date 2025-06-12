@@ -1,0 +1,39 @@
+.root {
+  flex: 1;
+}
+
+.label {
+  width: 100%;
+  display: inline-flex;
+  justify-content: center;
+  padding-left: 10px;
+  padding-right: 10px;
+
+  &[data-checked] {
+    &,
+    &:hover {
+      background-color: var(--mantine-color-blue-6);
+      color: var(--mantine-color-white);
+    }
+
+    .iconWrapper {
+      color: var(--mantine-color-white);
+      display: none;
+
+      @media (min-width: theme('screens.xs')) {
+        display: inline-block !important;
+      }
+    }
+  }
+
+  @media (min-width: theme('screens.xs')) {
+    & {
+      padding-left: 20px;
+      padding-right: 20px;
+    }
+  }
+}
+
+.iconWrapper {
+  // Placeholder for the iconWrapper class
+}

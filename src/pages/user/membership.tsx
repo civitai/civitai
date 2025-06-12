@@ -6,7 +6,6 @@ import {
   Button,
   Center,
   Container,
-  createStyles,
   Grid,
   Group,
   Loader,
@@ -30,6 +29,7 @@ import {
   useSubscriptionManagementUrls,
 } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
@@ -47,6 +47,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { booleanString } from '~/utils/zod-helpers';
+import styles from './membership.module.css';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -79,19 +80,6 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const useStyles = createStyles((theme) => ({
-  card: {
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.lg,
-  },
-  price: {
-    fontSize: 48,
-    fontWeight: 700,
-  },
-}));
-
 const querySchema = z.object({
   tier: userTierSchema.optional(),
   updated: booleanString().optional(),
@@ -99,7 +87,6 @@ const querySchema = z.object({
 });
 
 export default function UserMembership() {
-  const { classes, theme } = useStyles();
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
     checkWhenInBadState: true,
   });
@@ -225,10 +212,10 @@ export default function UserMembership() {
                   color="red"
                   iconColor="red"
                   icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
-                  iconSize={28}
+                  iconSize="lg"
                   py={11}
                 >
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text lh={1.2}>
                       Uh oh! It looks like there was an issue with your membership. You can update
                       your payment method or renew your membership now by clicking{' '}
@@ -254,10 +241,10 @@ export default function UserMembership() {
                   </Stack>
                 </AlertWithIcon>
               )}
-              <Paper withBorder className={classes.card}>
+              <Paper withBorder className={styles.card}>
                 <Stack>
-                  <Group position="apart">
-                    <Group noWrap>
+                  <Group justify="space-between">
+                    <Group wrap="nowrap">
                       {image && (
                         <Center>
                           <Box w={100}>
@@ -265,18 +252,18 @@ export default function UserMembership() {
                           </Box>
                         </Center>
                       )}
-                      <Stack spacing={0}>
+                      <Stack gap={0}>
                         {product && (
-                          <Text weight={600} size={20}>
+                          <Text fw={600} size="20px">
                             {isFree ? 'Free' : product.name}
                           </Text>
                         )}
                         {price && (
                           <Text>
-                            <Text component="span" className={classes.price}>
+                            <Text component="span" className={styles.price}>
                               {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                             </Text>{' '}
-                            <Text component="span" color="dimmed" size="sm">
+                            <Text component="span" c="dimmed" size="sm">
                               {price.currency.toUpperCase() +
                                 '/' +
                                 shortenPlanInterval(price.interval)}
@@ -286,7 +273,7 @@ export default function UserMembership() {
                       </Stack>
                     </Group>
                     <Stack className="@sm:items-end">
-                      <Group spacing="xs">
+                      <Group gap="xs">
                         {subscription.canceledAt && (
                           <>
                             {price.active && (
@@ -294,7 +281,10 @@ export default function UserMembership() {
                                 priceId={price.id}
                                 disabled={features.disablePayments}
                               >
-                                <Button radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
+                                <Button
+                                  radius="xl"
+                                  rightSection={<IconRotateClockwise size={16} />}
+                                >
                                   Resume
                                 </Button>
                               </SubscribeButton>
@@ -305,9 +295,9 @@ export default function UserMembership() {
                                 multiline
                                 label="Your old subscription price has been discontinued and cannot be restored. If you'd like to keep supporting us, consider upgrading"
                               >
-                                <ActionIcon variant="light" color="dark" size="lg">
+                                <LegacyActionIcon variant="light" color="dark" size="lg">
                                   <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Tooltip>
                             )}
                           </>
@@ -336,7 +326,7 @@ export default function UserMembership() {
                     </Stack>
                   </Group>
                   {subscription.cancelAt && (
-                    <Text color="red">
+                    <Text c="red">
                       Your membership will be canceled on{' '}
                       {new Date(subscription.cancelAt).toLocaleDateString()}. You will lose your
                       benefits on that date.
@@ -348,7 +338,7 @@ export default function UserMembership() {
               {benefits && (
                 <>
                   <Title order={3}>Your membership benefits</Title>
-                  <Paper withBorder className={classes.card}>
+                  <Paper withBorder className={styles.card}>
                     <PlanBenefitList benefits={benefits} />
                   </Paper>
                 </>

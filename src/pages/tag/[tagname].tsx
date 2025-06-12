@@ -1,4 +1,4 @@
-import { Box, Center, createStyles, Group, Stack, Text, Title } from '@mantine/core';
+import { Box, Center, Group, Stack, Title } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next/types';
 import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -10,8 +10,8 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
+import styles from './[tagname].module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -31,8 +31,6 @@ export default function TagPage({
   const { data = [] } = trpc.tag.getTagWithModelCount.useQuery({ name: tagname });
   const [tag] = data;
 
-  const { classes } = useStyles();
-
   return (
     <>
       <Meta
@@ -41,10 +39,10 @@ export default function TagPage({
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tag/${tagname}`, rel: 'canonical' }]}
       />
       {tag && (
-        <Box className={classes.banner} mb="md">
+        <Box className={styles.banner} mb="md">
           <Center>
-            <Stack spacing="xs">
-              <Title order={1} align="center">
+            <Stack gap="xs">
+              <Title order={1} className="text-center">
                 {tag.name}
               </Title>
             </Stack>
@@ -57,10 +55,10 @@ export default function TagPage({
         maxSingleColumnWidth={450}
       >
         <MasonryContainer>
-          <Stack spacing="xs">
-            <Group position="right">
+          <Stack gap="xs">
+            <Group justify="flex-end">
               <SortFilter type="models" />
-              <ModelFiltersDropdown size="sm" compact />
+              <ModelFiltersDropdown size="compact-sm" />
             </Group>
             <ModelsInfinite
               filters={{ ...queryFilters, followed: false, hidden: false }}
@@ -73,44 +71,3 @@ export default function TagPage({
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  banner: {
-    marginTop: `-${theme.spacing.md}px`,
-    paddingTop: theme.spacing.xl * 2,
-    paddingBottom: theme.spacing.xl * 2,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
-
-    [containerQuery.smallerThan('xs')]: {
-      paddingTop: theme.spacing.md,
-      paddingBottom: theme.spacing.md,
-    },
-  },
-  image: {
-    width: '128px',
-    borderRadius: theme.radius.sm,
-    overflow: 'hidden',
-  },
-  wrapper: {
-    alignItems: 'flex-start',
-    [containerQuery.smallerThan('xs')]: {
-      alignItems: 'center',
-    },
-  },
-  outsideImage: {
-    display: 'none',
-    [containerQuery.smallerThan('xs')]: {
-      display: 'block',
-    },
-  },
-  insideImage: {
-    [containerQuery.smallerThan('xs')]: {
-      display: 'none',
-    },
-  },
-  card: {
-    [containerQuery.smallerThan('xs')]: {
-      width: '100%',
-    },
-  },
-}));

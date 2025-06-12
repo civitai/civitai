@@ -17,7 +17,7 @@ export function RemixButton({
       color="white"
       variant="filled"
       data-activity="create:model-card"
-      onClick={(e) => {
+      onClick={() => {
         generationPanel.open(props);
       }}
     >

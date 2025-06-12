@@ -1,4 +1,4 @@
-import type { ButtonProps, GroupPosition, InputWrapperProps } from '@mantine/core';
+import type { ButtonProps, GroupProps, InputWrapperProps } from '@mantine/core';
 import { Button, Input } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useEffect } from 'react';
@@ -35,7 +35,7 @@ export const ResourceSelect = ({
   allowRemove?: boolean;
   selectSource?: ResourceSelectSource;
   hideVersion?: boolean;
-  groupPosition?: GroupPosition;
+  groupPosition?: GroupProps['justify'];
   showAsCheckpoint?: boolean;
 } & Omit<InputWrapperProps, 'children' | 'onChange'> & { disabled?: boolean }) => {
   const types = options.resources?.map((x) => x.type);
@@ -78,7 +78,7 @@ export const ResourceSelect = ({
         <div>
           <Button
             variant="light"
-            leftIcon={<IconPlus size={18} />}
+            leftSection={<IconPlus size={18} />}
             fullWidth
             onClick={handleOpenResourceSearch}
             disabled={disabled}

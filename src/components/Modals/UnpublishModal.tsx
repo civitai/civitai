@@ -21,7 +21,7 @@ export default function UnpublishModal({
 }) {
   const dialog = useDialogContext();
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const [reason, setReason] = useState<UnpublishReason | undefined>();
   const [customMessage, setCustomMessage] = useState<string>('');
   const [error, setError] = useState<string>('');
@@ -70,14 +70,12 @@ export default function UnpublishModal({
   return (
     <Modal {...dialog} title="Unpublish as Violation">
       <Stack>
-        <Radio.Group
-          orientation="vertical"
-          value={reason}
-          onChange={(value: UnpublishReason) => setReason(value)}
-        >
-          {reasonOptions.map((reason) => (
-            <Radio key={reason.value} value={reason.value} label={reason.label} />
-          ))}
+        <Radio.Group value={reason} onChange={(value) => setReason(value as UnpublishReason)}>
+          <Stack>
+            {reasonOptions.map((reason) => (
+              <Radio key={reason.value} value={reason.value} label={reason.label} />
+            ))}
+          </Stack>
         </Radio.Group>
         {reason && (
           <>
@@ -91,7 +89,7 @@ export default function UnpublishModal({
               error={error}
               withAsterisk={reason === 'other'}
             />
-            <Group position="right">
+            <Group justify="flex-end">
               <Button onClick={handleUnpublish} loading={loading}>
                 Unpublish
               </Button>

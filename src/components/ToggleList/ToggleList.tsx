@@ -5,7 +5,7 @@ import { Paper, Switch } from '@mantine/core';
 
 export function ToggleList({ children }: { children: React.ReactNode }) {
   return (
-    <Paper withBorder p={0} className={styles.root}>
+    <Paper withBorder p={0}>
       {children}
     </Paper>
   );

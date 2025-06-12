@@ -15,6 +15,7 @@ import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { trpc } from '~/utils/trpc';
 import { QuestionAnswerComments } from '~/components/Questions/QuestionAnswerComments';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function AnswerDetail({
   answer,
@@ -45,7 +46,7 @@ export function AnswerDetail({
   return (
     <Card p="sm" withBorder>
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <UserAvatar
             user={answer.user}
             subText={<DaysFromNow date={answer.createdAt} />}
@@ -55,11 +56,16 @@ export function AnswerDetail({
           />
           {/* TODO - menu item for reporting */}
           {(isOwner || isModerator) && (
-            <Menu position="bottom-end" transition="pop-top-right">
+            <Menu
+              position="bottom-end"
+              transitionProps={{
+                transition: 'pop-top-right',
+              }}
+            >
               <Menu.Target>
-                <ActionIcon variant="outline">
+                <LegacyActionIcon variant="outline">
                   <IconDotsVertical size={16} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Menu.Target>
               <Menu.Dropdown>
                 {(isOwner || isModerator) && (
@@ -67,14 +73,14 @@ export function AnswerDetail({
                     <DeleteAnswer id={answer.id}>
                       <Menu.Item
                         color={theme.colors.red[6]}
-                        icon={<IconTrash size={14} stroke={1.5} />}
+                        leftSection={<IconTrash size={14} stroke={1.5} />}
                       >
                         Delete answer
                       </Menu.Item>
                     </DeleteAnswer>
                     {(!isMuted || isModerator) && (
                       <Menu.Item
-                        icon={<IconEdit size={14} stroke={1.5} />}
+                        leftSection={<IconEdit size={14} stroke={1.5} />}
                         onClick={() => setEditing(true)}
                       >
                         Edit answer
@@ -87,7 +93,7 @@ export function AnswerDetail({
           )}
         </Group>
         <RenderHtml html={answer.content} />
-        <Group position="apart">
+        <Group justify="space-between">
           <Button.Group>
             <FavoriteBadge
               userReacted={answer.userReactions.some((x) => x.reaction === ReviewReactions.Heart)}
@@ -109,7 +115,7 @@ export function AnswerDetail({
           </Button.Group>
           <ReactionBadge
             color={showComments ? 'blue' : undefined}
-            leftIcon={<IconMessageCircle size={18} />}
+            leftSection={<IconMessageCircle size={18} />}
             onClick={() => setShowComments((v) => !v)}
             tooltip="Comments"
           >

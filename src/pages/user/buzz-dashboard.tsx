@@ -18,7 +18,7 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
 import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 import { CreatorProgramV2 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
@@ -67,7 +67,6 @@ export const getServerSideProps = createServerSideProps({
 
 export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
-  const { classes } = useBuzzDashboardStyles();
   const isMember = currentUser?.isMember;
   const { isFreeTier, meta } = useActiveSubscription();
   const { query } = useRouter();
@@ -105,14 +104,14 @@ export default function UserBuzzDashboard() {
         deIndex
       />
       <Container size="lg">
-        <Stack spacing="xl">
+        <Stack gap="xl">
           <Title order={1}>My Buzz Dashboard</Title>
 
           <BuzzDashboardOverview accountId={currentUser?.id as number} />
 
           <EarningBuzz withCTA />
 
-          <Paper withBorder className={classes.tileCard} h="100%">
+          <Paper className={classes.tileCard} h="100%">
             <Stack p="md">
               {showMismatchAlert && (
                 <Alert color="red" title="Looks like we have an issue!">
@@ -123,14 +122,14 @@ export default function UserBuzzDashboard() {
                   </Text>
                 </Alert>
               )}
-              <Group position="apart">
+              <Group justify="space-between">
                 <Title order={3} id="rewards">
                   Other ways you can earn Buzz
                 </Title>
                 {isMember && rewardsMultiplier > 1 && features.membershipsV2 && (
                   <Tooltip multiline label="Your membership makes rewards worth more!">
-                    <Stack spacing={0}>
-                      <Text size={20} className={classes.goldText}>
+                    <Stack gap={0}>
+                      <Text size="md" style={{ fontSize: 20 }} className={classes.goldText}>
                         Rewards Multiplier: {rewardsMultiplier}x
                       </Text>
                     </Stack>
@@ -149,10 +148,10 @@ export default function UserBuzzDashboard() {
                     reward.cap && hasAwarded ? reward.awarded / reward.cap : 0;
 
                   return (
-                    <Stack key={reward.type} spacing={4}>
-                      <Group position="apart" mih={30}>
-                        <Group noWrap spacing="xs">
-                          <Stack spacing={4} align="center">
+                    <Stack key={reward.type} gap={4}>
+                      <Group justify="space-between" mih={30}>
+                        <Group wrap="nowrap" gap="xs">
+                          <Stack gap={4} align="center">
                             <CurrencyBadge
                               w={100}
                               currency={Currency.BUZZ}
@@ -161,7 +160,8 @@ export default function UserBuzzDashboard() {
                             />
                             {rewardsMultiplier > 1 && (
                               <Text
-                                size={10}
+                                size="xs"
+                                style={{ fontSize: 10 }}
                                 color={reward.accountType === 'generation' ? 'blue.4' : 'yellow.7'}
                               >
                                 Originally {Math.floor(reward.awardAmount / rewardsMultiplier)} Buzz
@@ -175,13 +175,13 @@ export default function UserBuzzDashboard() {
                             </Tooltip>
                           )}
                           {reward.type === 'adWatched' && (
-                            <WatchAdButton size="xs" disabled={awardedAmountPercent >= 1} compact />
+                            <WatchAdButton size="compact-xs" disabled={awardedAmountPercent >= 1} />
                           )}
                         </Group>
                         {reward.cap && (
-                          <Group spacing={4}>
+                          <Group gap={4}>
                             <CurrencyIcon size={14} type={reward.accountType} />
-                            <Text color="dimmed" size="xs">
+                            <Text c="dimmed" size="xs">
                               {hasAwarded
                                 ? `${reward.awarded} / ${reward.cap.toLocaleString()} `
                                 : `${reward.cap.toLocaleString()} `}
@@ -218,7 +218,7 @@ export default function UserBuzzDashboard() {
           </Paper>
           <Text mt={-16} size="sm" mb="xs" align="right">
             Still looking for ways to get more Buzz? Consider posting to the{' '}
-            <Text variant="link" td="underline" component={Link} href="/collections/3870938">
+            <Text c="blue.4" td="underline" component={Link} href="/collections/3870938">
               Buzz Beggars Board
             </Text>
             .

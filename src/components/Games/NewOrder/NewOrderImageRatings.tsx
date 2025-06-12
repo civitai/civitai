@@ -1,13 +1,4 @@
-import {
-  ActionIcon,
-  Badge,
-  Card,
-  Loader,
-  ScrollArea,
-  Text,
-  Tooltip,
-  UnstyledButton,
-} from '@mantine/core';
+import { Badge, Card, Loader, ScrollArea, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconChevronLeft, IconHammer } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { NsfwLevel } from '~/server/common/enums';
@@ -15,6 +6,7 @@ import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants'
 import { useInquisitorTools, useQueryImageRaters } from '~/components/Games/KnightsNewOrder.utils';
 import { PlayerStats } from '~/components/Games/PlayerCard';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
   const [opened, setOpened] = useState(false);
@@ -47,7 +39,7 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
           }`}
         >
           <h2 className="text-lg font-semibold text-black dark:text-white">Raters</h2>
-          <ScrollArea.Autosize maxHeight={400}>
+          <ScrollArea.Autosize mah={400}>
             {isLoading ? (
               <div className="flex size-full items-center justify-center">
                 <Loader />
@@ -86,14 +78,14 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
                                 <PlayerStats stats={{ ...player.stats }} size="sm" showSmiteCount />
                               </div>
                               <Tooltip label="Smite player" withinPortal>
-                                <ActionIcon
+                                <LegacyActionIcon
                                   color="red"
                                   variant="filled"
                                   onClick={() => smitePlayer({ playerId: player.id, imageId })}
                                   loading={loading}
                                 >
                                   <IconHammer size={18} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Tooltip>
                             </div>
                           </Card>

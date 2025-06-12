@@ -6,6 +6,7 @@ import React, { useMemo } from 'react';
 import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
 import type { BaseModelSetType } from '~/server/common/constants';
 import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const simpleMetaProps = {
   comfy: 'Workflow',
@@ -57,8 +58,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
               {({ copy, copied, Icon, color }) => (
                 <Button
                   color={color}
-                  size="xs"
-                  compact
+                  size="compact-xs"
                   className="rounded-lg"
                   classNames={{ label: 'flex items-center gap-1' }}
                   onClick={copy}
@@ -104,13 +104,13 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             </div>
             <CopyButton value={prompt}>
               {({ copy, Icon, color }) => (
-                <ActionIcon onClick={copy} color={color}>
+                <LegacyActionIcon onClick={copy} color={color}>
                   <Icon size={16} />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
             </CopyButton>
           </div>
-          <LineClamp color="dimmed" className="text-sm">
+          <LineClamp c="dimmed" className="text-sm">
             {prompt}
           </LineClamp>
         </div>
@@ -130,13 +130,13 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             <Text className="font-semibold">Negative prompt</Text>
             <CopyButton value={negativePrompt}>
               {({ copy, Icon, color }) => (
-                <ActionIcon onClick={copy} color={color}>
+                <LegacyActionIcon onClick={copy} color={color}>
                   <Icon size={16} />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
             </CopyButton>
           </div>
-          <LineClamp color="dimmed" className="text-sm">
+          <LineClamp c="dimmed" className="text-sm">
             {negativePrompt}
           </LineClamp>
         </div>
@@ -150,7 +150,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             </div>
             <div className="flex flex-wrap gap-2">
               {simpleMeta.map(({ label, content }) => (
-                <Badge key={label} classNames={{ inner: 'flex gap-1 items-center leading-snug' }}>
+                <Badge key={label} classNames={{ root: 'flex gap-1 items-center leading-snug' }}>
                   <span>{label}:</span>
                   {content}
                 </Badge>

@@ -1,0 +1,16 @@
+export declare const active: string;
+export declare const carousel: string;
+export declare const center: string;
+export declare const control: string;
+export declare const desktopOnly: string;
+export declare const imageLoading: string;
+export declare const indicator: string;
+export declare const indicators: string;
+export declare const info: string;
+export declare const loader: string;
+export declare const mobileOnly: string;
+export declare const next: string;
+export declare const prev: string;
+export declare const root: string;
+export declare const scrollViewport: string;
+export declare const sidebar: string;

@@ -1,5 +1,5 @@
-import { ActionIcon, Menu } from '@mantine/core';
-import { IconDotsVertical, IconInfoCircle, IconTagOff } from '@tabler/icons-react';
+import { Menu } from '@mantine/core';
+import { IconInfoCircle, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import {
@@ -62,7 +62,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
     component: (
       <Menu.Item
         key="block-tags"
-        icon={<IconTagOff size={14} stroke={1.5} />}
+        leftSection={<IconTagOff size={14} stroke={1.5} />}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
@@ -151,7 +151,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
           component="a"
           key="lookup-model"
           target="_blank"
-          icon={<IconInfoCircle size={14} stroke={1.5} />}
+          leftSection={<IconInfoCircle size={14} stroke={1.5} />}
           href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
           onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
             e.preventDefault();

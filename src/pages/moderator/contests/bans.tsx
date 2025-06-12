@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Button,
   Center,
   Container,
@@ -19,6 +18,7 @@ import { BackButton } from '~/components/BackButton/BackButton';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditorComponent';
@@ -35,14 +35,14 @@ function ContestBanUserModal() {
 
   const [selectedUser, setSelectedUser] = useState<QuickSearchUserType | null>(null);
   const [banReason, setBanReason] = useState<string | undefined>();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onSuccess() {
       await queryUtils.user.getAll.invalidate({ contestBanned: true });
       dialog.onClose();
     },
-    onError(_error, _vars, context) {
+    onError() {
       showErrorNotification({
         error: new Error('Unable to ban user, please try again.'),
       });
@@ -62,11 +62,11 @@ function ContestBanUserModal() {
   return (
     <Modal {...dialog} size="sm" withCloseButton={false} radius="md">
       <Stack>
-        <Stack spacing="xs">
-          <Text size="md" weight={500}>
+        <Stack gap="xs">
+          <Text size="md" fw={500}>
             Select user to ban
           </Text>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Banning will be immediate. The user will not be able to participate in any future
             contests until unbanned. This will not affect current submissions.
           </Text>
@@ -97,7 +97,7 @@ function ContestBanUserModal() {
 
         <Button
           color="red"
-          leftIcon={<IconBan size={14} />}
+          leftSection={<IconBan size={14} />}
           disabled={!selectedUser || !banReason}
           loading={toggleBanMutation.isLoading}
           onClick={onToggleBanUser}
@@ -118,13 +118,13 @@ export default function ContestsBans() {
     contestBanned: true,
   });
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onSuccess() {
       await queryUtils.user.getAll.invalidate({ contestBanned: true });
     },
-    onError(_error, _vars, context) {
+    onError() {
       showErrorNotification({
         error: new Error('Unable to ban user, please try again.'),
       });
@@ -147,14 +147,14 @@ export default function ContestsBans() {
             <BackButton url="/moderator/contests" />
             <Title order={1}>Contest - Banned Users</Title>
           </Group>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You can add or remove banned users from contests. Banning a user from contests will
             prevent them from participating in any future contests. They will still be able to view
             the contests, but will not be able to submit entries.
           </Text>
           <Button
             color="red"
-            leftIcon={<IconBan size={14} />}
+            leftSection={<IconBan size={14} />}
             onClick={() => {
               dialogStore.trigger({
                 component: ContestBanUserModal,
@@ -172,41 +172,41 @@ export default function ContestsBans() {
             </Center>
           ) : users?.length ?? 0 ? (
             <Stack>
-              <Table highlightOnHover withBorder>
-                <thead>
-                  <tr>
-                    <th>Username</th>
-                    <th>Reason</th>
-                    <th>Banned At</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
+              <Table highlightOnHover withTableBorder>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Username</Table.Th>
+                    <Table.Th>Reason</Table.Th>
+                    <Table.Th>Banned At</Table.Th>
+                    <Table.Th />
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {users.map((user) => (
-                    <tr key={user.id}>
-                      <td>
-                        <Group spacing={4}>
+                    <Table.Tr key={user.id}>
+                      <Table.Td>
+                        <Group gap={4}>
                           <Text>{user.username}</Text>
                         </Group>
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         {user.meta?.contestBanDetails?.detailsInternal ? (
                           <RenderHtml
                             html={user.meta?.contestBanDetails?.detailsInternal}
-                            sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                            style={(theme) => ({ fontSize: theme.fontSizes.sm })}
                           />
                         ) : (
                           'N/A'
                         )}
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         {user.meta?.contestBanDetails?.bannedAt
                           ? formatDate(user.meta?.contestBanDetails?.bannedAt)
                           : 'N/A'}
-                      </td>
+                      </Table.Td>
 
-                      <td>
-                        <ActionIcon
+                      <Table.Td>
+                        <LegacyActionIcon
                           onClick={() => {
                             onToggleBanUser(user.id);
                           }}
@@ -215,11 +215,11 @@ export default function ContestsBans() {
                           <Tooltip label="Unban">
                             <IconTrashOff size={16} />
                           </Tooltip>
-                        </ActionIcon>
-                      </td>
-                    </tr>
+                        </LegacyActionIcon>
+                      </Table.Td>
+                    </Table.Tr>
                   ))}
-                </tbody>
+                </Table.Tbody>
               </Table>
             </Stack>
           ) : (

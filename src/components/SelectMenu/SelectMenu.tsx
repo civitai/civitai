@@ -5,6 +5,7 @@ import { useState } from 'react';
 import type { FilterButtonProps } from '~/components/Buttons/FilterButton';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import classes from './SelectMenu.module.scss';
 
 type SelectMenu<T extends string | number> = {
   label: React.ReactNode;
@@ -32,7 +33,7 @@ export function SelectMenu<T extends string | number>({
           className="flex cursor-pointer items-center gap-1.5"
           style={disabled ? { opacity: 0.3, cursor: 'default', userSelect: 'none' } : {}}
         >
-          <Text weight={700} transform="uppercase" suppressHydrationWarning>
+          <Text fw={700} tt="uppercase" suppressHydrationWarning>
             {label}
           </Text>
           <IconChevronDown size={16} stroke={3} />
@@ -43,10 +44,10 @@ export function SelectMenu<T extends string | number>({
           {options.map((option) => (
             <Menu.Item key={option.value.toString()} onClick={() => onClick(option.value)}>
               <Text
-                transform="uppercase"
+                tt="uppercase"
                 ta="center"
-                color={option.value === value ? theme.primaryColor : undefined}
-                weight={option.value === value ? 700 : undefined}
+                c={option.value === value ? theme.primaryColor : undefined}
+                fw={option.value === value ? 700 : undefined}
               >
                 {option.label}
               </Text>
@@ -93,14 +94,14 @@ export function SelectMenuV2<T extends string | number>({
           position="bottom"
           opened={opened}
           onClose={() => setOpened(false)}
-          styles={{
-            root: { zIndex: 400 },
-            body: { padding: 16, paddingTop: 0, overflow: 'auto' },
-            drawer: { height: 'auto' },
-            header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          classNames={{
+            root: classes.root,
+            content: classes.content,
+            header: classes.header,
+            body: classes.body,
+            close: classes.close,
           }}
-          closeButtonLabel="Close sort menu"
+          closeButtonProps={{ 'aria-label': 'Close sort menu' }}
         >
           <div className="flex flex-col gap-2">
             {options.map((option) => {
@@ -120,7 +121,7 @@ export function SelectMenuV2<T extends string | number>({
                   <div className="flex justify-between">
                     <Text inline>{option.label}</Text>
                     {active && (
-                      <Text color={theme.primaryColor} inline>
+                      <Text c={theme.primaryColor} inline>
                         <IconCheck size={16} color="currentColor" />
                       </Text>
                     )}
@@ -155,7 +156,7 @@ export function SelectMenuV2<T extends string | number>({
                 data-hovered={`${active}`}
                 rightSection={
                   active && (
-                    <Text color={theme.primaryColor} inline>
+                    <Text c={theme.primaryColor} inline>
                       <IconCheck size={16} color="currentColor" />
                     </Text>
                   )

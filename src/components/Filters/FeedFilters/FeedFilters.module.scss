@@ -1,0 +1,9 @@
+.filtersWrapper {
+  @container (max-width: theme('screens.sm')) {
+    width: 100%;
+
+    >* {
+      flex-grow: 1;
+    }
+  }
+}

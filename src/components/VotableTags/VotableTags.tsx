@@ -1,5 +1,5 @@
 import type { GroupProps } from '@mantine/core';
-import { ActionIcon, Center, Group, Loader, createStyles } from '@mantine/core';
+import { Center, Group, Loader } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useEffect, useMemo } from 'react';
@@ -15,6 +15,7 @@ import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.const
 import { trpc } from '~/utils/trpc';
 import { NsfwLevel } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function VotableTags({
   entityId: id,
@@ -31,7 +32,6 @@ export function VotableTags({
 }: GalleryTagProps) {
   const currentUser = useCurrentUser();
   const { canViewNsfw } = useFeatureFlags();
-  const { classes } = useStyles();
   const { data: tags = [], isLoading } = trpc.tag.getVotableTags.useQuery(
     { id, type },
     { enabled: !initialTags, initialData: initialTags }
@@ -83,14 +83,14 @@ export function VotableTags({
   if (!initialTags && isLoading)
     return (
       <Center p="xl">
-        <Loader variant="bars" />
+        <Loader type="bars" />
       </Center>
     );
   if (!tags) return null;
 
   const showAddibles = !collapsible || showAll;
   return (
-    <Group spacing={4} {...props}>
+    <Group gap={4} {...props}>
       {(nsfwLevel || currentUser?.isModerator) && type === 'image' && (
         <BrowsingLevelBadge
           radius="xs"
@@ -101,7 +101,7 @@ export function VotableTags({
               ? openSetBrowsingLevelModal({ imageId: id, nsfwLevel: nsfwLevel ?? NsfwLevel.XXX })
               : undefined
           }
-          sfwClassName={classes.nsfwBadge}
+          // sfwClassName="bg-blue-9"
         />
       )}
       {canAdd && (
@@ -145,9 +145,13 @@ export function VotableTags({
         />
       ))}
       {collapsible && tags.length > limit && (
-        <ActionIcon variant="transparent" size="sm" onClick={() => setShowAll((prev) => !prev)}>
+        <LegacyActionIcon
+          variant="transparent"
+          size="sm"
+          onClick={() => setShowAll((prev) => !prev)}
+        >
           {showAll ? <IconChevronUp strokeWidth={3} /> : <IconChevronDown strokeWidth={3} />}
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
     </Group>
   );
@@ -165,9 +169,3 @@ type GalleryTagProps = {
   highlightContested?: boolean;
   onTagsLoaded?: (tags: VotableTagModel[]) => void;
 } & Omit<GroupProps, 'id'>;
-
-const useStyles = createStyles((theme) => ({
-  nsfwBadge: {
-    backgroundColor: theme.colors.blue[9],
-  },
-}));

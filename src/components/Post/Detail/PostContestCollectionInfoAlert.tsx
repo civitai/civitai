@@ -22,7 +22,7 @@ export const PostContestCollectionInfoAlert = ({
   if (!showDetails) return null;
 
   const collectionName = (
-    <Text component="span" weight="bold">
+    <Text component="span" fw="bold">
       {collectionItem.collection.name}
     </Text>
   );
@@ -31,7 +31,7 @@ export const PostContestCollectionInfoAlert = ({
     <>
       {' '}
       for the{' '}
-      <Text tt="capitalize" weight="bold" span>
+      <Text tt="capitalize" fw="bold" span>
         {collectionItem?.tag.name}
       </Text>{' '}
       category
@@ -67,14 +67,14 @@ export const PostContestCollectionInfoAlert = ({
             <Button
               component={Link}
               href={`/posts/create?collectionId=${collectionItem.collection.id}`}
-              compact
+              size="compact-sm"
             >
               Submit Another Entry
             </Button>
             <Button
               component={Link}
               href={`/collections/${collectionItem.collection.id}`}
-              compact
+              size="compact-sm"
               variant="outline"
             >
               View Contest Collection

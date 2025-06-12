@@ -31,9 +31,9 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
           paddingRight: '6px',
         }}
       >
-        <Group spacing={0}>
+        <Group gap={0}>
           <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />{' '}
-          <Text color="dark.9">{abbreviateNumber(downloadPrice ?? 0, { decimals: 0 })}</Text>
+          <Text c="dark.9">{abbreviateNumber(downloadPrice ?? 0, { decimals: 0 })}</Text>
         </Group>
       </Badge>
     );
@@ -47,7 +47,7 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
       </Tooltip>
     ) : (
       <Button pos="relative" ref={ref} {...buttonProps}>
-        <Group spacing={8} noWrap>
+        <Group gap={8} wrap="nowrap">
           <IconDownload size={20} />
           {downloadPrice && <>{purchaseIcon}</>}
           {children}

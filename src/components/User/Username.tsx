@@ -34,18 +34,13 @@ export function Username({
   badgeSize ??= mapSizeToImageWidth[size];
 
   return (
-    <Group spacing={8} noWrap align="center">
+    <Group gap={8} wrap="nowrap" align="center">
       <Text
         size={size}
-        weight={500}
+        fw={500}
         lineClamp={1}
-        sx={(theme) => ({
-          verticalAlign: 'middle',
-          filter:
-            theme.colorScheme === 'dark'
-              ? 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8))'
-              : 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.2))',
-        })}
+        td="none"
+        className="align-middle drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)] dark:drop-shadow-[1px_1px_1px_rgba(0,0,0,0.2)]"
         inherit={inherit}
         {...additionalTextProps}
       >

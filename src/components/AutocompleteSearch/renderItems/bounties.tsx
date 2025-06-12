@@ -1,15 +1,11 @@
-import type { AutocompleteItem } from '@mantine/core';
+import type { ComboboxItem } from '@mantine/core';
 import { Center, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import React, { forwardRef } from 'react';
 import { Highlight } from 'react-instantsearch';
-import {
-  ActionIconBadge,
-  ViewMoreItem,
-  useSearchItemStyles,
-} from '~/components/AutocompleteSearch/renderItems/common';
+import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -19,13 +15,12 @@ import { constants } from '~/server/common/constants';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import styles from './common.module.scss';
 
 export const BountiesSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: SearchIndexDataMap['bounties'][number] }
+  ComboboxItem & { hit: SearchIndexDataMap['bounties'][number] }
 >(({ value, hit, ...props }, ref) => {
-  const { classes } = useSearchItemStyles();
-
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { user, images, nsfwLevel, stats } = hit;
@@ -37,14 +32,15 @@ export const BountiesSearchItem = forwardRef<
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
   return (
-    <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
+    <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
       <Center
-        sx={{
+        style={{
           width: 64,
           height: 64,
           position: 'relative',
           overflow: 'hidden',
           borderRadius: '10px',
+          flexShrink: 0,
         }}
       >
         {image ? (
@@ -72,14 +68,14 @@ export const BountiesSearchItem = forwardRef<
           <Skeleton width="100px" height="100px" />
         )}
       </Center>
-      <Stack spacing={8} sx={{ flex: '1 !important' }}>
+      <Stack gap={8} style={{ flex: '1 !important' }}>
         <Text>
-          <Highlight attribute="name" hit={hit} classNames={classes} />
+          <Highlight attribute="name" hit={hit} classNames={styles} />
         </Text>
         <UserAvatar size="xs" user={user} withUsername />
 
         {stats && (
-          <Group spacing={4}>
+          <Group gap={4}>
             <CurrencyBadge
               currency={Currency.BUZZ}
               unitAmount={stats.unitAmountCountAllTime || 0}

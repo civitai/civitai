@@ -3,8 +3,9 @@ import {
   ProfileSection,
   ProfileSectionNoResults,
   ProfileSectionPreview,
-  useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
+import classes from '~/components/Profile/ProfileSection.module.css';
+
 import { useInView } from '~/hooks/useInView';
 import { IconArrowRight, IconCategory } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
@@ -15,6 +16,7 @@ import { Button, Loader, Stack, Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import clsx from 'clsx';
 
 const MAX_MODELS_DISPLAY = 32; // 2 rows of 7
 
@@ -41,12 +43,6 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
 
   const models = useMemo(() => _models.slice(0, MAX_MODELS_DISPLAY), [_models]);
 
-  const { classes, cx } = useProfileSectionStyles({
-    count: models.length,
-    rowCount: 2,
-    widthGrid: '280px',
-  });
-
   const isNullState = !isLoading && !models.length;
 
   if (isNullState) {
@@ -54,7 +50,17 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
   }
 
   return (
-    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
+    <div
+      ref={ref}
+      className={isNullState ? undefined : classes.profileSection}
+      style={
+        {
+          '--count': models.length,
+          '--row-count': 2,
+          '--width-grid': '280px',
+        } as React.CSSProperties
+      }
+    >
       {inView &&
         (isLoading ? (
           <ProfileSectionPreview rowCount={2} />
@@ -73,7 +79,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
                     h={34}
                     component="a"
                     variant="subtle"
-                    rightIcon={<IconArrowRight size={16} />}
+                    rightSection={<IconArrowRight size={16} />}
                   >
                     <Text inherit> View all models</Text>
                   </Button>
@@ -84,7 +90,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
             <ShowcaseGrid
               itemCount={models.length}
               rows={2}
-              className={cx({
+              className={clsx({
                 [classes.nullState]: !models.length,
                 [classes.loading]: isRefetching,
               })}

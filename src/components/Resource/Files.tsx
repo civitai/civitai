@@ -3,12 +3,14 @@ import {
   Button,
   Card,
   Divider,
+  getPrimaryShade,
   Group,
   Progress,
   Select,
   Stack,
   Text,
   Tooltip,
+  useComputedColorScheme,
   useMantineTheme,
   Anchor,
 } from '@mantine/core';
@@ -43,6 +45,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import classes from './Files.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 // TODO.Briant - compare file extension when checking for duplicate files
 export function Files() {
@@ -57,7 +61,7 @@ export function Files() {
     {
       width: containerWidth,
       maxColumnCount: 2,
-      columnGutter: theme.spacing.md,
+      columnGutter: 16,
     },
     [files.length]
   );
@@ -83,23 +87,21 @@ export function Files() {
 
           showErrorNotification({ error: new Error(errors) });
         }}
-        sx={(theme) => ({
-          '&[data-reject]': { background: theme.colors.dark[5], borderColor: theme.colors.dark[4] },
-        })}
+        className={classes.dropzoneReject}
       >
-        <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
+        <Group justify="center" gap="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
           {/* <Dropzone.Accept>
             <IconUpload
               size={50}
               stroke={1.5}
-              color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Accept>
           <Dropzone.Reject>
             <IconX
               size={50}
               stroke={1.5}
-              color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Reject>
           <Dropzone.Idle>
@@ -107,11 +109,11 @@ export function Files() {
           </Dropzone.Idle> */}
 
           <IconFileUpload size={50} stroke={1.5} />
-          <Stack spacing={8}>
+          <Stack gap={8}>
             <Text size="xl" inline>
               Drop your files here or click to select
             </Text>
-            <Text size="sm" color="dimmed" inline>
+            <Text size="sm" c="dimmed" inline>
               {`Attach up to ${maxFiles} files. Accepted file types: ${fileExtensions.join(', ')}`}
             </Text>
           </Stack>
@@ -152,7 +154,7 @@ export function Files() {
 
 function FileCard({ data: versionFile, index }: { data: FileFromContextProps; index: number }) {
   const { removeFile, fileTypes, modelId } = useFilesContext();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const failedUpload = versionFile.status === 'error' || versionFile.status === 'aborted';
 
   // File card benefits from knowing if a tracked file exist.
@@ -180,36 +182,36 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
   };
 
   return (
-    <Card sx={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder>
-      <Stack spacing={4} pb="xs">
-        <Group position="apart" spacing={4} noWrap>
+    <Card style={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder>
+      <Stack gap={4} pb="xs">
+        <Group justify="space-between" gap={4} wrap="nowrap">
           <Text
             lineClamp={1}
             color={failedUpload ? 'red' : undefined}
-            sx={{ display: 'inline-block' }}
+            style={{ display: 'inline-block' }}
           >
             {versionFile.name}
           </Text>
           {/* Checking for tracked files here is a safeguard for failed uploads that ended up in the air.*/}
           {(!versionFile.isUploading || !trackedFile) && (
             <Tooltip label="Remove file" position="left">
-              <ActionIcon
+              <LegacyActionIcon
                 color="red"
                 onClick={() => handleRemoveFile(versionFile.uuid)}
                 loading={deleteFileMutation.isLoading}
               >
                 <IconTrash />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           )}
         </Group>
         {versionFile.isUploading ? (
           <>
-            <Stack spacing={0}>
-              <Text size="sm" weight="bold">
+            <Stack gap={0}>
+              <Text size="sm" fw="bold">
                 File Type
               </Text>
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 {getDisplayName(
                   versionFile.type === 'Model'
                     ? versionFile.modelType ?? versionFile.type ?? 'undefined'
@@ -219,28 +221,28 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
             </Stack>
             {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' ? (
               <>
-                <Stack spacing={0}>
-                  <Text size="sm" weight="bold">
+                <Stack gap={0}>
+                  <Text size="sm" fw="bold">
                     Model size
                   </Text>
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     {versionFile.size ?? 'undefined'}
                   </Text>
                 </Stack>
-                <Stack spacing={0}>
-                  <Text size="sm" weight="bold">
+                <Stack gap={0}>
+                  <Text size="sm" fw="bold">
                     Floating point
                   </Text>
-                  <Text size="sm" color="dimmed">
+                  <Text size="sm" c="dimmed">
                     {versionFile.fp ?? 'undefined'}
                   </Text>
                 </Stack>
                 {versionFile.name.endsWith('.zip') && (
-                  <Stack spacing={0}>
-                    <Text size="sm" weight="bold">
+                  <Stack gap={0}>
+                    <Text size="sm" fw="bold">
                       Format
                     </Text>
-                    <Text size="sm" color="dimmed">
+                    <Text size="sm" c="dimmed">
                       {versionFile.format ?? 'undefined'}
                     </Text>
                   </Stack>
@@ -268,7 +270,7 @@ function TrackedFile({ uuid: versionFileUuid }: { uuid: string }) {
   return (
     <>
       <Divider />
-      <Group spacing="xs" py="md" px="sm" sx={{ width: '100%' }}>
+      <Group gap="xs" py="md" px="sm" style={{ width: '100%' }}>
         <TrackedFileStatus trackedFile={trackedFile} versionFileUuid={versionFileUuid} />
       </Group>
     </>
@@ -283,6 +285,7 @@ function TrackedFileStatus({
   versionFileUuid: string;
 }) {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const clear = useS3UploadStore((state) => state.clear);
   const abort = useS3UploadStore((state) => state.abort);
   const { retry, removeFile, updateFile } = useFilesContext();
@@ -304,22 +307,25 @@ function TrackedFileStatus({
   switch (status) {
     case 'uploading':
       return (
-        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
-          <IconCloudUpload color={theme.colors.blue[theme.fn.primaryShade()]} />
-          <Stack spacing={4} sx={{ flex: '1 !important' }}>
-            <Group spacing={4}>
-              <Progress
-                size="xl"
-                radius="xs"
-                value={progress}
-                label={`${Math.floor(progress)}%`}
-                color={progress < 100 ? 'blue' : 'green'}
-                striped
-                animate
-                sx={{ flex: 1 }}
-              />
+        <Group justify="space-between" wrap="nowrap" gap="xs" style={{ width: '100%' }}>
+          <IconCloudUpload color={theme.colors.blue[getPrimaryShade(theme, colorScheme)]} />
+          <Stack gap={4} w="100%" style={{ flex: '1 !important' }}>
+            <Group gap={4}>
+              <Progress.Root size="xl" radius="xs" style={{ flex: 1 }}>
+                <Progress.Section
+                  value={progress}
+                  color={progress < 100 ? 'blue' : 'green'}
+                  striped
+                  animated
+                  style={{
+                    backgroundColor: theme.colors.blue[colorScheme === 'dark' ? 4 : 6],
+                  }}
+                >
+                  <Progress.Label>{`${Math.floor(progress)}%`}</Progress.Label>
+                </Progress.Section>
+              </Progress.Root>
               <Tooltip label="Cancel upload" position="left">
-                <ActionIcon
+                <LegacyActionIcon
                   color="red"
                   onClick={() => {
                     abort(uuid);
@@ -327,41 +333,41 @@ function TrackedFileStatus({
                   }}
                 >
                   <IconX />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
             </Group>
-            <Group position="apart" noWrap>
-              <Text color="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
-              <Text color="dimmed" size="xs">{`${formatSeconds(timeRemaining)} remaining`}</Text>
+            <Group justify="space-between" wrap="nowrap">
+              <Text c="dimmed" size="xs">{`${formatBytes(speed)}/s`}</Text>
+              <Text c="dimmed" size="xs">{`${formatSeconds(timeRemaining)} remaining`}</Text>
             </Group>
           </Stack>
         </Group>
       );
     case 'aborted':
       return (
-        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
-          <Group spacing="xs">
+        <Group justify="space-between" wrap="nowrap" gap="xs" style={{ width: '100%' }}>
+          <Group gap="xs">
             <IconBan color="red" />
             <Text size="sm">Aborted upload</Text>
           </Group>
           <Tooltip label="Remove file" position="left">
-            <ActionIcon color="red" onClick={handleRemoveFile}>
+            <LegacyActionIcon color="red" onClick={handleRemoveFile}>
               <IconTrash />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
         </Group>
       );
     case 'error':
       return (
-        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
-          <Group spacing="xs">
+        <Group justify="space-between" wrap="nowrap" gap="xs" style={{ width: '100%' }}>
+          <Group gap="xs">
             <IconBan color="red" />
             <Text size="sm">Failed to upload</Text>
           </Group>
           <Tooltip label="Retry upload" position="left">
-            <ActionIcon color="blue" onClick={() => retry(versionFileUuid)}>
+            <LegacyActionIcon color="blue" onClick={() => retry(versionFileUuid)}>
               <IconRefresh />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
         </Group>
       );
@@ -374,15 +380,15 @@ function TrackedFileStatus({
       );
     case 'pending':
       return (
-        <Group position="apart" noWrap spacing="xs" sx={{ width: '100%' }}>
-          <Group spacing="xs">
+        <Group justify="space-between" wrap="nowrap" gap="xs" style={{ width: '100%' }}>
+          <Group gap="xs">
             <IconCloudUpload />
             <Text size="sm">Pending upload</Text>
           </Group>
           <Tooltip label="Remove file" position="left">
-            <ActionIcon color="red" onClick={handleRemoveFile}>
+            <LegacyActionIcon color="red" onClick={handleRemoveFile}>
               <IconTrash />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
         </Group>
       );
@@ -469,11 +475,14 @@ function FileEditForm({
           value: x,
         }))}
         value={versionFile.type ?? null}
-        onChange={(value: ModelFileType | null) =>
-          updateFile(versionFile.uuid, { type: value, size: null, fp: null })
+        onChange={(value) =>
+          updateFile(versionFile.uuid, {
+            type: value as ModelFileType | null,
+            size: null,
+            fp: null,
+          })
         }
         withAsterisk
-        withinPortal
       />
       {versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint' && (
         <>
@@ -486,11 +495,10 @@ function FileEditForm({
             }))}
             error={error?.size?._errors[0]}
             value={versionFile.size ?? null}
-            onChange={(value: 'full' | 'pruned' | null) => {
-              updateFile(versionFile.uuid, { size: value });
+            onChange={(value) => {
+              updateFile(versionFile.uuid, { size: value as 'full' | 'pruned' | null });
             }}
             withAsterisk
-            withinPortal
           />
 
           <Select
@@ -499,11 +507,10 @@ function FileEditForm({
             data={constants.modelFileFp}
             error={error?.fp?._errors[0]}
             value={versionFile.fp ?? null}
-            onChange={(value: ModelFileFp | null) => {
-              updateFile(versionFile.uuid, { fp: value });
+            onChange={(value) => {
+              updateFile(versionFile.uuid, { fp: value as ModelFileFp | null });
             }}
             withAsterisk
-            withinPortal
           />
 
           {versionFile.name.endsWith('.zip') && (
@@ -513,11 +520,10 @@ function FileEditForm({
               data={zipModelFileTypes.map((x) => ({ label: x, value: x }))}
               error={error?.format?._errors[0]}
               value={versionFile.format ?? null}
-              onChange={(value: ZipModelFileType | null) => {
-                updateFile(versionFile.uuid, { format: value });
+              onChange={(value) => {
+                updateFile(versionFile.uuid, { format: value as ZipModelFileType | null });
               }}
               withAsterisk
-              withinPortal
             />
           )}
         </>
@@ -540,7 +546,7 @@ export function UploadStepActions({ onBackClick, onNextClick }: ActionProps) {
   const { startUpload, files, hasPending } = useFilesContext();
 
   return (
-    <Group mt="xl" position="right">
+    <Group mt="xl" justify="flex-end">
       <Button variant="default" onClick={onBackClick}>
         Back
       </Button>
@@ -554,7 +560,7 @@ export function UploadStepActions({ onBackClick, onNextClick }: ActionProps) {
           if (showConfirmModal) {
             return openConfirmModal({
               title: (
-                <Group spacing="xs">
+                <Group gap="xs">
                   <IconAlertTriangle color="gold" />
                   <Text size="lg">Missing files</Text>
                 </Group>

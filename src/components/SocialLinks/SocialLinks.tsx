@@ -13,6 +13,7 @@ import {
 } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { useIsLive } from '~/hooks/useIsLive';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const defaultProps: ActionIconProps = {
   size: 'lg',
@@ -71,9 +72,11 @@ export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
           (optionProps as HTMLBaseElement).title = 'Live now!';
         }
         return (
-          <ActionIcon
+          <LegacyActionIcon
             key={option}
             component="a"
+            variant="subtle"
+            color="gray"
             href={`/${option}`}
             target="_blank"
             rel="nofollow noreferrer"
@@ -82,7 +85,7 @@ export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
             {...optionProps}
           >
             <Icon size={iconSize} />
-          </ActionIcon>
+          </LegacyActionIcon>
         );
       })}
     </>

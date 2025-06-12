@@ -1,0 +1,50 @@
+.discordButton {
+  --discord-color: #5865F2;
+  background-color: var(--discord-color);
+
+  &:hover {
+    background-color: light-dark(darken(var(--discord-color), 0.05), lighten(var(--discord-color), 0.05));
+  }
+}
+
+
+.googleButton {
+  --google-color: #4285F4;
+  background-color: var(--google-color);
+
+  &:hover {
+    background-color: light-dark(darken(var(--google-color), 0.05), lighten(var(--google-color), 0.05));
+  }
+}
+
+.redditButton {
+  --reddit-color: #FF5700;
+  background-color: var(--reddit-color);
+
+  &:hover {
+    background-color: light-dark(darken(var(--reddit-color), 0.05), lighten(var(--reddit-color), 0.1));
+  }
+}
+
+.emailButton {
+  --email-color: #666;
+  background-color: var(--email-color);
+
+  &:hover {
+    background-color: light-dark(darken(var(--email-color), 0.05), lighten(var(--email-color), 0.1));
+  }
+}
+
+.githubButton {
+  background-color: light-dark(
+    var(--mantine-color-dark-6),
+    var(--mantine-color-dark-9)
+  );
+
+  &:hover {
+    background-color: light-dark(
+      lighten(var(--mantine-color-dark-6), 0.05),
+      lighten(var(--mantine-color-dark-9), 0.02)
+    );
+  }
+}

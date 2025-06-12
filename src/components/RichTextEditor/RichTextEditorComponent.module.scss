@@ -1,0 +1,47 @@
+.mention {
+  color: var(--mantine-color-blue-4);
+}
+
+.instagramEmbed {
+  aspect-ratio: 9 / 16;
+  max-height: 1060px;
+  max-width: 50%;
+  overflow: hidden;
+
+  @container (max-width: theme('screens.sm')) {
+    max-width: 100%;
+  }
+}
+
+.strawPollEmbed {
+  aspect-ratio: 4 / 3;
+  max-height: 480px;
+  pointer-events: auto !important;
+}
+
+.bubbleTooltip {
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+}
+
+.richTextEditor {
+  // margin-top and margin-bottom should be set inline via style prop if they depend on description/error
+  // border-color should be set inline via style prop if it depends on error
+
+  // Fixes gapcursor color for dark mode
+  :global .ProseMirror-gapcursor:after {
+    border-top: 1px solid light-dark(black, white);
+  }
+
+  :global .ProseMirror {
+    min-height: var(--editor-min-height, 50px);
+
+    p.is-editor-empty:first-of-type::before {
+      // color should be set inline via style prop if it depends on error
+      font-size: var(--editor-font-size, 14px);
+    }
+  }
+
+  iframe {
+    pointer-events: none;
+  }
+}

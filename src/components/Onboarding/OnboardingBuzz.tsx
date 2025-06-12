@@ -137,8 +137,8 @@ export function OnboardingBuzz() {
             </Text>
           }
         />
-        <Stack spacing="xl">
-          <Group align="start" sx={{ ['&>*']: { flexGrow: 1 } }}>
+        <Stack gap="xl">
+          <Group align="start" className="*:grow">
             <SpendingBuzz asList />
             <EarningBuzz asList />
           </Group>
@@ -183,7 +183,7 @@ export function OnboardingBuzz() {
             </Text>
           )}
           <TurnstilePrivacyNotice />
-          <Group position="apart">
+          <Group justify="space-between">
             <OnboardingAbortButton size="lg">Sign Out</OnboardingAbortButton>
             <Button
               size="lg"

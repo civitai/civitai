@@ -1,4 +1,11 @@
-import { useMantineTheme, Center, Loader, Button, LoadingOverlay } from '@mantine/core';
+import {
+  useMantineTheme,
+  Center,
+  Loader,
+  Button,
+  LoadingOverlay,
+  useComputedColorScheme,
+} from '@mantine/core';
 import type { UseMasonryOptions } from 'masonic';
 import {
   useContainerPosition,
@@ -54,7 +61,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   autoFetch = true,
   ...masonicProps
 }: Props<T, TFilters>) {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   // #region [track data/filter changes]
   const stringified = JSON.stringify(filters);
@@ -83,7 +90,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
       width: containerWidth,
       maxColumnCount: maxColumnCount,
       columnWidth,
-      columnGutter: columnGutter ?? theme.spacing.md,
+      columnGutter: columnGutter ?? 16,
     },
     [positionerDep]
   );
@@ -122,7 +129,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
             loadCondition={!isRefetching}
             style={{ gridColumn: '1/-1' }}
           >
-            <Center p="xl" sx={{ height: 36 }} mt="md">
+            <Center p="xl" style={{ height: 36 }} mt="md">
               <Loader />
             </Center>
           </InViewLoader>
@@ -132,7 +139,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
               onClick={fetchNextPage}
               loading={isFetchingNextPage}
               color="gray"
-              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              variant={colorScheme === 'dark' ? 'filled' : 'light'}
             >
               {isFetchingNextPage ? 'Loading more...' : 'Load more'}
             </Button>

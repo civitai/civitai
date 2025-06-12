@@ -17,7 +17,7 @@ export function GenerationPromptModal({
   nextIndex,
   onClose,
 }: Props) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const form = useForm({
     schema: upsertExplorationPromptSchema,
     defaultValues: { ...prompt, id: versionId, modelId, index: prompt?.index ?? nextIndex },
@@ -48,7 +48,7 @@ export function GenerationPromptModal({
       title={editing ? `Editing ${prompt.name} Prompt` : 'Add Explorable Prompt'}
     >
       <Form form={form} onSubmit={handleSubmit}>
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <AlertWithIcon icon={<IconAlertCircle />} px="xs">
             {`This will generate images similar to the one you've selected with the level of variation driven by your selection below.`}
           </AlertWithIcon>
@@ -72,7 +72,7 @@ export function GenerationPromptModal({
           />
           <InputText name="id" type="hidden" clearable={false} hidden />
           <InputText name="modelId" type="hidden" clearable={false} hidden />
-          <Group position="right">
+          <Group justify="flex-end">
             <Button type="submit" loading={upsertPromptMutation.isLoading}>
               {editing ? 'Save' : 'Add'}
             </Button>

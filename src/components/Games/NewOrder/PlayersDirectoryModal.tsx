@@ -29,6 +29,7 @@ import {
 } from '~/components/Games/KnightsNewOrder.utils';
 import { PlayerStats } from '~/components/Games/PlayerCard';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -69,7 +70,7 @@ export default function PlayersDirectoryModal() {
             className="w-full"
             placeholder="Search for players..."
             type="search"
-            icon={<IconSearch size={16} />}
+            leftSection={<IconSearch size={16} />}
             onChange={(e) => setDebouncedSearch(e.currentTarget.value || undefined)}
           />
         )}
@@ -150,7 +151,7 @@ function PlayerDetails({ player }: { player: GetPlayersItem }) {
         <Button
           size="sm"
           color="red"
-          leftIcon={<IconSkull className="size-5" />}
+          leftSection={<IconSkull className="size-5" />}
           loading={resettingPlayer}
           onClick={handleResetPlayerClick}
           fullWidth
@@ -179,7 +180,7 @@ function PlayerDetails({ player }: { player: GetPlayersItem }) {
                   </div>
                 </div>
                 <Tooltip label="Cleanse smite" withinPortal>
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="lg"
                     color="pink"
                     variant="filled"
@@ -193,7 +194,7 @@ function PlayerDetails({ player }: { player: GetPlayersItem }) {
                     loading={loading}
                   >
                     <IconHealthRecognition />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               </div>
             </Card>

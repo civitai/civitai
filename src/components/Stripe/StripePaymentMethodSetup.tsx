@@ -4,7 +4,7 @@ import { Elements, PaymentElement } from '@stripe/react-stripe-js';
 import React from 'react';
 import { useStripePaymentMethodSetup } from '~/components/Buzz/useStripePaymentMethodSetup';
 import type { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stripe-js';
-import { Button, Center, Group, Loader, Stack, Text, useMantineTheme } from '@mantine/core';
+import { Button, Center, Group, Loader, Stack, Text, useComputedColorScheme } from '@mantine/core';
 
 type Props = {
   redirectUrl?: string;
@@ -14,7 +14,7 @@ type Props = {
 };
 export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props) => {
   const stripePromise = useStripePromise();
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const { data, isLoading, isFetching } = trpc.stripe.getSetupIntent.useQuery(
     { paymentMethodTypes },
@@ -26,7 +26,7 @@ export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props
   if (isLoading || isFetching) {
     return (
       <Center>
-        <Loader variant="bars" />
+        <Loader type="bars" />
       </Center>
     );
   }
@@ -34,7 +34,7 @@ export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props
   if (!clientSecret) {
     return (
       <Center>
-        <Text color="red" size="sm">
+        <Text c="red" size="sm">
           There was an error attempting to setup a payment method. Please try again later.
         </Text>
       </Center>
@@ -43,7 +43,7 @@ export const StripePaymentMethodSetup = ({ paymentMethodTypes, ...props }: Props
 
   const options: StripeElementsOptions = {
     clientSecret,
-    appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
+    appearance: { theme: colorScheme === 'dark' ? 'night' : 'stripe' },
     locale: 'en',
   };
 
@@ -75,14 +75,14 @@ const SetupPaymentMethod = ({ redirectUrl, onCancel, cancelLabel }: Props) => {
         handleSubmit();
       }}
     >
-      <Stack spacing="md">
+      <Stack gap="md">
         <PaymentElement id="payment-element" options={paymentElementOptions} />
         {errorMessage && (
-          <Text color="red" size="sm">
+          <Text c="red" size="sm">
             {errorMessage}
           </Text>
         )}
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button
               component="button"

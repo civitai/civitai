@@ -23,12 +23,12 @@ export function PeriodModeToggle({ type, ...props }: Props) {
   const setFilters = useSetFilters(type);
 
   const value = queryValue ? queryValue : globalValue;
-  const setValue = (value: PeriodMode) => {
+  const setValue = (value: string) => {
     if (queryValue && queryValue !== value)
       replace({ pathname, query: removeEmpty({ ...query, periodMode: undefined }) }, undefined, {
         shallow: true,
       });
-    setFilters({ periodMode: value });
+    setFilters({ periodMode: value as PeriodMode });
   };
 
   return (

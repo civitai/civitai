@@ -21,7 +21,7 @@ export function ToggleLockComments({
   entityType,
   onSuccess,
 }: ToggleLockCommentsProps) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { data: thread } = trpc.commentv2.getThreadDetails.useQuery({
     entityId,
     entityType,

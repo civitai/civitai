@@ -8,9 +8,9 @@ import {
   Chip,
   ChipProps,
   Button,
-  createStyles,
   Drawer,
   useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import { BountyType, MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -39,7 +39,7 @@ const checkSupportsBaseModel = (types: BountyType[]) => {
 };
 
 export function BountyFiltersDropdown({ ...buttonProps }: Props) {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);
@@ -76,8 +76,7 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
+      disabled={!filterLength}
       inline
     >
       <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
@@ -87,17 +86,33 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
-        <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
+    <Stack gap="lg">
+      <Stack gap="md">
+        <Divider
+          label="Time period"
+          styles={{
+            label: {
+              weight: 'bold',
+              size: 'var(--mantine-font-size-sm)',
+            },
+          }}
+        />
         <PeriodFilter type="bounties" variant="chips" />
       </Stack>
-      <Stack spacing="md">
-        <Divider label="Bounty type" labelProps={{ weight: 'bold', size: 'sm' }} />
+      <Stack gap="md">
+        <Divider
+          label="Bounty type"
+          styles={{
+            label: {
+              weight: 'bold',
+              size: 'var(--mantine-font-size-sm)',
+            },
+          }}
+        />
         <Chip.Group
-          spacing={8}
           value={filters.types ?? []}
-          onChange={(types: BountyType[]) => {
+          onChange={(v: string[]) => {
+            const types = v as BountyType[];
             const clearBaseModelFilter = !checkSupportsBaseModel(types);
             setFilters({
               types,
@@ -106,34 +121,47 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
           }}
           multiple
         >
-          {Object.values(BountyType).map((type, index) => (
-            <FilterChip key={index} value={type}>
-              <span>{getDisplayName(type)}</span>
-            </FilterChip>
-          ))}
+          <Group gap={8}>
+            {Object.values(BountyType).map((type, index) => (
+              <FilterChip key={index} value={type}>
+                <span>{getDisplayName(type)}</span>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
       {showBaseModelFilter && (
-        <Stack spacing="md">
-          <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Stack gap="md">
+          <Divider
+            label="Base model"
+            styles={{
+              label: {
+                weight: 'bold',
+                size: 'var(--mantine-font-size-sm)',
+              },
+            }}
+          />
           <Chip.Group
-            spacing={8}
             value={filters.baseModels ?? []}
-            onChange={(baseModels: BaseModel[]) => setFilters({ baseModels })}
+            onChange={(baseModels: string[]) =>
+              setFilters({ baseModels: baseModels as BaseModel[] })
+            }
             multiple
           >
-            {activeBaseModels.map((baseModel, index) => (
-              <FilterChip key={index} value={baseModel}>
-                <span>{baseModel}</span>
-              </FilterChip>
-            ))}
+            <Group gap={8}>
+              {activeBaseModels.map((baseModel, index) => (
+                <FilterChip key={index} value={baseModel}>
+                  <span>{baseModel}</span>
+                </FilterChip>
+              ))}
+            </Group>
           </Chip.Group>
         </Stack>
       )}
       {/* TODO.bounty: turn this on once we accept split bounties */}
-      {/* <Stack spacing="md">
+      {/* <Stack gap="md">
         <Divider label="Bounty mode" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group spacing={8}>
+        <Group gap={8}>
           {Object.values(BountyMode).map((mode, index) => (
             <Chip
               {...chipProps}
@@ -146,9 +174,17 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
           ))}
         </Group>
       </Stack> */}
-      <Stack spacing="md">
-        <Divider label="Bounty status" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group spacing={8}>
+      <Stack gap="md">
+        <Divider
+          label="Bounty status"
+          styles={{
+            label: {
+              weight: 'bold',
+              size: 'var(--mantine-font-size-sm)',
+            },
+          }}
+        />
+        <Group gap={8}>
           {Object.values(BountyStatus).map((status, index) => (
             <FilterChip
               key={index}
@@ -163,7 +199,7 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -183,14 +219,14 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
           size="90%"
           position="bottom"
           styles={{
-            drawer: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -216,34 +252,3 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
 }
 
 type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'>;
-
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));

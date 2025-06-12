@@ -1,5 +1,12 @@
 import type { BadgeProps, MantineSize } from '@mantine/core';
-import { Badge, Loader, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import {
+  Badge,
+  Loader,
+  Text,
+  Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import NumberFlow from '@number-flow/react';
 import type { IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
@@ -7,6 +14,8 @@ import type { BuzzTypeDistribution } from '~/components/Buzz/buzz.utils';
 import { CurrencyConfig } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
+import classes from './CurrencyBadge.module.scss';
+import clsx from 'clsx';
 
 type Props = BadgeProps & {
   currency: Currency;
@@ -36,7 +45,6 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
       currency,
       formatter,
       displayCurrency = true,
-      sx,
       children,
       loading,
       iconProps,
@@ -44,12 +52,15 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
       type,
       typeDistrib,
       asCounter,
+      style,
+      className,
       ...badgeProps
     },
     ref
   ) => {
     const value = formatCurrencyForDisplay(unitAmount, currency);
     const theme = useMantineTheme();
+    const colorScheme = useComputedColorScheme('dark');
     const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
     const Icon = config.icon;
     const colorString = textColor || config.color(theme);
@@ -65,58 +76,46 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
       >
         <Badge
           ref={ref}
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           color="gray"
           radius="xl"
           pl={8}
           pr={12}
-          sx={{
+          style={{
             fontSize: 12,
             fontWeight: 600,
             lineHeight: 1.5,
             color: colorString,
             position: 'relative',
-            ...(sx ? (typeof sx === 'function' ? sx(theme) : sx) : {}),
-          }}
-          styles={{
-            root: typeDistrib
-              ? {
-                  '::after': {
-                    content: '""',
-                    position: 'absolute',
-                    pointerEvents: 'none',
-                    left: '1px',
-                    right: '1px',
-                    top: '1px',
-                    bottom: '1px',
-                    border: '1px solid yellow',
-                    borderRadius: '50%',
-                    borderImage: `linear-gradient(to right, ${theme.colors.blue[4]} ${Math.round(
-                      typeDistrib.pct.blue * 100
-                    )}%, ${theme.colors.yellow[7]} ${Math.round(typeDistrib.pct.blue * 100)}%, ${
-                      theme.colors.yellow[7]
-                    } ${Math.round(typeDistrib.pct.yellow * 100)}%) 1`,
-                    clipPath: 'inset(0% 0% 0% 0% round 1px)',
-                  },
-                }
+            ...(style ?? {}),
+            '--border-image': typeDistrib
+              ? `linear-gradient(to right, ${theme.colors.blue[4]} ${Math.round(
+                  typeDistrib.pct.blue * 100
+                )}%, ${theme.colors.yellow[7]} ${Math.round(typeDistrib.pct.blue * 100)}%, ${
+                  theme.colors.yellow[7]
+                } ${Math.round(typeDistrib.pct.yellow * 100)}%) 1`
               : undefined,
+          }}
+          classNames={{
+            root: clsx(typeDistrib && classes.badgeWithDistrib, className),
+            label: 'flex gap-0.5 items-center flex-nowrap',
           }}
           {...badgeProps}
         >
           <div className="flex items-center gap-1">
             <Icon
-              size={iconSize[badgeProps.size ?? 'sm']}
+              size={iconSize[(badgeProps.size as MantineSize) ?? 'sm']}
               fill={currency === Currency.BUZZ ? 'currentColor' : undefined}
               {...iconProps}
             />
             {loading ? (
-              <Loader size="xs" variant="dots" color={colorString} />
+              <Loader size="xs" type="dots" color={colorString} />
             ) : (
               <div className="flex items-center gap-1">
                 {asCounter ? (
                   <NumberFlow respectMotionPreference={false} value={unitAmount} />
                 ) : (
-                  <Text>
+                  <Text fw={600} size="xs">
                     {formatter
                       ? formatter(unitAmount)
                       : `${value || 0} ${displayCurrency ? currency : ''}`}

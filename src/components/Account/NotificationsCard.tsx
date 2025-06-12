@@ -13,7 +13,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function NotificationsCard() {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { hasNotifications, hasCategory, notificationSettings, isLoading } =
     useNotificationSettings();
@@ -67,8 +67,8 @@ export function NotificationsCard() {
         </Title>
         <Card withBorder pb={0}>
           <Card.Section withBorder inheritPadding py="xs">
-            <Group position="apart">
-              <Text weight={500}>On-site Notifications</Text>
+            <Group justify="space-between">
+              <Text fw={500}>On-site Notifications</Text>
               <SkeletonSwitch
                 loading={isLoading}
                 checked={hasNotifications ?? false}
@@ -77,9 +77,9 @@ export function NotificationsCard() {
             </Group>
           </Card.Section>
           {!hasNotifications ? (
-            <Group noWrap mt="xs" pb="sm">
+            <Group wrap="nowrap" mt="xs" pb="sm">
               <IconBellOff size={24} strokeWidth={2} />
-              <Text sx={{ lineHeight: 1.3 }}>
+              <Text style={{ lineHeight: 1.3 }}>
                 {`All non-essential notifications are turned off`}
               </Text>
             </Group>
@@ -88,8 +88,8 @@ export function NotificationsCard() {
               {Object.entries(notificationCategoryTypes).map(([category, settings]) => (
                 <React.Fragment key={category}>
                   <Card.Section withBorder inheritPadding py="xs">
-                    <Group position="apart">
-                      <Text weight={500}>{category} Notifications</Text>
+                    <Group justify="space-between">
+                      <Text fw={500}>{category} Notifications</Text>
                       <SkeletonSwitch
                         loading={isLoading}
                         checked={hasCategory[category]}

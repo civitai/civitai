@@ -27,7 +27,7 @@ type SortFilterComponentProps = {
   type: Exclude<FilterSubTypes, 'changelogs' | 'auctions'>;
   ignoreNsfwLevel?: boolean;
   options?: { label: SortOption; value: SortOption }[];
-} & Omit<ButtonProps, 'children' | 'type'>;
+} & Omit<ButtonProps, 'children' | 'type' | 'style'>;
 
 type SortFilterProps = StatefulProps | DumbProps;
 

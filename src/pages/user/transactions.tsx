@@ -13,7 +13,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { DatePicker } from '@mantine/dates';
+import { DatePickerInput } from '@mantine/dates';
 import { IconBolt } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
@@ -81,7 +81,7 @@ export default function UserTransactions() {
 
   return (
     <Container size="sm">
-      <Stack spacing="xl">
+      <Stack gap="xl">
         <Title order={1}>Transaction History</Title>
         <SegmentedControl
           value={filters.accountType}
@@ -91,8 +91,8 @@ export default function UserTransactions() {
             { label: 'Blue', value: 'generation' },
           ]}
         />
-        <Group spacing="sm">
-          <DatePicker
+        <Group gap="sm">
+          <DatePickerInput
             label="From"
             name="start"
             placeholder="Start date"
@@ -100,9 +100,11 @@ export default function UserTransactions() {
             w="calc(50% - 12px)"
             defaultValue={defaultFilters.start}
             maxDate={dayjs(filters.end).subtract(1, 'day').toDate()}
-            clearButtonLabel="Clear start date"
+            clearButtonProps={{
+              children: 'Clear start date',
+            }}
           />
-          <DatePicker
+          <DatePickerInput
             label="To"
             name="end"
             placeholder="End date"
@@ -111,7 +113,9 @@ export default function UserTransactions() {
             defaultValue={defaultFilters.end}
             minDate={dayjs(filters.start).add(1, 'day').toDate()}
             maxDate={defaultFilters.end}
-            clearButtonLabel="Clear end date"
+            clearButtonProps={{
+              children: 'Clear end date',
+            }}
           />
           <Select
             label="Type"
@@ -127,7 +131,7 @@ export default function UserTransactions() {
                   }))
                 : setFilters((current) => ({ ...current, type: undefined }))
             }
-            clearButtonLabel="Clear tip filter"
+            clearButtonProps={{ children: 'Clear tip filter' }}
             clearable
           />
         </Group>
@@ -136,7 +140,7 @@ export default function UserTransactions() {
             <Loader />
           </Center>
         ) : transactions.length ? (
-          <Stack spacing="md">
+          <Stack gap="md">
             {transactions.map((transaction, index) => {
               const { amount, date, fromUser, toUser, details, type } = transaction;
               let { description } = transaction;
@@ -151,46 +155,45 @@ export default function UserTransactions() {
 
               return (
                 <Card key={`${index}-${date.toISOString()}`} withBorder>
-                  <Stack spacing={4}>
-                    <Group position="apart">
-                      <Group spacing={8}>
-                        <Text weight="500">{formatDate(date)}</Text>
+                  <Stack gap={4}>
+                    <Group justify="space-between">
+                      <Group gap={8}>
+                        <Text fw="500">{formatDate(date)}</Text>
                         <Badge>{TransactionType[type]}</Badge>
                       </Group>
-                      <Text color={isDebit ? 'red' : 'green'}>
-                        <Group spacing={4}>
+                      <Text c={isDebit ? 'red' : 'green'}>
+                        <Group gap={4}>
                           <IconBolt size={16} fill="currentColor" />
-                          <Text sx={{ fontVariantNumeric: 'tabular-nums' }} span>
+                          <Text style={{ fontVariantNumeric: 'tabular-nums' }} span>
                             {amount.toLocaleString()}
                           </Text>
                         </Group>
                       </Text>
                     </Group>
                     {fromUser && fromUser.id !== currentUser?.id && (
-                      <Text color="dimmed">
-                        <Group spacing={4}>
+                      <Text c="dimmed">
+                        <Group gap={4}>
                           {isDebit ? 'To: ' : 'From: '}
-                          <Text weight="500" span>
+                          <Text fw="500" span>
                             {fromUser.username}
                           </Text>
                         </Group>
                       </Text>
                     )}
                     {toUser && toUser.id !== currentUser?.id && (
-                      <Text color="dimmed">
-                        <Group spacing={4}>
+                      <Text c="dimmed">
+                        <Group gap={4}>
                           {isDebit ? 'From: ' : 'To: '}
-                          <Text weight="500" span>
+                          <Text fw="500" span>
                             {toUser.username}
                           </Text>
                         </Group>
                       </Text>
                     )}
-                    {description && <Text color="dimmed">{description}</Text>}
+                    {description && <Text c="dimmed">{description}</Text>}
                     {isImage && details?.entityId ? (
                       <RoutedDialogLink
                         name="imageDetail"
-                        variant="link"
                         state={{ imageId: details.entityId }}
                         style={{ fontSize: 12 }}
                       >

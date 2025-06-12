@@ -1,4 +1,4 @@
-import { Group, Progress, Skeleton, Stack, Text, createStyles } from '@mantine/core';
+import { Group, Progress, Skeleton, Stack, Text } from '@mantine/core';
 import { Fragment, createContext, useContext } from 'react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -11,8 +11,8 @@ import {
 import { StarRating } from '~/components/StartRating/StarRating';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import type { ResourceReviewRatingTotals } from '~/types/router';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import classes from './ResourceReviewSummary.module.scss';
 
 type ContextState = {
   count: number;
@@ -73,7 +73,7 @@ ResourceReviewSummary.Header = function Header({
   const roundedRating = roundRating(rating ?? initialRating ?? 0);
 
   return (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       {showSkeleton ? (
         <>
           <Skeleton height={12.8} my={6} />
@@ -83,7 +83,7 @@ ResourceReviewSummary.Header = function Header({
         <>
           <Group>
             <Text>Reviews</Text>
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               {count ?? initialCount} {!!modelVersionId ? 'version' : ''} ratings
             </Text>
           </Group>
@@ -99,11 +99,10 @@ ResourceReviewSummary.Header = function Header({
 
 const ratings = ['5', '4', '3', '2', '1'] as (keyof ResourceReviewRatingTotals)[];
 ResourceReviewSummary.Totals = function Totals() {
-  const { classes } = useStyles();
   const { totals, count, loading } = useSummaryContext();
 
   return loading ? (
-    <Stack spacing={4}>
+    <Stack gap={4}>
       {ratings.map((r) => (
         <Skeleton height={12} my={6} key={r} />
       ))}
@@ -136,20 +135,19 @@ ResourceReviewSummary.Simple = function Simple({
 }) {
   const { rating, count, loading } = useSummaryContext();
   const roundedRating = roundRating(rating ?? initialRating ?? 0);
-  const { classes } = useStyles();
 
   if (loading && initialRating === undefined && initialCount === undefined) {
     return null;
   }
 
   return (
-    <Stack spacing={0}>
+    <Stack gap={0}>
       <IconBadge
         radius="sm"
         color="gray"
         size="lg"
         icon={<StarRating value={roundedRating} />}
-        sx={{ cursor: 'pointer' }}
+        className="cursor-pointer"
         onClick={onClick}
       >
         <Text className={classes.badgeText}>{abbreviateNumber(count ?? 0)}</Text>
@@ -157,20 +155,3 @@ ResourceReviewSummary.Simple = function Simple({
     </Stack>
   );
 };
-
-const useStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'max-content 1fr max-content',
-    alignItems: 'center',
-    columnGap: theme.spacing.md,
-    rowGap: 4,
-  },
-
-  badgeText: {
-    fontSize: theme.fontSizes.md,
-    [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.sm,
-    },
-  },
-}));

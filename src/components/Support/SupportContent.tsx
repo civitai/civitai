@@ -3,7 +3,6 @@ import type { IconProps } from '@tabler/icons-react';
 import { IconMail, IconQuestionMark, IconWand } from '@tabler/icons-react';
 import { IconBook, IconBrandDiscord } from '@tabler/icons-react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';
-import { trpc } from '~/utils/trpc';
 
 const SUPPORT_OPTIONS = [
   {
@@ -43,20 +42,20 @@ const SUPPORT_OPTIONS = [
 
 export function SupportContent() {
   return (
-    <Grid gutter="xl">
-      <Grid.Col xs={12} md={6}>
-        <Stack spacing="lg">
+    <Grid gutter={24}>
+      <Grid.Col span={{ base: 12, md: 6 }}>
+        <Stack gap="lg">
           {SUPPORT_OPTIONS.map((option) => (
             <Card key={option.title} shadow="xs" radius={12} p="md" pr="lg">
-              <Group align="flex-start" noWrap>
+              <Group align="flex-start" wrap="nowrap">
                 <div style={{ minWidth: 32 }}>{option.icon({ size: 32 })}</div>
-                <Stack spacing="sm">
-                  <Text size="sm" weight={500}>
+                <Stack gap="sm">
+                  <Text size="sm" fw={500}>
                     {option.description}
                   </Text>
                   <Anchor
                     size="sm"
-                    weight={700}
+                    fw={700}
                     href={option.link.href}
                     target="_blank"
                     rel="nofollow noreferrer"
@@ -69,15 +68,8 @@ export function SupportContent() {
           ))}
         </Stack>
       </Grid.Col>
-      <Grid.Col xs={12} md={6}>
-        <AssistantChat
-          width="100%"
-          height="100%"
-          sx={{
-            height: '100%',
-            minHeight: 500,
-          }}
-        />
+      <Grid.Col span={{ base: 12, md: 6 }}>
+        <AssistantChat width="100%" height="100%" className="h-full min-h-[500px]" />
       </Grid.Col>
       <Grid.Col>
         <Text size="md">

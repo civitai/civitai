@@ -1,4 +1,13 @@
-import { ActionIcon, Button, Card, Modal, Radio, SegmentedControl, Slider } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Card,
+  Modal,
+  Radio,
+  SegmentedControl,
+  Slider,
+  Stack,
+} from '@mantine/core';
 import { useEffect, useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
@@ -7,6 +16,7 @@ import { IconZoomIn, IconZoomOut } from '@tabler/icons-react';
 import { getCroppedImg } from '~/utils/image-utils';
 import clsx from 'clsx';
 import { isMobileDevice } from '~/hooks/useIsMobile';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type ImageProps = { url: string; width: number; height: number; label?: string };
 type ImageCropperProps = { images: ImageProps[]; onCancel?: () => void; onConfirm: OnConfirmFn };
@@ -36,7 +46,9 @@ export function ImageCropModal(props: ImageCropperProps) {
       {...dialog}
       title="Crop Images"
       size={768}
-      transitionDuration={0}
+      transitionProps={{
+        duration: 0,
+      }}
       onClose={handleCancel}
       fullScreen={isMobileDevice()}
     >
@@ -164,14 +176,14 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
             <Radio.Group
               size="xs"
               label="Aspect Ratio"
-              orientation="vertical"
               value={`${aspect}`}
               onChange={(value) => setAspect(Number(value))}
-              spacing="sm"
             >
-              {availableAspects.map(({ label, value }, index) => (
-                <Radio key={index} value={value} label={label} />
-              ))}
+              <Stack gap="sm">
+                {availableAspects.map(({ label, value }, index) => (
+                  <Radio key={index} value={value} label={label} />
+                ))}
+              </Stack>
             </Radio.Group>
           </Card>
         </div>
@@ -277,14 +289,14 @@ function ImageCropper({
       </div>
       {!readonly && (
         <div className="mx-auto flex w-full max-w-80 items-center gap-2">
-          <ActionIcon
+          <LegacyActionIcon
             size="sm"
             disabled={zoom === minZoom}
             onClick={handleZoomOut}
             variant="transparent"
           >
             <IconZoomOut />
-          </ActionIcon>
+          </LegacyActionIcon>
           <Slider
             className="flex-1"
             value={zoom}
@@ -294,14 +306,14 @@ function ImageCropper({
             step={0.1}
             precision={1}
           />
-          <ActionIcon
+          <LegacyActionIcon
             size="sm"
             disabled={zoom === maxZoom}
             onClick={handleZoomIn}
             variant="transparent"
           >
             <IconZoomIn />
-          </ActionIcon>
+          </LegacyActionIcon>
         </div>
       )}
     </div>

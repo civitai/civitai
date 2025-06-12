@@ -49,7 +49,7 @@ export const contentGenerationTour: StepWithData[] = [
       <div className="flex flex-col gap-2">
         <Text>
           Alternatively, you can remix existing images on the site. Click{' '}
-          <Text weight={600} span>
+          <Text fw={600} span>
             Next
           </Text>{' '}
           to learn more.
@@ -149,11 +149,11 @@ export const contentGenerationTour: StepWithData[] = [
     content: (
       <Text>
         You can select images from both the{' '}
-        <Text weight={600} span>
+        <Text fw={600} span>
           Queue
         </Text>{' '}
         and the{' '}
-        <Text weight={600} span>
+        <Text fw={600} span>
           Feed
         </Text>{' '}
         to post them on the site. Posting lets you share your creations with the community and earn
@@ -289,11 +289,11 @@ export const remixContentGenerationTour: StepWithData[] = [
     content: (
       <Text>
         You can select images from both the{' '}
-        <Text weight={600} span>
+        <Text fw={600} span>
           Queue
         </Text>{' '}
         and the{' '}
-        <Text weight={600} span>
+        <Text fw={600} span>
           Feed
         </Text>{' '}
         to post them on the site. Posting lets you share your creations with the community and earn

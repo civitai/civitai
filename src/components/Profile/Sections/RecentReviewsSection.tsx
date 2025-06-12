@@ -1,43 +1,35 @@
-import { Badge, Button, Group, Paper, Stack, Text, ThemeIcon, createStyles } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  ThemeIcon,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import { IconCategory, IconPhoto, IconStar } from '@tabler/icons-react';
 import React from 'react';
 
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
-import {
-  ProfileSection,
-  ProfileSectionPreview,
-  useProfileSectionStyles,
-} from '~/components/Profile/ProfileSection';
+import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
+import classes from '~/components/Profile/ProfileSection.module.css';
+
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useQueryResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useInView } from '~/hooks/useInView';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles(() => ({
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  ContainerGrid: {
-    [containerQuery.smallerThan('sm')]: {
-      flexDirection: 'column-reverse',
-    },
-  },
-}));
+import sectionClasses from './RecentReviewsSection.module.scss';
 
 export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
-  const { classes: sectionClasses } = useStyles();
   const [ref, inView] = useInViewDynamic({ id: 'profile-reviews-section' });
-  const { classes, theme } = useProfileSectionStyles({});
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const { resourceReviews, isLoading } = useQueryResourceReview(
     {
@@ -64,8 +56,8 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
           <ProfileSectionPreview />
         ) : (
           <ProfileSection title="Recent Reviews" icon={<IconStar />}>
-            <ContainerGrid className={sectionClasses.ContainerGrid}>
-              <ContainerGrid.Col sm={12} md={8}>
+            <ContainerGrid2 className={sectionClasses.containerGrid}>
+              <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
                 <Stack>
                   {resourceReviews.map((review) => {
                     const reviewer = review.user;
@@ -78,13 +70,11 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                         radius="sm"
                         style={{
                           background:
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[6]
-                              : theme.colors.gray[1],
+                            colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
                         }}
                       >
                         <Stack>
-                          <Group align="flex-start" position="apart" noWrap>
+                          <Group align="flex-start" justify="space-between" wrap="nowrap">
                             <UserAvatar
                               user={reviewer}
                               withUsername
@@ -93,7 +83,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                               spacing="md"
                               linkToProfile
                               subText={
-                                <Text color="dimmed" size="sm">
+                                <Text c="dimmed" size="sm">
                                   <DaysFromNow date={review.createdAt} />
                                 </Text>
                               }
@@ -113,12 +103,12 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                 <RenderHtml
                                   html={review.details}
                                   style={{
-                                    color: theme.colorScheme === 'dark' ? 'white' : 'black',
+                                    color: colorScheme === 'dark' ? 'white' : 'black',
                                   }}
                                 />
                               </ContentClamp>
                             )}
-                            <Group spacing="xs">
+                            <Group gap="xs">
                               {review.model && (
                                 <Button
                                   px={4}
@@ -129,7 +119,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                   size="xs"
                                   style={{ height: '26px' }}
                                 >
-                                  <Group spacing={2}>
+                                  <Group gap={2}>
                                     <IconCategory size={15} />
                                     <span>{review.model.name}</span>
                                   </Group>
@@ -137,7 +127,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                               )}
                               {/* {review.helper && (review.helper?.imageCount ?? 0) > 0 && (
                               <Badge px={4} py={2} radius="sm" style={{ height: '26px' }}>
-                                <Group spacing={2}>
+                                <Group gap={2}>
                                   <IconPhoto size={15} />{' '}
                                   <span>{abbreviateNumber(review.helper.imageCount)}</span>
                                 </Group>
@@ -150,8 +140,8 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                     );
                   })}
                 </Stack>
-              </ContainerGrid.Col>
-            </ContainerGrid>
+              </ContainerGrid2.Col>
+            </ContainerGrid2>
           </ProfileSection>
         ))}
     </div>

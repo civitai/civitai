@@ -5,8 +5,9 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 export function PageModal({ children, ...props }: ModalProps) {
   return (
     <Modal
-      target="main"
-      transitionDuration={0}
+      transitionProps={{
+        duration: 0,
+      }}
       {...props}
       styles={{
         root: { position: 'absolute' },

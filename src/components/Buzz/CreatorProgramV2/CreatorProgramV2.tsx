@@ -57,6 +57,7 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
 import { TosModal } from '~/components/ToSModal/TosModal';
@@ -71,8 +72,6 @@ import {
   getForecastedValue,
 } from '~/server/utils/creator-program.utils';
 import {
-  CAP_DEFINITIONS,
-  MIN_CAP,
   MIN_WITHDRAWAL_AMOUNT,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
@@ -213,13 +212,13 @@ const JoinCreatorProgramCard = () => {
             </span>
             !
           </p>
-          <ActionIcon onClick={openEarningEstimateModal}>
+          <LegacyActionIcon variant="subtle" color="gray" onClick={openEarningEstimateModal}>
             <IconInfoCircle size={14} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </div>
       </div>
 
-      <div className="  flex flex-col gap-2">
+      <div className="flex flex-col gap-2">
         <p className="font-bold">Program requirements</p>
         <Divider />
 
@@ -230,17 +229,19 @@ const JoinCreatorProgramCard = () => {
               requirements?.score.min ?? 10000
             )}`}
             content={
-              <p>
-                Your current{' '}
-                <Anchor
-                  onClick={() => {
-                    openCreatorScoreModal();
-                  }}
-                >
-                  Creator Score
-                </Anchor>{' '}
-                is {abbreviateNumber(requirements?.score.current ?? 0)}.
-              </p>
+              <>
+                <p className="my-0">
+                  Your current{' '}
+                  <Anchor
+                    onClick={() => {
+                      openCreatorScoreModal();
+                    }}
+                  >
+                    Creator Score
+                  </Anchor>{' '}
+                  is {abbreviateNumber(requirements?.score.current ?? 0)}.
+                </p>
+              </>
             }
           />
           <CreatorProgramRequirement
@@ -248,24 +249,28 @@ const JoinCreatorProgramCard = () => {
             title="Be a Civitai Member"
             content={
               hasValidMembership ? (
-                <p>
-                  You are a {capitalize(getDisplayName(membership as string))} Member! Thank you for
-                  supporting Civitai.
-                </p>
+                <>
+                  <p className="my-0">
+                    You are a {capitalize(getDisplayName(membership as string))} Member! Thank you
+                    for supporting Civitai.
+                  </p>
+                </>
               ) : membership ? (
-                <p>
-                  You are a {capitalize(getDisplayName(membership as string))} Member. Your current
-                  membership does not apply to join the Creator Program. Consider upgrading to one
-                  our supported memberships.
-                  <br />
-                  <NextLink href="/pricing">
-                    <Anchor>Upgrade Membership</Anchor>
-                  </NextLink>
-                </p>
+                <>
+                  <p className="my-0">
+                    You are a {capitalize(getDisplayName(membership as string))} Member. Your
+                    current membership does not apply to join the Creator Program. Consider
+                    upgrading to one our supported memberships.
+                    <br />
+                    <Anchor component={NextLink} href="/pricing">
+                      Upgrade Membership
+                    </Anchor>
+                  </p>
+                </>
               ) : (
-                <NextLink href="/pricing">
-                  <Anchor>Become a Civitai Member Now!</Anchor>
-                </NextLink>
+                <Anchor component={NextLink} href="/pricing">
+                  Become a Civitai Member Now!
+                </Anchor>
               )
             }
           />
@@ -296,13 +301,13 @@ export const CreatorProgramRequirement = ({
   return (
     <div className="flex gap-2">
       {isMet ? (
-        <IconCircleCheck className="text-green-500" size={25} />
+        <IconCircleCheck className="shrink-0 text-green-500" size={25} />
       ) : (
-        <IconCircleX className="text-red-500" size={25} />
+        <IconCircleX className="shrink-0 text-red-500" size={25} />
       )}
       <div className="flex flex-col gap-0">
-        <p className="font-bold">{title}</p>
-        {typeof content === 'string' ? <p>{content}</p> : content}
+        <p className="my-0 font-bold">{title}</p>
+        {typeof content === 'string' ? <p className="my-0">{content}</p> : content}
       </div>
     </div>
   );
@@ -325,17 +330,17 @@ export const CompensationPoolCard = () => {
     <div className={clsx(cardProps.className, 'h-full basis-1/4 gap-6')}>
       <div className="flex h-full flex-col justify-between gap-12">
         <div className="flex flex-col">
-          <h3 className="text-center text-xl font-bold">Compensation Pool</h3>
-          <p className="text-center">{date}</p>
+          <h3 className="my-0 text-center text-xl font-bold">Compensation Pool</h3>
+          <p className="my-0 text-center">{date}</p>
         </div>
 
         <div className="flex flex-col">
-          <p className="text-center text-2xl font-bold">
+          <p className="my-0 text-center text-2xl font-bold">
             ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
           </p>
         </div>
         <div className="flex flex-col">
-          <h3 className="text-center text-xl font-bold">Current Banked Buzz</h3>
+          <h3 className="my-0 text-center text-xl font-bold">Current Banked Buzz</h3>
           <div className="flex justify-center gap-1">
             <CurrencyIcon className="my-auto" currency={Currency.BUZZ} size={20} />
             <span className="text-2xl font-bold">
@@ -363,7 +368,7 @@ const BankBuzzCard = () => {
   const [toBank, setToBank] = React.useState<number>(10000);
   const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
   const isLoading = isLoadingCompensationPool || buzzAccount.balanceLoading || isLoadingBanked;
-  const [_, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
+  const [, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
   const endDate = formatDate(roundMinutes(end), DATE_FORMAT, false);
   const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
 
@@ -403,12 +408,12 @@ const BankBuzzCard = () => {
           <NumberInputWrapper
             label="Buzz"
             labelProps={{ className: 'hidden' }}
-            icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+            leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
             value={toBank ? toBank : undefined}
             min={10000}
             max={maxBankable}
-            onChange={(value) => {
-              setToBank(Math.min(value ?? 10000, maxBankable));
+            onChange={(value: string | number) => {
+              setToBank(Math.min(Number(value ?? 10000), maxBankable));
             }}
             styles={{
               input: {
@@ -420,7 +425,7 @@ const BankBuzzCard = () => {
             step={1000}
           />
           <Tooltip label="Bank now!" position="top">
-            <ActionIcon
+            <LegacyActionIcon
               miw={40}
               variant="filled"
               color="lime.7"
@@ -449,12 +454,11 @@ const BankBuzzCard = () => {
               }}
             >
               <IconPigMoney size={24} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
         </div>
         <Button
-          compact
-          size="xs"
+          size="compact-xs"
           variant="outline"
           disabled={toBank === maxBankable}
           onClick={() => setToBank(maxBankable)}
@@ -467,9 +471,9 @@ const BankBuzzCard = () => {
             <span className="font-bold">Estimated Value:</span> $
             {numberWithCommas(formatToLeastDecimals(forecasted ?? 0))}
           </p>
-          <ActionIcon onClick={openEarningEstimateModal}>
+          <LegacyActionIcon color="gray" variant="subtle" onClick={openEarningEstimateModal}>
             <IconInfoCircle size={14} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </div>
 
         <Alert color="yellow" className="mt-auto p-2">
@@ -481,9 +485,9 @@ const BankBuzzCard = () => {
                 {shouldUseCountdown ? <Countdown endTime={end} /> : endDate}
               </p>
             </div>
-            <ActionIcon onClick={openPhasesModal}>
+            <LegacyActionIcon onClick={openPhasesModal}>
               <IconInfoCircle size={18} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </div>
         </Alert>
       </div>
@@ -513,38 +517,38 @@ const EstimatedEarningsCard = () => {
       <div className="flex flex-col gap-2">
         <h3 className="text-xl font-bold">Estimated Earnings</h3>
 
-        <table className="-mt-2 table-auto">
-          <tbody>
-            <tr className="font-bold">
-              <td colSpan={2} className="border-b">
+        <Table className="-mt-2 table-auto">
+          <Table.Tbody>
+            <Table.Tr className="font-bold">
+              <Table.Td colSpan={2} className="border-b">
                 <div className="flex items-center gap-1">
                   <span>Compensation Pool</span>
-                  <ActionIcon onClick={openCompensationPoolModal}>
+                  <LegacyActionIcon onClick={openCompensationPoolModal}>
                     <IconInfoCircle size={18} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </div>
-              </td>
-              <td className="border-b border-l py-1 pl-2">
+              </Table.Td>
+              <Table.Td className="border-b border-l py-1 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-b">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-b">
                 Total Banked Buzz
-              </td>
-              <td className="border-b border-l py-1 pl-2">
+              </Table.Td>
+              <Table.Td className="border-b border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td>Your Banked Buzz</td>
-              <td className="text-right">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td>Your Banked Buzz</Table.Td>
+              <Table.Td className="text-right">
                 {cap && (
                   <Text
-                    variant="link"
+                    c="blue.4"
                     className="cursor-pointer pr-2 text-sm"
                     td="underline"
                     onClick={() => {
@@ -556,8 +560,8 @@ const EstimatedEarningsCard = () => {
                     {abbreviateNumber(cap)} Cap
                   </Text>
                 )}
-              </td>
-              <td className="border-l py-1 pl-2">
+              </Table.Td>
+              <Table.Td className="border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(banked.total)}</span>
@@ -567,10 +571,10 @@ const EstimatedEarningsCard = () => {
                     </Badge>
                   )}
                 </div>{' '}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </Table.Td>
+            </Table.Tr>
+          </Table.Tbody>
+        </Table>
 
         <div className="mb-4 flex flex-col gap-0">
           <div className="flex items-center gap-1">
@@ -582,9 +586,9 @@ const EstimatedEarningsCard = () => {
                   )
                 : 'N/A'}
             </p>
-            <ActionIcon onClick={openEarningEstimateModal}>
+            <LegacyActionIcon onClick={openEarningEstimateModal}>
               <IconInfoCircle size={18} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </div>
           {phase === 'bank' && (
             <p className="text-xs">
@@ -725,41 +729,41 @@ const WithdrawCashCard = () => {
           )}
         </div>
         <p className="text-sm">Once you&rsquo;ve earned cash, you can withdraw it to your bank</p>
-        <table className="mb-4 table-auto">
-          <tbody>
-            <tr className="border-b">
-              <td>
+        <Table className="mb-4 table-auto">
+          <Table.Tbody>
+            <Table.Tr className="border-b">
+              <Table.Td>
                 <div className="flex items-center gap-1">
                   <span>Pending Settlement </span>
-                  <ActionIcon onClick={openSettlementModal}>
+                  <LegacyActionIcon onClick={openSettlementModal}>
                     <IconInfoCircle size={14} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </div>
-              </td>
-              <td className="border-l py-1 pl-2">
+              </Table.Td>
+              <Table.Td className="border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   $<span>{formatCurrencyForDisplay(userCash?.pending ?? 0, Currency.USD)}</span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td>
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td>
                 <div className="flex items-center gap-2">
                   <span>Ready to Withdraw </span>
                 </div>
-              </td>
-              <td className="border-l py-1 pl-2">
+              </Table.Td>
+              <Table.Td className="border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   $<span>{formatCurrencyForDisplay(userCash?.ready ?? 0, Currency.USD)}</span>
                 </div>
-              </td>
-            </tr>
+              </Table.Td>
+            </Table.Tr>
             {userCash?.withdrawn > 0 && (
-              <tr className="border-t">
-                <td>
+              <Table.Tr className="border-t">
+                <Table.Td>
                   <div className="flex items-center gap-2">
                     <span>Total Withdrawn </span>
-                    <ActionIcon
+                    <LegacyActionIcon
                       onClick={() => {
                         dialogStore.trigger({
                           component: WithdrawalHistoryModal,
@@ -767,18 +771,18 @@ const WithdrawCashCard = () => {
                       }}
                     >
                       <IconHistory size={14} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </div>
-                </td>
-                <td className="border-l py-1 pl-2">
+                </Table.Td>
+                <Table.Td className="border-l py-1 pl-2">
                   <div className="flex items-center gap-2">
                     $<span>{formatCurrencyForDisplay(userCash?.withdrawn ?? 0, Currency.USD)}</span>
                   </div>
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )}
-          </tbody>
-        </table>
+          </Table.Tbody>
+        </Table>
 
         {!canWithdraw && (
           <Alert color="red" className="mt-auto p-2">
@@ -795,7 +799,11 @@ const WithdrawCashCard = () => {
         )}
 
         {canWithdraw && !userPaymentConfiguration?.tipaltiPaymentsEnabled && (
-          <Button leftIcon={<IconBuildingBank />} color="lime.7" onClick={handleSetupWithdrawals}>
+          <Button
+            leftSection={<IconBuildingBank />}
+            color="lime.7"
+            onClick={handleSetupWithdrawals}
+          >
             Setup Withdrawals
           </Button>
         )}
@@ -806,12 +814,12 @@ const WithdrawCashCard = () => {
               <NumberInputWrapper
                 label="Cash to Withdraw"
                 labelProps={{ className: 'hidden' }}
-                icon={<CurrencyIcon currency={Currency.USD} size={18} />}
+                leftSection={<CurrencyIcon currency={Currency.USD} size={18} />}
                 value={toWithdraw ? toWithdraw : undefined}
                 min={MIN_WITHDRAWAL_AMOUNT}
                 max={userCash?.ready ?? MIN_WITHDRAWAL_AMOUNT}
-                onChange={(value) => {
-                  setToWithdraw(value ?? MIN_WITHDRAWAL_AMOUNT);
+                onChange={(value: number | string) => {
+                  setToWithdraw(Number(value ?? MIN_WITHDRAWAL_AMOUNT));
                 }}
                 styles={{
                   input: {
@@ -825,7 +833,7 @@ const WithdrawCashCard = () => {
                 format="currency"
               />
               <Tooltip label="Withdraw" position="top">
-                <ActionIcon
+                <LegacyActionIcon
                   miw={40}
                   variant="filled"
                   color="lime.7"
@@ -859,7 +867,7 @@ const WithdrawCashCard = () => {
                   }}
                 >
                   <IconBuildingBank size={24} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
             </div>
             {!withdrawalMethodSetup && (
@@ -887,9 +895,9 @@ const WithdrawCashCard = () => {
                     ? formatCurrencyForDisplay(userCash?.withdrawalFee.amount)
                     : formatCurrencyForDisplay(toWithdraw * userCash?.withdrawalFee.amount)}
                 </p>
-                <ActionIcon onClick={openWithdrawalFeeModal}>
+                <LegacyActionIcon onClick={openWithdrawalFeeModal}>
                   <IconInfoCircle size={14} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </div>
             )}
           </div>
@@ -918,18 +926,18 @@ const WithdrawalHistoryModal = () => {
               <p className="text-center opacity-50">You have no withdrawal history.</p>
             ) : (
               <Table className="table-auto">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Amount</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Date</Table.Th>
+                    <Table.Th>Amount</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {withdrawalHistory?.map((withdrawal) => (
-                    <tr key={withdrawal.id}>
-                      <td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA z')}</td>
-                      <td>
+                    <Table.Tr key={withdrawal.id}>
+                      <Table.Td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA z')}</Table.Td>
+                      <Table.Td>
                         <div className="flex items-center gap-2">
                           <span>${formatCurrencyForDisplay(withdrawal.amount)}</span>
                           {withdrawal.fee && (
@@ -941,8 +949,8 @@ const WithdrawalHistoryModal = () => {
                             </Tooltip>
                           )}
                         </div>
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <div className="flex items-center gap-2">
                           <span>{getDisplayName(withdrawal.status)}</span>
                           {withdrawal.note && (
@@ -951,10 +959,10 @@ const WithdrawalHistoryModal = () => {
                             </Tooltip>
                           )}
                         </div>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   ))}
-                </tbody>
+                </Table.Tbody>
               </Table>
             )}
           </div>
@@ -1062,13 +1070,13 @@ const ExtractBuzzCard = () => {
               <CurrencyIcon currency={Currency.BUZZ} size={14} className="inline" />
               {numberWithCommas(extractionFee)}
             </p>
-            <ActionIcon
+            <LegacyActionIcon
               onClick={() => {
                 openExtractionFeeModal();
               }}
             >
               <IconInfoCircle size={14} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </div>
         </div>
 
@@ -1081,9 +1089,9 @@ const ExtractBuzzCard = () => {
                 {shouldUseCountdown ? <Countdown endTime={end} /> : endDate}
               </p>
             </div>
-            <ActionIcon onClick={openPhasesModal}>
+            <LegacyActionIcon onClick={openPhasesModal}>
               <IconInfoCircle size={18} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </div>
         </Alert>
       </div>

@@ -232,26 +232,26 @@ function ViewDuplicateHashLinks() {
         ></input>
       ) : (
         <Table>
-          <thead>
-            <tr>
-              <th>Hash</th>
-              <th>Links</th>
-            </tr>
-          </thead>
-          <tbody>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Hash</Table.Th>
+              <Table.Th>Links</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
             {Object.entries(state).map(([hash, values]) => (
-              <tr key={hash}>
-                <td>{hash}</td>
-                <td>
+              <Table.Tr key={hash}>
+                <Table.Td>{hash}</Table.Td>
+                <Table.Td>
                   <div className="flex flex-col">
                     {values.map((link, i) => (
                       <ModelVersionLink key={i} url={link} />
                     ))}
                   </div>
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             ))}
-          </tbody>
+          </Table.Tbody>
         </Table>
       )}
     </div>

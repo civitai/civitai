@@ -1,23 +1,15 @@
 import type { InputWrapperProps } from '@mantine/core';
-import {
-  ActionIcon,
-  Box,
-  Group,
-  Input,
-  LoadingOverlay,
-  Paper,
-  Text,
-  Tooltip,
-  useMantineTheme,
-} from '@mantine/core';
+import { Group, Input, LoadingOverlay, Paper, Text, Tooltip } from '@mantine/core';
 import type { DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
-import { MediaType } from '~/shared/utils/prisma/enums';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
 
+import classes from './SimpleImageUpload.module.scss';
+
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import type { DataFromFile } from '~/hooks/useCFImageUpload';
@@ -25,6 +17,7 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { formatBytes } from '~/utils/number-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?:
@@ -52,7 +45,6 @@ export function SimpleImageUpload({
   withNsfwLevel = true,
   ...props
 }: SimpleImageUploadProps) {
-  const theme = useMantineTheme();
   const { uploadToCF, files: imageFiles, resetFiles } = useCFImageUpload();
   const imageFile = imageFiles[0];
   // const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
@@ -120,56 +112,26 @@ export function SimpleImageUpload({
       ) : !previewDisabled && image ? (
         <div style={{ position: 'relative', width: '100%', marginTop: 5 }}>
           <Tooltip label="Remove image">
-            <ActionIcon
+            <LegacyActionIcon
               size="sm"
               variant={aspectRatio ? 'filled' : 'light'}
               color="red"
               onClick={handleRemove}
-              sx={(theme) => ({
-                position: 'absolute',
-                top: theme.spacing.xs * 0.4,
-                right: theme.spacing.xs * 0.4,
-                zIndex: 1,
-              })}
+              className="absolute right-1 top-1 z-[1]"
             >
               <IconTrash />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
 
-          <Box
-            sx={(theme) =>
+          <div
+            style={
               aspectRatio
-                ? {
-                    position: 'relative',
-                    width: '100%',
-                    overflow: 'hidden',
-                    height: 0,
-                    paddingBottom: `${(aspectRatio * 100).toFixed(3)}%`,
-                    borderRadius: theme.radius.md,
-
-                    '& > img': {
-                      position: 'absolute',
-                      top: '50%',
-                      left: '50%',
-                      transform: 'translate(-50%, -50%)',
-                      height: 'auto',
-                      objectFit: 'cover',
-                      borderRadius: theme.radius.md,
-                    },
-                  }
-                : {
-                    height: 'calc(100vh / 3)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-
-                    '& > img': {
-                      height: '100%',
-                      objectFit: 'cover',
-                      borderRadius: theme.radius.md,
-                    },
-                  }
+                ? ({
+                    '--aspect-ratio': `${(aspectRatio * 100).toFixed(3)}%`,
+                  } as React.CSSProperties)
+                : undefined
             }
+            className={aspectRatio ? classes.imageContainerAspectRatio : classes.imageContainer}
           >
             {withNsfwLevel && !!value && typeof value !== 'string' && (
               <BrowsingLevelBadge
@@ -184,20 +146,14 @@ export function SimpleImageUpload({
               style={{ maxWidth: aspectRatio ? '100%' : undefined }}
               anim
             />
-          </Box>
+          </div>
         </div>
       ) : (
         <Dropzone
           mt={5}
-          styles={(theme) => ({
-            root:
-              !!props.error || !!error
-                ? {
-                    borderColor: theme.colors.red[6],
-                    marginBottom: theme.spacing.xs / 2,
-                  }
-                : undefined,
-          })}
+          classNames={{
+            root: props.error || error ? 'border-red-6 mb-[5px]' : undefined,
+          }}
           accept={IMAGE_MIME_TYPE}
           {...dropzoneProps}
           onDrop={handleDrop}
@@ -205,31 +161,21 @@ export function SimpleImageUpload({
           // maxSize={maxSize}
         >
           <Dropzone.Accept>
-            <Group position="center" spacing="xs">
-              <IconUpload
-                size={32}
-                stroke={1.5}
-                color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
-              />
-              <Text color="dimmed">Drop image here</Text>
+            <Group justify="center" gap="xs">
+              <IconUpload size={32} stroke={1.5} className="text-blue-6 dark:text-blue-4" />
+              <Text c="dimmed">Drop image here</Text>
             </Group>
           </Dropzone.Accept>
           <Dropzone.Reject>
-            <Group position="center" spacing="xs">
-              <IconX
-                size={32}
-                stroke={1.5}
-                color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
-              />
+            <Group justify="center" gap="xs">
+              <IconX size={32} stroke={1.5} className="text-red-6 dark:text-red-4" />
               <Text>File not accepted</Text>
             </Group>
           </Dropzone.Reject>
           <Dropzone.Idle>
-            <Group position="center" spacing="xs">
+            <Group justify="center" gap="xs">
               <IconPhoto size={32} stroke={1.5} />
-              <Text color="dimmed">{`Drop image here, should not exceed ${formatBytes(
-                maxSize
-              )}`}</Text>
+              <Text c="dimmed">{`Drop image here, should not exceed ${formatBytes(maxSize)}`}</Text>
             </Group>
           </Dropzone.Idle>
         </Dropzone>

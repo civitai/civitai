@@ -1,8 +1,9 @@
 import { Stack, Group, Text, Loader, Center, Divider, Paper } from '@mantine/core';
-import { Comment, useCommentStyles } from '~/components/CommentsV2/Comment/Comment';
+import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
 import { ReturnToRootThread } from '../CommentsV2/ReturnToRootThread';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 
 type Props = {
   bountyEntryId: number;
@@ -11,8 +12,6 @@ type Props = {
 };
 
 export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }: Props) {
-  const { classes } = useCommentStyles();
-
   return (
     <RootThreadProvider
       entityType="bountyEntry"
@@ -23,15 +22,15 @@ export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }:
       {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
         isLoading ? (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         ) : (
           <Stack>
             <ReturnToRootThread />
             {activeComment && (
-              <Stack spacing="xl">
+              <Stack gap="xl">
                 <Divider />
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Viewing thread for
                 </Text>
                 <Comment comment={activeComment} viewOnly />
@@ -44,7 +43,7 @@ export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }:
               ))}
               {!!remaining && !showMore && (
                 <div className="flex justify-center">
-                  <Text variant="link" className="cursor-pointer text-sm" onClick={toggleShowMore}>
+                  <Text c="blue.4" className="cursor-pointer text-sm" onClick={toggleShowMore}>
                     Show {remaining} More
                   </Text>
                 </div>

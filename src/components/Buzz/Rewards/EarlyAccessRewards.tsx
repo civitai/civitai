@@ -1,4 +1,13 @@
-import { Center, Loader, Paper, Stack, Text, Title } from '@mantine/core';
+import {
+  Center,
+  Loader,
+  Paper,
+  Stack,
+  Text,
+  Title,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import type { ChartOptions } from 'chart.js';
 import {
   CategoryScale,
@@ -13,7 +22,7 @@ import {
 import dayjs from 'dayjs';
 import { useMemo } from 'react';
 import { Line } from 'react-chartjs-2';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { constants } from '~/server/common/constants';
@@ -32,6 +41,8 @@ ChartJS.register(
 );
 
 export const EarlyAccessRewards = () => {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { userPaymentConfiguration } = useUserPaymentConfiguration();
   const { data: modelVersions = [], isLoading } =
     trpc.modelVersion.earlyAccessModelVersionsOnTimeframe.useQuery(
@@ -40,9 +51,7 @@ export const EarlyAccessRewards = () => {
         enabled: userPaymentConfiguration?.stripeAccountStatus === StripeConnectStatus.Approved,
       }
     );
-
-  const { classes, theme } = useBuzzDashboardStyles();
-  const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
+  const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
 
   const options = useMemo<ChartOptions<'line'>>(
     () => ({
@@ -82,7 +91,7 @@ export const EarlyAccessRewards = () => {
         },
       },
     }),
-    [theme.colorScheme]
+    [colorScheme]
   );
 
   const labels = useMemo(() => {
@@ -119,7 +128,7 @@ export const EarlyAccessRewards = () => {
     <Paper withBorder className={classes.tileCard} h="100%">
       <Stack p="md">
         <Title order={3}>Your early access models</Title>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text>
             As a member of the Civitai Creator Program, your models in early access will award you
             Buzz per unique download.
@@ -138,7 +147,7 @@ export const EarlyAccessRewards = () => {
           </Center>
         ) : datasets.length === 0 ? (
           <Center>
-            <Text color="dimmed">
+            <Text c="dimmed">
               Whoops! Looks like we are still collecting data on your early access models on these
               past 14 days. Please check back later.
             </Text>

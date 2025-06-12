@@ -62,7 +62,7 @@ export function DeleteCard() {
             onChange={(event) => setConfirmDeleteInput(event.currentTarget.value)}
           />
           {/* Buttons */}
-          <Group position="right">
+          <Group justify="flex-end">
             <Button variant="outline" onClick={() => setDeleteModalOpen(false)}>
               Cancel
             </Button>
@@ -88,7 +88,7 @@ export function DeleteCard() {
           <Text>
             Do you want to delete all the models you have created along with your account?
           </Text>
-          <Group position="apart">
+          <Group justify="space-between">
             <Button variant="default" onClick={handleCancelAll}>
               Stop! Go back!
             </Button>

@@ -1,14 +1,4 @@
-import {
-  ActionIcon,
-  Button,
-  Card,
-  Divider,
-  Group,
-  Rating,
-  Stack,
-  Text,
-  createStyles,
-} from '@mantine/core';
+import { ActionIcon, Button, Card, Divider, Group, Rating, Stack, Text } from '@mantine/core';
 import { IconChevronDown, IconPhotoPlus, IconSend } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
@@ -26,6 +16,9 @@ import type {
   ResourceReviewModel,
   ResourceReviewSimpleModel,
 } from '~/server/selectors/resourceReview.selector';
+import classes from './EditUserResourceReview.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const schema = z.object({
   details: z.string().optional(),
@@ -98,13 +91,13 @@ export function EditUserResourceReview({
 
   return (
     <Card p={8} withBorder>
-      <Stack spacing="xs">
-        <Stack spacing={4}>
-          <Group align="center" position="apart">
-            <Stack spacing={0}>
+      <Stack gap="xs">
+        <Stack gap={4}>
+          <Group align="center" justify="space-between">
+            <Stack gap={0}>
               {modelName && <Text lineClamp={1}>{modelName}</Text>}
               {modelVersionName && (
-                <Text lineClamp={1} size="xs" color="dimmed">
+                <Text lineClamp={1} size="xs" c="dimmed">
                   {modelVersionName}
                 </Text>
               )}
@@ -125,15 +118,15 @@ export function EditUserResourceReview({
             </Card.Section>
             <Stack>
               {!editDetail ? (
-                <Text variant="link" onClick={toggleEditDetail} size="sm">
-                  <Group spacing={4} sx={{ cursor: 'pointer' }}>
+                <Text c="blue.4" onClick={toggleEditDetail} size="sm">
+                  <Group gap={4} style={{ cursor: 'pointer' }}>
                     <IconChevronDown size={16} />{' '}
                     <span>{!resourceReview.details ? 'Add' : 'Edit'} Review Comments</span>
                   </Group>
                 </Text>
               ) : (
                 <Form form={form} onSubmit={handleSubmit}>
-                  <Stack spacing="xs">
+                  <Stack gap="xs">
                     <InputRTE
                       name="details"
                       includeControls={['formatting', 'link']}
@@ -144,7 +137,7 @@ export function EditUserResourceReview({
                       styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
                       // withLinkValidation
                     />
-                    <Group grow spacing="xs">
+                    <Group grow gap="xs">
                       <Button size="xs" variant="default" onClick={toggleEditDetail}>
                         Cancel
                       </Button>
@@ -178,13 +171,6 @@ type Props = {
   innerRef?: React.ForwardedRef<ReviewEditCommandsRef>;
   showNoAccessAlert?: boolean;
 };
-
-const useStyles = createStyles(() => ({
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-}));
 
 type UserResourceReviewCompositeProps = {
   userReview: ResourceReviewSimpleModel | null | undefined;
@@ -220,7 +206,6 @@ export function EditUserResourceReviewV2({
   opened: initialOpened = false,
   autoFocus = true,
 }: PropsV2) {
-  const { classes, cx } = useStyles();
   const [opened, setOpened] = useState(initialOpened);
 
   const { loading: loadingUserReview } = useQueryUserResourceReview({ modelVersionId });
@@ -268,23 +253,23 @@ export function EditUserResourceReviewV2({
   }));
 
   return (
-    <Stack spacing="sm" pos="relative">
-      <Group spacing={8} position="apart">
-        <Text variant="link" size="sm" style={{ cursor: 'pointer' }} onClick={handleToggleOpen}>
-          <Group spacing={4}>
-            <IconChevronDown className={cx({ [classes.opened]: opened })} size={20} />
+    <Stack gap="sm" pos="relative">
+      <Group gap={8} justify="space-between">
+        <Text c="blue.4" size="sm" style={{ cursor: 'pointer' }} onClick={handleToggleOpen}>
+          <Group gap={4}>
+            <IconChevronDown className={clsx({ [classes.opened]: opened })} size={20} />
             <span>{hasComment ? 'Edit' : 'Add'} Review Comments</span>
           </Group>
         </Text>
         {userReview && showReviewedAt && (
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             Reviewed <DaysFromNow date={userReview.createdAt} />
           </Text>
         )}
       </Group>
       {opened && (
         <Form form={form} onSubmit={handleSubmit}>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <InputTextArea
               name="details"
               placeholder={
@@ -296,7 +281,7 @@ export function EditUserResourceReviewV2({
               autoFocus={autoFocus}
               autosize
             />
-            <Group grow spacing="xs">
+            <Group grow gap="xs">
               <Button size="xs" variant="default" onClick={handleCancel}>
                 Cancel
               </Button>
@@ -361,7 +346,7 @@ export function EditUserResourceReviewLight({
 
   return (
     <Form form={form} onSubmit={handlePostClick}>
-      <Group spacing={0} align="flex-end" noWrap>
+      <Group gap={0} align="flex-end" wrap="nowrap">
         <InputTextArea
           name="details"
           variant="unstyled"
@@ -372,16 +357,16 @@ export function EditUserResourceReviewLight({
           autoFocus
           autosize
         />
-        <Group spacing={8} noWrap>
-          <ActionIcon
+        <Group gap={8} wrap="nowrap">
+          <LegacyActionIcon
             size="lg"
             variant="light"
             disabled={updateMutation.isLoading}
             onClick={handleImageUploadClick}
           >
             <IconPhotoPlus size={16} />
-          </ActionIcon>
-          <ActionIcon
+          </LegacyActionIcon>
+          <LegacyActionIcon
             variant="filled"
             size="lg"
             color="blue"
@@ -390,7 +375,7 @@ export function EditUserResourceReviewLight({
             loading={updateMutation.isLoading || loadingUserReview}
           >
             <IconSend size={16} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Group>
       </Group>
     </Form>

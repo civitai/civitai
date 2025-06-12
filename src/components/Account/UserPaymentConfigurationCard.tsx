@@ -1,6 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
 import {
-  ActionIcon,
   Alert,
   Button,
   Card,
@@ -15,7 +14,6 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '../../utils/trpc';
 import { IconExternalLink, IconInfoCircle } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -31,6 +29,7 @@ import {
 } from '~/components/UserPaymentConfiguration/util';
 import dynamic from 'next/dynamic';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
@@ -43,7 +42,7 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
   });
 
   const updateUserSettings = useMutateUserSettings({
-    onError(_error, _payload, context) {
+    onError() {
       showErrorNotification({
         title: 'Failed to accept code of conduct',
         error: new Error('Something went wrong, please try again later.'),
@@ -65,8 +64,8 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
 
   return (
     <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
-      <Group position="apart" mb="md">
-        <Text size="lg" weight="bold">
+      <Group justify="space-between" mb="md">
+        <Text size="lg" fw="bold">
           Civitai Creator Program Code of Conduct
         </Text>
       </Group>
@@ -76,8 +75,8 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
           <Loader />
         </Center>
       ) : (
-        <Stack spacing="md">
-          <ScrollArea.Autosize maxHeight={500}>
+        <Stack gap="md">
+          <ScrollArea.Autosize mah={500}>
             <Stack>
               <CustomMarkdown rehypePlugins={[rehypeRaw]}>{data.content}</CustomMarkdown>
               <Checkbox
@@ -163,7 +162,7 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
     case StripeConnectStatus.Rejected:
       return (
         <Stack>
-          <Text color="red" weight="bold">
+          <Text c="red" fw="bold">
             Looks like you can&rsquo;t receive payments
           </Text>
           <Text>
@@ -178,7 +177,7 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
     case StripeConnectStatus.PendingVerification:
       return (
         <Stack>
-          <Text weight="bold">Your account is pending verification</Text>
+          <Text fw="bold">Your account is pending verification</Text>
           <Text>
             Once your account is approved and verified you will be able to start receiving payments
             for your content. Stripe verification process can take 3 to 5 business days, so please
@@ -214,7 +213,7 @@ const StripeConnectConfigurationCard = () => {
     // True as of now, we don't support stripe anymore
     return (
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <Title order={3}>Stripe Connect</Title>
         </Group>
 
@@ -229,9 +228,11 @@ const StripeConnectConfigurationCard = () => {
   return (
     <>
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <Title order={3}>Stripe Connect</Title>
-          <ActionIcon
+          <LegacyActionIcon
+            color="gray"
+            variant="subtle"
             onClick={() => {
               dialogStore.trigger({
                 component: FeatureIntroductionModal,
@@ -243,7 +244,7 @@ const StripeConnectConfigurationCard = () => {
             }}
           >
             <IconInfoCircle />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Group>
       </Stack>
 
@@ -279,7 +280,7 @@ const TipaltiConfigurationCard = () => {
     // True as of now, we don't support stripe anymore
     return (
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <Title order={3}>Tipalti Account</Title>
         </Group>
 
@@ -295,7 +296,7 @@ const TipaltiConfigurationCard = () => {
   return (
     <>
       <Stack>
-        <Group position="apart">
+        <Group justify="space-between">
           <Title order={3}>Tipalti Account</Title>
         </Group>
       </Stack>
@@ -354,6 +355,7 @@ const TipaltiConfigurationCard = () => {
           href="/tipalti/setup"
           target="_blank"
           rel="nofollow noreferrer"
+          classNames={{ label: 'text-white' }}
           fullWidth
         >
           Set up my Tipalti Account
@@ -381,7 +383,7 @@ export function UserPaymentConfigurationCard() {
       {userPaymentConfiguration?.tipaltiAccountId && userPaymentConfiguration?.stripeAccountId && (
         <Divider my="xl" />
       )}
-      {userPaymentConfiguration?.tipaltiAccountId && <TipaltiConfigurationCard />}
+      {!userPaymentConfiguration?.tipaltiAccountId && <TipaltiConfigurationCard />}
     </Card>
   );
 }

@@ -1,4 +1,4 @@
-import { Modal, Stack, Group, Button, createStyles, Text } from '@mantine/core';
+import { Modal, Stack, Group, Button, Text } from '@mantine/core';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -8,31 +8,15 @@ import { consumeRedeemableCodeSchema } from '~/server/schema/redeemableCode.sche
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from './RedeemCodeModal.module.scss';
 
 const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
   { ssr: false }
 );
 
-const useStyles = createStyles(() => ({
-  cancelButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-      order: 2,
-    },
-  },
-
-  submitButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-      order: 1,
-    },
-  },
-}));
-
 export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; code?: string }) {
   const dialog = useDialogContext();
-  const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
 
   const [playAnimation, setPlayAnimation] = useState(false);
@@ -58,11 +42,11 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
       {playAnimation ? (
         <Stack>
           <SuccessAnimation gap={8} lottieProps={{ width: 120 }} align="center" justify="center">
-            <Text size="xl" weight={500}>
+            <Text size="xl" fw={500}>
               Code redeemed successfully
             </Text>
           </SuccessAnimation>
-          <Group position="right">
+          <Group justify="flex-end">
             <Button className={classes.submitButton} onClick={dialog.onClose}>
               Close
             </Button>
@@ -78,7 +62,7 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
               maxLength={12}
               autoFocus
             />
-            <Group position="right">
+            <Group justify="flex-end">
               <Button
                 className={classes.cancelButton}
                 variant="light"

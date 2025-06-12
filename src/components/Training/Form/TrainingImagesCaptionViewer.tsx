@@ -2,7 +2,6 @@ import {
   Accordion,
   ActionIcon,
   Badge,
-  createStyles,
   Divider,
   Group,
   Paper,
@@ -25,16 +24,8 @@ import {
 import { useDebouncer } from '~/utils/debouncer';
 import 'draft-js/dist/Draft.css';
 import { blankTagStr } from '~/components/Training/Form/TrainingImagesTagViewer';
-
-const useStyles = createStyles(() => ({
-  hiText: {
-    '.DraftEditor-root': {
-      height: '100px',
-      scrollbarWidth: 'thin',
-      overflowY: 'auto',
-    },
-  },
-}));
+import styles from './TrainingImagesCaptionViewer.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const TrainingImagesCaptions = ({
   imgData,
@@ -47,7 +38,6 @@ export const TrainingImagesCaptions = ({
   mediaType: TrainingDetailsObj['mediaType'];
   searchCaption: string;
 }) => {
-  const { classes } = useStyles();
   const [captionTxt, setCaptionTxt] = useState('');
   const { autoLabeling } = useTrainingImageStore(
     (state) =>
@@ -64,7 +54,7 @@ export const TrainingImagesCaptions = ({
   }, [imgData.label]);
 
   return (
-    <Paper fz={12} p={6} mt={-6} radius={0} className={classes.hiText}>
+    <Paper fz={12} p={6} mt={-6} radius={0} className={styles.hiText}>
       <HighlightWithinTextarea
         placeholder="Add caption..."
         readOnly={autoLabeling.isRunning}
@@ -105,8 +95,8 @@ export const TrainingImagesCaptionViewer = ({
   return (
     <Accordion variant="contained" transitionDuration={0}>
       <Accordion.Item value="caption-viewer">
-        <Accordion.Control>
-          <Group spacing="xs">
+        <Accordion.Control py="md" pl="md" pr={8}>
+          <Group gap="xs">
             <Text>Caption Viewer</Text>
             <Badge color="indigo" leftSection={<IconPhoto size={14} />}>
               {numImages}
@@ -121,20 +111,20 @@ export const TrainingImagesCaptionViewer = ({
         <Accordion.Panel>
           <Group>
             <TextInput
-              icon={<IconSearch size={16} />}
+              leftSection={<IconSearch size={16} />}
               placeholder="Search captions"
               value={searchCaption}
               onChange={(event) => setSearchCaption(event.currentTarget.value.toLowerCase())}
               style={{ flexGrow: 1 }}
               rightSection={
-                <ActionIcon
+                <LegacyActionIcon
                   onClick={() => {
                     setSearchCaption('');
                   }}
                   disabled={!searchCaption.length}
                 >
                   <IconX size={16} />
-                </ActionIcon>
+                </LegacyActionIcon>
               }
             />
             <Divider orientation="vertical" />

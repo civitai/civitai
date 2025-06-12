@@ -1,4 +1,4 @@
-import type { MantineNumberSize } from '@mantine/core';
+import type { MantineSpacing } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import type { CSSProperties } from 'react';
 import type { EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
@@ -17,7 +17,7 @@ type ImagePreviewProps = {
   edgeImageProps?: Omit<EdgeMediaProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
-  radius?: MantineNumberSize;
+  radius?: MantineSpacing;
   cropFocus?: 'top' | 'bottom' | 'left' | 'right' | 'center';
   className?: string;
   style?: CSSProperties;

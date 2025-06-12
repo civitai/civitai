@@ -11,7 +11,6 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronDown, IconConfetti } from '@tabler/icons-react';
@@ -68,7 +67,6 @@ export const AdvancedSettings = ({
         ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
       }
   );
-  const theme = useMantineTheme();
   const previous = usePrevious(selectedRun);
   const [openedSections, setOpenedSections] = useState<string[]>([]);
 
@@ -109,7 +107,7 @@ export const AdvancedSettings = ({
 
   // Set targetSteps automatically on value changes
   useEffect(() => {
-    const { maxTrainEpochs, numRepeats, trainBatchSize, engine } = selectedRun.params;
+    const { maxTrainEpochs, numRepeats, trainBatchSize } = selectedRun.params;
 
     const newSteps = Math.ceil(
       ((numImages || 1) * (numRepeats ?? 200) * maxTrainEpochs) / trainBatchSize
@@ -186,7 +184,7 @@ export const AdvancedSettings = ({
         <Group mt="md">
           <Switch
             label={
-              <Group spacing={4} noWrap>
+              <Group gap={4} wrap="nowrap">
                 <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
                   <Text>
                     Your LoRA will be trained in {<b>{rapidEta} minutes</b>} or less so you can get
@@ -209,7 +207,7 @@ export const AdvancedSettings = ({
               color="pink"
               size="sm"
               pl={0}
-              sx={{ overflow: 'visible' }}
+              style={{ overflow: 'visible' }}
               leftSection={
                 <ThemeIcon variant="filled" size={18} color="pink" radius="xl" ml={-8}>
                   <IconConfetti size={12} />
@@ -231,24 +229,18 @@ export const AdvancedSettings = ({
         multiple
         mt="xs"
         onChange={setOpenedSections}
-        styles={(theme) => ({
-          content: { padding: 0 },
-          item: {
-            overflow: 'hidden',
-            borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-            boxShadow: theme.shadows.sm,
-          },
-          control: {
-            padding: theme.spacing.sm,
-          },
-        })}
+        classNames={{
+          content: 'p-0',
+          item: 'overflow-hidden shadow-sm border-gray-3 dark:border-dark-4',
+          control: 'py-4 pl-4 pr-2',
+        }}
       >
         <Accordion.Item value="custom-prompts">
           <Accordion.Control>
-            <Stack spacing={4}>
+            <Stack gap={4}>
               <Text>Sample Media Prompts</Text>
               {openedSections.includes('custom-prompts') && (
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   Set your own prompts for any of the {isVideo ? '2' : '3'} sample{' '}
                   {isVideo ? 'videos' : 'images'} we generate for each epoch.
                 </Text>
@@ -307,22 +299,15 @@ export const AdvancedSettings = ({
         {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
           <Card withBorder mt="md" p="sm">
             <Card.Section inheritPadding withBorder py="sm">
-              <Group position="apart">
-                <Text
-                  color={theme.colorScheme === 'dark' ? theme.colors.gray[6] : theme.colors.gray[5]}
-                >
+              <Group justify="space-between">
+                <Text className="text-gray-5 dark:text-gray-6">
                   Training Parameters{' '}
                   <Text component="span" size="xs" fs="italic">
                     (disabled with &quot;Rapid Training&quot;)
                   </Text>
                 </Text>
                 <Box mr={4}>
-                  <IconChevronDown
-                    color={
-                      theme.colorScheme === 'dark' ? theme.colors.gray[6] : theme.colors.gray[5]
-                    }
-                    size={16}
-                  />
+                  <IconChevronDown className="text-gray-5 dark:text-gray-6" size={16} />
                 </Box>
               </Group>
             </Card.Section>
@@ -330,43 +315,27 @@ export const AdvancedSettings = ({
         ) : (
           <Accordion.Item value="training-settings">
             <Accordion.Control>
-              <Stack spacing={4}>
-                <Group spacing="sm">
+              <Stack gap={4}>
+                <Group gap="sm">
                   <Text>Training Parameters</Text>
                   {!!selectedRun.customModel && (
                     <Tooltip
                       label="Custom models will likely require parameter adjustments. Please carefully check these before submitting."
                       maw={300}
+                      classNames={{
+                        tooltip: 'border-gray-3 dark:border-dark-4',
+                        arrow:
+                          'border-r-gray-3 border-b-gray-3 dark:border-r-dark-4 dark:border-b-dark-4',
+                      }}
                       multiline
                       withArrow
-                      styles={(theme) => ({
-                        tooltip: {
-                          border: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[3]
-                          }`,
-                        },
-                        arrow: {
-                          borderRight: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[3]
-                          }`,
-                          borderBottom: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[3]
-                          }`,
-                        },
-                      })}
                     >
                       <IconAlertTriangle color="orange" size={16} />
                     </Tooltip>
                   )}
                 </Group>
                 {openedSections.includes('training-settings') && (
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     Hover over each setting for more information.
                     <br />
                     Default settings are based on your chosen model. Altering these settings may
@@ -401,13 +370,13 @@ export const AdvancedSettings = ({
                       <NumberInputWrapper
                         min={tOverride?.min ?? ts.min}
                         max={tOverride?.max ?? ts.max}
-                        precision={
+                        decimalScale={
                           ts.type === 'number'
                             ? getPrecision(ts.step ?? ts.default) || 4
                             : undefined
                         }
                         step={ts.step}
-                        sx={{ flexGrow: 1 }}
+                        className="grow"
                         disabled={disabled}
                         format="default"
                         value={selectedRun.params[ts.name] as number}
@@ -483,7 +452,7 @@ export const AdvancedSettings = ({
                         label={hint}
                       >
                         <Group>
-                          <Group spacing={6}>
+                          <Group gap={6}>
                             <Text inline style={{ cursor: 'help' }}>
                               {ts.label}
                             </Text>

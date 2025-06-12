@@ -11,8 +11,8 @@ export function RemoveFromCollectionMenuItem({ collectionId, itemId }: Props) {
 
   return (
     <Menu.Item
-      icon={<IconTrash size={14} stroke={1.5} />}
-      onClick={(e) => {
+      leftSection={<IconTrash size={14} stroke={1.5} />}
+      onClick={(e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         handleRemoval();

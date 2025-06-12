@@ -124,22 +124,21 @@ export function ImageToolsPopover({
                   className="m-1 cursor-pointer"
                   onClick={() => setShowSelected((b) => !b)}
                 >
-                  <Text variant="link" align="center">
+                  <Text c="blue.4" align="center">
                     {!showSelected ? `Show ${value.length} selected` : `Show all`}
                   </Text>
                 </UnstyledButton>
               </div>
               <Divider />
             </div>
-            <Button compact size="md" disabled={isLoading} onClick={() => handleAddTools()}>
+            <Button size="compact-sm" disabled={isLoading} onClick={() => handleAddTools()}>
               Add
             </Button>
             {imageCount > 1 && (
               <Button
                 className="text-sm"
                 variant="default"
-                compact
-                size="md"
+                size="compact-sm"
                 disabled={isLoading}
                 onClick={() => handleAddTools(true)}
               >

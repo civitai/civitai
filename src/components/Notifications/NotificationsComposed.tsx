@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Center,
   CloseButton,
   Group,
@@ -17,6 +16,7 @@ import React, { forwardRef, useMemo, useState } from 'react';
 import { dismissAnnouncements } from '~/components/Announcements/announcements.utils';
 import { AnnouncementsList } from '~/components/Announcements/AnnouncementsList';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 
 import { NotificationList } from '~/components/Notifications/NotificationList';
@@ -79,9 +79,9 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
     return (
       <>
         <div className="flex flex-col gap-4 p-4">
-          <Group position="apart">
+          <Group justify="space-between">
             <Title order={1}>Notifications</Title>
-            <Group spacing={8}>
+            <Group gap={8}>
               <Switch
                 label="Hide Read"
                 labelPosition="left"
@@ -89,36 +89,36 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
                 onChange={(e) => setHideRead(e.currentTarget.checked)}
               />
               <Tooltip label={`Mark ${categoryName} as read`} position="bottom">
-                <ActionIcon size="lg" onClick={handleMarkAsRead}>
+                <LegacyActionIcon size="lg" onClick={handleMarkAsRead}>
                   <IconListCheck />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
               <Tooltip label="Notification settings" position="bottom">
-                <ActionIcon
+                <LegacyActionIcon
                   component={NextLink}
                   size="lg"
                   href="/user/account#notification-settings"
                 >
                   <IconSettings />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
               {onClose && <CloseButton size="lg" onClick={onClose} />}
             </Group>
           </Group>
           <NotificationTabs
-            onTabChange={(value: NotificationCategory | null) => setSelectedTab(value)}
+            onTabChange={(value) => setSelectedTab(value as NotificationCategory | null)}
           />
           <TextInput
-            icon={<IconSearch size={16} />}
+            leftSection={<IconSearch size={16} />}
             placeholder="Filter by message..."
             value={searchText}
             maxLength={150}
             disabled={!notifications || notifications.length === 0}
             onChange={(event) => setSearchText(event.currentTarget.value)}
             rightSection={
-              <ActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
+              <LegacyActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
                 <IconX size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             }
           />
         </div>
@@ -149,7 +149,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
                   />
                   {hasNextPage && (
                     <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-                      <Center p="xl" sx={{ height: 36 }} mt="md">
+                      <Center p="xl" style={{ height: 36 }} mt="md">
                         <Loader />
                       </Center>
                     </InViewLoader>

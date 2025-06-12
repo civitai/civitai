@@ -17,7 +17,7 @@ export function SocialProfileCard() {
     url?: string;
   }>();
 
-  // const utils = trpc.useContext();
+  // const utils = trpc.useUtils();
   const { data, isLoading } = trpc.userLink.getAll.useQuery(
     { userId: user?.id },
     {
@@ -38,9 +38,9 @@ export function SocialProfileCard() {
     return (
       <Card withBorder>
         <Card.Section withBorder p="sm">
-          <Group position="apart">
+          <Group justify="space-between">
             <Title order={5}>{type} Links</Title>
-            <Button compact onClick={() => setSelectedLink({ type })}>
+            <Button size="compact-sm" onClick={() => setSelectedLink({ type })}>
               Add Link
             </Button>
           </Group>

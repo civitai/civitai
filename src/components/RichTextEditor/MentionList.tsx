@@ -70,7 +70,7 @@ export const MentionList = forwardRef<MentionListRef, Props>((props, ref) => {
 
   return (
     <Paper radius="md" withBorder>
-      <Stack spacing={0}>
+      <Stack gap={0}>
         {items.length > 0
           ? items.map((item, index) => (
               <Button
@@ -86,16 +86,16 @@ export const MentionList = forwardRef<MentionListRef, Props>((props, ref) => {
           : null}
         {(isLoading && debouncedQuery) || isRefetching ? (
           <Center p="sm">
-            <Group spacing="sm" noWrap>
+            <Group gap="sm" wrap="nowrap">
               <Loader size="sm" />
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 Fetching...
               </Text>
             </Group>
           </Center>
         ) : items.length === 0 ? (
           <Center p="sm">
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               No results
             </Text>
           </Center>

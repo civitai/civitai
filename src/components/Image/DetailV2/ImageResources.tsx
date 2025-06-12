@@ -4,6 +4,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useMemo } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { sortByModelTypes } from '~/utils/array-helpers';
@@ -48,7 +49,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
     <div className="flex flex-col gap-1.5">
       <Text className="text-lg font-semibold">Resources used</Text>
       {isLoading ? (
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Skeleton height={16} radius="md" />
           <Skeleton height={16} radius="md" />
         </Stack>
@@ -94,7 +95,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                   <Wrapper resource={resource}>
                     <Text
                       lineClamp={1}
-                      color="dimmed"
+                      c="dimmed"
                       className={`text-xs ${resource.modelId ? 'cursor-pointer' : ''}`}
                     >
                       {resource.versionName}
@@ -108,11 +109,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
       )}
       {resources.length > LIMIT && (
         <div className="flex justify-start">
-          <Text
-            variant="link"
-            className="cursor-pointer text-sm"
-            onClick={() => setShowAll((x) => !x)}
-          >
+          <Text c="blue.4" className="cursor-pointer text-xs" onClick={() => setShowAll((x) => !x)}>
             {!showAll ? `Show ${resources.length - LIMIT} more` : 'Show less'}
           </Text>
         </div>
@@ -180,7 +177,7 @@ function RemoveResource({ imageId, modelVersionId }: { imageId: number; modelVer
   };
 
   return (
-    <ActionIcon
+    <LegacyActionIcon
       size="xs"
       color="red"
       variant="light"
@@ -190,6 +187,6 @@ function RemoveResource({ imageId, modelVersionId }: { imageId: number; modelVer
       w={20}
     >
       <IconX size={14} stroke={1.5} />
-    </ActionIcon>
+    </LegacyActionIcon>
   );
 }

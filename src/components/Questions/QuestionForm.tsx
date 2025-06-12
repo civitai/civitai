@@ -9,7 +9,14 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { useForm, Form, InputText, InputMultiSelect, InputRTE } from '~/libs/form';
+import {
+  useForm,
+  Form,
+  InputText,
+  InputMultiSelect,
+  InputRTE,
+  InputCreatableMultiSelect,
+} from '~/libs/form';
 import type { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { upsertQuestionSchema } from '~/server/schema/question.schema';
 import { trpc } from '~/utils/trpc';
@@ -24,13 +31,14 @@ import { useMemo } from 'react';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const schema = upsertQuestionSchema.extend({ tags: z.string().array().nullish() });
 
 export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const user = useCurrentUser();
 
   const form = useForm({
@@ -110,15 +118,15 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
 
   return (
     <Container>
-      <Group spacing="lg" mb="lg">
-        <ActionIcon variant="outline" size="lg" onClick={() => router.back()}>
+      <Group gap="lg" mb="lg">
+        <LegacyActionIcon variant="outline" size="lg" onClick={() => router.back()}>
           <IconArrowLeft size={20} stroke={1.5} />
-        </ActionIcon>
+        </LegacyActionIcon>
         <Title order={3}>{question ? 'Editing question' : 'Ask a question'}</Title>
       </Group>
       <Form form={form} onSubmit={handleSubmit}>
-        <ContainerGrid gutter="xl">
-          <ContainerGrid.Col lg={8}>
+        <ContainerGrid2 gutter="xl">
+          <ContainerGrid2.Col span={{ base: 12, lg: 8 }}>
             <Paper radius="md" p="xl" withBorder>
               <Stack>
                 <InputText name="title" label="Title" withAsterisk />
@@ -130,23 +138,19 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
                 />
               </Stack>
             </Paper>
-          </ContainerGrid.Col>
-          <ContainerGrid.Col lg={4}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, lg: 4 }}>
             <Paper radius="md" p="xl" withBorder>
               <Stack>
-                <InputMultiSelect
+                <InputCreatableMultiSelect
                   data={tagsData}
                   name="tags"
                   label="Tags"
-                  limit={50}
                   placeholder="e.g.: portrait, sharp focus, etc."
                   description="Please add your tags"
-                  creatable
-                  getCreateLabel={(query) => `+ Create ${query}`}
                   clearable
-                  searchable
                 />
-                <Group position="right" noWrap>
+                <Group justify="flex-end" wrap="nowrap">
                   <Button
                     variant="outline"
                     onClick={() => form.reset()}
@@ -160,8 +164,8 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
                 </Group>
               </Stack>
             </Paper>
-          </ContainerGrid.Col>
-        </ContainerGrid>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
       </Form>
     </Container>
   );
