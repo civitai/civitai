@@ -1,5 +1,7 @@
-import { constants } from '~/server/common/constants';
+import type { UseFeatureFlagsReturn } from '~/providers/FeatureFlagsProvider';
+import { constants, EARLY_ACCESS_CONFIG } from '~/server/common/constants';
 import type { UserMeta } from '~/server/schema/user.schema';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { increaseDate, maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -38,9 +40,21 @@ export function isEarlyAccess({
   return new Date() < deadline;
 }
 
-export function getMaxEarlyAccessDays({ userMeta }: { userMeta?: UserMeta }) {
-  const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
-    .map(([score, days]) => ((userMeta?.scores?.models ?? 0) >= score ? days : null))
+export function getMaxEarlyAccessDays({
+  userMeta,
+  features,
+}: {
+  userMeta?: UserMeta;
+  features?: FeatureAccess;
+}) {
+  const earlyAccessUnlockedDays = EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock
+    .map(([score, days]) => {
+      if (typeof score === 'function') {
+        return score({ features }) ? (days as number) : null;
+      }
+
+      return (userMeta?.scores?.models ?? 0) >= score ? (days as number) : null;
+    })
     .filter(isDefined);
 
   return earlyAccessUnlockedDays.length > 0
@@ -48,9 +62,21 @@ export function getMaxEarlyAccessDays({ userMeta }: { userMeta?: UserMeta }) {
     : 0;
 }
 
-export function getMaxEarlyAccessModels({ userMeta }: { userMeta?: UserMeta }) {
-  const earlyAccessUnlockedDays = constants.earlyAccess.scoreQuantityUnlock
-    .map(([score, days]) => ((userMeta?.scores?.models ?? 0) >= score ? days : null))
+export function getMaxEarlyAccessModels({
+  userMeta,
+  features,
+}: {
+  userMeta?: UserMeta;
+  features?: FeatureAccess;
+}) {
+  const earlyAccessUnlockedDays = EARLY_ACCESS_CONFIG.scoreQuantityUnlock
+    .map(([score, days]) => {
+      if (typeof score === 'function') {
+        return score({ features }) ? (days as number) : null;
+      }
+
+      return (userMeta?.scores?.models ?? 0) >= score ? (days as number) : null;
+    })
     .filter(isDefined);
 
   return earlyAccessUnlockedDays.length > 0

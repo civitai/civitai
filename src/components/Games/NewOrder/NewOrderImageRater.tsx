@@ -96,7 +96,7 @@ export function NewOrderImageRater({
             '5',
             handleHotkeyPress({
               rating: NsfwLevel.Blocked,
-              damnedReason: NewOrderDamnedReason.GraphicViolence,
+              damnedReason: NewOrderDamnedReason.Other,
             }),
           ],
         ]

@@ -33,8 +33,14 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     return fetchedCount;
   }
 
-  async function getAll(opts?: { limit?: number; offset?: number }) {
-    const { limit = 100, offset = 0 } = opts ?? {};
+  async function getAll(opts?: { limit?: number; offset?: number }): Promise<string[]>;
+  async function getAll(opts?: {
+    limit?: number;
+    offset?: number;
+    withCount: true;
+  }): Promise<{ score: number; value: string }[]>;
+  async function getAll(opts?: { limit?: number; offset?: number; withCount?: boolean }) {
+    const { limit = 100, offset = 0, withCount = false } = opts ?? {};
     // Returns all ids in the range of min and max
     // If ordered, returns the ids by the score in descending order.
     if (ordered) {
@@ -44,7 +50,7 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
         LIMIT: { offset, count: limit },
       });
 
-      return data.map((x) => x.value);
+      return withCount ? data : data.map((x) => x.value);
     }
 
     const data = await sysRedis.hGetAll(key);
@@ -82,9 +88,16 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     return count - absValue;
   }
 
-  function reset({ id, all }: { id: number; all?: never } | { all: true; id?: never }) {
+  async function reset({
+    id,
+    all,
+  }: { id: number | number[]; all?: never } | { all: true; id?: never }) {
     if (all) return sysRedis.del(key);
-    return ordered ? sysRedis.zRem(key, id.toString()) : sysRedis.hDel(key, id.toString());
+
+    const ids = Array.isArray(id) ? id : [id];
+    const stringIds = ids.map(String);
+
+    return ordered ? sysRedis.zRem(key, stringIds) : sysRedis.hDel(key, stringIds);
   }
 
   async function exists(id: number | string) {
@@ -213,7 +226,7 @@ export const poolKeys = {
     `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight1`,
     // Temporarily disabled Knight2 queue
     // `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight2`,
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight3`,
+    // `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight3`,
   ],
   [NewOrderRankType.Templar]: [
     `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar1`,

@@ -6,7 +6,7 @@ import type { Session } from 'next-auth';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
-import type { NewOrderImageRatingStatus } from '~/server/common/enums';
+import type { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import type { AllModKeys } from '~/server/jobs/entity-moderation';
 import { logToAxiom } from '~/server/logging/client';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
@@ -517,6 +517,7 @@ export class Tracker {
       grantedExp: number;
       multiplier: number;
       rank: NewOrderRankType;
+      originalLevel?: NsfwLevel;
     }
   ) {
     return this.track('knights_new_order_image_rating', { ...values, createdAt: new Date() });

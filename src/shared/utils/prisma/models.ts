@@ -1117,14 +1117,7 @@ export interface Image {
   ratingRequests?: ImageRatingRequest[];
   tagsNew?: TagsOnImageNew[];
   imageResourceNew?: ImageResourceNew[];
-  imagesForReview?: ImageForReview[];
   imageTagsForReview?: ImageTagForReview[];
-}
-
-export interface ImageForReview {
-  imageId: number;
-  image?: Image;
-  reason: string;
 }
 
 export interface ImageTagForReview {

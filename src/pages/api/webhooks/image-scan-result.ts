@@ -20,10 +20,7 @@ import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
-import {
-  createImageTagsForReview,
-  createImageForReview,
-} from '~/server/services/image-review.service';
+import { createImageTagsForReview } from '~/server/services/image-review.service';
 import {
   getImagesModRules,
   getTagNamesForImages,
@@ -216,7 +213,7 @@ async function handleSuccess(args: BodyProps) {
     if (data.ingestion === 'Scanned') {
       if (reviewKey) {
         await Promise.all([
-          createImageForReview({ imageId: id, reason: reviewKey }),
+          // createImageForReview({ imageId: id, reason: reviewKey }),
           createImageTagsForReview({ imageId: id, tagIds: tagsForReview.map((x) => x.id) }),
         ]);
       }
@@ -978,7 +975,6 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   if (!image.nsfwLevelLocked) data.nsfwLevel = nsfwLevel;
   if (flags.poi) data.poi = true;
   if (flags.minor) data.minor = true;
-  if (reviewKey) data.needsReview = reviewKey;
 
   const validAiGeneration = isValidAIGeneration({
     ...image,
@@ -1003,6 +999,9 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   }
 
   if (data.ingestion === ImageIngestionStatus.Scanned) {
+    // only set "needsReview" if the scan is successful
+    if (reviewKey) data.needsReview = reviewKey;
+
     const createdAtTime = new Date(image.createdAt).getTime();
     const now = new Date();
     const oneWeekAgo = decreaseDate(now, 7, 'days').getTime();

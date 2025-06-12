@@ -1,8 +1,9 @@
-import { Group, Navbar, Popover, ThemeIcon } from '@mantine/core';
+import { Alert, Group, Navbar, Popover, ThemeIcon } from '@mantine/core';
 import {
   IconBubbleText,
   IconChevronDown,
   IconCrown,
+  IconHelpSquareRounded,
   IconHistory,
   IconInfoCircle,
   IconSkull,
@@ -11,12 +12,13 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   openJudgmentHistoryModal,
   openPlayersDirectoryModal,
+  openRatingGuideModal,
   useJoinKnightsNewOrder,
 } from '~/components/Games/KnightsNewOrder.utils';
 import { NewOrderRulesModal } from '~/components/Games/NewOrder/NewOrderRulesModal';
@@ -28,11 +30,13 @@ import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 export function NewOrderSidebar() {
   const currentUser = useCurrentUser();
-  const { playerData, resetCareer } = useJoinKnightsNewOrder();
+  const { playerData, resetCareer, viewedRatingGuide } = useJoinKnightsNewOrder();
   const mobile = useIsMobile({ breakpoint: 'md' });
 
-  const [opened, setOpened] = useState(false);
-  const [modalOpened, setModalOpened] = useState(false);
+  const [state, setState] = useState({
+    opened: false,
+    rulesOpened: false,
+  });
 
   const header =
     playerData && currentUser ? (
@@ -54,7 +58,7 @@ export function NewOrderSidebar() {
           showStats={playerData.rank.type !== NewOrderRankType.Acolyte}
           className={clsx(
             'w-full rounded-b-none p-4 @md:rounded-sm',
-            opened ? 'bg-gray-1 dark:bg-dark-5' : 'dark:bg-dark-6'
+            state.opened ? 'bg-gray-1 dark:bg-dark-5' : 'dark:bg-dark-6'
           )}
           withBorder
         />
@@ -100,7 +104,7 @@ export function NewOrderSidebar() {
           </Group>
         </Link>
         <button
-          className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+          className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
           onClick={() => {
             dialogStore.trigger({
               component: ConfirmDialog,
@@ -121,6 +125,17 @@ export function NewOrderSidebar() {
             Restart Career
           </Group>
         </button>
+        <button
+          className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+          onClick={() => openRatingGuideModal()}
+        >
+          <div className="flex flex-nowrap items-center gap-4">
+            <ThemeIcon size="xl" color="teal" variant="light">
+              <IconHelpSquareRounded />
+            </ThemeIcon>
+            Guide
+          </div>
+        </button>
         <Link
           className="w-full cursor-pointer rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
           href="https://forms.clickup.com/8459928/f/825mr-13011/SEFW63SLT4PH1H7DQ0"
@@ -136,7 +151,7 @@ export function NewOrderSidebar() {
         </Link>
         <button
           className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
-          onClick={() => setModalOpened(true)}
+          onClick={() => setState((prev) => ({ ...prev, rulesOpened: true }))}
         >
           <div className="flex flex-nowrap items-center gap-4">
             <ThemeIcon size="xl" color="gray" variant="light">
@@ -149,6 +164,12 @@ export function NewOrderSidebar() {
     </>
   );
 
+  useEffect(() => {
+    if (!viewedRatingGuide) {
+      openRatingGuideModal();
+    }
+  }, [viewedRatingGuide]);
+
   return (
     <>
       {mobile ? (
@@ -158,19 +179,19 @@ export function NewOrderSidebar() {
             position="bottom"
             transition="scale-y"
             width="calc(100% - 32px)"
-            onChange={setOpened}
+            onChange={(open) => setState((prev) => ({ ...prev, opened: open }))}
             zIndex={40}
           >
             <Popover.Target>
               <button
                 className={clsx(
                   'z-10 w-full justify-items-center border border-t-0 p-1 dark:border-dark-4',
-                  opened ? 'bg-gray-1 dark:bg-dark-5' : 'bg-white dark:bg-dark-6'
+                  state.opened ? 'bg-gray-1 dark:bg-dark-5' : 'bg-white dark:bg-dark-6'
                 )}
               >
                 <IconChevronDown
                   size={16}
-                  className={clsx('transition-transform', opened ? 'rotate-180' : '')}
+                  className={clsx('transition-transform', state.opened ? 'rotate-180' : '')}
                 />
               </button>
             </Popover.Target>
@@ -187,7 +208,15 @@ export function NewOrderSidebar() {
           </Navbar.Section>
         </Navbar>
       )}
-      <NewOrderRulesModal opened={modalOpened} onClose={() => setModalOpened(false)} />
+      <NewOrderRulesModal
+        opened={state.rulesOpened}
+        onClose={() => setState((prev) => ({ ...prev, rulesOpened: false }))}
+        footer={
+          <Alert color="blue" title="Pro Tip">
+            See an image you like? Check out the Judgement History and give the creator a follow.
+          </Alert>
+        }
+      />
     </>
   );
 }

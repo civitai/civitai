@@ -1,4 +1,4 @@
-import { Badge, Button, createStyles, Group, Menu, Text } from '@mantine/core';
+import { Badge, Button, createStyles, Group, keyframes, Menu, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import type { IconProps } from '@tabler/icons-react';
 import {
@@ -102,7 +102,7 @@ export const homeOptions: HomeOption[] = [
     key: 'shop',
     url: '/shop',
     icon: (props: IconProps) => <IconShoppingBag {...props} />,
-    classes: ['tabHighlight'],
+    classes: ['tabRainbow'],
   },
 ];
 
@@ -118,6 +118,18 @@ export function filterHomeOptions(features: FeatureAccess) {
       ].some((b) => b)
   );
 }
+
+const rainbowTextAnimation = keyframes({
+  '0%': {
+    backgroundPosition: '0% 50%',
+  },
+  '50%': {
+    backgroundPosition: '100% 50%',
+  },
+  '100%': {
+    backgroundPosition: '0% 50%',
+  },
+});
 
 const useTabsStyles = createStyles((theme) => ({
   tabHighlight: {
@@ -140,55 +152,55 @@ const useTabsStyles = createStyles((theme) => ({
     willChange: 'background-position',
   },
 
-  // tabRainbow: {
-  //   background: `linear-gradient(
-  //       90deg,
-  //       rgba(255, 0, 0, 1) 0%,
-  //       rgba(255, 154, 0, 1) 10%,
-  //       rgba(208, 222, 33, 1) 20%,
-  //       rgba(79, 220, 74, 1) 30%,
-  //       rgba(63, 218, 216, 1) 40%,
-  //       rgba(47, 201, 226, 1) 50%,
-  //       rgba(28, 127, 238, 1) 60%,
-  //       rgba(95, 21, 242, 1) 70%,
-  //       rgba(186, 12, 248, 1) 80%,
-  //       rgba(251, 7, 217, 1) 90%,
-  //       rgba(255, 0, 0, 1) 100%
-  //   ) 0/200%`,
-  //   animation: `${rainbowTextAnimation} 10s linear infinite`,
-  //   ':hover': {
-  //     background: `linear-gradient(
-  //       90deg,
-  //       rgba(255, 0, 0, 1) 0%,
-  //       rgba(255, 154, 0, 1) 10%,
-  //       rgba(208, 222, 33, 1) 20%,
-  //       rgba(79, 220, 74, 1) 30%,
-  //       rgba(63, 218, 216, 1) 40%,
-  //       rgba(47, 201, 226, 1) 50%,
-  //       rgba(28, 127, 238, 1) 60%,
-  //       rgba(95, 21, 242, 1) 70%,
-  //       rgba(186, 12, 248, 1) 80%,
-  //       rgba(251, 7, 217, 1) 90%,
-  //       rgba(255, 0, 0, 1) 100%
-  //   ) 0/200%`,
-  //   },
-  //   '&[data-active]': {
-  //     background: `linear-gradient(
-  //       90deg,
-  //       rgba(255, 0, 0, 1) 0%,
-  //       rgba(255, 154, 0, 1) 10%,
-  //       rgba(208, 222, 33, 1) 20%,
-  //       rgba(79, 220, 74, 1) 30%,
-  //       rgba(63, 218, 216, 1) 40%,
-  //       rgba(47, 201, 226, 1) 50%,
-  //       rgba(28, 127, 238, 1) 60%,
-  //       rgba(95, 21, 242, 1) 70%,
-  //       rgba(186, 12, 248, 1) 80%,
-  //       rgba(251, 7, 217, 1) 90%,
-  //       rgba(255, 0, 0, 1) 100%
-  //   ) 0/200%`,
-  //   },
-  // },
+  tabRainbow: {
+    background: `linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 1) 0%,
+        rgba(255, 154, 0, 1) 10%,
+        rgba(208, 222, 33, 1) 20%,
+        rgba(79, 220, 74, 1) 30%,
+        rgba(63, 218, 216, 1) 40%,
+        rgba(47, 201, 226, 1) 50%,
+        rgba(28, 127, 238, 1) 60%,
+        rgba(95, 21, 242, 1) 70%,
+        rgba(186, 12, 248, 1) 80%,
+        rgba(251, 7, 217, 1) 90%,
+        rgba(255, 0, 0, 1) 100%
+    ) 0/200%`,
+    animation: `${rainbowTextAnimation} 10s linear infinite`,
+    ':hover': {
+      background: `linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 1) 0%,
+        rgba(255, 154, 0, 1) 10%,
+        rgba(208, 222, 33, 1) 20%,
+        rgba(79, 220, 74, 1) 30%,
+        rgba(63, 218, 216, 1) 40%,
+        rgba(47, 201, 226, 1) 50%,
+        rgba(28, 127, 238, 1) 60%,
+        rgba(95, 21, 242, 1) 70%,
+        rgba(186, 12, 248, 1) 80%,
+        rgba(251, 7, 217, 1) 90%,
+        rgba(255, 0, 0, 1) 100%
+    ) 0/200%`,
+    },
+    '&[data-active]': {
+      background: `linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 1) 0%,
+        rgba(255, 154, 0, 1) 10%,
+        rgba(208, 222, 33, 1) 20%,
+        rgba(79, 220, 74, 1) 30%,
+        rgba(63, 218, 216, 1) 40%,
+        rgba(47, 201, 226, 1) 50%,
+        rgba(28, 127, 238, 1) 60%,
+        rgba(95, 21, 242, 1) 70%,
+        rgba(186, 12, 248, 1) 80%,
+        rgba(251, 7, 217, 1) 90%,
+        rgba(255, 0, 0, 1) 100%
+    ) 0/200%`,
+    },
+  },
   moreButton: {
     padding: '8px 10px 8px 16px',
     fontSize: 16,
@@ -244,7 +256,7 @@ export function HomeTabs() {
               ['bg-gray-4 dark:bg-dark-4']:
                 activePath === key || (activePath === 'changelog' && key === 'updates'),
               [classes.groupedOptions]: value.grouped,
-              [classes.tabHighlight]: key === 'shop',
+              [classes.tabRainbow]: key === 'shop',
             })}
             classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
           >
