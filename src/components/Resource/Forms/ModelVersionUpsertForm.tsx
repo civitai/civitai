@@ -86,7 +86,7 @@ const schema = modelVersionUpsertSchema2
     recommendedResources: generationResourceSchema
       .merge(recommendedSettingsSchema)
       .array()
-      .optional(),
+      .nullish(),
   })
   .refine((data) => (!data.skipTrainedWords ? (data.trainedWords ?? []).length > 0 : true), {
     message: 'You need to specify at least one trained word',

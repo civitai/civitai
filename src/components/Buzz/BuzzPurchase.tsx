@@ -5,6 +5,7 @@ import {
   Button,
   Center,
   Chip,
+  Divider,
   Grid,
   Group,
   Input,
@@ -15,7 +16,16 @@ import {
   ThemeIcon,
   useComputedColorScheme,
 } from '@mantine/core';
-import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
+import {
+  IconArrowsExchange,
+  IconBolt,
+  IconBuilding,
+  IconBuildingBank,
+  IconCreditCard,
+  IconCreditCardOff,
+  IconInfoCircle,
+  IconMoodDollar,
+} from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -46,6 +56,7 @@ import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
+import { BuzzCoinbaseOnrampButton } from '~/components/Buzz/BuzzCoinbaseOnrampButton';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -189,10 +200,12 @@ const BuzzPurchasePaymentButton = ({
           : undefined
       }
       radius="xl"
-      fullWidth
     >
       {features.disablePayments ? (
-        <Text>Credit Cards are currently disabled</Text>
+        <Group spacing="xs" noWrap>
+          <IconCreditCard size={20} />
+          <span>Credit Card</span>
+        </Group>
       ) : (
         <>
           Pay Now{' '}
@@ -561,15 +574,33 @@ export const BuzzPurchase = ({
             </Accordion>
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
 
-            <Stack gap="xs" mt="md">
+            <Divider
+              label={`Pay $${formatCurrencyForDisplay(unitAmount, undefined, {
+                decimals: false,
+              })} USD`}
+              labelPosition="center"
+              labelProps={{ className: 'font-bold' }}
+            />
+            <div className="flex flex-col gap-3 md:flex-row">
               {features.coinbasePayments && (
-                <BuzzCoinbaseButton
-                  unitAmount={unitAmount}
-                  buzzAmount={buzzAmount}
-                  onPurchaseSuccess={onPurchaseSuccess}
-                  disabled={!ctaEnabled}
-                  purchaseSuccessMessage={purchaseSuccessMessage}
-                />
+                <>
+                  {features.coinbaseOnramp && (
+                    <BuzzCoinbaseOnrampButton
+                      unitAmount={unitAmount}
+                      buzzAmount={buzzAmount}
+                      onPurchaseSuccess={onPurchaseSuccess}
+                      disabled={!ctaEnabled}
+                      purchaseSuccessMessage={purchaseSuccessMessage}
+                    />
+                  )}
+                  <BuzzCoinbaseButton
+                    unitAmount={unitAmount}
+                    buzzAmount={buzzAmount}
+                    onPurchaseSuccess={onPurchaseSuccess}
+                    disabled={!ctaEnabled}
+                    purchaseSuccessMessage={purchaseSuccessMessage}
+                  />
+                </>
               )}
               {features.nowpaymentPayments && (
                 <BuzzNowPaymentsButton
@@ -590,38 +621,43 @@ export const BuzzPurchase = ({
                 disabled={!ctaEnabled}
                 purchaseSuccessMessage={purchaseSuccessMessage}
               />
+              <Button disabled radius="xl">
+                <Group spacing="xs" noWrap>
+                  <IconBuildingBank size={20} />
+                  <span>Bank Account</span>
+                </Group>
+              </Button>
+            </div>
 
-              {(features.nowpaymentPayments || features.coinbasePayments) && (
-                <Stack align="center">
-                  <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
-                    <Text size="xs">
-                      Never purchased with Crypto before?{' '}
-                      <Anchor
-                        size="xs"
-                        href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        Learn how
-                      </Anchor>
-                    </Text>
-                  </AlertWithIcon>
-                </Stack>
-              )}
-
-              <Stack gap={0} align="center" my={4}>
-                <p className="mb-0 text-xs opacity-50">
-                  By clicking Pay Now, you agree to our{' '}
-                  <Anchor component={Link} size="xs" href="/content/tos" inherit>
-                    Terms of Service
+            {liveFeatures.buzzGiftCards && (
+              <Text align="center" size="xs" color="dimmed" mt="xs">
+                Don&rsquo;t see a supported payment method?{' '}
+                <Anchor
+                  href="https://buybuzz.io/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  size="xs"
+                >
+                  Buy a gift card!
+                </Anchor>
+              </Text>
+            )}
+            {(features.nowpaymentPayments || features.coinbasePayments) && (
+              <Stack align="center">
+                <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
+                  Never purchased with Crypto before?{' '}
+                  <Anchor
+                    href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Learn how
                   </Anchor>
-                </p>
-                <p className="text-xs opacity-50">
-                  Transactions will appear as CIVIT AI INC on your billing statement
-                </p>
+                </AlertWithIcon>
               </Stack>
+            )}
 
-              {/* {env.NEXT_PUBLIC_PAYPAL_CLIENT_ID && (
+            {/* {env.NEXT_PUBLIC_PAYPAL_CLIENT_ID && (
                 <BuzzPaypalButton
                   onError={(error) => setError(error.message)}
                   onSuccess={onPaypalSuccess}
@@ -631,12 +667,11 @@ export const BuzzPurchase = ({
                 />
               )} */}
 
-              {onCancel && (
-                <Button variant="light" color="gray" onClick={onCancel} radius="xl">
-                  Cancel
-                </Button>
-              )}
-            </Stack>
+            {onCancel && (
+              <Button variant="light" color="gray" onClick={onCancel} radius="xl">
+                Cancel
+              </Button>
+            )}
           </Stack>
         </Stack>
       </Grid.Col>

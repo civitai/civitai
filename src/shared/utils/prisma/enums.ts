@@ -52,6 +52,19 @@ export const CashWithdrawalMethod = {
 
 export type CashWithdrawalMethod = (typeof CashWithdrawalMethod)[keyof typeof CashWithdrawalMethod];
 
+export const CryptoTransactionStatus = {
+  WaitingForRamp: 'WaitingForRamp',
+  RampTimedOut: 'RampTimedOut',
+  RampFailed: 'RampFailed',
+  RampInProgress: 'RampInProgress',
+  RampSuccess: 'RampSuccess',
+  WaitingForSweep: 'WaitingForSweep',
+  SweepFailed: 'SweepFailed',
+  Complete: 'Complete',
+} as const;
+
+export type CryptoTransactionStatus = (typeof CryptoTransactionStatus)[keyof typeof CryptoTransactionStatus];
+
 export const RewardsEligibility = {
   Eligible: 'Eligible',
   Ineligible: 'Ineligible',
@@ -574,6 +587,7 @@ export type HomeBlockType = (typeof HomeBlockType)[keyof typeof HomeBlockType];
 export const Currency = {
   USD: 'USD',
   BUZZ: 'BUZZ',
+  USDC: 'USDC',
 } as const;
 
 export type Currency = (typeof Currency)[keyof typeof Currency];

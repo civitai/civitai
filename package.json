@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.821",
+  "version": "5.0.824",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -64,6 +64,7 @@
     "@civitai/client": "^0.1.9-beta.37",
     "@civitai/next-axiom": "^0.17.0",
     "@clickhouse/client": "^0.2.2",
+    "@coinbase/cdp-sdk": "^1.13.0",
     "@dnd-kit/core": "^6.1.0",
     "@dnd-kit/sortable": "^8.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -146,6 +147,7 @@
     "idb-keyval": "^6.2.0",
     "immer": "^9.0.15",
     "instantsearch.js": "4.64.1",
+    "jose": "^6.0.11",
     "jsonwebtoken": "^9.0.1",
     "jssha": "^3.3.1",
     "jszip": "^3.10.1",
@@ -211,6 +213,7 @@
     "unified": "^11.0.5",
     "use-sound": "^5.0.0",
     "uuid": "^9.0.0",
+    "viem": "^2.30.6",
     "xml2js": "^0.6.2",
     "zod": "^3.23.8",
     "zustand": "^4.3.7"

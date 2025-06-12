@@ -209,6 +209,37 @@ model CashWithdrawal {
   @@index([userId])
 }
 
+model CryptoWallet {
+  userId       Int     @id
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet       String  @unique
+  smartAccount String? @unique
+}
+
+enum CryptoTransactionStatus {
+  WaitingForRamp // Ramp url created
+  RampTimedOut // Been 5 minutes since url was created and still not tx associated with key
+  RampFailed // Failed to ramp
+  RampInProgress // Ramp is in progress
+  RampSuccess // Ramp completed successfully
+  WaitingForSweep // Sweep tx created
+  SweepFailed // Sweep tx failed
+  Complete // Sweep tx completed, Buzz paid
+}
+
+model CryptoTransaction {
+  key         String                  @id @default(cuid())
+  userId      Int
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status      CryptoTransactionStatus @default(WaitingForRamp)
+  amount      Int // (compute in pennies for USDC)
+  currency    Currency                @default(USDC)
+  sweepTxHash String?
+  note        String?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+}
+
 enum RewardsEligibility {
   Eligible
   Ineligible
@@ -348,6 +379,8 @@ model User {
   recurringBids              BidRecurring[]
   moderationRules            ModerationRule[]
   playerInfo                 NewOrderPlayer?
+  CryptoWallet               CryptoWallet[]
+  CryptoTransaction          CryptoTransaction[]
 
   @@index([deletedAt])
 }
@@ -2638,6 +2671,7 @@ model BuzzTip {
 enum Currency {
   USD
   BUZZ
+  USDC
 }
 
 enum BountyType {

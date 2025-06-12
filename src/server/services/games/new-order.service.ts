@@ -906,13 +906,13 @@ export async function addImageToQueue({
     })
   );
 
-  await signalClient
-    .topicSend({
-      topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
-      target: SignalMessages.NewOrderQueueUpdate,
-      data: { images, action: NewOrderSignalActions.AddImage },
-    })
-    .catch();
+  // await signalClient
+  //   .topicSend({
+  //     topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
+  //     target: SignalMessages.NewOrderQueueUpdate,
+  //     data: { images, action: NewOrderSignalActions.AddImage },
+  //   })
+  //   .catch();
 
   return true;
 }

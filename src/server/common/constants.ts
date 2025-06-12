@@ -1134,6 +1134,11 @@ export const CurrencyConfig: Record<
     color: (theme) => theme.colors.yellow[7],
     fill: undefined,
   },
+  [Currency.USDC]: {
+    icon: IconCurrencyDollar,
+    color: (theme) => theme.colors.yellow[7],
+    fill: undefined,
+  },
 };
 
 export const BUZZ_FEATURE_LIST = [

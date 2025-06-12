@@ -56,7 +56,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = isDev
     ? false
-    : features.adsEnabled &&
+    : !features.isGreen &&
+      features.isBlue &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url));
 
