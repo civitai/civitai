@@ -12,6 +12,7 @@ export const flux1AspectRatios = [
   '9:16',
   '9:21',
 ] as const;
+export const flux1SafetyTolerance = ['1', '2', '3', '4', '5', '6'] as const;
 type Flux1Model = (typeof flux1Models)[number];
 export const flux1Models = ['pro-kontext', 'max-kontext'] as const;
 
@@ -48,19 +49,24 @@ export const flux1Config = ImageGenConfig({
     safetyTolerance: params.safetyTolerance,
     seed: params.seed,
   }),
-  inputFn: ({ params, resources }) => {
+  inputFn: ({ params, resources, whatIf }) => {
     let model = 'pro-kontext';
     for (const resource of resources) {
       const match = fluxKontextModelVersionToModelMap.get(resource.id);
       if (match) model = match;
     }
 
+    let imageUrl = params.sourceImage?.url;
+    if (whatIf && !params.sourceImage)
+      imageUrl =
+        'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/3fdba611-f34d-4a68-8bf8-3805629652d3/4a0f3c58d8c6a370bc926efe3279cbad.jpeg';
+
     return schema.parse({
       engine: params.engine,
       model,
       prompt: params.prompt,
-      imageUrl: params.sourceImage?.url,
-      aspectRatio: params.aspectRatio ? flux1AspectRatios[Number(params.aspectRatio)] : undefined,
+      imageUrl,
+      aspectRatio: params.aspectRatio,
       numImages: params.quantity,
       safetyTolerance: params.safetyTolerance,
       guidanceScale: params.cfgScale,

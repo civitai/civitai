@@ -115,6 +115,7 @@ export const constants = {
     'OpenAI',
     'Imagen4',
     'Wan Video',
+    'Flux.1 Kontext',
   ] as string[],
   modelFileTypes: [
     'Model',

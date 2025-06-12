@@ -15,10 +15,15 @@ export async function createImageGenStep(
   input: z.infer<typeof generateImageSchema> & {
     user: SessionUser;
   },
-  config: ReturnType<typeof ImageGenConfig>
+  config?: ReturnType<typeof ImageGenConfig>
 ) {
   const { priority } = input.params;
   const timeSpan = new TimeSpan(0, 10, 0);
+
+  if (!config) {
+    config = imageGenConfig[input.params.engine as keyof typeof imageGenConfig];
+    if (!config) throw new Error(`missing config for engine: ${input.params.engine}`);
+  }
 
   return {
     $type: 'imageGen',

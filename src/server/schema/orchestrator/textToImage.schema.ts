@@ -100,6 +100,7 @@ export const generateImageSchema = z.object({
       civitai: z.number().min(0).max(1).default(0),
     })
     .default({ creators: 0, civitai: 0 }),
+  whatIf: z.boolean().optional(),
 });
 
 export const generateImageWhatIfSchema = generateImageSchema.extend({
