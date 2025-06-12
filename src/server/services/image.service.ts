@@ -25,6 +25,7 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
+import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
@@ -90,7 +91,7 @@ import { getUserCollectionPermissionsById } from '~/server/services/collection.s
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
 import { deleteImagTagsForReviewByImageIds } from '~/server/services/image-review.service';
-import { trackModActivity } from '~/server/services/moderator.service';
+import { ImageModActivity, trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
@@ -4121,7 +4122,12 @@ export async function updateImageNsfwLevel({
   userId,
   status,
   isModerator,
-}: UpdateImageNsfwLevelOutput & { userId: number; isModerator?: boolean }) {
+  activity,
+}: UpdateImageNsfwLevelOutput & {
+  userId: number;
+  isModerator?: boolean;
+  activity?: ImageModActivity['activity'];
+}) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
@@ -4137,7 +4143,7 @@ export async function updateImageNsfwLevel({
     await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,
-      activity: 'setNsfwLevel',
+      activity: activity ?? 'setNsfwLevel',
     });
   } else {
     // Track potential content leaking
@@ -4805,6 +4811,16 @@ export async function queueImageSearchIndexUpdate({
 }) {
   await imagesSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
+
+  if (action === SearchIndexUpdateQueueAction.Delete) {
+    // Bust the thumbnail cache for deleted images
+    await thumbnailCache.bust(ids);
+    // Remove the image from the knights of new order pool counters
+    await Promise.all([
+      ...poolCounters.Knight.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Templar.map((queue) => queue.reset({ id: ids })),
+    ]);
+  }
 }
 
 export async function getPostDetailByImageId({ imageId }: { imageId: number }) {

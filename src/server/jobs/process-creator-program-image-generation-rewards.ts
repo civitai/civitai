@@ -84,15 +84,16 @@ export const processCreatorProgramImageGenerationRewards = createJob(
     // Get all records that need to be processed
     const modelVersionData = await clickhouse.$query<ModelVersionRow>`
       SELECT
-          resourceId as modelVersionId,
-          createdAt,
-          SUM(1) as generations
+        resourceId as modelVersionId,
+        createdAt,
+        SUM(1) as generations
       FROM (
-          SELECT
-              arrayJoin(resourcesUsed) as resourceId,
-              createdAt::date as createdAt
-          FROM orchestration.textToImageJobs
-          WHERE createdAt >= ${lastUpdate}
+        SELECT
+          arrayJoin(resourcesUsed) as resourceId,
+          createdAt::date as createdAt
+        FROM orchestration.jobs
+        WHERE jobType IN ('TextToImageV2', 'TextToImage', 'Comfy')
+        AND createdAt >= ${lastUpdate}
       )
       WHERE resourceId IN (${modelVersions.map((x) => x.id)})
       GROUP BY resourceId, createdAt

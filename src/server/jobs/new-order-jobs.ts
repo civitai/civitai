@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { newOrderConfig } from '~/server/common/constants';
-import { NewOrderImageRatingStatus } from '~/server/common/enums';
+import { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   allJudgmentsCounter,
@@ -11,6 +11,7 @@ import {
   correctJudgmentsCounter,
   expCounter,
   fervorCounter,
+  poolCounters,
 } from '~/server/games/new-order/utils';
 import { createJob } from '~/server/jobs/job';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -328,9 +329,54 @@ const newOrderCleanseSmites = createJob('new-order-cleanse-smites', '0 0 * * *',
   log(`CleanseSmites :: Cleansing smites :: done`);
 });
 
+const ranksToClean = [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'] as const;
+const newOrderCleanupQueues = createJob('new-order-cleanup-queues', '*/10 * * * *', async () => {
+  log('CleanupQueues :: Cleaning up queues');
+
+  for (const rank of ranksToClean) {
+    log(`CleanupQueues :: Cleaning up ${rank} queues`);
+
+    // Fetch current image IDs from the rankType queue
+    const currentImageIds = (
+      await Promise.all(poolCounters[rank].map((pool) => pool.getAll({ limit: 10000 })))
+    )
+      .flat()
+      .map((value) => Number(value));
+
+    if (currentImageIds.length === 0) {
+      log(`CleanupQueues :: No images found for ${rank}`);
+      continue;
+    }
+
+    const chunks = chunk(currentImageIds, 1000);
+    for (const chunk of chunks) {
+      // Check against the database to find non-existing image IDs
+      const existingImages = await dbRead.image.findMany({
+        where: { id: { in: chunk } },
+        select: { id: true, nsfwLevel: true },
+      });
+      const existingImageIds = new Set(existingImages.map((image) => image.id));
+      const blockedImageIds = new Set(
+        existingImages
+          .filter((image) => image.nsfwLevel === NsfwLevel.Blocked)
+          .map((image) => image.id)
+      );
+      const imageIdsToRemove = chunk.filter(
+        (id) => !existingImageIds.has(id) || blockedImageIds.has(id)
+      );
+      if (imageIdsToRemove.length === 0) continue;
+
+      // Remove non-existing images from the queue
+      await Promise.all([poolCounters[rank].map((pool) => pool.reset({ id: imageIdsToRemove }))]);
+    }
+  }
+  log('CleanupQueues :: Cleaning up queues :: done');
+});
+
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
   newOrderDailyReset,
   newOrderPickTemplars,
   newOrderCleanseSmites,
+  newOrderCleanupQueues,
 ];

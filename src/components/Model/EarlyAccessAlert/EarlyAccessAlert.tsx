@@ -11,7 +11,7 @@ import { showSuccessNotification, showErrorNotification } from '~/utils/notifica
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useQueryModelVersionDonationGoals } from '../ModelVersions/model-version.utils';
-import { constants } from '~/server/common/constants';
+import { constants, EARLY_ACCESS_CONFIG } from '~/server/common/constants';
 
 export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Props) {
   const features = useFeatureFlags();
@@ -91,7 +91,7 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
             c="yellow"
             td="underline"
             target="_blank"
-            href={`/articles/${constants.earlyAccess.article}`}
+            href={`/articles/${EARLY_ACCESS_CONFIG.article}`}
           >
             here
           </Anchor>

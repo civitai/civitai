@@ -136,6 +136,10 @@ export function ImageDetail2() {
   );
 
   if (!image) return <NotFound />;
+  // Avoid showing POI images to non-mods non owners.
+  if (image.poi && image.user.id !== currentUser?.id && !currentUser?.isModerator) {
+    return <NotFound />;
+  }
 
   const actualCollection = collection || collectionItems[0]?.collection;
   const forcedBrowsingLevel = actualCollection?.metadata?.forcedBrowsingLevel;
