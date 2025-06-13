@@ -8,7 +8,7 @@ import {
   IconBrandReddit,
   IconMail,
 } from '@tabler/icons-react';
-import type { BuiltInProviderType } from 'next-auth/providers';
+import type { BuiltInProviderType } from 'next-auth/providers/index';
 
 type SocialProps = Partial<
   Record<

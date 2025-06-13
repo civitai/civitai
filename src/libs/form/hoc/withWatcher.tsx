@@ -1,6 +1,6 @@
 import { useDidUpdate } from '@mantine/hooks';
-import { useCallback, useState, useEffect, forwardRef } from 'react';
-import type { DeepPartial, FieldValues, UnpackNestedValue } from 'react-hook-form';
+import { forwardRef, useCallback, useEffect, useState } from 'react';
+import type { DeepPartial, FieldValues } from 'react-hook-form';
 import { useFormContext } from 'react-hook-form';
 
 type WatcherBaseProps = {
@@ -43,7 +43,7 @@ export function Watcher({ visible, children }: Required<Props>) {
   const { watch, getValues } = useFormContext<FieldValues>() ?? {};
 
   const handleVisible = useCallback(() => {
-    const values = getValues?.() as UnpackNestedValue<DeepPartial<FieldValues>>;
+    const values = getValues?.() as DeepPartial<FieldValues>;
     return visible(values);
   }, [getValues, visible]);
 

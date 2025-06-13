@@ -1,14 +1,15 @@
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import { normalizeText } from '~/utils/normalize-text';
+import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import blockedNSFW from './lists/blocklist-nsfw.json';
+import blocked from './lists/blocklist.json';
+import promptTags from './lists/prompt-tags.json';
 import nsfwPromptWords from './lists/words-nsfw-prompt.json';
 import nsfwWordsSoft from './lists/words-nsfw-soft.json';
 import nsfwWordsPaddle from './lists/words-paddle-nsfw.json';
-import blocked from './lists/blocklist.json';
-import youngWords from './lists/words-young.json';
 import poiWords from './lists/words-poi.json';
-import promptTags from './lists/prompt-tags.json';
+import youngWords from './lists/words-young.json';
+
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
 // #region [audit]

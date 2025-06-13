@@ -66,11 +66,11 @@ import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import {
+  blankTagStr,
+  labelDescriptions,
   TrainingImagesSwitchLabel,
   TrainingImagesTags,
   TrainingImagesTagViewer,
-  blankTagStr,
-  labelDescriptions,
 } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import type { BaseModel } from '~/server/common/constants';
@@ -328,6 +328,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     title: 'Failed to upload archive',
     message: 'Please try again (or contact us if it continues)',
     autoClose: false,
+    loading: false,
   };
 
   const mediaExts = isVideo ? { ...imageExts, ...videoExts } : imageExts;
@@ -748,6 +749,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         message: '',
         autoClose: 3000,
         disallowClose: false,
+        loading: false,
       });
 
       setInitialImageList(model.id, thisMediaType, imageList);
@@ -1847,7 +1849,9 @@ const AttestDiv = () => {
           granted, and I will immediately remove or modify the content if consent is revoked.
         </List.Item>
         <List.Item mb={2}>
-          Legality: I will not upload any material that is illegal or exploitative (e.g., child sexual abuse material, non-consensual imagery, extremist propaganda). Such content will be removed and reported to the relevant authorities.
+          Legality: I will not upload any material that is illegal or exploitative (e.g., child
+          sexual abuse material, non-consensual imagery, extremist propaganda). Such content will be
+          removed and reported to the relevant authorities.
         </List.Item>
       </List>
     </>

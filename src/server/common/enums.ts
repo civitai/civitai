@@ -378,3 +378,7 @@ export enum NewOrderSignalActions {
   AddImage = 'add-image',
   RemoveImage = 'remove-image',
 }
+
+export enum ExternalModerationType {
+  Clavata = 'Clavata',
+}
