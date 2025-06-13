@@ -62,7 +62,7 @@
     "@axiomhq/axiom-node": "^0.12.0",
     "@civitai/client": "^0.1.9-beta.37",
     "@civitai/next-axiom": "^0.17.0",
-    "@clavata/sdk": "^0.2.2",
+    "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^0.2.2",
     "@coinbase/cdp-sdk": "^1.13.0",
     "@dnd-kit/core": "^6.1.0",
