@@ -8,6 +8,7 @@ import {
   Text,
   TextInput,
   Title,
+  useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';

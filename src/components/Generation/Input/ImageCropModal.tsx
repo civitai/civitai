@@ -8,10 +8,6 @@ import {
   Slider,
   Stack,
 } from '@mantine/core';
-import { useEffect, useMemo, useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
-import type { Point, Area, MediaSize } from 'react-easy-crop/types';
 import { IconZoomIn, IconZoomOut } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
