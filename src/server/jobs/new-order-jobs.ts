@@ -124,13 +124,20 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     return;
   }
 
-  const json = users.map((u) => `'${JSON.stringify(u)}'`);
-  const userData = await clickhouse.$query<DailyResetQueryResult>`
+  const userBatches = chunk(users, 1000);
+  log(`DailyReset:: Processing ${users.length} users in ${userBatches.length} batches`);
+  let userData: DailyResetQueryResult[] = [];
+  let userLoopCount = 1;
+  for (const batch of userBatches) {
+    log(`DailyReset:: Processing users :: ${userLoopCount} of ${userBatches.length}`);
+
+    const tuples = batch.map((u) => `(${u.userId},'${u.startAt.toISOString()}')`).join(',');
+    const data = await clickhouse.$query<DailyResetQueryResult>`
     WITH u AS (
       SELECT 
-        arrayJoin([${json}]) as user,
-        JSONExtractInt(user, 'userId') as userId,
-        JSONExtractString(user, 'startAt') as startAt
+        arrayJoin([${tuples}]) as user_tuple,
+        user_tuple.1 as userId,
+        user_tuple.2 as startAt
     )
     SELECT 
       knoir."userId",
@@ -157,6 +164,14 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     WHERE knoir."createdAt" BETWEEN ${startDate} AND ${endDate}
     GROUP BY knoir."userId"
   `;
+
+    if (data.length) {
+      userData = [...userData, ...data];
+    }
+
+    log(`DailyReset:: Processing users :: ${userLoopCount} of ${userBatches.length} :: done`);
+    userLoopCount++;
+  }
 
   if (!userData.length) {
     log('DailyReset:: No judgments found');
