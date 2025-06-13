@@ -163,7 +163,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     return;
   }
 
-  const batches = chunk(userData, 500);
+  const batches = chunk(userData, 200);
   let loopCount = 1;
   for (const batch of batches) {
     log(`DailyReset:: Processing judgments :: ${loopCount} of ${batches.length}`);

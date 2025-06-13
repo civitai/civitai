@@ -282,7 +282,9 @@ export const getPaginatedUserTransactionHistory = async (
   const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
   const { take, skip } = getPagination(limit, page);
 
-  const where: Prisma.CryptoTransactionFindManyArgs['where'] = {};
+  const where: Prisma.CryptoTransactionFindManyArgs['where'] = {
+    userId: input.userId,
+  };
   if (input.statuses && input.statuses.length) where.status = { in: input.statuses };
 
   const items = await dbRead.cryptoTransaction.findMany({
