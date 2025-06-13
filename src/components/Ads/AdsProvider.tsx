@@ -24,6 +24,7 @@ const AdsContext = createContext<{
   adsEnabled: boolean;
   username?: string;
   isMember: boolean;
+  kontextReady: boolean;
 } | null>(null);
 
 export function useAdsContext() {
@@ -32,10 +33,13 @@ export function useAdsContext() {
   return context;
 }
 
-const useAdProviderStore = create<{ ready: boolean; adsBlocked: boolean }>(() => ({
-  ready: false,
-  adsBlocked: true,
-}));
+const useAdProviderStore = create<{ ready: boolean; adsBlocked: boolean; kontextReady: boolean }>(
+  () => ({
+    ready: false,
+    adsBlocked: true,
+    kontextReady: false,
+  })
+);
 
 const blockedUrls: string[] = [
   '/collections/6503138',
@@ -48,6 +52,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const ready = useAdProviderStore((state) => state.ready);
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
+  const kontextReady = useAdProviderStore((state) => state.kontextReady);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
@@ -96,6 +101,19 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!!window.fetchKontextAd) return;
+
+    function callback() {
+      useAdProviderStore.setState({ kontextReady: true });
+    }
+
+    window.addEventListener('kontext-ad-script-loaded', callback);
+    return () => {
+      window.removeEventListener('kontext-ad-script-loaded', callback);
+    };
+  }, []);
+
   return (
     <AdsContext.Provider
       value={{
@@ -104,6 +122,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         adsEnabled,
         username: currentUser?.username,
         isMember,
+        kontextReady,
       }}
     >
       {children}
@@ -174,6 +193,22 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         />
       )}
       {adsEnabled && <ImpressionTracker />}
+
+      <Script
+        id="kontext-ad-script"
+        async
+        type="module"
+        dangerouslySetInnerHTML={{
+          __html: `
+          import('https://server.megabrain.co/sdk/js').then(({fetchAd, markAdAsViewed}) => {
+            window.fetchKontextAd = fetchAd
+            window.markKontextAdAsViewed = markAdAsViewed
+            dispatchEvent(new CustomEvent('kontext-ad-script-loaded'))
+          })
+
+          `,
+        }}
+      ></Script>
     </AdsContext.Provider>
   );
 }
