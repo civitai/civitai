@@ -18,8 +18,8 @@ import { fromJson } from '~/utils/json-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate } from './job';
 
-// http://localhost:3000/api/webhooks/run-jobs?token=letsgethookie&run=entity-moderation-queues
-// http://localhost:3000/api/webhooks/run-jobs?token=letsgethookie&run=entity-moderation-chat
+// http://localhost:3000/api/webhooks/run-jobs?token=X&run=entity-moderation-queues
+// http://localhost:3000/api/webhooks/run-jobs?token=X&run=entity-moderation-chat
 
 const jobName = 'entity-moderation';
 const jobNameQueues = 'queues';
