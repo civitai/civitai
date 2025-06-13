@@ -18,7 +18,7 @@ export const cleanupWaitingRampUpTransactions = createJob(
     await dbWrite.$executeRaw`
        UPDATE "CryptoTransaction" t
         SET "status" = 'RampTimedOut'
-        WHERE "status" = 'WaitingRampUp'
+        WHERE "status" = 'WaitingForRamp'
         AND "createdAt" < ${lastRun} - INTERVAL '10 minutes' 
     `;
 
