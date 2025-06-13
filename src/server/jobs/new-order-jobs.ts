@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { newOrderConfig } from '~/server/common/constants';
-import { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
+import { NewOrderImageRatingStatus, NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   allJudgmentsCounter,
@@ -17,6 +17,7 @@ import { createJob } from '~/server/jobs/job';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { calculateFervor, cleanseSmite } from '~/server/services/games/new-order.service';
+import { createNotification } from '~/server/services/notification.service';
 import { claimCosmetic } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
@@ -207,7 +208,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   log('DailyReset:: Cleared counters');
 });
 
-const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', async () => {
+const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * *', async () => {
   if (!clickhouse) return;
   log('PickTemplars :: Picking templars');
 
@@ -256,32 +257,38 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
     return acc;
   }, {} as Record<number, number>);
 
-  // Clear fervor counters
-  await Promise.all(
-    Object.keys(playersFervor).map((id) => fervorCounter.reset({ id: Number(id) }))
-  );
-
-  // Update fervor counter with new data
-  await Promise.all(
-    Object.entries(playersFervor).map(([id, fervor]) =>
-      fervorCounter.increment({ id: Number(id), value: fervor })
-    )
-  );
-
-  const candidates = await fervorCounter.getAll({ limit: newOrderConfig.limits.templarPicks });
+  // Pick the top 24 players based on fervor
+  const candidates = Object.entries(playersFervor)
+    .sort((a, b) => b[1] - a[1]) // Sort by fervor descending
+    .slice(0, newOrderConfig.limits.templarPicks) // Take the top 24
+    .map(([userId]) => Number(userId)); // Extract userIds
+  if (candidates.length === 0) {
+    log('PickTemplars :: No candidates found');
+    return;
+  }
 
   log(`PickTemplars :: Candidates: ${candidates}`);
 
-  const playerIds = candidates.map(Number);
   // Update the new templars:
   const selectedTemplars = await dbWrite.newOrderPlayer.updateManyAndReturn({
     select: { userId: true },
-    where: { userId: { in: playerIds }, rankType: NewOrderRankType.Knight },
+    where: {
+      userId: { in: candidates },
+      rankType: { not: NewOrderRankType.Acolyte },
+    },
     data: { rankType: NewOrderRankType.Templar },
   });
 
   // Grant cosmetic to new templars
   for (const templar of selectedTemplars) {
+    createNotification({
+      category: NotificationCategory.Other,
+      type: 'new-order-templar-promotion',
+      key: `new-order-templar-promotion:${templar.userId}:${endDate.valueOf()}`,
+      userId: templar.userId,
+      details: {},
+    }).catch();
+
     await claimCosmetic({
       id: newOrderConfig.cosmetics.badgeIds.templar,
       userId: templar.userId,
@@ -289,14 +296,28 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
   }
   log(`PickTemplars :: Granted templar badge to ${selectedTemplars.length} players`);
 
-  // Update the new knights:
-  await dbWrite.newOrderPlayer.updateMany({
+  // Get a list of players who are not candidates
+  const nonCandidates = players.filter((p) => !candidates.includes(p.userId)).map((p) => p.userId);
+
+  // Update the demoted knights:
+  const demotedKnights = await dbWrite.newOrderPlayer.updateManyAndReturn({
+    select: { userId: true },
     where: {
-      userId: { in: players.filter((p) => !playerIds.includes(p.userId)).map((p) => p.userId) },
+      userId: { in: nonCandidates },
       rankType: { not: NewOrderRankType.Acolyte },
     },
     data: { rankType: NewOrderRankType.Knight },
   });
+
+  for (const knight of demotedKnights) {
+    createNotification({
+      category: NotificationCategory.Other,
+      type: 'new-order-knight-demoted',
+      key: `new-order-knight-demoted:${knight.userId}:${endDate.valueOf()}`,
+      userId: knight.userId,
+      details: {},
+    }).catch();
+  }
 
   log('PickTemplars :: Picking templars :: done');
 });

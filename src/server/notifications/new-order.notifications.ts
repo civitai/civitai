@@ -28,4 +28,21 @@ export const knightsNewOrderNotifications = createNotificationProcessor({
       url: '/games/knights-of-new-order',
     }),
   },
+  'new-order-templar-promotion': {
+    displayName: 'Knights of New Order: Templar Promotion',
+    category: NotificationCategory.Other,
+    prepareMessage: () => ({
+      message: `Knights of New Order: Congratulations! You have been promoted to Templar because your fervor is outstangin! Keep up the good work!`,
+      url: '/games/knights-of-new-order',
+    }),
+  },
+  'new-order-knight-demoted': {
+    displayName: 'Knights of New Order: Knight Demotion',
+    category: NotificationCategory.Other,
+    prepareMessage: () => ({
+      message:
+        'Knights of New Order: Oh no! You have been demoted to Knight because your fervor is not up to the standards. You can still redeem yourself!',
+      url: '/games/knights-of-new-order',
+    }),
+  },
 });
