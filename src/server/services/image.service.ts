@@ -91,7 +91,8 @@ import { getUserCollectionPermissionsById } from '~/server/services/collection.s
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
 import { deleteImagTagsForReviewByImageIds } from '~/server/services/image-review.service';
-import { ImageModActivity, trackModActivity } from '~/server/services/moderator.service';
+import type { ImageModActivity } from '~/server/services/moderator.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
@@ -3707,10 +3708,10 @@ export const getImageModerationReviewQueue = async ({
         ? `WITH tags_review AS (
             SELECT
               toi."imageId"
-            FROM "TagsOnImageNew" toi  JOIN "Image" i ON toi."imageId" = i.id
+            FROM "TagsOnImageDetails" toi  JOIN "Image" i ON toi."imageId" = i.id
             WHERE
-            (toi."attributes" >> 9) & 1 = 1
-            AND (toi."attributes" >> 10) & 1 != 1
+            toi."needsReview"
+            AND toi.disabled = false
             AND i."nsfwLevel" < 32
             ${cursor ? `AND "imageId" <= ${cursor}` : ''}
             ORDER BY (toi."imageId", toi."tagId") DESC

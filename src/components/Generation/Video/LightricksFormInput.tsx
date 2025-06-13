@@ -3,14 +3,12 @@ import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
-import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
 import {
   lightricksAspectRatios,
   lightricksDuration,
 } from '~/server/orchestrator/lightricks/lightricks.schema';
-import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 
@@ -25,11 +23,6 @@ export function LightricksFormInput() {
       {process === 'img2vid' && (
         <InputSourceImageUpload name="sourceImage" className="flex-1" warnOnMissingAiMetadata />
       )}
-      <InputResourceSelectMultipleStandalone
-        name="resources"
-        options={{ resources: baseModelResourceTypes.WanVideo }}
-        buttonLabel="Add additional resource"
-      />
       <InputTextArea
         required={isTxt2Img}
         name="prompt"

@@ -79,37 +79,69 @@ async function sendImagesForScanBulk(images: IngestImageInput[]) {
   console.log('Failed sends:', failedSends.length);
 }
 
-const delayedBlockCutoff = new Date('2025-05-31');
+// const delayedBlockCutoff = new Date('2025-05-31');
+const limit = 1000;
 export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * *', async () => {
   // During the delayed block period, we want to keep the images for 30 days
-  if (!isProd || delayedBlockCutoff > new Date()) return;
+  // if (!isProd || delayedBlockCutoff > new Date()) return;
   const cutoff = decreaseDate(new Date(), 7, 'days');
 
-  const images = await dbRead.image.findMany({
-    where: {
-      ingestion: ImageIngestionStatus.Blocked,
-      OR: [
-        {
-          blockedFor: { not: BlockedReason.Moderated },
-          createdAt: { lte: cutoff },
-        },
-        {
-          blockedFor: BlockedReason.Moderated,
-          updatedAt: { lte: cutoff },
-        },
-      ],
-    },
-    select: { id: true },
-  });
-  if (!images.length) return;
+  let nextCursor: number | undefined;
+  await removeBlockedImagesRecursive(cutoff, nextCursor);
+});
+
+async function removeBlockedImagesRecursive(cutoff: Date, nextCursor?: number) {
+  const images = await dbRead.$queryRaw<{ id: number }[]>`
+    select id, ingestion, "blockedFor"
+    from "Image"
+    WHERE "ingestion" = 'Blocked' AND "blockedFor" != 'AiNotVerified'
+    AND (
+      ("blockedFor" != 'moderated' and "createdAt" <= ${cutoff}) OR
+      ("blockedFor" = 'moderated' and "updatedAt" <= ${cutoff})
+    )
+    ${nextCursor ? `id > ${nextCursor}` : ''}
+    ORDER BY id
+    LIMIT ${limit + 1}
+  `;
+
+  // const images = await dbRead.image.findMany({
+  //   where: {
+  //     ingestion: ImageIngestionStatus.Blocked,
+  //     OR: [
+  //       {
+  //         blockedFor: { notIn: [BlockedReason.Moderated, BlockedReason.AiNotVerified] },
+  //         createdAt: { lte: cutoff },
+  //       },
+  //       {
+  //         blockedFor: BlockedReason.Moderated,
+  //         updatedAt: { lte: cutoff },
+  //       },
+  //     ],
+  //   },
+  //   select: { id: true },
+  //   take: limit + 1,
+  //   cursor: nextCursor ? { id: nextCursor } : undefined,
+  // });
+  console.log(images.length);
+
+  if (images.length > limit) {
+    const nextItem = images.pop();
+    nextCursor = nextItem?.id;
+  } else nextCursor = undefined;
 
   if (!isProd) {
-    console.log(images.length);
-    return;
+    console.log({ images: images.length });
   }
 
-  const tasks = images.map((x) => async () => {
-    await deleteImageById(x);
-  });
-  await limitConcurrency(tasks, 5);
-});
+  if (!images.length) return;
+  if (isProd) {
+    const tasks = images.map((x) => async () => {
+      await deleteImageById(x);
+    });
+    await limitConcurrency(tasks, 5);
+  }
+
+  if (nextCursor) {
+    await removeBlockedImagesRecursive(cutoff, nextCursor);
+  }
+}

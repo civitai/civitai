@@ -28,7 +28,7 @@ import { KlingFormInput } from '~/components/Generation/Video/KlingFormInput';
 import { MinimaxFormInput } from '~/components/Generation/Video/MinimaxFormInput';
 import { HaiperFormInput } from '~/components/Generation/Video/HaiperFormInput';
 import { MochiFormInput } from '~/components/Generation/Video/MochiFormInput';
-import { LightricksFormInput } from '~/components/Generation/Video/LightrixFormInput';
+import { LightricksFormInput } from '~/components/Generation/Video/LightricksFormInput';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 
