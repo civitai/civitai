@@ -58,7 +58,7 @@ export type MetricTimeframe = "Day" | "Week" | "Month" | "Year" | "AllTime";
 
 export type AssociationType = "Suggested";
 
-export type ReportReason = "TOSViolation" | "NSFW" | "Ownership" | "AdminAttention" | "Claim" | "CSAM";
+export type ReportReason = "TOSViolation" | "NSFW" | "Ownership" | "AdminAttention" | "Claim" | "CSAM" | "Automated";
 
 export type ReportStatus = "Pending" | "Processing" | "Actioned" | "Unactioned";
 
@@ -146,9 +146,9 @@ export type ChatMessageType = "Markdown" | "Image" | "Video" | "Audio" | "Embed"
 
 export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
-export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection";
+export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -902,6 +902,7 @@ export interface Report {
   bounty?: BountyReport | null;
   bountyEntry?: BountyEntryReport | null;
   chat?: ChatReport | null;
+  automated?: ReportAutomated | null;
 }
 
 export interface ResourceReviewReport {
@@ -2744,6 +2745,14 @@ export interface NewOrderSmite {
   createdAt: Date;
   cleansedAt: Date | null;
   cleansedReason: string | null;
+}
+
+export interface ReportAutomated {
+  id: number;
+  reportId: number;
+  report?: Report;
+  metadata: JsonValue;
+  createdAt: Date;
 }
 
 export interface QuestionRank {

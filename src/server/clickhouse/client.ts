@@ -1,28 +1,30 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 import { createClient } from '@clickhouse/client';
+import dayjs from 'dayjs';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Session } from 'next-auth';
+import requestIp from 'request-ip';
+import { isProd } from '~/env/other';
+import { env } from '~/env/server';
+import type { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
+import type { AllModKeys } from '~/server/jobs/entity-moderation';
+import { logToAxiom } from '~/server/logging/client';
+import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
+import type { ProhibitedSources } from '~/server/schema/user.schema';
+import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import type {
   ArticleEngagementType,
   BountyEngagementType,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
+  EntityType,
   NewOrderRankType,
   ReportReason,
   ReportStatus,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import dayjs from 'dayjs';
-import type { NextApiRequest, NextApiResponse } from 'next';
-import requestIp from 'request-ip';
-import { isProd } from '~/env/other';
-import { env } from '~/env/server';
-import { logToAxiom } from '~/server/logging/client';
-import type { ProhibitedSources } from '~/server/schema/user.schema';
-import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
-import type { Session } from 'next-auth';
-import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
-import type { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -110,16 +112,6 @@ export type ViewType =
   | 'CollectionView'
   | 'BountyView'
   | 'BountyEntryView';
-export type EntityType =
-  | 'User'
-  | 'Image'
-  | 'Post'
-  | 'Model'
-  | 'ModelVersion'
-  | 'Article'
-  | 'Collection'
-  | 'Bounty'
-  | 'BountyEntry';
 
 export type UserActivityType =
   | 'Registration'
@@ -539,6 +531,22 @@ export class Tracker {
   }) {
     return this.track(
       'entityMetricEvents',
+      { ...values, createdAt: new Date() },
+      { skipActorMeta: true }
+    );
+  }
+
+  public moderationRequest(values: {
+    entityType: AllModKeys;
+    entityId: number;
+    userId: number;
+    rules: string[];
+    // value: string;
+    date: Date;
+    valid?: boolean;
+  }) {
+    return this.track(
+      'moderationRequests',
       { ...values, createdAt: new Date() },
       { skipActorMeta: true }
     );

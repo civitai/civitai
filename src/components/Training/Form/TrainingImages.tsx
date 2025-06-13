@@ -65,11 +65,11 @@ import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import {
+  blankTagStr,
+  labelDescriptions,
   TrainingImagesSwitchLabel,
   TrainingImagesTags,
   TrainingImagesTagViewer,
-  blankTagStr,
-  labelDescriptions,
 } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import type { BaseModel } from '~/server/common/constants';
@@ -297,6 +297,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     title: 'Failed to upload archive',
     message: 'Please try again (or contact us if it continues)',
     autoClose: false,
+    loading: false,
   };
 
   const mediaExts = isVideo ? { ...imageExts, ...videoExts } : imageExts;
@@ -717,6 +718,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         message: '',
         autoClose: 3000,
         withCloseButton: false,
+        loading: false,
       });
 
       setInitialImageList(model.id, thisMediaType, imageList);

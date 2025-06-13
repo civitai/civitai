@@ -291,6 +291,7 @@ export const ReportReason = {
   AdminAttention: 'AdminAttention',
   Claim: 'Claim',
   CSAM: 'CSAM',
+  Automated: 'Automated',
 } as const;
 
 export type ReportReason = (typeof ReportReason)[keyof typeof ReportReason];
@@ -698,6 +699,12 @@ export const EntityType = {
   ModelVersion: 'ModelVersion',
   Model: 'Model',
   Collection: 'Collection',
+  Comment: 'Comment',
+  CommentV2: 'CommentV2',
+  User: 'User',
+  UserProfile: 'UserProfile',
+  ResourceReview: 'ResourceReview',
+  ChatMessage: 'ChatMessage',
 } as const;
 
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
@@ -708,6 +715,7 @@ export const JobQueueType = {
   UpdateNsfwLevel: 'UpdateNsfwLevel',
   UpdateSearchIndex: 'UpdateSearchIndex',
   CleanIfEmpty: 'CleanIfEmpty',
+  ModerationRequest: 'ModerationRequest',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];

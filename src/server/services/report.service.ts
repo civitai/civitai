@@ -1,14 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import {
-  AppealStatus,
-  BuzzAccountType,
-  EntityType,
-  ImageEngagementType,
-  ImageIngestionStatus,
-  ReportReason,
-  ReportStatus,
-} from '~/shared/utils/prisma/enums';
-import type { Report } from '~/shared/utils/prisma/models';
+import dayjs from 'dayjs';
 import {
   BlockedReason,
   NotificationCategory,
@@ -19,6 +10,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import type {
   CreateEntityAppealInput,
   CreateReportInput,
@@ -33,24 +25,24 @@ import {
   imagesMetricsSearchIndex,
   imagesSearchIndex,
 } from '~/server/search-index';
-import { trackModActivity } from '~/server/services/moderator.service';
-import { addTagVotes } from '~/server/services/tag.service';
-import {
-  throwAuthorizationError,
-  throwBadRequestError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
-import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { withRetries } from '~/utils/errorHandling';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import dayjs from 'dayjs';
-import {
-  ingestImage,
-  queueImageSearchIndexUpdate,
-  updateNsfwLevel,
-} from '~/server/services/image.service';
+import { queueImageSearchIndexUpdate, updateNsfwLevel } from '~/server/services/image.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
+import { addTagVotes } from '~/server/services/tag.service';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import {
+  AppealStatus,
+  BuzzAccountType,
+  EntityType,
+  ImageEngagementType,
+  ImageIngestionStatus,
+  ReportReason,
+  ReportStatus,
+} from '~/shared/utils/prisma/enums';
+import type { Report } from '~/shared/utils/prisma/models';
+import { withRetries } from '~/utils/errorHandling';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -158,7 +150,7 @@ export const createReport = async ({
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
 
   const validReport =
-    data.reason !== ReportReason.NSFW
+    data.reason !== ReportReason.NSFW && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
           userId,
           reportType: type,
@@ -168,9 +160,9 @@ export const createReport = async ({
       : null;
   if (validReport) return validReport;
 
-  await dbWrite.$transaction(async (tx) => {
+  return await dbWrite.$transaction(async (tx) => {
     // create the report
-    await tx.report.create({
+    const createdReport = await tx.report.create({
       data: {
         ...data,
         userId,
@@ -184,11 +176,11 @@ export const createReport = async ({
     });
 
     // handle NSFW
-    if (data.reason === ReportReason.NSFW)
+    if (data.reason === ReportReason.NSFW) {
       switch (type) {
         case ReportEntity.Model:
         case ReportEntity.Image:
-          return await addTagVotes({
+          await addTagVotes({
             userId,
             type,
             id,
@@ -196,19 +188,24 @@ export const createReport = async ({
             isModerator,
             vote: 1,
           });
+          break;
         case ReportEntity.Collection:
           await tx.collection.update({ where: { id }, data: { nsfw: true } });
-          return collectionsSearchIndex.queueUpdate([
+          await collectionsSearchIndex.queueUpdate([
             { id, action: SearchIndexUpdateQueueAction.Update },
           ]);
+          break;
         case ReportEntity.Article:
           await tx.article.update({ where: { id }, data: { nsfw: true } });
-          return articlesSearchIndex.queueUpdate([
+          await articlesSearchIndex.queueUpdate([
             { id, action: SearchIndexUpdateQueueAction.Update },
           ]);
+          break;
         case ReportEntity.Post:
-          return await tx.post.update({ where: { id }, data: { nsfw: true } });
+          await tx.post.update({ where: { id }, data: { nsfw: true } });
+          break;
       }
+    }
 
     // handle TOS violations
     if (data.reason === ReportReason.TOSViolation)
@@ -245,6 +242,8 @@ export const createReport = async ({
         { id, action: SearchIndexUpdateQueueAction.Delete },
       ]);
     }
+
+    return createdReport;
   });
 };
 

@@ -70,6 +70,7 @@ export default function Reports() {
         ReportReason.Claim,
         ReportReason.Ownership,
         ReportReason.TOSViolation,
+        ReportReason.Automated,
       ],
     },
     {

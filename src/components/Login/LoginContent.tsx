@@ -1,7 +1,7 @@
 import { Alert, Code, Paper, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconExclamationMark, IconMail } from '@tabler/icons-react';
 import dayjs from 'dayjs';
-import type { BuiltInProviderType } from 'next-auth/providers';
+import type { BuiltInProviderType } from 'next-auth/providers/index';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';

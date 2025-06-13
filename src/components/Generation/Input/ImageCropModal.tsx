@@ -13,10 +13,13 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
 import type { Point, Area, MediaSize } from 'react-easy-crop/types';
 import { IconZoomIn, IconZoomOut } from '@tabler/icons-react';
-import { getCroppedImg } from '~/utils/image-utils';
 import clsx from 'clsx';
+import { useEffect, useMemo, useState } from 'react';
+import type { Area, MediaSize, Point } from 'react-easy-crop';
+import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { getCroppedImg } from '~/utils/image-utils';
 
 type ImageProps = { url: string; width: number; height: number; label?: string };
 type ImageCropperProps = { images: ImageProps[]; onCancel?: () => void; onConfirm: OnConfirmFn };
@@ -289,14 +292,14 @@ function ImageCropper({
       </div>
       {!readonly && (
         <div className="mx-auto flex w-full max-w-80 items-center gap-2">
-          <LegacyActionIcon
+          <ActionIcon
             size="sm"
             disabled={zoom === minZoom}
             onClick={handleZoomOut}
             variant="transparent"
           >
             <IconZoomOut />
-          </LegacyActionIcon>
+          </ActionIcon>
           <Slider
             className="flex-1"
             value={zoom}
@@ -306,14 +309,14 @@ function ImageCropper({
             step={0.1}
             precision={1}
           />
-          <LegacyActionIcon
+          <ActionIcon
             size="sm"
             disabled={zoom === maxZoom}
             onClick={handleZoomIn}
             variant="transparent"
           >
             <IconZoomIn />
-          </LegacyActionIcon>
+          </ActionIcon>
         </div>
       )}
     </div>

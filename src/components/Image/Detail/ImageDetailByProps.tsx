@@ -16,39 +16,39 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { useDidUpdate, useHotkeys } from '@mantine/hooks';
 import {
   IconAlertTriangle,
-  IconEye,
   IconBookmark,
   IconChevronLeft,
   IconChevronRight,
+  IconEye,
 } from '@tabler/icons-react';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { Reactions } from '~/components/Reaction/Reactions';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
-import { ImageResources } from '~/components/Image/Detail/ImageResources';
-import { Meta } from '~/components/Meta/Meta';
-import { TrackView } from '~/components/TrackView/TrackView';
-import { CollectionType } from '~/shared/utils/prisma/enums';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { trpc } from '~/utils/trpc';
-import { useDidUpdate, useHotkeys } from '@mantine/hooks';
-import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
-import type { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
-import React from 'react';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { NextLink } from '~/components/NextLink/NextLink';
+import React from 'react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openAddToCollectionModal } from '~/components/Dialog/dialog-registry';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
+import { ImageResources } from '~/components/Image/Detail/ImageResources';
+import type { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import { Meta } from '~/components/Meta/Meta';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { Reactions } from '~/components/Reaction/Reactions';
+import { TrackView } from '~/components/TrackView/TrackView';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { CollectionType } from '~/shared/utils/prisma/enums';
+import { trpc } from '~/utils/trpc';
 import { Notifications } from '@mantine/notifications';
 import classes from './ImageDetailByProps.module.scss';
 import clsx from 'clsx';
@@ -142,7 +142,13 @@ export function ImageDetailByProps({
                           <>
                             {image.publishedAt || image.createdAt ? (
                               <Text size="xs" c="dimmed">
-                                Uploaded <DaysFromNow date={image.publishedAt || image.createdAt} />
+                                Uploaded{' '}
+                                <DaysFromNow
+                                  date={Math.max(
+                                    image.publishedAt?.getTime() ?? 0,
+                                    image.createdAt?.getTime() ?? 0
+                                  )}
+                                />
                               </Text>
                             ) : (
                               'Not Published'

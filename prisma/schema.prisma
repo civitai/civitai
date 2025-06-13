@@ -1064,6 +1064,7 @@ enum ReportReason {
   AdminAttention
   Claim
   CSAM
+  Automated
 }
 
 enum ReportStatus {
@@ -1099,6 +1100,7 @@ model Report {
   bounty         BountyReport?
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
+  automated      ReportAutomated?
 }
 
 model ResourceReviewReport {
@@ -3229,6 +3231,12 @@ enum EntityType {
   ModelVersion
   Model
   Collection
+  Comment
+  CommentV2
+  User
+  UserProfile
+  ResourceReview
+  ChatMessage
 }
 
 enum JobQueueType {
@@ -3237,6 +3245,7 @@ enum JobQueueType {
   UpdateNsfwLevel
   UpdateSearchIndex
   CleanIfEmpty
+  ModerationRequest
 }
 
 model JobQueue {
@@ -3632,6 +3641,14 @@ model NewOrderSmite {
   createdAt      DateTime       @default(now())
   cleansedAt     DateTime?
   cleansedReason String?
+}
+
+model ReportAutomated {
+  id        Int      @id @default(autoincrement())
+  reportId  Int      @unique
+  report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
 }
 
 /// @view

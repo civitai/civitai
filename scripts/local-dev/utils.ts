@@ -55,6 +55,8 @@ export const insertRows = async (table: string, data: any[][], hasId = true) => 
   let query = 'INSERT INTO %I VALUES %L ON CONFLICT DO NOTHING';
   if (hasId) query += ' RETURNING ID';
 
+  // console.log(`\t-> ${format(query, table, data)}`);
+
   try {
     const ret = await pgDbWrite.query<{ id: number }>(format(query, table, data));
 
@@ -91,3 +93,64 @@ export const generateRandomName = (count: number) => {
 
   return randomNames.join(' ');
 };
+
+/**
+ * Deletes a random percentage of rows from the JobQueue table
+ * @param num - The percentage of rows to delete (0-100)
+ * @param type - How  to delete
+ * @returns The number of rows deleted
+ */
+export const deleteRandomJobQueueRows = async (num: number, type: 'pct' | 'count') => {
+  if (type === 'pct' && (num < 0 || num > 100)) {
+    throw new Error('Percentage must be between 0 and 100');
+  }
+
+  const totalRows = await pgDbWrite.query('SELECT COUNT(*) as cnt FROM "JobQueue"');
+  if (totalRows.rowCount === 0) {
+    console.log('No rows found in JobQueue table');
+    return 0;
+  }
+
+  try {
+    const query = `
+      WITH random_ordered AS (
+        SELECT 
+          type, 
+          "entityType", 
+          "entityId",
+          ROW_NUMBER() OVER (ORDER BY RANDOM()) as rn,
+          COUNT(*) OVER () as total_count
+        FROM "JobQueue"
+      )
+      DELETE FROM "JobQueue"
+      USING random_ordered
+      WHERE "JobQueue".type = random_ordered.type
+        AND "JobQueue"."entityType" = random_ordered."entityType"
+        AND "JobQueue"."entityId" = random_ordered."entityId"
+        AND random_ordered.rn ${
+          type === 'count'
+            ? '> $1'
+            : '<= (SELECT MAX(total_count) * $1 / 100.0 FROM random_ordered)'
+        }
+      RETURNING *;
+    `;
+
+    const result = await pgDbWrite.query(query, [num]);
+    console.log(
+      `Deleted ${result.rowCount} / ${totalRows.rows[0].cnt} rows from JobQueue (${type})`
+    );
+    return result.rowCount;
+  } catch (error) {
+    const e = error as Error;
+    console.error('Error deleting random JobQueue rows:', e.message);
+    throw e;
+  }
+};
+
+const badWords = ['kill', 'underage', 'nazi'];
+export function randPrependBad(s: string, sep = ' ') {
+  return faker.helpers.weightedArrayElement([
+    { value: s, weight: 20 },
+    { value: `${badWords[Math.floor(Math.random() * badWords.length)]}${sep}${s}`, weight: 1 },
+  ]);
+}

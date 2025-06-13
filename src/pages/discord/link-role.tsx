@@ -1,24 +1,23 @@
 import {
+  Alert,
+  Button,
   Container,
+  Group,
   Paper,
   Stack,
   Text,
-  Alert,
-  Group,
   ThemeIcon,
   Title,
-  Button,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons-react';
 import type { BuiltInProviderType } from 'next-auth/providers';
 import { getProviders, signIn } from 'next-auth/react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { SocialButton } from '~/components/Social/SocialButton';
 import { dbRead } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
 import { getUserDiscordMetadata } from '~/server/jobs/push-discord-metadata';
-
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 

@@ -1,15 +1,13 @@
 import {
-  Container,
-  Title,
-  Text,
-  useMantineTheme,
-  Stack,
-  TextInput,
   Alert,
-  List,
-  Paper,
-  Group,
   Badge,
+  Container,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  TextInput,
+  Title,
   useComputedColorScheme,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
@@ -18,14 +16,14 @@ import { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import type { ImageTag } from '~/server/integrations/clavata';
+import type { ClavataTag } from '~/server/integrations/clavata';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
   const [policyId, setPolicyId] = useState<string | undefined>(undefined);
-  const [tags, setTags] = useState<ImageTag[]>([]);
+  const [tags, setTags] = useState<ClavataTag[]>([]);
   const [error, setError] = useState<string | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [processed, setProcessed] = useState(false);
@@ -64,7 +62,7 @@ export default function MetadataTester() {
         throw new Error(data.error ?? res.statusText);
       }
 
-      const resJson: ImageTag[] = await res.json();
+      const resJson: ClavataTag[] = await res.json();
       setTags(resJson.filter((t) => t.outcome !== 'OUTCOME_FALSE'));
     } catch (e) {
       console.error('Error processing image with Clavata:', e);

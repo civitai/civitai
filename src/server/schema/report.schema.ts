@@ -1,8 +1,9 @@
 import type { MantineColor } from '@mantine/core';
-import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
-import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
+import { ExternalModerationType } from '~/server/common/enums';
+import { getAllQuerySchema } from '~/server/schema/base.schema';
+import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 
 export enum ReportEntity {
   Model = 'model',
@@ -45,6 +46,23 @@ export const reportClaimDetailsSchema = baseDetailSchema.extend({
 export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
   reason: z.string(),
 });
+
+export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
+  externalId: z.string(),
+  externalType: z.nativeEnum(ExternalModerationType),
+  entityId: z.number(),
+  tags: z.array(z.string()),
+  // tags: z.array(
+  //   z.object({
+  //     tag: z.string(),
+  //     confidence: z.number(),
+  //     outcome: z.string(), // z.nativeEnum(Outcome), // but this causes errors
+  //     message: z.string().optional(),
+  //   })
+  // ),
+  userId: z.number(),
+  value: z.string().optional(),
+});
 // #endregion
 
 // #region [report reason schemas]
@@ -82,6 +100,12 @@ export const reportAdminAttentionSchema = baseSchema.extend({
 export const reportCsamSchema = baseSchema.extend({
   reason: z.literal(ReportReason.CSAM),
 });
+
+export const reportAutomatedSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.Automated),
+  details: reportAutomatedDetailsSchema,
+});
+
 // #endregion
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>;
@@ -92,6 +116,7 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportClaimSchema,
   reportAdminAttentionSchema,
   reportCsamSchema,
+  reportAutomatedSchema,
 ]);
 
 export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;

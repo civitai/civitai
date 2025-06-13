@@ -41,6 +41,10 @@ declare global {
   type MixedObject = Record<string, any>;
   type BaseEntity = { id: number | string } & MixedObject;
 
+  type Entries<T> = {
+    [K in keyof T]: [K, T[K]];
+  }[keyof T][];
+
   type CustomFile = {
     id?: number;
     url: string;
