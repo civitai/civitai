@@ -148,7 +148,7 @@ export function ProfileCard() {
                       });
                     }}
                   >
-                    View Crypto Transactions
+                    View Debit Card Transactions
                   </Button>
                 )}
               </Stack>
