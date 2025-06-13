@@ -89,11 +89,17 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
     }));
 
     await createBuzzTransactionMany(transactions);
+
+    // Deduct the blessed buzz from the counter
+    await Promise.all(
+      batch.map((player) => {
+        const blessedBuzzValue = player.balance / newOrderConfig.blessedBuzzConversionRatio;
+        return blessedBuzzCounter.decrement({ id: player.userId, value: blessedBuzzValue });
+      })
+    );
     log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`);
     loopCount++;
   }
-
-  await Promise.all(validPlayers.map(({ userId: id }) => blessedBuzzCounter.reset({ id })));
 
   log('BlessedBuzz :: Granting Blessed Buzz :: done');
 });
