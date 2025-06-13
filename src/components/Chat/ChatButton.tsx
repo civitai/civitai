@@ -19,7 +19,7 @@ export function ChatButton() {
 
   if (!currentUser || !features.chat) return <></>;
 
-  const totalUnread = unreadData?.reduce((accum, { cnt }) => accum + cnt, 0);
+  const totalUnread = unreadData?.reduce((accum, { cnt }) => accum + cnt, 0) ?? 0;
 
   return (
     <>
@@ -27,18 +27,12 @@ export function ChatButton() {
         color="red"
         disabled={unreadLoading || !totalUnread}
         // processing={unreadLoading} (this doesn't work)
-        label={totalUnread}
+        label={totalUnread > 99 ? '99+' : totalUnread}
         size={16}
         offset={4}
-        className="flex items-center"
-        styles={{
-          indicator: {
-            height: '20px !important',
-            '> span': { marginBottom: '2px' },
-          },
-        }}
+        className="flex items-center text-sm font-bold"
+        classNames={{ indicator: 'cursor-pointer h-5' }}
         withBorder
-        inline
       >
         <LegacyActionIcon
           variant={state.open ? 'filled' : 'subtle'}

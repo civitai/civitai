@@ -9,7 +9,6 @@ import {
   Popover,
   Stack,
   Text,
-  useMantineTheme,
   Badge,
   UnstyledButton,
   useComputedColorScheme,
@@ -93,7 +92,6 @@ const mapSize: Record<
 
 export function ProfileSidebar({ username, className }: { username: string; className?: string }) {
   const router = useRouter();
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
@@ -337,7 +335,6 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                   withArrow
                   width={200}
                   position="top"
-                  offset={35}
                   onChange={(opened) => {
                     if (opened) {
                       setEnlargedBadge(award.id);

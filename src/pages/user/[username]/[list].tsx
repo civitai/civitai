@@ -103,19 +103,17 @@ export default function UserLists() {
                   >
                     {data.following.length > 0 ? (
                       data.following.map((user) => (
-                        <List.Item key={user.id} p={8}>
-                          <Link legacyBehavior href={`/user/${user.username}`} passHref>
-                            <Anchor variant="text">
-                              <Group justify="space-between">
-                                <UserAvatar user={user} withUsername />
-                                <FollowUserButton userId={user.id} size="compact-sm" />
-                              </Group>
-                            </Anchor>
-                          </Link>
+                        <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
+                          <Text component={Link} variant="text" href={`/user/${user.username}`}>
+                            <Group className="w-full" justify="space-between">
+                              <UserAvatar user={user} withUsername />
+                              <FollowUserButton userId={user.id} size="compact-sm" />
+                            </Group>
+                          </Text>
                         </List.Item>
                       ))
                     ) : (
-                      <List.Item>
+                      <List.Item classNames={{ itemLabel: 'w-full' }}>
                         <Paper p="xl" style={{ width: '100%' }} withBorder>
                           <Center>
                             <Text size="lg" fw="bold">
@@ -135,7 +133,7 @@ export default function UserLists() {
                   >
                     {data.followers.length > 0 ? (
                       data.followers.map((user) => (
-                        <List.Item key={user.id} p={8}>
+                        <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
                           <Link legacyBehavior href={`/user/${user.username}`} passHref>
                             <Anchor variant="text">
                               <Group justify="space-between">
@@ -147,7 +145,7 @@ export default function UserLists() {
                         </List.Item>
                       ))
                     ) : (
-                      <List.Item>
+                      <List.Item classNames={{ itemLabel: 'w-full' }}>
                         <Paper p="xl" style={{ width: '100%' }} withBorder>
                           <Center>
                             <Text size="lg" fw="bold">
@@ -169,7 +167,7 @@ export default function UserLists() {
                       >
                         {data.hidden.length > 0 ? (
                           data.hidden.map((user) => (
-                            <List.Item key={user.id} p={8}>
+                            <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
                               <Link legacyBehavior href={`/user/${user.username}`} passHref>
                                 <Anchor variant="text">
                                   <Group justify="space-between">
@@ -181,7 +179,7 @@ export default function UserLists() {
                             </List.Item>
                           ))
                         ) : (
-                          <List.Item>
+                          <List.Item classNames={{ itemLabel: 'w-full' }}>
                             <Paper p="xl" style={{ width: '100%' }} withBorder>
                               <Center>
                                 <Text size="lg" fw="bold">
@@ -201,7 +199,7 @@ export default function UserLists() {
                       >
                         {data.blocked.length > 0 ? (
                           data.blocked.map((user) => (
-                            <List.Item key={user.id} p={8}>
+                            <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
                               <Link legacyBehavior href={`/user/${user.username}`} passHref>
                                 <Anchor variant="text">
                                   <Group justify="space-between">
@@ -213,7 +211,7 @@ export default function UserLists() {
                             </List.Item>
                           ))
                         ) : (
-                          <List.Item>
+                          <List.Item classNames={{ itemLabel: 'w-full' }}>
                             <Paper p="xl" style={{ width: '100%' }} withBorder>
                               <Center>
                                 <Text size="lg" fw="bold">

@@ -37,7 +37,7 @@ export function NotificationBell() {
           offset={4}
           className="flex items-center text-sm font-bold"
           classNames={{
-            indicator: 'cursor-pointer h-[20px]',
+            indicator: 'cursor-pointer h-5',
           }}
           disabled={count.all <= 0}
           withBorder

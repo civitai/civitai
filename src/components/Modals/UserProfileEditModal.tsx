@@ -576,7 +576,7 @@ export default function UserProfileEditModal() {
             maxLength={constants.profile.messageMaxLength}
             labelProps={{ style: { width: '100%' } }}
             label={
-              <Group justify="space-between">
+              <Group className="w-full" justify="space-between">
                 <Text>Announcement</Text>
                 <Text size="xs">
                   {message?.length ?? 0}/{constants.profile.messageMaxLength}
@@ -588,7 +588,7 @@ export default function UserProfileEditModal() {
             name="bio"
             labelProps={{ style: { width: '100%' } }}
             label={
-              <Group justify="space-between">
+              <Group className="w-full" justify="space-between">
                 <Text>Bio</Text>
                 <Text size="xs">
                   {bio?.length ?? 0}/{constants.profile.bioMaxLength}
@@ -602,7 +602,7 @@ export default function UserProfileEditModal() {
             name="location"
             labelProps={{ style: { width: '100%' } }}
             label={
-              <Group justify="space-between">
+              <Group className="w-full" justify="space-between">
                 <Text>Location</Text>
                 <Text size="xs">
                   {location?.length ?? 0}/{constants.profile.locationMaxLength}

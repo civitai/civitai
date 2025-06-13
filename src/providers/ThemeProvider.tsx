@@ -1,22 +1,15 @@
 import type { MantineColorScheme } from '@mantine/core';
-import { ColorSchemeScript, createTheme, MantineProvider } from '@mantine/core';
+import { ColorSchemeScript, createTheme, MantineProvider, Modal } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 
 const theme = createTheme({
   components: {
-    Modal: {
+    Modal: Modal.extend({
       styles: {
-        modal: { maxWidth: '100%' },
+        content: { maxWidth: '100%', overflowX: 'hidden' },
         inner: { paddingLeft: 0, paddingRight: 0 },
       },
-      // defaultProps: {
-      //   target:
-      //     typeof window !== 'undefined' ? document.getElementById('root') : undefined,
-      // },
-      // defaultProps: {
-      //   scrollAreaComponent: ScrollArea.Autosize,
-      // },
-    },
+    }),
     Drawer: {
       styles: {
         drawer: {
