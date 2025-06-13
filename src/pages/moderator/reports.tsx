@@ -70,7 +70,7 @@ export default function Reports() {
         ReportReason.Claim,
         ReportReason.Ownership,
         ReportReason.TOSViolation,
-        ReportReason.Automated,
+        // ReportReason.Automated, // removing temporarily as per Seb
       ],
     },
     {
