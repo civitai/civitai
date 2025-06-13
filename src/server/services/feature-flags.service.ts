@@ -122,6 +122,7 @@ const featureFlags = createFeatureFlags({
   annualMemberships: ['public'],
   disablePayments: ['public'],
   coinbasePayments: ['public'],
+  coinbaseOnramp: ['mod'],
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
 });

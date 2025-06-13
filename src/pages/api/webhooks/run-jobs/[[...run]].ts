@@ -42,8 +42,8 @@ import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
-import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
-import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
+// import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
+// import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 import { processImportsJob } from '~/server/jobs/process-imports';
@@ -74,6 +74,8 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
+import { cleanupWaitingRampUpTransactions, processPendingTransactions } from '~/server/jobs/crypto';
+
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -107,14 +109,14 @@ export const jobs: Job[] = [
   ...bountyJobs,
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
-  processClubMembershipRecurringPayments,
+  // processClubMembershipRecurringPayments,
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
   rewardsAbusePrevention,
   nextauthCleanup,
   applyTagRules,
-  processCreatorProgramImageGenerationRewards,
+  // processCreatorProgramImageGenerationRewards,
   processVaultItems,
   clearVaultItems,
   ...jobQueueJobs,
@@ -143,6 +145,8 @@ export const jobs: Job[] = [
   updateModelVersionNsfwLevelsJob,
   deliverAnnualSubscriptionBuzz,
   ...entityModerationJobs,
+  processPendingTransactions,
+  cleanupWaitingRampUpTransactions,
 ];
 
 const log = createLogger('jobs', 'green');

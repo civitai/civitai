@@ -45,8 +45,11 @@ type PlayerRankUpPayload = {
 
 type PlayerUpdatePayload = PlayerUpdateStatsPayload | PlayerRankUpPayload;
 
-type QueueUpdateAddPayload = { action: 'add'; images: GetImagesQueueItem[] };
-type QueueUpdateRemovePayload = { action: 'remove'; imageId: number };
+type QueueUpdateAddPayload = {
+  action: NewOrderSignalActions.AddImage;
+  images: GetImagesQueueItem[];
+};
+type QueueUpdateRemovePayload = { action: NewOrderSignalActions.RemoveImage; imageId: number };
 type QueueUpdatePayload = QueueUpdateAddPayload | QueueUpdateRemovePayload;
 
 export const useKnightsNewOrderListener = ({
@@ -57,6 +60,7 @@ export const useKnightsNewOrderListener = ({
   onReset?: VoidFunction;
 } = {}) => {
   const queryUtils = trpc.useUtils();
+  const currentUser = useCurrentUser();
 
   const { playerData } = useJoinKnightsNewOrder();
 
@@ -78,7 +82,7 @@ export const useKnightsNewOrderListener = ({
           return { ...old, stats: { ...old.stats, ...updatedStats } };
         });
         break;
-      case 'reset':
+      case NewOrderSignalActions.Reset:
         onReset?.();
         queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
           if (!old) return old;
@@ -111,13 +115,21 @@ export const useKnightsNewOrderListener = ({
   // Used to update the current image queue
   useSignalConnection(SignalMessages.NewOrderQueueUpdate, (data: QueueUpdatePayload) => {
     switch (data.action) {
-      case 'add':
+      case NewOrderSignalActions.AddImage:
+        if (currentUser?.isModerator) {
+          console.log('NewOrderQueueUpdate :: Image added to queue:', data);
+        }
+
         queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
           if (!old) return old;
           return [...old, ...data.images];
         });
         break;
-      case 'remove':
+      case NewOrderSignalActions.RemoveImage:
+        if (currentUser?.isModerator) {
+          console.log('NewOrderQueueUpdate :: Image removed from queue:', data);
+        }
+
         queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
           if (!old) return old;
           return old.filter((image) => image.id !== data.imageId);

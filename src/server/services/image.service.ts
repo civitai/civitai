@@ -91,7 +91,7 @@ import { getUserCollectionPermissionsById } from '~/server/services/collection.s
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
 import { deleteImagTagsForReviewByImageIds } from '~/server/services/image-review.service';
-import { trackModActivity } from '~/server/services/moderator.service';
+import { ImageModActivity, trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
@@ -4122,7 +4122,12 @@ export async function updateImageNsfwLevel({
   userId,
   status,
   isModerator,
-}: UpdateImageNsfwLevelOutput & { userId: number; isModerator?: boolean }) {
+  activity,
+}: UpdateImageNsfwLevelOutput & {
+  userId: number;
+  isModerator?: boolean;
+  activity?: ImageModActivity['activity'];
+}) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
@@ -4138,7 +4143,7 @@ export async function updateImageNsfwLevel({
     await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,
-      activity: 'setNsfwLevel',
+      activity: activity ?? 'setNsfwLevel',
     });
   } else {
     // Track potential content leaking
