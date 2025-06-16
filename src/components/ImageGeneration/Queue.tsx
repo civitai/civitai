@@ -6,12 +6,25 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { KontextProvider } from '~/components/Ads/Kontext/KontextProvider';
+import { KontextAd } from '~/components/Ads/Kontext/KontextAd';
+import { Fragment, useMemo } from 'react';
 
 export function Queue() {
   const filters = useFiltersContext((state) => state.generation);
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError, error } =
     useGetTextToImageRequests();
+
+  const kontextMessages = useMemo(
+    () =>
+      data?.flatMap((request) =>
+        request.steps.map((step) => ({ content: step.params.prompt, createdAt: step.createdAt }))
+      ),
+    [data]
+  );
+
+  console.log({ kontextMessages });
 
   if (isError)
     return (
@@ -75,23 +88,27 @@ export function Queue() {
         Creations are kept in the Generator for 30 days. Download or Post them to your Profile to
         save them!
       </Text>
-      <div className="flex flex-col gap-2">
-        {data.map((request) =>
-          request.steps.map((step) => {
-            const { marker } = filters;
+      <KontextProvider messages={kontextMessages}>
+        <div className="flex flex-col gap-2">
+          {data.map((request, index) =>
+            request.steps.map((step) => {
+              const { marker } = filters;
 
-            return (
-              <QueueItem
-                key={request.id}
-                id={request.id.toString()}
-                request={request}
-                step={step}
-                filter={{ marker }}
-              />
-            );
-          })
-        )}
-      </div>
+              return (
+                <Fragment key={request.id}>
+                  {index !== 0 && (index + 4) % 5 === 0 && <KontextAd index={index} />}
+                  <QueueItem
+                    id={request.id.toString()}
+                    request={request}
+                    step={step}
+                    filter={{ marker }}
+                  />
+                </Fragment>
+              );
+            })
+          )}
+        </div>
+      </KontextProvider>
       {hasNextPage ? (
         <InViewLoader
           loadFn={fetchNextPage}
