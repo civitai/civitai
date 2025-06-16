@@ -1,9 +1,14 @@
+BEGIN;
 -- CreateEnum
 CREATE TYPE "CryptoTransactionStatus" AS ENUM ('WaitingForRamp', 'RampTimedOut', 'RampFailed', 'RampInProgress', 'RampSuccess', 'WaitingForSweep', 'SweepFailed', 'Complete');
+COMMIT;
 
+BEGIN;
 -- AlterEnum
 ALTER TYPE "Currency" ADD VALUE 'USDC';
+COMMIT;
 
+BEGIN;
 -- CreateTable
 CREATE TABLE "CryptoWallet" (
     "userId" INTEGER NOT NULL,
@@ -39,4 +44,4 @@ ALTER TABLE "CryptoWallet" ADD CONSTRAINT "CryptoWallet_userId_fkey" FOREIGN KEY
 
 -- AddForeignKey
 ALTER TABLE "CryptoTransaction" ADD CONSTRAINT "CryptoTransaction_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
- 
+COMMIT;

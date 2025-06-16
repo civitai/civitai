@@ -735,6 +735,7 @@ export async function updatePlayerStats({
         : await correctJudgmentsCounter.getCount(playerId);
 
     const fervor = calculateFervor({ correctJudgments, allJudgments });
+    await fervorCounter.reset({ id: playerId });
     const newFervor = await fervorCounter.increment({ id: playerId, value: fervor });
     const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
 

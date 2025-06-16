@@ -2356,7 +2356,7 @@ model Article {
   content          String
   cover            String?
   coverId          Int?          @unique
-  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: NoAction)
+  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
   userId           Int
   user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)

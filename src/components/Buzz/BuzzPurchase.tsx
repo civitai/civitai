@@ -578,13 +578,24 @@ export const BuzzPurchase = ({
               {features.coinbasePayments && (
                 <>
                   {features.coinbaseOnramp && (
-                    <BuzzCoinbaseOnrampButton
-                      unitAmount={unitAmount}
-                      buzzAmount={buzzAmount}
-                      onPurchaseSuccess={onPurchaseSuccess}
-                      disabled={!ctaEnabled}
-                      purchaseSuccessMessage={purchaseSuccessMessage}
-                    />
+                    <>
+                      <BuzzCoinbaseOnrampButton
+                        unitAmount={unitAmount}
+                        buzzAmount={buzzAmount}
+                        onPurchaseSuccess={onPurchaseSuccess}
+                        disabled={!ctaEnabled}
+                        purchaseSuccessMessage={purchaseSuccessMessage}
+                      />
+
+                      <BuzzCoinbaseOnrampButton
+                        unitAmount={unitAmount}
+                        buzzAmount={buzzAmount}
+                        onPurchaseSuccess={onPurchaseSuccess}
+                        disabled={!ctaEnabled}
+                        purchaseSuccessMessage={purchaseSuccessMessage}
+                        type="international"
+                      />
+                    </>
                   )}
                   <BuzzCoinbaseButton
                     unitAmount={unitAmount}
