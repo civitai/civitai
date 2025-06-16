@@ -189,7 +189,6 @@ function Test() {
       {/* <IsClient>
         <ImageCropperContent images={imageData} />
       </IsClient> */}
-      <KontextAd messages={messages} />
     </div>
   );
 }

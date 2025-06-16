@@ -19,7 +19,7 @@ export function Queue() {
   const kontextMessages = useMemo(
     () =>
       data?.flatMap((request) =>
-        request.steps.map((step) => ({ content: step.params.prompt, createdAt: step.createdAt }))
+        request.steps.map((step) => ({ content: step.params.prompt, createdAt: request.createdAt }))
       ),
     [data]
   );
