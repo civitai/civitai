@@ -194,12 +194,13 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       )}
       {adsEnabled && <ImpressionTracker />}
 
-      <Script
-        id="kontext-ad-script"
-        async
-        type="module"
-        dangerouslySetInnerHTML={{
-          __html: `
+      {currentUser?.isModerator && (
+        <Script
+          id="kontext-ad-script"
+          async
+          type="module"
+          dangerouslySetInnerHTML={{
+            __html: `
           import('https://server.megabrain.co/sdk/js').then(({fetchAd, markAdAsViewed}) => {
             window.fetchKontextAd = fetchAd
             window.markKontextAdAsViewed = markAdAsViewed
@@ -207,8 +208,9 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
           })
 
           `,
-        }}
-      ></Script>
+          }}
+        />
+      )}
     </AdsContext.Provider>
   );
 }
