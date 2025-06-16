@@ -29,9 +29,7 @@ export const useMutateCoinbase = () => {
   });
 
   const createBuzzOrderOnrampMutation = trpc.coinbase.createBuzzOrderOnramp.useMutation({
-    async onSuccess() {
-      showSuccessNotification({ message: 'Redirecting to coinbase...' });
-    },
+    async onSuccess() {},
     onError(error) {
       showErrorNotification({
         title: 'Failed to create Coinbase onramp order',
