@@ -14,7 +14,6 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
   addBlockedImage,
-  bulkAddBlockedImages,
   bulkRemoveBlockedImages,
   deleteImageById,
   getAllImagesIndex,

@@ -363,7 +363,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           form.setValue('cfgScale', 3.5);
         }
 
-        if (prevBaseModelRef.current === 'Flux1' && watchedValues.baseModel !== 'Flux1') {
+        if (
+          prevBaseModelRef.current === 'Flux1' &&
+          watchedValues.baseModel !== 'Flux1' &&
+          watchedValues.sampler === 'undefined'
+        ) {
           form.setValue('sampler', 'Euler a');
         }
         prevBaseModelRef.current = watchedValues.baseModel;

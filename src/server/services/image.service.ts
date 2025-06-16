@@ -89,9 +89,11 @@ import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
 import { deleteImagTagsForReviewByImageIds } from '~/server/services/image-review.service';
-import { ImageModActivity, trackModActivity } from '~/server/services/moderator.service';
+import type { ImageModActivity } from '~/server/services/moderator.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
@@ -133,6 +135,7 @@ import {
   EntityType,
   ImageIngestionStatus,
   MediaType,
+  NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
@@ -3707,10 +3710,10 @@ export const getImageModerationReviewQueue = async ({
         ? `WITH tags_review AS (
             SELECT
               toi."imageId"
-            FROM "TagsOnImageNew" toi  JOIN "Image" i ON toi."imageId" = i.id
+            FROM "TagsOnImageDetails" toi  JOIN "Image" i ON toi."imageId" = i.id
             WHERE
-            (toi."attributes" >> 9) & 1 = 1
-            AND (toi."attributes" >> 10) & 1 != 1
+            toi."needsReview"
+            AND toi.disabled = false
             AND i."nsfwLevel" < 32
             ${cursor ? `AND "imageId" <= ${cursor}` : ''}
             ORDER BY (toi."imageId", toi."tagId") DESC
@@ -4150,7 +4153,7 @@ export async function updateImageNsfwLevel({
     // If the image is currently PG and the new level is R or higher, and the image isn't from the original user, increment the counter
     const current = await dbWrite.image.findFirst({
       where: { id },
-      select: { nsfwLevel: true, userId: true },
+      select: { nsfwLevel: true, userId: true, nsfwLevelLocked: true },
     });
     if (!current) return;
     if (
@@ -4161,13 +4164,24 @@ export async function updateImageNsfwLevel({
       leakingContentCounter.inc();
     }
 
+    // TODO: In the future, we might need to revise if the Knights are doing a great job.
+    if (!current?.nsfwLevelLocked && current.userId === userId) {
+      // Add it to knights queue so they can review this:
+      await addImageToQueue({
+        imageIds: id,
+        rankType: NewOrderRankType.Knight,
+        priority: 1,
+      });
+    }
+
     await dbWrite.imageRatingRequest.upsert({
       where: { imageId_userId: { imageId: id, userId: userId } },
       create: {
         nsfwLevel,
         imageId: id,
         userId: userId,
-        weight: current.userId === userId ? 3 : 1,
+        // -5 means it was added to the queue, 3 means it was locked so mods should see.
+        weight: current.userId === userId ? (current?.nsfwLevelLocked ? 3 : -5) : 1,
       },
       update: { nsfwLevel },
     });

@@ -171,27 +171,6 @@ async function getBlocklists() {
   }
 }
 
-function hasIssue(
-  text: string | null,
-  modWordBlocklist: ModWordBlocklist,
-  modURLBlocklist: ModWordBlocklist,
-  useBlocklist: boolean
-) {
-  if (!text || text.trim().length === 0) return false;
-  if (!useBlocklist) return true; // scan everything
-
-  const lower = text.trim().toLowerCase();
-
-  // can return w.word if we want all of them
-  const hasBadWord = modWordBlocklist.some((w) => w.re.test(lower));
-  if (hasBadWord) return true;
-  const hasBadUrl = modURLBlocklist.some((w) => w.re.test(lower));
-  // noinspection RedundantIfStatementJS
-  if (hasBadUrl) return true;
-
-  return false;
-}
-
 // type PrismaSelectForModel<T extends Uncapitalize<Prisma.ModelName>> =
 //   T extends Uncapitalize<Prisma.ModelName>
 //     ? Prisma.Args<(typeof dbRead)[T], 'findMany'>['select']
@@ -285,6 +264,44 @@ type RedisPolicyType = {
 type RedisDisabledType = {
   [K in AllModKeys]?: boolean;
 };
+
+function hasIssue(
+  text: string | null,
+  modWordBlocklist: ModWordBlocklist,
+  modURLBlocklist: ModWordBlocklist,
+  useBlocklist: boolean,
+  type: AllModKeys
+) {
+  if (!text || text.trim().length === 0) return false;
+
+  // special handling for repetitive Collection data
+  if (type === 'Collection') {
+    // name
+    if (['Bookmarked Articles', 'Liked Models', 'Bookmarked Model'].includes(text)) return false;
+    // description
+    if (
+      [
+        'Your bookmarked articles will appear in this collection.',
+        'Your liked models will appear in this collection.',
+        'Your bookmarked model will appear in this collection.',
+      ].includes(text)
+    )
+      return false;
+  }
+
+  if (!useBlocklist) return true; // scan everything
+
+  const lower = text.trim().toLowerCase();
+
+  // can return w.word if we want all of them
+  const hasBadWord = modWordBlocklist.some((w) => w.re.test(lower));
+  if (hasBadWord) return true;
+  const hasBadUrl = modURLBlocklist.some((w) => w.re.test(lower));
+  // noinspection RedundantIfStatementJS
+  if (hasBadUrl) return true;
+
+  return false;
+}
 
 async function getPolicies() {
   const policies = await sysRedis.hGet(
@@ -518,7 +535,7 @@ async function runModChat(lastRun: Date) {
   const { use, modWordBlocklist, modURLBlocklist } = await getBlocklists();
 
   const badMessages = data.filter((d) =>
-    hasIssue(d.content, modWordBlocklist, modURLBlocklist, use)
+    hasIssue(d.content, modWordBlocklist, modURLBlocklist, use, 'Chat')
   );
 
   if (badMessages.length > 0) {
@@ -626,10 +643,16 @@ async function runModQueue() {
           select: { [idKey]: true, [userIdKey]: true, ...fields },
         });
 
+      const missingIds = ids.filter((id) => !data.some((d) => d[idKey] === id));
+      if (missingIds.length > 0) {
+        log(`Deleting missing ids (${missingIds.length})`);
+        await deleteFromJobQueue(entityType, missingIds);
+      }
+
       for (const col of Object.keys(fields) as (keyof typeof fields)[]) {
         const { goodData, badData } = data.reduce(
           (acc, d) => {
-            if (hasIssue(d[col], modWordBlocklist, modURLBlocklist, use)) {
+            if (hasIssue(d[col], modWordBlocklist, modURLBlocklist, use, entityType)) {
               acc.badData.push(d);
             } else {
               acc.goodData.push(d);

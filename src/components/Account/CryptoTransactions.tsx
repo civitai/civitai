@@ -56,10 +56,11 @@ export const CryptoTransactions = () => {
     <Modal {...dialog} size="lg" withCloseButton={true} radius="md">
       <Stack gap={0} mb="xl">
         <Group>
-          <Title order={3}>Crypto Transactions</Title>
+          <Title order={3}>Debit Card Transactions</Title>
         </Group>
         <Text size="sm" color="dimmed">
-          Transactions made through Coinbase after the 10th of July 2025 will be shown here.
+          Transactions made by Debit Card via Coinbase after the 13th of June 2025 will be shown
+          here.
         </Text>
 
         {balance >= 2 && (

@@ -224,8 +224,8 @@ export const poolKeys = {
   ],
   [NewOrderRankType.Knight]: [
     `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight1`,
-    // Temporarily disabled Knight2 queue
-    // `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight2`,
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight2`,
+    // Temporarily disabled Knight3 queue
     // `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight3`,
   ],
   [NewOrderRankType.Templar]: [

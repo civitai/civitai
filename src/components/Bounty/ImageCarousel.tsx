@@ -109,7 +109,7 @@ export function ImageCarouselContent({
                     : undefined
                 }
               >
-                <div className="relative">
+                <div className="relative size-full">
                   <ImageGuard2 image={image} connectType={connectType} connectId={connectId}>
                     {(safe) => (
                       <>

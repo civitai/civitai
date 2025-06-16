@@ -2,7 +2,7 @@ import Clavata, { type EvaluateRequest, StreamError } from '@clavata/sdk';
 import { env } from '~/env/server';
 
 export const clavataSDK = env.CLAVATA_TOKEN
-  ? new Clavata({ apiKey: env.CLAVATA_TOKEN, server: env.CLAVATA_ENDPOINT })
+  ? new Clavata({ apiKey: env.CLAVATA_TOKEN }) // , server: env.CLAVATA_ENDPOINT // TODO this gives a name resolution error
   : undefined;
 
 export const clavataEvaluate = async function* (
