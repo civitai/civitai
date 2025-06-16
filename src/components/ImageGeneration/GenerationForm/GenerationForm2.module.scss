@@ -1,4 +1,9 @@
 .promptPaper {
+  padding: 0 var(--mantine-spacing-sm);
+  background-color: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-6)
+  );
 
   // These will be toggled via a conditional class in your component
   &.noFillForm {

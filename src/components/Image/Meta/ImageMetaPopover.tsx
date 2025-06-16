@@ -104,7 +104,7 @@ function ImageMetaPopoverInner({ imageId }: { imageId: number }) {
         {meta && (
           <CopyButton value={() => encodeMetadata(meta)}>
             {({ copy, copied, color, Icon }) => (
-              <Button {...sharedButtonProps} onClick={copy} color={color}>
+              <Button {...sharedButtonProps} className="-ml-px" onClick={copy} color={color}>
                 <Icon size={16} />
                 {!canRemix && (!copied ? 'Copy Generation Data' : 'Copied')}
               </Button>

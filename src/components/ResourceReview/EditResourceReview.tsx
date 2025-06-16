@@ -135,9 +135,7 @@ export function EditResourceReview({
                 fullWidth
               >
                 <Text c="success.5" size="xs" inline>
-                  <Group gap={4} wrap="nowrap">
-                    <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
-                  </Group>
+                  <ThumbsUpIcon size={20} filled={isThumbsUp} />
                 </Text>
               </Button>
               <Button
@@ -163,7 +161,7 @@ export function EditResourceReview({
         {id ? (
           <Stack>
             {!editDetail ? (
-              <Text c="blue.4" onClick={toggleEditDetail} size="sm">
+              <Text component="div" c="blue.4" onClick={toggleEditDetail} size="sm">
                 <Group gap={4} style={{ cursor: 'pointer' }}>
                   <IconChevronDown size={16} />{' '}
                   <span>{!details ? 'Add' : 'Edit'} Review Comments</span>

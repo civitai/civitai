@@ -1,5 +1,5 @@
 import { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
-import { Button, Alert, Loader, Select, Text, SegmentedControl } from '@mantine/core';
+import { Button, Alert, Loader, Select, Text, SegmentedControl, Anchor } from '@mantine/core';
 import {
   useVideoGenerationStore,
   useGenerationEngines,
@@ -22,14 +22,14 @@ export function VideoGenerationFormWrapper() {
       <Alert radius={0}>
         <Text>
           Learn more about{' '}
-          <Text
-            component="a"
+          <Anchor
             href="https://education.civitai.com/civitais-guide-to-video-in-the-civitai-generator"
+            rel="nofollow noreferrer"
             target="_blank"
             inline
           >
             video generation
-          </Text>
+          </Anchor>
         </Text>
         <Text size="xs" c="dimmed">
           Note: this is an experimental build. Pricing, default settings, and results are subject to

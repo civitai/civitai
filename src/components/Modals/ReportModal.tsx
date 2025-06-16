@@ -256,7 +256,7 @@ export default function ReportModal({
   }, [currentUser]);
 
   return (
-    <Modal {...dialog} withCloseButton={false}>
+    <Modal {...dialog} classNames={{ body: 'p-5' }} withCloseButton={false}>
       <Stack>
         <Group justify="space-between" wrap="nowrap">
           <Group gap={4}>

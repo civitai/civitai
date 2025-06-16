@@ -13,7 +13,7 @@ const variants: Record<string, Partial<TooltipProps>> = {
     styles: {
       tooltip: {
         maxWidth: 200,
-        backgroundColor: 'rgba(0,0,0,.5)',
+        // backgroundColor: 'rgba(0,0,0,.5)',
         padding: '1px 10px 2px',
         zIndex: 9,
       },
@@ -29,7 +29,7 @@ const variants: Record<string, Partial<TooltipProps>> = {
     styles: {
       tooltip: {
         maxWidth: 500,
-        backgroundColor: 'rgba(0,0,0,1)',
+        // backgroundColor: 'rgba(0,0,0,1)',
         zIndex: 9,
       },
     },
@@ -41,7 +41,7 @@ export function CivitaiTooltip({ variant, ...props }: CivitaiTooltipProps) {
   const variantProps = variant ? variants[variant] : {};
   if (variant === 'smallRounded')
     props.label = (
-      <Text size="xs" fw={500}>
+      <Text size="xs" fw={500} inherit>
         {props.label}
       </Text>
     );

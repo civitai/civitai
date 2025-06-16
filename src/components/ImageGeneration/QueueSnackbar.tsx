@@ -7,6 +7,7 @@ import {
   Popover,
   useMantineTheme,
   defaultVariantColorsResolver,
+  Anchor,
 } from '@mantine/core';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
@@ -114,10 +115,10 @@ export function QueueSnackbar() {
               </Popover.Target>
               <Popover.Dropdown>
                 <div className="flex flex-col items-center">
-                  <Text fw={600}>Generation Buzz Credit </Text>
-                  <Text component={Link} href="/articles/7012" target="_blank">
+                  <Text fw={600}>Generation Buzz Credit</Text>
+                  <Anchor component={Link} href="/articles/7012" target="_blank">
                     Learn more
-                  </Text>
+                  </Anchor>
                 </div>
               </Popover.Dropdown>
             </Popover>

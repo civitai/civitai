@@ -253,7 +253,7 @@ export function DumbModelFiltersDropdown({
         </Group>
       </Stack>
       <Stack gap={0}>
-        <Divider label="Model types" className="text-sm font-bold" />
+        <Divider label="Model types" className="text-sm font-bold" mb={4} />
         <Chip.Group
           value={mergedFilters.types ?? []}
           onChange={(types) => handleChange({ types: types as ModelType[] })}
@@ -271,7 +271,7 @@ export function DumbModelFiltersDropdown({
       {showCheckpointType ? (
         <>
           <Stack gap={0}>
-            <Divider label="Checkpoint type" className="text-sm font-bold" />
+            <Divider label="Checkpoint type" className="text-sm font-bold" mb={4} />
             <Chip.Group
               value={mergedFilters.checkpointType ?? 'all'}
               onChange={(value) =>
@@ -290,7 +290,7 @@ export function DumbModelFiltersDropdown({
             </Chip.Group>
           </Stack>
           <Stack gap={0}>
-            <Divider label="File format" className="text-sm font-bold" />
+            <Divider label="File format" className="text-sm font-bold" mb={4} />
             <Chip.Group
               value={mergedFilters.fileFormats ?? []}
               onChange={(fileFormats) =>
@@ -310,7 +310,7 @@ export function DumbModelFiltersDropdown({
         </>
       ) : null}
       <Stack gap={0}>
-        <Divider label="Base model" className="text-sm font-bold" />
+        <Divider label="Base model" className="text-sm font-bold" mb={4} />
         <Chip.Group
           value={(mergedFilters.baseModels as string[]) ?? []}
           onChange={(baseModels) => handleChange({ baseModels: baseModels as BaseModel[] })}

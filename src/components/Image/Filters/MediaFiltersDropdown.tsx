@@ -149,7 +149,7 @@ export function MediaFiltersDropdown({
   const dropdown = (
     <Stack gap="lg" p="md">
       <Stack gap="md">
-        <Divider label="Time period" className="text-sm font-bold" />
+        <Divider label="Time period" className="text-sm font-bold" mb={4} />
         {query?.period && onChange ? (
           <PeriodFilter
             type={filterType}
@@ -163,7 +163,7 @@ export function MediaFiltersDropdown({
       </Stack>
       {!hideBaseModels && (
         <Stack gap="md">
-          <Divider label="Base model" className="text-sm font-bold" />
+          <Divider label="Base model" className="text-sm font-bold" mb={4} />
           <Chip.Group
             value={mergedFilters.baseModels ?? []}
             onChange={(baseModels) => handleChange({ baseModels: baseModels as BaseModel[] })}
@@ -196,7 +196,7 @@ export function MediaFiltersDropdown({
       <Stack gap="md">
         {!hideMediaTypes && (
           <>
-            <Divider label="Media type" className="text-sm font-bold" />
+            <Divider label="Media type" className="text-sm font-bold" mb={4} />
             <Chip.Group
               value={mergedFilters.types ?? []}
               onChange={(types) => handleChange({ types: types as MediaType[] })}
@@ -212,7 +212,7 @@ export function MediaFiltersDropdown({
             </Chip.Group>
           </>
         )}
-        <Divider label="Modifiers" className="text-sm font-bold" />
+        <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <div className="flex flex-wrap gap-2">
           <FilterChip
             checked={mergedFilters.withMeta}
@@ -294,7 +294,7 @@ export function MediaFiltersDropdown({
 
         {filterType === 'modelImages' && (
           <>
-            <Divider label="Resources" className="text-sm font-bold" />
+            <Divider label="Resources" className="text-sm font-bold" mb={4} />
             <div className="flex gap-2">
               <FilterChip
                 checked={mergedFilters.hideManualResources}
@@ -314,7 +314,7 @@ export function MediaFiltersDropdown({
 
         {isModerator && (
           <>
-            <Divider label="Moderator" className="text-sm font-bold" />
+            <Divider label="Moderator" className="text-sm font-bold" mb={4} />
             <div className="flex gap-2">
               <FilterChip
                 checked={mergedFilters.notPublished}
@@ -334,20 +334,22 @@ export function MediaFiltersDropdown({
 
         {!hideTools && (
           <>
-            <Divider label="Tools" className="text-sm font-bold" />
+            <Divider label="Tools" className="text-sm font-bold" mb={4} />
             <ToolMultiSelect
               value={mergedFilters.tools ?? []}
               onChange={(tools) => handleChange({ tools })}
               placeholder="Created with..."
+              comboboxProps={{ withinPortal: false }}
             />
           </>
         )}
 
-        <Divider label="Techniques" className="text-sm font-bold" />
+        <Divider label="Techniques" className="text-sm font-bold" mb={4} />
         <TechniqueMultiSelect
           value={mergedFilters.techniques ?? []}
           onChange={(techniques) => handleChange({ techniques })}
           placeholder="Created with..."
+          comboboxProps={{ withinPortal: false }}
         />
       </Stack>
       {filterLength > 0 && (

@@ -5,7 +5,8 @@
   );
   position: relative;
 
-  &:hover .trashIcon {
+  &:hover .trash,
+  &:hover .source {
     display: flex;
   }
 }

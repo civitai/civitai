@@ -153,7 +153,11 @@ export default function Auctions({
     <Stack>
       <NavLink
         p={itemSize}
-        label={<Text fw={500}>My Bids</Text>}
+        label={
+          <Text fw={500} inherit>
+            My Bids
+          </Text>
+        }
         onClick={() => {
           chooseAuction(undefined);
         }}
@@ -177,7 +181,7 @@ export default function Auctions({
               p={itemSize}
               label={
                 <Group justify="space-between">
-                  <Text fw={500} className="shrink basis-2/3">
+                  <Text fw={500} className="shrink basis-2/3" inherit>
                     {a.auctionBase.name}
                   </Text>
                   <Tooltip label="Min bid currently required to place">
@@ -217,9 +221,13 @@ export default function Auctions({
         deIndex={slug === MY_BIDS}
       />
       <Container size="xl" h="100%" data-tour="auction:start">
-        <ContainerGrid2 gutter="xl" className="my-8 h-full">
+        <ContainerGrid2
+          gutter="xl"
+          className="my-3 h-full"
+          classNames={{ container: 'h-full', inner: 'h-full' }}
+        >
           {!isMobile && (
-            <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
+            <ContainerGrid2.Col span={{ base: 12, sm: 4 }}>
               <Box
                 maw={330}
                 w="100%"
@@ -234,7 +242,7 @@ export default function Auctions({
           )}
 
           <ContainerGrid2.Col
-            span={{ base: 12, md: 8 }}
+            span={{ base: 12, sm: 8 }}
             display="flex"
             style={{ justifyContent: 'center' }}
           >

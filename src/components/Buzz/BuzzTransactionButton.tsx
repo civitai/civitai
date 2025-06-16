@@ -94,7 +94,10 @@ export function BuzzTransactionButton({
         !buttonColor.includes('blue') ? 'text-dark-8' : 'text-white',
         buttonProps?.className
       )}
-      classNames={{ inner: 'flex gap-8 justify-between items-center', label: 'w-full gap-2' }}
+      classNames={{
+        inner: 'flex gap-8 justify-between items-center',
+        label: 'flex items-center justify-center w-full gap-2',
+      }}
     >
       <Text fz={size ?? 14} ta={!hasCost ? 'center' : 'start'} fw={600} style={{ flex: 1 }}>
         {label}

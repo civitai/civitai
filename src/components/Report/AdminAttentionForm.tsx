@@ -17,7 +17,7 @@ export const AdminAttentionForm = createReportForm({
     return (
       <>
         <InputRadioGroup name="reason" label="Reason" withAsterisk>
-          <Stack>
+          <Stack pt="xs" gap="lg">
             {reasons.map((value, index) => (
               <Radio key={index} value={value} label={value} />
             ))}

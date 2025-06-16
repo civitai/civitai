@@ -97,6 +97,11 @@ button, input, optgroup, select, textarea {
   flex-shrink: 0;
 }
 
+.mantine-Divider-label {
+  font-size: var(--mantine-font-size-sm);
+  font-weight: bold;
+}
+
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
   input:focus,

@@ -193,6 +193,7 @@ export const AuctionTopSection = ({
                 leftSection={<IconCalendar size={14} />}
                 w={165}
                 size="xs"
+                clearable
               />
               <LegacyActionIcon
                 variant="subtle"
@@ -512,9 +513,7 @@ export const AuctionInfo = () => {
             <Group gap="sm" className="max-md:justify-between max-md:gap-1">
               <Tooltip label={`Maximum # of entities that can win.`}>
                 <Group gap="sm" className="max-md:w-full">
-                  <Badge className="max-md:w-[80px]">
-                    <Text>Spots</Text>
-                  </Badge>
+                  <Badge className="max-md:w-[80px]">Spots</Badge>
 
                   {auctionData ? <Text>{auctionData.quantity}</Text> : <Loader type="dots" />}
                 </Group>
@@ -524,9 +523,7 @@ export const AuctionInfo = () => {
 
               <Tooltip label={`Minimum Buzz cost to place.`}>
                 <Group gap="sm" className="max-md:w-full">
-                  <Badge className="max-md:w-[80px]">
-                    <Text>Min ⚡</Text>
-                  </Badge>
+                  <Badge className="max-md:w-[80px]">Min ⚡</Badge>
 
                   {auctionData ? (
                     <Text>{auctionData.minPrice.toLocaleString()}</Text>
@@ -552,9 +549,7 @@ export const AuctionInfo = () => {
                 }
               >
                 <Group gap="sm" className="max-md:w-full">
-                  <Badge className="max-md:w-[80px]">
-                    <Text>Featured</Text>
-                  </Badge>
+                  <Badge className="max-md:w-[80px]">Featured</Badge>
 
                   {auctionData ? (
                     <Text>
@@ -581,9 +576,7 @@ export const AuctionInfo = () => {
                 }
               >
                 <Group gap="sm" className="max-md:w-full">
-                  <Badge className="max-md:w-[80px]">
-                    <Text inherit>Ends In</Text>
-                  </Badge>
+                  <Badge className="max-md:w-[80px]">Ends In</Badge>
 
                   {auctionData ? (
                     <Countdown
@@ -722,7 +715,7 @@ export const AuctionInfo = () => {
                 <BuzzTransactionButton
                   loading={createLoading}
                   disabled={!validBid || createLoading}
-                  label={'Bid'}
+                  label="Bid"
                   buzzAmount={bidPrice ?? 0}
                   transactionType="Default"
                   onPerformTransaction={() =>
@@ -736,9 +729,10 @@ export const AuctionInfo = () => {
                   }
                   data-testid="place-bid-button"
                   // error={hasIssue ? 'Error computing cost' : undefined}
-                  className={clsx('text-center max-md:w-full md:h-full md:w-[160px]', {
+                  className={clsx('text-center max-md:w-full md:h-full md:w-[165px]', {
                     'animate-[wiggle_1.5s_ease-in-out_4.5]': validBid,
                   })}
+                  classNames={{ label: 'flex gap-2 items-center justify-center' }}
                   size="md"
                   priceReplacement={
                     bidPrice && getPosFromBid(selectedModelBid + bidPrice) !== -1 ? (
@@ -756,10 +750,8 @@ export const AuctionInfo = () => {
                           variant={colorScheme === 'dark' ? 'filled' : 'light'}
                           color={validBid ? (colorScheme === 'dark' ? 'gray' : 'gray.8') : 'dark'}
                           radius="xl"
-                          pl={8}
-                          pr={12}
                         >
-                          <Text>{`Est: ${
+                          <Text inherit>{`Est: ${
                             bidPrice ? getPosStringFromBid(selectedModelBid + bidPrice) : '?'
                           }`}</Text>
                         </Badge>

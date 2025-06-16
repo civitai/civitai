@@ -28,11 +28,10 @@ function ChatWindowContent() {
   }
 
   return (
-    <Grid h="100%" classNames={{ inner: 'h-full' }} m={0}>
+    <Grid h="100%" classNames={{ inner: 'h-full' }} gutter={0} overflow="hidden">
       {/* List and Search Panel */}
       <Grid.Col
         span={{ base: 12, xs: 4 }}
-        p={0}
         style={{
           borderRight: colorScheme === 'dark' ? '1px solid #373A40' : '1px solid #CED4DA',
           height: '100%',
@@ -41,7 +40,7 @@ function ChatWindowContent() {
         <ChatList />
       </Grid.Col>
       {/* Chat Panel */}
-      <Grid.Col span={{ base: 12, xs: 8 }} p={0} h="100%">
+      <Grid.Col span={{ base: 12, xs: 8 }} h="100%">
         {!state.existingChatId ? <NewChat /> : <ExistingChat />}
       </Grid.Col>
     </Grid>

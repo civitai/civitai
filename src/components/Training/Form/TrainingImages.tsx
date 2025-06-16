@@ -1349,7 +1349,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 <Group gap="xs">
                   <Button size="compact-sm" color="indigo" onClick={() => setIsZoomed((z) => !z)}>
                     {isZoomed ? <IconZoomOut size={16} /> : <IconZoomIn size={16} />}
-                    <Text inline ml={4}>
+                    <Text inline ml={4} inherit>
                       Zoom {isZoomed ? 'Out' : 'In'}
                     </Text>
                   </Button>
@@ -1371,7 +1371,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     >
                       <Group gap={4}>
                         <IconTags size={16} />
-                        <Text>Auto Label</Text>
+                        <Text inherit>Auto Label</Text>
                         {Date.now() < new Date('2024-09-27').getTime() && (
                           <Badge color="green" variant="filled" size="sm" ml={4}>
                             NEW
@@ -1387,7 +1387,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     onClick={() => handleNextAfterCheck(true)}
                   >
                     <IconFileDownload size={16} />
-                    <Text inline ml={4}>
+                    <Text inline ml={4} inherit>
                       Download
                     </Text>
                   </Button>
@@ -1410,7 +1410,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     }}
                   >
                     <IconTrash size={16} />
-                    <Text inline ml={4}>
+                    <Text inline ml={4} inherit>
                       Reset
                     </Text>
                   </Button>
@@ -1567,14 +1567,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       <Card
                         key={index}
                         shadow="sm"
-                        p={4}
                         radius="sm"
                         withBorder
-                        className={clsx({ [styles.badLabel]: imgData.invalidLabel })}
+                        className={clsx('p-1', { [styles.badLabel]: imgData.invalidLabel })}
                       >
-                        <Card.Section mb="xs">
+                        <Card.Section className="-mx-1 -mt-1" mb="xs">
                           <div className={styles.imgOverlay}>
-                            <Group gap={4} className={clsx(styles.trash, 'trashIcon')}>
+                            <Group gap={4} className={clsx(styles.trash)}>
                               <Tooltip label="Remove labels">
                                 <LegacyActionIcon
                                   color="violet"
@@ -1620,7 +1619,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                               </Tooltip>
                             </Group>
                             {imgData.source?.type && (
-                              <div className={clsx(styles.source, 'trashIcon')}>
+                              <div className={clsx(styles.source)}>
                                 <Badge
                                   variant="filled"
                                   className="px-1"
@@ -1630,7 +1629,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                     // </ThemeIcon>
                                   }
                                 >
-                                  <Text>{imgData.source.type}</Text>
+                                  <Text inherit>{imgData.source.type}</Text>
                                 </Badge>
                               </div>
                             )}
@@ -1654,15 +1653,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                               <MImage
                                 alt={imgData.name}
                                 src={imgData.url}
-                                imageProps={{
-                                  style: {
-                                    height: isZoomed ? '100%' : '250px',
-                                    width: '100%',
-                                    // if we want to show full image, change objectFit to contain
-                                    objectFit: 'cover',
-                                    // object-position: top;
-                                  },
-                                  // onLoad: () => URL.revokeObjectURL(imageUrl)
+                                style={{
+                                  height: isZoomed ? '100%' : '250px',
+                                  width: '100%',
+                                  // if we want to show full image, change objectFit to contain
+                                  objectFit: 'cover',
+                                  // object-position: top;
                                 }}
                               />
                             )}
@@ -1741,7 +1737,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           <div className="flex flex-col gap-4">
             <Title order={4}>Acknowledgement</Title>
             {attested.status ? (
-              <ContentClamp maxHeight={30}>
+              <ContentClamp maxHeight={28}>
                 <AttestDiv />
               </ContentClamp>
             ) : (

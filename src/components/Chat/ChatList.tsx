@@ -391,7 +391,7 @@ export function ChatList() {
                           textOverflow: 'ellipsis',
                           minWidth: 0,
                         }}
-                        color={hasMod ? 'red' : undefined}
+                        c={hasMod ? 'red' : undefined}
                         highlight={searchInput}
                       >
                         {otherMembers.map((cm) => cm.user.username).join(', ')}
@@ -411,17 +411,15 @@ export function ChatList() {
                         </Text>
                       )}
                     </Stack>
-                    <Group style={{ marginLeft: 'auto' }} wrap="nowrap" gap={6}>
-                      {isModSender && (
-                        <Tooltip
-                          withArrow={false}
-                          label="Moderator chat"
-                          style={{ border: '1px solid gray' }}
-                        >
-                          <Image src="/images/civ-c.png" alt="Moderator" width={16} height={16} />
-                        </Tooltip>
-                      )}
-                    </Group>
+                    {isModSender && (
+                      <Tooltip
+                        withArrow={false}
+                        label="Moderator chat"
+                        style={{ border: '1px solid gray' }}
+                      >
+                        <Image src="/images/civ-c.png" alt="Moderator" width={16} height={16} />
+                      </Tooltip>
+                    )}
                   </PGroup>
                 );
               })}

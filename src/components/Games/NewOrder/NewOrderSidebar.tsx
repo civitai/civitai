@@ -201,7 +201,13 @@ export function NewOrderSidebar() {
           </Popover>
         </div>
       ) : (
-        <Card component="nav" p={0} h="100%" w="33%" zIndex={1} withBorder>
+        <Card
+          component="nav"
+          p={0}
+          h="100%"
+          className="w-full max-w-[300px] @sm:max-w-[360px]"
+          withBorder
+        >
           <Card.Section className="m-0 border-b border-gray-4 p-4 dark:border-b-dark-4">
             {header}
           </Card.Section>

@@ -1,3 +1,4 @@
+import type { MultiSelectProps } from '@mantine/core';
 import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
 import { trpc } from '~/utils/trpc';
 
@@ -5,7 +6,8 @@ export function TechniqueMultiSelect({
   value,
   onChange,
   placeholder = 'select...',
-}: {
+  ...selectProps
+}: Omit<MultiSelectProps, 'data' | 'onChange' | 'value' | 'defaultValue'> & {
   value: number[];
   onChange: (value: number[]) => void;
   placeholder?: string;
@@ -14,6 +16,7 @@ export function TechniqueMultiSelect({
 
   return (
     <MultiSelectWrapper
+      {...selectProps}
       value={value}
       onChange={onChange}
       loading={isLoading}

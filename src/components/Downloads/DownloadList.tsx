@@ -23,7 +23,7 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
               passHref
               legacyBehavior
             >
-              <Text component="a" className="flex w-full p-2 hover:bg-gray-1 dark:hover:bg-dark-4">
+              <Text component="a" className="flex w-full p-3 hover:bg-gray-1 dark:hover:bg-dark-4">
                 <Stack gap={0}>
                   <Text size={textSize} fw={500} lineClamp={2} style={{ lineHeight: 1 }}>
                     {download.modelVersion.model.name}: {download.modelVersion.name}

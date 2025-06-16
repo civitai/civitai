@@ -99,7 +99,7 @@ export const TrainingImagesLabelTypeSelect = ({
           //   </InfoPopover>
           // </Group>
           <Tooltip maw={350} multiline label={labelDescriptions[l]} withinPortal>
-            <Text>{titleCase(l)}</Text>
+            <Text inherit>{titleCase(l)}</Text>
           </Tooltip>
         ),
         value: l,
@@ -190,9 +190,9 @@ export const TrainingImagesTags = ({
                 color={selectedTags.includes(cap) ? 'green' : 'gray'}
                 px={6}
                 className={styles.tagOverlay}
-                classNames={{ label: 'overflow-auto break-words whitespace-normal' }}
+                classNames={{ label: 'overflow-auto break-words whitespace-normal text-start' }}
               >
-                <Text>{cap}</Text>
+                <Text inherit>{cap}</Text>
                 <LegacyActionIcon
                   disabled={autoLabeling.isRunning}
                   size={14}

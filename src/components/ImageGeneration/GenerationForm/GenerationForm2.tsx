@@ -701,7 +701,7 @@ export function GenerationFormContent() {
                           </Card.Section>
                         )}
                         {(!!minorFlaggedResources.length || !!sfwFlaggedResources.length) && (
-                          <Card.Section>
+                          <Card.Section m={0}>
                             <Alert color="yellow" title="Content Restricted" radius={0}>
                               <Text size="xs">
                                 {!!minorFlaggedResources.length
@@ -924,6 +924,8 @@ export function GenerationFormContent() {
                                   fontSize: theme.fontSizes.sm,
                                   lineHeight: theme.lineHeights.sm,
                                   overflow: 'hidden',
+                                  backgroundColor: 'transparent',
+                                  padding: '10px 0',
                                 },
                                 // Prevents input from displaying form error
                                 error: { display: 'none' },
@@ -953,7 +955,7 @@ export function GenerationFormContent() {
                                         color={color ?? 'blue.5'}
                                         onClick={copy}
                                         size="compact-xs"
-                                        classNames={{ inner: 'flex gap-1' }}
+                                        classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
                                       >
                                         {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
                                       </Button>
@@ -1440,7 +1442,7 @@ function ReadySection() {
   const { data } = useTextToImageWhatIfContext();
 
   return data?.ready === false ? (
-    <Card.Section>
+    <Card.Section m={0}>
       <Alert color="yellow" title="Potentially slow generation" radius={0}>
         <Text size="xs">
           {`We need to download additional resources to fulfill your request. This generation may take longer than usual to complete.`}

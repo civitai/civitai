@@ -9,7 +9,7 @@ import {
   Stack,
   useComputedColorScheme,
 } from '@mantine/core';
-import { DatePicker } from '@mantine/dates';
+import { DatePickerInput } from '@mantine/dates';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
@@ -37,6 +37,7 @@ const ChangelogTagSelect = ({
       loading={isLoading}
       placeholder="Select tags..."
       data={data}
+      comboboxProps={{ withinPortal: false }}
       searchable
       clearable
     />
@@ -122,7 +123,7 @@ export function ChangelogFiltersDropdown() {
       </Stack>
       <Stack gap="md">
         <Divider label="Before" className="text-sm font-bold" />
-        <DatePicker
+        <DatePickerInput
           placeholder="Choose a date..."
           value={filters.dateBefore ?? null}
           onChange={(x) => {
@@ -135,7 +136,7 @@ export function ChangelogFiltersDropdown() {
       </Stack>
       <Stack gap="md">
         <Divider label="After" className="text-sm font-bold" />
-        <DatePicker
+        <DatePickerInput
           placeholder="Choose a date..."
           value={filters.dateAfter ?? null}
           onChange={(x) => {
@@ -192,6 +193,7 @@ export function ChangelogFiltersDropdown() {
       radius={12}
       onClose={() => setOpened(false)}
       middlewares={{ flip: true, shift: true }}
+      trapFocus
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p="md" w="100%">

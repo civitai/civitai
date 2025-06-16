@@ -117,7 +117,7 @@ export function ViduFormInput() {
       )} */}
       {isTxt2Vid && (
         <InputRadioGroup name="style" label="Style">
-          <Group gap={4}>
+          <Group gap="lg">
             {[
               { label: 'General', value: ViduVideoGenStyle.GENERAL },
               { label: 'Animation', value: ViduVideoGenStyle.ANIME },
@@ -142,7 +142,7 @@ export function ViduFormInput() {
           </div>
         }
       >
-        <Group gap={4}>
+        <Group gap="lg">
           {viduMovementAmplitudes.map((option) => (
             <Radio key={option} value={option} label={titleCase(option)} />
           ))}

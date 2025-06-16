@@ -91,7 +91,7 @@ export function SelectWrapper<T extends string | number>({
       disabled={disabled}
       label={
         hasPresets ? (
-          <Group gap={8} justify="space-between" wrap="nowrap">
+          <Group gap={8} justify="space-between" className="w-full" wrap="nowrap">
             {label}
             <PresetOptions
               disabled={disabled}

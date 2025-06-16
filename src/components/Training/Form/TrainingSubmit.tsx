@@ -532,7 +532,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               You can use different base models and/or parameters, all trained on the same dataset.
               Each will be created as their own version.
             </InfoPopover>
-            <Text>Show Multi Training</Text>
+            <Text inherit>Show Multi Training</Text>
           </Group>
         }
         labelPosition="left"
@@ -718,7 +718,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                         Jump to the front of the training queue and ensure that your training run is
                         uninterrupted.
                       </InfoPopover>
-                      <Text>High Priority</Text>
+                      <Text inherit>High Priority</Text>
                     </Group>
                   }
                   labelPosition="left"
@@ -756,7 +756,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             <Group gap="sm">
               <Badge>
                 <Group gap={4} wrap="nowrap">
-                  <Text>Queue</Text>
+                  <Text inherit>Queue</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
                     <Text size="sm">How many jobs are in the queue before you</Text>
                   </InfoPopover>
@@ -773,7 +773,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
               <Badge>
                 <Group gap={4} wrap="nowrap">
-                  <Text>ETA</Text>
+                  <Text inherit>ETA</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
                     <Text size="sm">How long your job is expected to run</Text>
                   </InfoPopover>
