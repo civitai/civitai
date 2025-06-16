@@ -1,7 +1,6 @@
 import type { MenuItemProps } from '@mantine/core';
 import {
   ActionIcon,
-  Center,
   Checkbox,
   createStyles,
   Menu,
@@ -33,7 +32,7 @@ import clsx from 'clsx';
 import type { DragEvent } from 'react';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 // import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
@@ -79,7 +78,6 @@ import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerat
 import { capitalize } from '~/utils/string-helpers';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
-import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1.config';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;

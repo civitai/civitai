@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 
-export const flux1AspectRatios = [
+export const flux1KontextAspectRatios = [
   '21:9',
   '16:9',
   '4:3',
@@ -13,13 +13,12 @@ export const flux1AspectRatios = [
   '9:16',
   '9:21',
 ] as const;
-export const flux1SafetyTolerance = ['1', '2', '3', '4', '5', '6'] as const;
-type Flux1Model = (typeof flux1Models)[number];
-export const flux1Models = ['pro-kontext', 'max-kontext'] as const;
+type Flux1Model = (typeof flux1KontextModels)[number];
+export const flux1KontextModels = ['pro', 'max'] as const;
 
 export const fluxKontextModelVersionToModelMap = new Map<number, Flux1Model>([
-  [1892509, 'pro-kontext'],
-  [1892523, 'max-kontext'],
+  [1892509, 'pro'],
+  [1892523, 'max'],
 ]);
 
 export function getIsFluxKontext(modelVersionId?: number) {
@@ -32,31 +31,31 @@ export const flux1ModelModeOptions = [
 ];
 
 const schema = z.object({
-  engine: z.literal('flux1').catch('flux1'),
-  model: z.enum(flux1Models),
+  engine: z.literal('flux1-kontext').catch('flux1-kontext'),
+  model: z.enum(flux1KontextModels),
   prompt: z.string(),
   imageUrl: z.string(),
-  aspectRatio: z.enum(flux1AspectRatios).optional(),
+  aspectRatio: z.enum(flux1KontextAspectRatios).optional(),
   numImages: z.number().optional(),
-  safetyTolerance: z.string().optional(),
   guidanceScale: z.number().optional(),
   seed: z.number().nullish(),
 });
 
-export const flux1Config = ImageGenConfig({
+export const flux1KontextConfig = ImageGenConfig({
   metadataFn: (params) => {
     if (params.sourceImage) {
-      params.aspectRatio = findClosestAspectRatio(params.sourceImage, [...flux1AspectRatios]);
+      params.aspectRatio = findClosestAspectRatio(params.sourceImage, [
+        ...flux1KontextAspectRatios,
+      ]);
     }
 
     return {
-      engine: 'flux1',
+      engine: 'flux1-kontext',
       process: 'img2img',
       baseModel: params.baseModel,
       prompt: params.prompt,
       sourceImage: params.sourceImage,
       aspectRatio: params.aspectRatio,
-      safetyTolerance: params.safetyTolerance,
       cfgScale: params.cfgScale,
       quantity: params.quantity,
       seed: params.seed,
@@ -78,10 +77,9 @@ export const flux1Config = ImageGenConfig({
       engine: params.engine,
       model,
       prompt: params.prompt,
-      imageUrl,
+      images: [imageUrl],
       aspectRatio: params.aspectRatio,
-      numImages: params.quantity,
-      safetyTolerance: params.safetyTolerance?.toString(),
+      quantity: params.quantity,
       guidanceScale: params.cfgScale,
       seed: params.seed,
     });

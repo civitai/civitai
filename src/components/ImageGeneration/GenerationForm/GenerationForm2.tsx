@@ -108,9 +108,8 @@ import {
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
-  flux1SafetyTolerance,
   getIsFluxKontext,
-} from '~/shared/orchestrator/ImageGen/flux1.config';
+} from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { getIsImagen4 } from '~/shared/orchestrator/ImageGen/google.config';
 import {
   getModelVersionUsesImageGen,
@@ -547,6 +546,7 @@ export function GenerationFormContent() {
                   <InputSourceImageUpload
                     name="sourceImage"
                     label={isOpenAI ? 'Image (optional)' : undefined}
+                    warnOnMissingAiMetadata={isFluxKontext}
                   />
                 )}
 
@@ -1331,7 +1331,7 @@ export function GenerationFormContent() {
                               )}
                             </div>
                           )}
-                          {!disableSafetyTolerance && (
+                          {/* {!disableSafetyTolerance && (
                             <InputNumberSlider
                               name="safetyTolerance"
                               label="Safety Tolerance"
@@ -1345,7 +1345,7 @@ export function GenerationFormContent() {
                               }}
                               numberProps={sharedNumberProps}
                             />
-                          )}
+                          )} */}
                           <InputSeed name="seed" label="Seed" />
                           {!disableClipSkip && (
                             <InputNumberSlider

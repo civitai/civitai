@@ -1131,7 +1131,6 @@ export const generation = {
     openAIQuality: 'medium',
     vae: null,
     resources: null,
-    safetyTolerance: 2,
   },
   maxValues: {
     seed: 4294967295,

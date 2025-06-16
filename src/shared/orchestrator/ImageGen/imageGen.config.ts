@@ -1,7 +1,7 @@
 import {
-  flux1Config,
+  flux1KontextConfig,
   fluxKontextModelVersionToModelMap,
-} from '~/shared/orchestrator/ImageGen/flux1.config';
+} from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import {
   googleConfig,
   googleModelVersionToModelMap,
@@ -15,7 +15,7 @@ type ImageGenConfigKey = keyof typeof imageGenConfig;
 export const imageGenConfig = {
   openai: openaiConfig,
   google: googleConfig,
-  flux1: flux1Config,
+  flux1: flux1KontextConfig,
 };
 
 export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
