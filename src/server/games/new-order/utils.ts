@@ -82,16 +82,21 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     if (!count) count = await populateCount(id);
 
     const absValue = Math.abs(value); // Make sure we are using positive number
-    if (ordered) await sysRedis.zIncrBy(key, absValue * -1, id.toString());
-    else await sysRedis.hIncrBy(key, id.toString(), absValue * -1);
+    const newValue = Math.max(0, count - absValue); // Ensure we don't go below 0
+    if (newValue > 0) {
+      if (ordered) await sysRedis.zIncrBy(key, absValue * -1, id.toString());
+      else await sysRedis.hIncrBy(key, id.toString(), absValue * -1);
+    } else {
+      await reset({ id }); // Reset the count if it goes below 0
+    }
 
-    return count - absValue;
+    return newValue;
   }
 
   async function reset({
     id,
     all,
-  }: { id: number | number[]; all?: never } | { all: true; id?: never }) {
+  }: { id: number | string | (number | string)[]; all?: never } | { all: true; id?: never }) {
     if (all) return sysRedis.del(key);
 
     const ids = Array.isArray(id) ? id : [id];
