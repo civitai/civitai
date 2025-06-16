@@ -110,6 +110,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'availability',
     'cannotPromote',
     'poi',
+    'minor',
   ];
 
   if (
