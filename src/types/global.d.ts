@@ -173,3 +173,9 @@ declare global {
 
   type MantineSpacing = MantineSize | number;
 }
+
+declare module 'react' {
+  interface CSSProperties {
+    [key: `--${string}`]: string | number;
+  }
+}

@@ -1,5 +1,5 @@
 .card {
-  background: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-0));
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
 
   @container (min-width: theme('screens.sm')) {
     max-height: 376px;

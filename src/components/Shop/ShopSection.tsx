@@ -1,5 +1,5 @@
 import type { GridProps } from '@mantine/core';
-import { Grid, Stack, Title, TypographyStylesProvider } from '@mantine/core';
+import { Grid, Stack, Title } from '@mantine/core';
 import React from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -54,9 +54,7 @@ export function ShopSection({
       <Stack>
         {description && (
           <ContentClamp maxHeight={200} className={classes.sectionDescription}>
-            <TypographyStylesProvider>
-              <RenderHtml html={description} />
-            </TypographyStylesProvider>
+            <RenderHtml html={description} />
           </ContentClamp>
         )}
       </Stack>

@@ -63,7 +63,10 @@
   margin-right: -16px;
   padding: 16px;
   position: relative;
-  background: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-0));
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-6)
+  );
 }
 
 .profileSectionWithCoverImage {

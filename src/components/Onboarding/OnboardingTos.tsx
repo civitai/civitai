@@ -1,13 +1,4 @@
-import {
-  Button,
-  Center,
-  Group,
-  Loader,
-  ScrollArea,
-  Stack,
-  Title,
-  TypographyStylesProvider,
-} from '@mantine/core';
+import { Button, Center, Group, Loader, ScrollArea, Stack, Title } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
@@ -18,6 +9,7 @@ import rehypeRaw from 'rehype-raw';
 
 import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
+import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 
 export function OnboardingTos() {
   const { next } = useOnboardingContext();
@@ -44,9 +36,9 @@ export function OnboardingTos() {
           terms && (
             <>
               <Title order={1}>{terms.title}</Title>
-              <TypographyStylesProvider>
+              <TypographyStylesWrapper>
                 <CustomMarkdown rehypePlugins={[rehypeRaw]}>{terms.content}</CustomMarkdown>
-              </TypographyStylesProvider>
+              </TypographyStylesWrapper>
             </>
           )
         )}

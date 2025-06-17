@@ -1,6 +1,6 @@
+import type { CSSProperties } from 'react';
 import React from 'react';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import classes from './ShowcaseGrid.module.scss';
 import clsx from 'clsx';
 
@@ -30,19 +30,17 @@ export function ShowcaseGrid({
     }
   });
 
+  const styleVars: CSSProperties = {
+    '--item-count': itemCount,
+    '--rows': rows,
+    '--min-width': `${minWidth}px`,
+    '--default-width': `${defaultWidth}px`,
+  };
+
   if (props.carousel) {
     // Return a wrapped version:
     return (
-      <div
-        style={{
-          // @ts-ignore
-          '--item-count': itemCount,
-          '--rows': rows,
-          '--min-width': `${minWidth}px`,
-          '--default-width': `${defaultWidth}px`,
-        }}
-        className={classes.container}
-      >
+      <div style={styleVars} className={classes.container}>
         <div className={classes.scrollArea}>
           <div ref={ref} className={clsx(classes.grid, classes.gridCarousel, className)}>
             {children}
@@ -53,7 +51,7 @@ export function ShowcaseGrid({
   }
 
   return (
-    <div ref={ref} className={clsx(classes.grid, className)}>
+    <div style={styleVars} ref={ref} className={clsx(classes.grid, className)}>
       {children}
     </div>
   );

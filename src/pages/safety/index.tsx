@@ -1,13 +1,4 @@
-import {
-  Accordion,
-  Box,
-  Container,
-  Group,
-  Stack,
-  Text,
-  Title,
-  TypographyStylesProvider,
-} from '@mantine/core';
+import { Accordion, Box, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { IconList } from '@tabler/icons-react';
 import fs from 'fs';
 import matter from 'gray-matter';
@@ -20,6 +11,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import classes from './index.module.scss';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
+import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 
 const contentRoot = 'src/static-content/rules';
 const files = ['minors', 'real-people'];
@@ -97,7 +89,7 @@ export default function Safety({
             </Box>
           </ContainerGrid2.Col>
           <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
-            <TypographyStylesProvider>
+            <TypographyStylesWrapper>
               <article className={classes.content}>
                 <a id="welcome" />
 
@@ -373,7 +365,7 @@ export default function Safety({
                   the openness and inclusivity of this platform and community.
                 </p>
               </article>
-            </TypographyStylesProvider>
+            </TypographyStylesWrapper>
           </ContainerGrid2.Col>
         </ContainerGrid2>
       </Container>

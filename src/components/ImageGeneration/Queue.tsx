@@ -24,8 +24,6 @@ export function Queue() {
     [data]
   );
 
-  console.log({ kontextMessages });
-
   if (isError)
     return (
       <Alert color="red">

@@ -267,12 +267,22 @@ export function QueueItem({
 
             <div className="-my-2 flex gap-2">
               {workflowDefinition && (
-                <Badge radius="sm" color="violet" size="sm" classNames={{ label: 'overflow-hidden' }}>
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
                   {workflowDefinition.label}
                 </Badge>
               )}
               {engine && (
-                <Badge radius="sm" color="violet" size="sm" classNames={{ label: 'overflow-hidden' }}>
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
                   {engine}
                 </Badge>
               )}

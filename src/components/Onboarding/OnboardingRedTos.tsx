@@ -20,6 +20,7 @@ import rehypeRaw from 'rehype-raw';
 
 import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
+import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 
 export function OnboardingRedTos() {
   const { next } = useOnboardingContext();
@@ -57,9 +58,9 @@ export function OnboardingRedTos() {
           terms && (
             <>
               <Title order={1}>{terms.title}</Title>
-              <TypographyStylesProvider>
+              <TypographyStylesWrapper>
                 <CustomMarkdown rehypePlugins={[rehypeRaw]}>{terms.content}</CustomMarkdown>
-              </TypographyStylesProvider>
+              </TypographyStylesWrapper>
             </>
           )
         )}

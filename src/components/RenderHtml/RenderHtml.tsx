@@ -1,9 +1,10 @@
 import type { TypographyStylesProviderProps } from '@mantine/core';
-import { TypographyStylesProvider, useComputedColorScheme, lighten, darken } from '@mantine/core';
+import { useComputedColorScheme, lighten, darken } from '@mantine/core';
 import { useMemo } from 'react';
 
 import { DEFAULT_ALLOWED_ATTRIBUTES, needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
 import classes from './RenderHtml.module.scss';
+import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 
 // const useStyles = createStyles((theme) => ({
 //   htmlRenderer: {
@@ -171,9 +172,9 @@ export function RenderHtml({
   );
 
   return (
-    <TypographyStylesProvider {...props} className={classes.htmlRenderer}>
+    <TypographyStylesWrapper {...props} className={classes.htmlRenderer}>
       <div dangerouslySetInnerHTML={{ __html: html }} />
-    </TypographyStylesProvider>
+    </TypographyStylesWrapper>
   );
 }
 
