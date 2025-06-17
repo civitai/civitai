@@ -34,7 +34,7 @@ const schema = z.object({
   engine: z.literal('flux1-kontext').catch('flux1-kontext'),
   model: z.enum(flux1KontextModels),
   prompt: z.string(),
-  imageUrl: z.string(),
+  images: z.string().array(),
   aspectRatio: z.enum(flux1KontextAspectRatios).optional(),
   numImages: z.number().optional(),
   guidanceScale: z.number().optional(),
@@ -69,7 +69,7 @@ export const flux1KontextConfig = ImageGenConfig({
     }
 
     let imageUrl = params.sourceImage?.url;
-    if (whatIf && !params.sourceImage)
+    if (whatIf && !imageUrl)
       imageUrl =
         'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/3fdba611-f34d-4a68-8bf8-3805629652d3/4a0f3c58d8c6a370bc926efe3279cbad.jpeg';
 
