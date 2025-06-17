@@ -278,7 +278,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
           checked={selected}
           readOnly
           size="lg"
-          className="absolute left-[5px] top-[5px] z-10"
+          className="absolute right-[5px] top-[5px] z-10"
         />
         <ImageGuard2 image={image}>
           {(safe) => (

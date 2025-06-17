@@ -72,6 +72,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import clsx from 'clsx';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -303,7 +304,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const mergedRef = useMergedRef(inViewRef, ref);
 
   return (
-    <MasonryCard
+    <Card
       shadow="sm"
       withBorder
       ref={mergedRef as any}
@@ -321,48 +322,63 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         opacity: !image.needsReview && !pendingReport ? 0.2 : undefined,
       })}
     >
-      <>
-        <Card.Section style={{ height: `${height}px` }} className="relative">
-          {inView && (
-            <>
-              <Checkbox
-                checked={selected}
-                onChange={() => toggleSelected(image.id)}
-                size="lg"
-                className="absolute right-2 top-2 z-10"
-              />
+      <Card.Section style={{ height: `${height}px` }} className="relative">
+        {inView && (
+          <>
+            <Checkbox
+              checked={selected}
+              onChange={() => toggleSelected(image.id)}
+              size="lg"
+              className="absolute right-2 top-2 z-10"
+            />
 
-              <ImageGuard2 image={image}>
-                {(safe) => (
-                  <div className="relative" onClick={() => toggleSelected(image.id)}>
-                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                    {!safe ? (
-                      <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
-                        <MediaHash {...image} />
-                      </AspectRatio>
-                    ) : (
-                      <EdgeMedia
-                        src={image.url}
-                        name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
-                        type={image.type}
-                        width={450}
-                        placeholder="empty"
-                      />
-                    )}
-                  </div>
-                )}
-              </ImageGuard2>
-              {!!entityUrl && (
+            <ImageGuard2 image={image}>
+              {(safe) => (
+                <div className="relative" onClick={() => toggleSelected(image.id)}>
+                  <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                  {!safe ? (
+                    <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
+                      <MediaHash {...image} />
+                    </AspectRatio>
+                  ) : (
+                    <EdgeMedia
+                      src={image.url}
+                      name={image.name ?? image.id.toString()}
+                      alt={image.name ?? undefined}
+                      type={image.type}
+                      width={450}
+                      placeholder="empty"
+                    />
+                  )}
+                </div>
+              )}
+            </ImageGuard2>
+            {!!entityUrl && (
+              <LegacyActionIcon
+                component={Link}
+                href={`${entityUrl}?moderator`}
+                variant="transparent"
+                style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                size="lg"
+                target="_blank"
+              >
+                <IconExternalLink
+                  color="white"
+                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                  opacity={0.8}
+                  strokeWidth={2.5}
+                  size={26}
+                />
+              </LegacyActionIcon>
+            )}
+            {image.meta ? (
+              <ImageMetaPopover meta={image.meta}>
                 <LegacyActionIcon
-                  component={Link}
-                  href={`${entityUrl}?moderator`}
                   variant="transparent"
-                  style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                  style={{ position: 'absolute', bottom: '5px', right: '5px' }}
                   size="lg"
-                  target="_blank"
                 >
-                  <IconExternalLink
+                  <IconInfoCircle
                     color="white"
                     filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
                     opacity={0.8}
@@ -370,115 +386,96 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     size={26}
                   />
                 </LegacyActionIcon>
-              )}
-              {image.meta ? (
-                <ImageMetaPopover meta={image.meta}>
-                  <LegacyActionIcon
-                    variant="transparent"
-                    style={{ position: 'absolute', bottom: '5px', right: '5px' }}
-                    size="lg"
-                  >
-                    <IconInfoCircle
-                      color="white"
-                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                      opacity={0.8}
-                      strokeWidth={2.5}
-                      size={26}
-                    />
-                  </LegacyActionIcon>
-                </ImageMetaPopover>
-              ) : image.metadata?.profilePicture ? (
-                <Badge
-                  variant="filled"
-                  style={{ position: 'absolute', bottom: '10px', right: '5px' }}
-                >
-                  Avatar
-                </Badge>
-              ) : null}
-            </>
+              </ImageMetaPopover>
+            ) : image.metadata?.profilePicture ? (
+              <Badge
+                variant="filled"
+                style={{ position: 'absolute', bottom: '10px', right: '5px' }}
+              >
+                Avatar
+              </Badge>
+            ) : null}
+          </>
+        )}
+      </Card.Section>
+      {hasReport && (
+        <Stack gap={8} p="xs" style={{ cursor: 'auto', color: 'initial' }}>
+          <Group justify="space-between" wrap="nowrap">
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed" inline>
+                Reported by
+              </Text>
+              <Group gap={4}>
+                <Link legacyBehavior href={`/user/${image.report?.user.username}`} passHref>
+                  <Anchor size="xs" target="_blank" lineClamp={1} inline>
+                    {image.report?.user.username}
+                  </Anchor>
+                </Link>
+                {(image.report?.count ?? 0) > 1 && (
+                  <Badge size="xs" color="red">
+                    +{(image.report?.count ?? 0) - 1}
+                  </Badge>
+                )}
+              </Group>
+            </Stack>
+            <Stack gap={2} align="flex-end">
+              <Text size="xs" c="dimmed" inline>
+                Reported for
+              </Text>
+              <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
+            </Stack>
+          </Group>
+          {image.acceptableMinor && (
+            <Badge variant="light" color="pink">
+              Acceptable Minor
+            </Badge>
           )}
+          <ContentClamp maxHeight={150}>
+            {image.report?.details
+              ? Object.entries(image.report.details).map(([key, value]) => (
+                  <Text key={key} size="sm">
+                    <Text fw="bold" span className="capitalize">
+                      {splitUppercase(key)}:
+                    </Text>{' '}
+                    {value}
+                  </Text>
+                ))
+              : null}
+          </ContentClamp>
+        </Stack>
+      )}
+      {image.needsReview === 'minor' && (
+        <Stack>
+          {image.acceptableMinor && (
+            <Badge variant="light" color="pink">
+              Acceptable Minor
+            </Badge>
+          )}
+          <PromptHighlight prompt={image.meta?.prompt} negativePrompt={image.meta?.negativePrompt}>
+            {({ includesInappropriate, html }) =>
+              !includesInappropriate ? (
+                <></>
+              ) : (
+                <Card.Section p="xs" mt={0} style={{ cursor: 'auto', color: 'initial' }}>
+                  <RenderHtml className="break-words text-sm leading-[1.2]" html={html} />
+                </Card.Section>
+              )
+            }
+          </PromptHighlight>
+        </Stack>
+      )}
+      {image.reviewTags.length > 0 && (
+        <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
+          <Group gap={4}>
+            {image.reviewTags.map((tag) => (
+              <Badge key={tag.id} size="sm">
+                {tag.name}
+              </Badge>
+            ))}
+          </Group>
         </Card.Section>
-        {hasReport && (
-          <Stack gap={8} p="xs" style={{ cursor: 'auto', color: 'initial' }}>
-            <Group justify="space-between" wrap="nowrap">
-              <Stack gap={2}>
-                <Text size="xs" c="dimmed" inline>
-                  Reported by
-                </Text>
-                <Group gap={4}>
-                  <Link legacyBehavior href={`/user/${image.report?.user.username}`} passHref>
-                    <Anchor size="xs" target="_blank" lineClamp={1} inline>
-                      {image.report?.user.username}
-                    </Anchor>
-                  </Link>
-                  {(image.report?.count ?? 0) > 1 && (
-                    <Badge size="xs" color="red">
-                      +{(image.report?.count ?? 0) - 1}
-                    </Badge>
-                  )}
-                </Group>
-              </Stack>
-              <Stack gap={2} align="flex-end">
-                <Text size="xs" c="dimmed" inline>
-                  Reported for
-                </Text>
-                <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
-              </Stack>
-            </Group>
-            {image.acceptableMinor && (
-              <Badge variant="light" color="pink">
-                Acceptable Minor
-              </Badge>
-            )}
-            <ContentClamp maxHeight={150}>
-              {image.report?.details
-                ? Object.entries(image.report.details).map(([key, value]) => (
-                    <Text key={key} size="sm">
-                      <Text fw="bold" span className="capitalize">
-                        {splitUppercase(key)}:
-                      </Text>{' '}
-                      {value}
-                    </Text>
-                  ))
-                : null}
-            </ContentClamp>
-          </Stack>
-        )}
-        {image.needsReview === 'minor' && (
-          <Stack>
-            {image.acceptableMinor && (
-              <Badge variant="light" color="pink">
-                Acceptable Minor
-              </Badge>
-            )}
-            <PromptHighlight
-              prompt={image.meta?.prompt}
-              negativePrompt={image.meta?.negativePrompt}
-            >
-              {({ includesInappropriate, html }) =>
-                !includesInappropriate ? (
-                  <></>
-                ) : (
-                  <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
-                    <div className="lh-1.2 text-sm" dangerouslySetInnerHTML={{ __html: html }} />
-                  </Card.Section>
-                )
-              }
-            </PromptHighlight>
-          </Stack>
-        )}
-        {image.reviewTags.length > 0 && (
-          <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-            <Group gap={4}>
-              {image.reviewTags.map((tag) => (
-                <Badge key={tag.id} size="sm">
-                  {tag.name}
-                </Badge>
-              ))}
-            </Group>
-          </Card.Section>
-        )}
-        {/* {image.needsReview === 'poi' && !!image.names?.length && (
+      )}
+      {/* {image.needsReview === 'poi' && !!image.names?.length && (
           <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
             <Group spacing={4}>
               {image.names.map((name) => (
@@ -489,83 +486,82 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
             </Group>
           </Card.Section>
         )} */}
-        {image.needsReview === 'tag' && !!image.tags && (
-          <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
-            <Group gap={4}>
-              {image.tags
-                .filter((x) => x.nsfwLevel === NsfwLevel.Blocked)
-                .map(({ name }) => (
-                  <Badge key={name} size="sm">
-                    {name}
-                  </Badge>
-                ))}
+      {image.needsReview === 'tag' && !!image.tags && (
+        <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
+          <Group gap={4}>
+            {image.tags
+              .filter((x) => x.nsfwLevel === NsfwLevel.Blocked)
+              .map(({ name }) => (
+                <Badge key={name} size="sm">
+                  {name}
+                </Badge>
+              ))}
+          </Group>
+        </Card.Section>
+      )}
+      {image.needsReview === 'appeal' && hasAppeal && (
+        <Card.Section p="xs">
+          <Stack gap={8} style={{ cursor: 'auto', color: 'initial' }}>
+            <Group justify="space-between" wrap="nowrap">
+              <Stack gap={2}>
+                <Text size="xs" c="dimmed" inline>
+                  Appealed by
+                </Text>
+                <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
+                  <Anchor size="xs" target="_blank" lineClamp={1} inline>
+                    {image.appeal?.user.username}
+                  </Anchor>
+                </Link>
+              </Stack>
+              <Stack gap={2} align="flex-end">
+                <Text size="xs" c="dimmed" inline>
+                  Created at
+                </Text>
+                {image.appeal?.createdAt ? (
+                  <Text size="xs">{formatDate(image.appeal?.createdAt)}</Text>
+                ) : null}
+              </Stack>
             </Group>
-          </Card.Section>
-        )}
-        {image.needsReview === 'appeal' && hasAppeal && (
-          <Card.Section p="xs">
-            <Stack gap={8} style={{ cursor: 'auto', color: 'initial' }}>
+            {image.appeal?.moderator && (
               <Group justify="space-between" wrap="nowrap">
                 <Stack gap={2}>
                   <Text size="xs" c="dimmed" inline>
-                    Appealed by
+                    Moderated by
                   </Text>
-                  <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
-                    <Anchor size="xs" target="_blank" lineClamp={1} inline>
-                      {image.appeal?.user.username}
-                    </Anchor>
-                  </Link>
+                  <Text size="xs" lineClamp={1} inline>
+                    {image.appeal?.moderator.username}
+                  </Text>
                 </Stack>
                 <Stack gap={2} align="flex-end">
                   <Text size="xs" c="dimmed" inline>
-                    Created at
+                    Removed at
                   </Text>
-                  {image.appeal?.createdAt ? (
-                    <Text size="xs">{formatDate(image.appeal?.createdAt)}</Text>
-                  ) : null}
+                  {image.removedAt ? <Text size="xs">{formatDate(image.removedAt)}</Text> : null}
                 </Stack>
               </Group>
-              {image.appeal?.moderator && (
-                <Group justify="space-between" wrap="nowrap">
-                  <Stack gap={2}>
-                    <Text size="xs" c="dimmed" inline>
-                      Moderated by
-                    </Text>
-                    <Text size="xs" lineClamp={1} inline>
-                      {image.appeal?.moderator.username}
-                    </Text>
-                  </Stack>
-                  <Stack gap={2} align="flex-end">
-                    <Text size="xs" c="dimmed" inline>
-                      Removed at
-                    </Text>
-                    {image.removedAt ? <Text size="xs">{formatDate(image.removedAt)}</Text> : null}
-                  </Stack>
-                </Group>
-              )}
-              {image.tosReason ? (
-                <Badge size="sm" color="pink">
-                  Removed for: {getDisplayName(image.tosReason)}
-                </Badge>
-              ) : null}
-              <ContentClamp maxHeight={150}>
-                {image.appeal?.reason ? <Text size="sm">{image.appeal.reason}</Text> : null}
-              </ContentClamp>
-            </Stack>
-          </Card.Section>
-        )}
-        {image.needsReview === 'modRule' && image.metadata?.ruleReason && (
-          <Card.Section p="xs">
-            <Stack>
-              <Text>{image.metadata.ruleReason}</Text>
-              {image.metadata.ruleId && (
-                <RuleDefinitionPopover ruleId={image.metadata.ruleId} entityType="Image" />
-              )}
-            </Stack>
-          </Card.Section>
-        )}
-      </>
-    </MasonryCard>
+            )}
+            {image.tosReason ? (
+              <Badge size="sm" color="pink">
+                Removed for: {getDisplayName(image.tosReason)}
+              </Badge>
+            ) : null}
+            <ContentClamp maxHeight={150}>
+              {image.appeal?.reason ? <Text size="sm">{image.appeal.reason}</Text> : null}
+            </ContentClamp>
+          </Stack>
+        </Card.Section>
+      )}
+      {image.needsReview === 'modRule' && image.metadata?.ruleReason && (
+        <Card.Section p="xs">
+          <Stack>
+            <Text>{image.metadata.ruleReason}</Text>
+            {image.metadata.ruleId && (
+              <RuleDefinitionPopover ruleId={image.metadata.ruleId} entityType="Image" />
+            )}
+          </Stack>
+        </Card.Section>
+      )}
+    </Card>
   );
 }
 

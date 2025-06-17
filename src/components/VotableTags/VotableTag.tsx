@@ -122,7 +122,7 @@ export function VotableTag({
     0.05
   );
   const badgeBg = alpha(badgeColor.background ?? theme.colors.gray[4], 0.3);
-  const progressBg = alpha(badgeColor.background ?? theme.colors.gray[4], isNsfw ? 0.4 : 0.8);
+  const progressBg = alpha(badgeColor.background ?? theme.colors.gray[4], isNsfw ? 1 : 0.8);
   const opacity = 0.2 + (Math.max(Math.min(score, 10), 0) / 10) * 0.8;
 
   if (upvoteDate) lastUpvote = upvoteDate;

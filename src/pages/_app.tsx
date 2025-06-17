@@ -79,6 +79,7 @@ import '@mantine/dropzone/styles.layer.css';
 import '@mantine/notifications/styles.layer.css';
 import '@mantine/nprogress/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
+import 'mantine-react-table/styles.css'; //import MRT styles
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);

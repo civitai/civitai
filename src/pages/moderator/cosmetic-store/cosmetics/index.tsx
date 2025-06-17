@@ -239,17 +239,17 @@ export default function CosmeticStoreProducts() {
                   );
                 })}
               </Table.Tbody>
-              {pagination && pagination.totalPages > 1 && (
-                <Group justify="space-between">
-                  <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
-                  <Pagination
-                    value={filters.page}
-                    onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
-                    total={pagination.totalPages}
-                  />
-                </Group>
-              )}
             </Table>
+            {pagination && pagination.totalPages > 1 && (
+              <Group className="mt-4" justify="space-between">
+                <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
+                <Pagination
+                  value={filters.page}
+                  onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
+                  total={pagination.totalPages}
+                />
+              </Group>
+            )}
           </div>
         ) : (
           <Stack align="center">

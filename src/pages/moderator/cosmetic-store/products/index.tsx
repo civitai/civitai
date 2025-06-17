@@ -134,10 +134,8 @@ export default function CosmeticStoreProducts() {
                   <Table.Th>Title</Table.Th>
                   <Table.Th>Cosmetic Name</Table.Th>
                   <Table.Th>Type</Table.Th>
-                  <Table.Th>
-                    <Text align="center">Sample</Text>
-                  </Table.Th>
-                  <Table.Th>Price</Table.Th>
+                  <Table.Th>Sample</Table.Th>
+                  <Table.Th style={{ width: '135px' }}>Price</Table.Th>
                   <Table.Th>Purchases</Table.Th>
                   <Table.Th>Available From</Table.Th>
                   <Table.Th>Available To</Table.Th>
@@ -210,17 +208,17 @@ export default function CosmeticStoreProducts() {
                   );
                 })}
               </Table.Tbody>
-              {pagination && pagination.totalPages > 1 && (
-                <Group justify="space-between">
-                  <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
-                  <Pagination
-                    value={filters.page}
-                    onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
-                    total={pagination.totalPages}
-                  />
-                </Group>
-              )}
             </Table>
+            {pagination && pagination.totalPages > 1 && (
+              <Group className="mt-4" justify="space-between">
+                <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
+                <Pagination
+                  value={filters.page}
+                  onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
+                  total={pagination.totalPages}
+                />
+              </Group>
+            )}
           </div>
         ) : (
           <Stack align="center">

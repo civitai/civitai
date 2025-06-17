@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import { DEFAULT_ALLOWED_ATTRIBUTES, needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
 import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
+import clsx from 'clsx';
 
 // const useStyles = createStyles((theme) => ({
 //   htmlRenderer: {
@@ -85,6 +86,7 @@ export function RenderHtml({
   html,
   withMentions = false,
   allowCustomStyles = true,
+  className,
   ...props
 }: Props) {
   const colorScheme = useComputedColorScheme('dark');
@@ -172,7 +174,7 @@ export function RenderHtml({
   );
 
   return (
-    <TypographyStylesWrapper {...props} className={classes.htmlRenderer}>
+    <TypographyStylesWrapper {...props} className={clsx(classes.htmlRenderer, className)}>
       <div dangerouslySetInnerHTML={{ __html: html }} />
     </TypographyStylesWrapper>
   );
