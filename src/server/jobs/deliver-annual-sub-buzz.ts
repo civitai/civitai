@@ -25,7 +25,7 @@ export const deliverAnnualSubscriptionBuzz = createJob(
         AND status = 'active'
         AND "currentPeriodEnd" > NOW()
         AND p."interval" = 'year'
-        AND pr.metadata->>'monthlyBuzz' != NULL
+        AND pr.metadata->>'monthlyBuzz' IS NOT NULL
     `;
 
     if (!data.length) return;
