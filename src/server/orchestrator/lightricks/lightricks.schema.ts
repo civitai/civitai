@@ -8,9 +8,10 @@ import {
   baseVideoGenerationSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
+import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { numberEnum } from '~/utils/zod-helpers';
 
-export const lightricksAspectRatios = ['16:9', '3:2', '1:1', '2:3'] as const;
+export const lightricksAspectRatios = ['16:9', '9:16'] as const;
 export const lightricksDuration = [5] as const;
 
 const schema = baseVideoGenerationSchema.extend({
@@ -18,7 +19,7 @@ const schema = baseVideoGenerationSchema.extend({
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
   negativePrompt: negativePromptSchema,
-  aspectRatio: z.enum(lightricksAspectRatios).optional().catch('3:2'),
+  aspectRatio: z.enum(lightricksAspectRatios).optional().catch('16:9'),
   duration: numberEnum(lightricksDuration).default(5).catch(5),
   cfgScale: z.number().min(3).max(3.5).default(3).catch(3),
   steps: z.number().min(20).max(30).default(25).catch(25),
@@ -36,11 +37,8 @@ export const lightricksGenerationConfig = VideoGenerationConfig2({
   transformFn: (data) => {
     if (!data.sourceImage) {
       data.process = 'txt2vid';
-    }
-    if (data.process === 'txt2vid') {
-      delete data.sourceImage;
-    } else if (data.process === 'img2vid') {
-      delete data.aspectRatio;
+    } else {
+      data.aspectRatio = findClosestAspectRatio(data.sourceImage, [...lightricksAspectRatios]);
     }
     return data;
   },

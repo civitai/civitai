@@ -39,5 +39,3 @@ function findClosest(array: number[], target: number) {
     return Math.abs(b - target) < Math.abs(a - target) ? b : a;
   });
 }
-
-// function getRatioFromSize({width, height}: {width: number; height: number;})
