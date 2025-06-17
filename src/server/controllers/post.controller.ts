@@ -59,6 +59,7 @@ import {
   updatePostCollectionTagId,
   updatePostImage,
 } from './../services/post.service';
+import { getDbWithoutLag } from '~/server/db/db-helpers';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -132,7 +133,8 @@ export const updatePostHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const post = await dbRead.post.findFirst({
+    const db = await getDbWithoutLag('post', input.id);
+    const post = await db.post.findFirst({
       where: { id: input.id },
       select: {
         publishedAt: true,
@@ -240,7 +242,7 @@ export const updatePostHandler = async ({
 
     const wasPublished = !post?.publishedAt && updatedPost.publishedAt;
     if (wasPublished) {
-      const postTags = await dbRead.postTag.findMany({
+      const postTags = await db.postTag.findMany({
         where: { postId: updatedPost.id },
         select: { tagName: true },
       });

@@ -11,8 +11,6 @@ export * from './comfy/comfy.types';
 export type GenerationWhatIfResponse = {
   cost?: WorkflowCost;
   ready: boolean;
-  eta: Date;
-  position: number;
 };
 
 export type GeneratedImageWorkflowStep = Omit<WorkflowStep, 'metadata'> & {

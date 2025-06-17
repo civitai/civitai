@@ -49,7 +49,7 @@ export function LightricksFormInput() {
           options={lightricksAspectRatios}
         />
       )}
-      <div className="flex flex-col gap-0.5">
+      {/* <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
@@ -58,7 +58,7 @@ export function LightricksFormInput() {
             value,
           }))}
         />
-      </div>
+      </div> */}
       <InputNumberSlider
         name="cfgScale"
         label={

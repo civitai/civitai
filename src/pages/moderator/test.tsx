@@ -193,6 +193,13 @@ function Test() {
   );
 }
 
+const messages = [
+  {
+    content:
+      'A black and white photograph shows the blurred silhouette of an alien , behind a frosted or translucent surface. The hand is sharply defined and pressed against the surface, creating a stark contrast with the rest of the hazy, indistinct figure. The background is a soft gradient of gray tones, enhancing the mysterious and artistic atmosphere, ',
+  },
+];
+
 function ViewDuplicateHashLinks() {
   const [state, setState] = useState<Record<string, string[]> | null>();
 
@@ -347,6 +354,7 @@ function Example() {
 import { Label, Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
 import { IconCheck, IconSelector } from '@tabler/icons-react';
 import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
+import { KontextAd } from '~/components/Ads/Kontext/KontextAd';
 
 const people = [
   {
