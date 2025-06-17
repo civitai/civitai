@@ -30,12 +30,12 @@ export function ShowcaseGrid({
     }
   });
 
-  const styleVars: CSSProperties = {
+  const styleVars = {
     '--item-count': itemCount,
     '--rows': rows,
     '--min-width': `${minWidth}px`,
     '--default-width': `${defaultWidth}px`,
-  };
+  } as CSSProperties;
 
   if (props.carousel) {
     // Return a wrapped version:
