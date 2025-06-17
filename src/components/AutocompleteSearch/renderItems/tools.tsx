@@ -20,9 +20,7 @@ export const ToolSearchItem = forwardRef<
         <Image
           src={getEdgeUrl(icon, { width: 96 })}
           alt={name ?? ''}
-          width={32}
-          height={32}
-          radius="xl"
+          className="size-8 rounded-full"
         />
       ) : (
         <ThemeIcon variant="light" size={32} radius="xl">

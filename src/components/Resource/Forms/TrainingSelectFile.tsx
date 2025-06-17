@@ -146,15 +146,12 @@ const EpochRow = ({
                   <Image
                     alt={`Sample image #${index}`}
                     src={url}
-                    withPlaceholder
-                    imageProps={{
-                      style: {
-                        height: '200px',
-                        // if we want to show full image, change objectFit to contain
-                        objectFit: 'cover',
-                        // object-position: top;
-                        width: '100%',
-                      },
+                    style={{
+                      height: '200px',
+                      // if we want to show full image, change objectFit to contain
+                      objectFit: 'cover',
+                      // object-position: top;
+                      width: '100%',
                     }}
                   />
                 )}

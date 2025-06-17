@@ -105,10 +105,8 @@ export default function LinkApp(props: ServerSideProps) {
                 src="/images/link/glance.png"
                 alt="download"
                 id="download"
-                width="auto"
-                imageProps={{
-                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
-                }}
+                w="auto"
+                style={{ objectFit: 'cover', objectPosition: 'top', height: '100%' }}
               />
               <div className={classes.gradientBox} />
             </Flex>
@@ -123,10 +121,8 @@ export default function LinkApp(props: ServerSideProps) {
                 src="/images/link/pair.png"
                 alt="activity"
                 id="activity"
-                width="auto"
-                imageProps={{
-                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
-                }}
+                w="auto"
+                style={{ objectFit: 'cover', objectPosition: 'top', height: '100%' }}
               />
               <div className={classes.gradientBox} />
             </Flex>
@@ -146,10 +142,8 @@ export default function LinkApp(props: ServerSideProps) {
                 src="/images/link/download.png"
                 alt="download"
                 id="download"
-                width="auto"
-                imageProps={{
-                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
-                }}
+                w="auto"
+                style={{ objectFit: 'cover', objectPosition: 'top', height: '100%' }}
               />
               <div className={classes.gradientBox} />
             </Flex>
@@ -166,10 +160,8 @@ export default function LinkApp(props: ServerSideProps) {
                 src="/images/link/activity.png"
                 alt="activity"
                 id="activity"
-                width="auto"
-                imageProps={{
-                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
-                }}
+                w="auto"
+                style={{ objectFit: 'cover', objectPosition: 'top', height: '100%' }}
               />
               <div
                 className="absolute inset-0"

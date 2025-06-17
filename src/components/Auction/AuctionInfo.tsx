@@ -751,7 +751,7 @@ export const AuctionInfo = () => {
                           color={validBid ? (colorScheme === 'dark' ? 'gray' : 'gray.8') : 'dark'}
                           radius="xl"
                         >
-                          <Text inherit>{`Est: ${
+                          <Text fz={11}>{`Est: ${
                             bidPrice ? getPosStringFromBid(selectedModelBid + bidPrice) : '?'
                           }`}</Text>
                         </Badge>

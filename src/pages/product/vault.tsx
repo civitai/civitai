@@ -54,8 +54,8 @@ export default function CivitaiVault() {
             <Image
               src="/images/product/vault/lp-main.png"
               alt="check out the vault"
-              width="100%"
-              height="auto"
+              w="100%"
+              h="auto"
             />
             <div
               className="absolute inset-0"

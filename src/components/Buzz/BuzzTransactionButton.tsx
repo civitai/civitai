@@ -99,7 +99,12 @@ export function BuzzTransactionButton({
         label: 'flex items-center justify-center w-full gap-2',
       }}
     >
-      <Text fz={size ?? 14} ta={!hasCost ? 'center' : 'start'} fw={600} style={{ flex: 1 }}>
+      <Text
+        fz={size ?? 14}
+        ta={!hasCost || !priceReplacement ? 'center' : 'start'}
+        fw={600}
+        style={{ flex: 1 }}
+      >
         {label}
       </Text>
       {priceReplacement}

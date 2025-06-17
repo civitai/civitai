@@ -220,12 +220,7 @@ export default function BuildPage() {
                     <Stack className={classes.component}>
                       <Group gap={80} justify="space-between" w="100%" wrap="nowrap">
                         <Group className={classes.componentTitleWrapper} gap="lg" wrap="nowrap">
-                          <Image
-                            src={component.imageUrl}
-                            alt={component.name}
-                            width={72}
-                            radius="sm"
-                          />
+                          <Image src={component.imageUrl} alt={component.name} w={72} radius="sm" />
                           <Stack gap={8} align="flex-start" style={{ flex: 1 }}>
                             <Badge color="orange" radius="sm" tt="capitalize">
                               {component.type}

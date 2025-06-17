@@ -181,8 +181,8 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
                       alt="Model Image"
                       radius="sm"
                       className="size-12 shrink-0 grow-0"
-                      width="50px"
-                      height="50px"
+                      w="50px"
+                      h="50px"
                     />
                   )}
                   <Stack gap={0}>
@@ -293,8 +293,8 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
                       alt="Model Image"
                       radius="sm"
                       className="size-12 shrink-0 grow-0"
-                      width="50px"
-                      height="50px"
+                      w="50px"
+                      h="50px"
                     />
                   )}
                   <Stack gap={0}>
@@ -509,8 +509,8 @@ const MobileVault = () => {
                           src={item.coverImageUrl}
                           alt="Model Image"
                           radius="sm"
-                          width="100%"
-                          height="100%"
+                          w="100%"
+                          h="100%"
                         />
                       )}
                       <Stack gap={0}>
@@ -774,8 +774,8 @@ export default function CivitaiVault() {
                                 alt="Model Image"
                                 radius="sm"
                                 className="size-12 shrink-0 grow-0"
-                                width="50px"
-                                height="50px"
+                                w="50px"
+                                h="50px"
                               />
                             ) : (
                               <Tooltip

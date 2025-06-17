@@ -377,8 +377,8 @@ export const VaultStorageDowngrade = ({
                 src={item.coverImageUrl}
                 alt="Model Image"
                 radius="lg"
-                width={100}
-                height={100}
+                w={100}
+                h={100}
               />
             ))}
           </Group>

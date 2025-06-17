@@ -23,9 +23,7 @@ export const UserSearchItem = forwardRef<
         <Image
           src={getEdgeUrl(image, { width: 96 })}
           alt={username ?? ''}
-          width={32}
-          height={32}
-          radius="xl"
+          className="size-8 rounded-full"
         />
       ) : (
         <ThemeIcon variant="light" size={32} radius="xl">
@@ -33,7 +31,7 @@ export const UserSearchItem = forwardRef<
         </ThemeIcon>
       )}
       <Stack gap={4}>
-        <Text size="md" lineClamp={1}>
+        <Text component="div" size="md" lineClamp={1}>
           <Username {...hit} inherit />
         </Text>
         {metrics && (

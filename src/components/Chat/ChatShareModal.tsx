@@ -230,7 +230,7 @@ export default function ChatShareModal(props: { message: string }) {
                           label="Moderator chat"
                           style={{ border: '1px solid gray' }}
                         >
-                          <Image src="/images/civ-c.png" alt="Moderator" width={16} height={16} />
+                          <Image src="/images/civ-c.png" alt="Moderator" className="size-4" />
                         </Tooltip>
                       )}
                     </Group>

@@ -151,11 +151,10 @@ export function ModelGenerationCard({
                 <Group gap={8}>
                   <Image
                     src="https://downloads.intercomcdn.com/i/o/415875/17821df0928378c5e14e54e6/17c1c63527031e39c565ab2c57308471.png"
-                    width={32}
-                    height={32}
+                    w={32}
+                    h={32}
                     alt="some alt"
                     radius="sm"
-                    withPlaceholder
                   />
                   <Stack gap={0}>
                     <Text size="sm" fw="bold">
@@ -219,8 +218,8 @@ export function ModelGenerationCard({
                     <Image
                       key={index}
                       src={url}
-                      height={height}
-                      width={imageContainerWidth}
+                      h={height}
+                      w={imageContainerWidth}
                       alt={`AI generated image with prompt: ${prompt}`}
                       styles={{
                         root: { scrollSnapAlign: 'start', objectPosition: 'top' },

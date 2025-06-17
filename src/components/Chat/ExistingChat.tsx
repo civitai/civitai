@@ -356,8 +356,7 @@ export function ExistingChat() {
                             src="/images/civ-c.png"
                             title="Moderator"
                             alt="Moderator"
-                            width={16}
-                            height={16}
+                            className="size-4"
                           />
                         ) : undefined}
                         {cm.isOwner === true ? (

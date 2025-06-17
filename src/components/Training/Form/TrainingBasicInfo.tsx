@@ -90,7 +90,7 @@ const RadioImg = ({
   const media =
     type === 'img' ? (
       <figure>
-        <Image src={src} w={180} h={255} alt={value} radius="sm" withPlaceholder />
+        <Image src={src} w={180} h={255} alt={value} radius="sm" />
         <figcaption>
           <Text component="div" c="dimmed" align="center" mt={10}>
             {caption}

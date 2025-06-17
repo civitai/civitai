@@ -30,6 +30,7 @@ import { searchClient } from '~/components/Search/search.client';
 import { ApplyCustomFilter, BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import classes from './QuickSearchDropdown.module.scss';
+import { truncate } from 'lodash-es';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -215,7 +216,21 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   });
 
   const items = useMemo(() => {
-    const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: String(hit.id) }));
+    const items = filtered.map((hit) => ({
+      key: String(hit.id),
+      hit,
+      value: String(hit.id),
+      label:
+        'prompt' in hit
+          ? truncate(hit.prompt, { length: 50 })
+          : 'name' in hit
+          ? hit.name
+          : 'title' in hit
+          ? hit.title
+          : 'username' in hit
+          ? hit.username
+          : '',
+    }));
     return items;
   }, [filtered]);
 
@@ -224,18 +239,18 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       const item = items.find((item) => item.value === value);
       if (!item) return null;
 
-      return item.hit;
+      return item;
     },
     [items]
   );
 
   const renderOption = useCallback<NonNullable<AutocompleteProps['renderOption']>>(
     ({ option }) => {
-      const hit = getItemFromValue(option.value);
-      if (!hit) return null;
+      const item = getItemFromValue(option.value);
+      if (!item) return null;
 
       const RenderItem = IndexRenderItem[indexName] ?? ModelSearchItem;
-      return <RenderItem item={hit} />;
+      return <RenderItem {...item} />;
     },
     [getItemFromValue, indexName]
   );
@@ -304,10 +319,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
           if (item) {
             onItemSelected(
               {
-                entityId: item.id,
+                entityId: item.hit.id,
                 entityType: SearchIndexEntityTypes[searchIndexMap[indexName]],
               },
-              item as any
+              item.hit as any
             );
 
             setSearch('');

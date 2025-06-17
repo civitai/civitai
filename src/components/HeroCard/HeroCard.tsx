@@ -20,12 +20,10 @@ export function HeroCard({
       <Card.Section className={classes.section}>
         <Image
           src={imageUrl}
-          width="auto"
+          w="auto"
           alt={''}
           classNames={classes}
-          imageProps={{
-            style: { objectFit: 'cover', objectPosition: 'top', height: '100%', width: 480 },
-          }}
+          style={{ objectFit: 'cover', objectPosition: 'top', height: '100%', width: 480 }}
         />
       </Card.Section>
       <Stack gap={32} justify="center">
