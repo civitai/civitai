@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { CollectionItemStatus, EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { chunk, uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -7,12 +6,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import {
   getNsfwLevelRelatedEntities,
-  updateNsfwLevels,
   updateCollectionsNsfwLevels,
+  updateNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { createJob } from './job';
-import { enqueueJobs } from '~/server/services/job-queue.service';
 
 const jobQueueMap = {
   [EntityType.Image]: 'imageIds',
@@ -23,6 +22,12 @@ const jobQueueMap = {
   [EntityType.Collection]: 'collectionIds',
   [EntityType.Model]: 'modelIds',
   [EntityType.ModelVersion]: 'modelVersionIds',
+  [EntityType.Comment]: 'commentIds', // unused
+  [EntityType.CommentV2]: 'commentV2Ids', // unused
+  [EntityType.User]: 'userIds', // unused
+  [EntityType.UserProfile]: 'userProfileIds', // unused
+  [EntityType.ResourceReview]: 'resourceReviewIds', // unused
+  [EntityType.ChatMessage]: 'chatMessageIds', // unused
 } as const;
 type JobQueueMap = typeof jobQueueMap;
 type JobQueueIds = {

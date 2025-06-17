@@ -8,6 +8,8 @@ export type CashWithdrawalStatus = "Paid" | "Rejected" | "Scheduled" | "Submitte
 
 export type CashWithdrawalMethod = "NoPM" | "WireTransfer" | "Payoneer" | "PayPal" | "ACH" | "Check" | "eCheck" | "HoldMyPayments" | "Custom" | "Intercash" | "Card" | "TipaltiInternalValue";
 
+export type CryptoTransactionStatus = "WaitingForRamp" | "RampTimedOut" | "RampFailed" | "RampInProgress" | "RampSuccess" | "WaitingForSweep" | "SweepFailed" | "Complete";
+
 export type RewardsEligibility = "Eligible" | "Ineligible" | "Protected";
 
 export type PaymentProvider = "Stripe" | "Paddle";
@@ -56,7 +58,7 @@ export type MetricTimeframe = "Day" | "Week" | "Month" | "Year" | "AllTime";
 
 export type AssociationType = "Suggested";
 
-export type ReportReason = "TOSViolation" | "NSFW" | "Ownership" | "AdminAttention" | "Claim" | "CSAM";
+export type ReportReason = "TOSViolation" | "NSFW" | "Ownership" | "AdminAttention" | "Claim" | "CSAM" | "Automated";
 
 export type ReportStatus = "Pending" | "Processing" | "Actioned" | "Unactioned";
 
@@ -120,7 +122,7 @@ export type CollectionContributorPermission = "VIEW" | "ADD" | "ADD_REVIEW" | "M
 
 export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop" | "FeaturedModelVersion";
 
-export type Currency = "USD" | "BUZZ";
+export type Currency = "USD" | "BUZZ" | "USDC";
 
 export type BountyType = "ModelCreation" | "LoraCreation" | "EmbedCreation" | "DataSetCreation" | "DataSetCaption" | "ImageCreation" | "VideoCreation" | "Other";
 
@@ -144,9 +146,9 @@ export type ChatMessageType = "Markdown" | "Image" | "Video" | "Audio" | "Embed"
 
 export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
-export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection";
+export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -284,6 +286,26 @@ export interface CashWithdrawal {
   updatedAt: Date | null;
 }
 
+export interface CryptoWallet {
+  userId: number;
+  user?: User;
+  wallet: string;
+  smartAccount: string | null;
+}
+
+export interface CryptoTransaction {
+  key: string;
+  userId: number;
+  user?: User;
+  status: CryptoTransactionStatus;
+  amount: number;
+  currency: Currency;
+  sweepTxHash: string | null;
+  note: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface User {
   id: number;
   name: string | null;
@@ -413,6 +435,8 @@ export interface User {
   recurringBids?: BidRecurring[];
   moderationRules?: ModerationRule[];
   playerInfo?: NewOrderPlayer | null;
+  CryptoWallet?: CryptoWallet[];
+  CryptoTransaction?: CryptoTransaction[];
 }
 
 export interface CustomerSubscription {
@@ -878,6 +902,7 @@ export interface Report {
   bounty?: BountyReport | null;
   bountyEntry?: BountyEntryReport | null;
   chat?: ChatReport | null;
+  automated?: ReportAutomated | null;
 }
 
 export interface ResourceReviewReport {
@@ -2720,6 +2745,14 @@ export interface NewOrderSmite {
   createdAt: Date;
   cleansedAt: Date | null;
   cleansedReason: string | null;
+}
+
+export interface ReportAutomated {
+  id: number;
+  reportId: number;
+  report?: Report;
+  metadata: JsonValue;
+  createdAt: Date;
 }
 
 export interface QuestionRank {

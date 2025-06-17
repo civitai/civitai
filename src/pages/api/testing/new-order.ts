@@ -76,7 +76,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           return {
             rank,
             queues: await Promise.all(
-              poolCounters[rank as NewOrderRankType].map((p) => p.getAll())
+              poolCounters[rank as NewOrderRankType].map((p) => p.getAll({ limit: 20000 }))
             ),
           };
         })

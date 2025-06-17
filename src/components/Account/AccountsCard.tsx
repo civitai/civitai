@@ -1,15 +1,5 @@
-import {
-  Table,
-  Group,
-  Text,
-  LoadingOverlay,
-  Card,
-  Title,
-  Stack,
-  Button,
-  Alert,
-} from '@mantine/core';
-import type { BuiltInProviderType } from 'next-auth/providers';
+import { Alert, Card, Group, LoadingOverlay, Stack, Table, Text, Title } from '@mantine/core';
+import type { BuiltInProviderType } from 'next-auth/providers/index';
 import { getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';

@@ -1,12 +1,12 @@
 import { ActionIcon, Button, Card, Modal, Radio, SegmentedControl, Slider } from '@mantine/core';
-import { useEffect, useMemo, useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
-import type { Point, Area, MediaSize } from 'react-easy-crop/types';
 import { IconZoomIn, IconZoomOut } from '@tabler/icons-react';
-import { getCroppedImg } from '~/utils/image-utils';
 import clsx from 'clsx';
+import { useEffect, useMemo, useState } from 'react';
+import type { Area, MediaSize, Point } from 'react-easy-crop';
+import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
+import { getCroppedImg } from '~/utils/image-utils';
 
 type ImageProps = { url: string; width: number; height: number; label?: string };
 type ImageCropperProps = { images: ImageProps[]; onCancel?: () => void; onConfirm: OnConfirmFn };

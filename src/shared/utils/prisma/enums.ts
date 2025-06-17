@@ -52,6 +52,19 @@ export const CashWithdrawalMethod = {
 
 export type CashWithdrawalMethod = (typeof CashWithdrawalMethod)[keyof typeof CashWithdrawalMethod];
 
+export const CryptoTransactionStatus = {
+  WaitingForRamp: 'WaitingForRamp',
+  RampTimedOut: 'RampTimedOut',
+  RampFailed: 'RampFailed',
+  RampInProgress: 'RampInProgress',
+  RampSuccess: 'RampSuccess',
+  WaitingForSweep: 'WaitingForSweep',
+  SweepFailed: 'SweepFailed',
+  Complete: 'Complete',
+} as const;
+
+export type CryptoTransactionStatus = (typeof CryptoTransactionStatus)[keyof typeof CryptoTransactionStatus];
+
 export const RewardsEligibility = {
   Eligible: 'Eligible',
   Ineligible: 'Ineligible',
@@ -278,6 +291,7 @@ export const ReportReason = {
   AdminAttention: 'AdminAttention',
   Claim: 'Claim',
   CSAM: 'CSAM',
+  Automated: 'Automated',
 } as const;
 
 export type ReportReason = (typeof ReportReason)[keyof typeof ReportReason];
@@ -574,6 +588,7 @@ export type HomeBlockType = (typeof HomeBlockType)[keyof typeof HomeBlockType];
 export const Currency = {
   USD: 'USD',
   BUZZ: 'BUZZ',
+  USDC: 'USDC',
 } as const;
 
 export type Currency = (typeof Currency)[keyof typeof Currency];
@@ -684,6 +699,12 @@ export const EntityType = {
   ModelVersion: 'ModelVersion',
   Model: 'Model',
   Collection: 'Collection',
+  Comment: 'Comment',
+  CommentV2: 'CommentV2',
+  User: 'User',
+  UserProfile: 'UserProfile',
+  ResourceReview: 'ResourceReview',
+  ChatMessage: 'ChatMessage',
 } as const;
 
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
@@ -694,6 +715,7 @@ export const JobQueueType = {
   UpdateNsfwLevel: 'UpdateNsfwLevel',
   UpdateSearchIndex: 'UpdateSearchIndex',
   CleanIfEmpty: 'CleanIfEmpty',
+  ModerationRequest: 'ModerationRequest',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];

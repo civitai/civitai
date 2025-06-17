@@ -251,29 +251,21 @@ export const orchestratorRouter = router({
           },
         });
 
-        let ready = true,
-          eta = dayjs().add(10, 'minutes').toDate(),
-          position = 0;
+        let ready = true;
 
         for (const step of workflow.steps ?? []) {
           for (const job of step.jobs ?? []) {
             const { queuePosition } = job;
             if (!queuePosition) continue;
 
-            const { precedingJobs, startAt, support } = queuePosition;
+            const { support } = queuePosition;
             if (support !== 'available' && ready) ready = false;
-            if (precedingJobs && precedingJobs < position) {
-              position = precedingJobs;
-              if (startAt && new Date(startAt).getTime() < eta.getTime()) eta = new Date(startAt);
-            }
           }
         }
 
         return {
           cost: workflow.cost,
           ready,
-          eta,
-          position,
         };
       } catch (e) {
         logToAxiom({

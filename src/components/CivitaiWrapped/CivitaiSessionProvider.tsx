@@ -5,6 +5,7 @@ import { useDomainSync } from '~/hooks/useDomainSync';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { browsingModeDefaults } from '~/shared/constants/browsingLevel.constants';
+import { md5 } from '~/shared/utils/md5';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
 //   ssr: false,
@@ -34,6 +35,7 @@ export function CivitaiSessionProvider({
     const currentUser: AuthedUser = {
       type: 'authed',
       ...user,
+      emailHash: user.email ? md5(user.email) : undefined,
       isMember,
       isPaidMember,
       memberInBadState: user.memberInBadState,
@@ -73,6 +75,7 @@ export type CivitaiSessionUser = SessionUser & {
   browsingLevel: number;
   meta?: UserMeta;
   isPaidMember: boolean;
+  emailHash?: string;
 };
 
 type SharedUser = { settings: BrowsingSettings };

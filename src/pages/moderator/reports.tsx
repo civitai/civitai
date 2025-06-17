@@ -17,7 +17,6 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { IconExternalLink } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
@@ -30,7 +29,6 @@ import type {
   MRT_SortingState,
 } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
@@ -38,6 +36,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { Meta } from '~/components/Meta/Meta';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -46,6 +45,7 @@ import { constants } from '~/server/common/constants';
 import type { GetReportsProps } from '~/server/controllers/report.controller';
 import type { SetReportStatusInput } from '~/server/schema/report.schema';
 import { ReportEntity, reportStatusColorScheme } from '~/server/schema/report.schema';
+import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -70,6 +70,7 @@ export default function Reports() {
         ReportReason.Claim,
         ReportReason.Ownership,
         ReportReason.TOSViolation,
+        // ReportReason.Automated, // removing temporarily as per Seb
       ],
     },
     {

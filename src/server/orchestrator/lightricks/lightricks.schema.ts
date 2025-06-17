@@ -11,7 +11,7 @@ import {
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const lightricksAspectRatios = ['16:9', '3:2', '1:1', '2:3'] as const;
-export const lightricksDuration = [5, 10] as const;
+export const lightricksDuration = [5] as const;
 
 const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('lightricks').catch('lightricks'),
