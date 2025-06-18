@@ -4,6 +4,7 @@ import {
   Card,
   Center,
   CloseButton,
+  ColorSchemeScript,
   Divider,
   Group,
   Loader,
@@ -99,7 +100,8 @@ export function ImageDetailByProps({
         deIndex={nsfw || (image ? !!image.needsReview : false)}
       />
       {image && <TrackView entityId={image.id} entityType="Image" type="ImageView" />}
-      <MantineProvider>
+      <ColorSchemeScript forceColorScheme="dark" />
+      <MantineProvider forceColorScheme="dark">
         <Notifications />
         <Paper className={classes.root}>
           <CloseButton
