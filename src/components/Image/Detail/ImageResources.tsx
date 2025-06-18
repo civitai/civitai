@@ -135,8 +135,8 @@ export function ImageResources({ imageId }: { imageId: number }) {
               <Wrapper resource={resource} key={key}>
                 <Card
                   p={8}
+                  className="bg-gray-1 dark:bg-dark-7"
                   style={{
-                    backgroundColor: theme.colors.dark[7],
                     opacity: removing ? 0.3 : isAvailable ? 1 : 0.3,
                   }}
                   withBorder

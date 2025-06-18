@@ -65,6 +65,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
     );
 
     const isCurrency = format === 'currency';
+    const parsedValue = typeof value === 'number' ? (isCurrency ? value / 100 : value) : 0;
 
     return (
       <NumberInput
@@ -77,7 +78,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         decimalScale={isCurrency ? 2 : undefined}
         fixedDecimalScale={isCurrency}
         onChange={handleChange}
-        value={value}
+        value={isCurrency ? (parsedValue ?? 0) / 100 : parsedValue}
         {...props}
       />
     );
