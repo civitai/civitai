@@ -220,12 +220,12 @@ export function LeaderboardMetrics({
         icon={<IconTrophy {...iconProps} />}
         tooltip={
           <Stack spacing={0} align="center">
-            {delta && delta != 0 && (
+            {delta && delta !== 0 ? (
               <Text size="xs" color={delta > 0 ? 'green' : 'red'}>
                 {delta > 0 ? '+' : ''}
                 {numberWithCommas(delta)}
               </Text>
-            )}
+            ) : null}
             <>Score</>
           </Stack>
         }
