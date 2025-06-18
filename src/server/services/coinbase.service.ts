@@ -135,7 +135,11 @@ export const getTransactionStatusByKey = async ({
     }
   }
 
-  if (transaction.status === CryptoTransactionStatus.SweepFailed) {
+  if (
+    [CryptoTransactionStatus.SweepFailed, CryptoTransactionStatus.WaitingForSweep].some(
+      (s) => s === transaction.status
+    )
+  ) {
     // Re-attempt:
     await completeCryptoTransaction({
       userId,
