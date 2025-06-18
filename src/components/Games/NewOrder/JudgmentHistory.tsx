@@ -172,7 +172,7 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
               </Badge>
               {!isPending && !isCorrect && (
                 <Badge className="mx-2 border border-blue-5" variant="filled" color="gray">
-                  {browsingLevelLabels[originalLevel ?? (image.nsfwLevel as NsfwLevel)]}
+                  {browsingLevelLabels[image.nsfwLevel as NsfwLevel]}
                 </Badge>
               )}
             </div>
