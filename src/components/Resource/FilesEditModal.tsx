@@ -29,10 +29,10 @@ export default function FilesEditModal({ modelVersionId }: { modelVersionId: num
             <Loader size="lg" />
           </Center>
         ) : modelVersion ? (
-          <Stack spacing="xl">
+          <Stack gap="xl">
             <Link legacyBehavior href={`/models/${modelVersion?.model.id}`} passHref shallow>
               <Anchor size="xs">
-                <Group spacing={4}>
+                <Group gap={4}>
                   <IconArrowLeft size={12} />
                   <Text inherit>Back to {modelVersion?.model?.name} page</Text>
                 </Group>

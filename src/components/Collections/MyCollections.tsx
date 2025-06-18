@@ -3,7 +3,6 @@ import {
   ScrollArea,
   Stack,
   TextInput,
-  createStyles,
   Skeleton,
   Text,
   ThemeIcon,
@@ -24,7 +23,6 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const { classes } = useStyles();
   const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery(
     { permission: CollectionContributorPermission.VIEW },
     { enabled: !!currentUser }
@@ -60,7 +58,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
   const FilterBox = (
     <TextInput
       variant="unstyled"
-      icon={<IconSearch size={20} />}
+      leftSection={<IconSearch size={20} />}
       onChange={(e) => setQuery(e.target.value)}
       value={query}
       placeholder="Filter"
@@ -72,17 +70,17 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
       {ownedFilteredCollections.map((c) => (
         <NavLink
           key={c.id}
-          className={classes.navItem}
+          radius="sm"
           onClick={() => selectCollection(c.id)}
           active={router.query?.collectionId === c.id.toString()}
           label={<Text>{c.name}</Text>}
         />
       ))}
-      {contributingFilteredCollections.length > 0 && <Divider label="Following" mt="sm" />}
+      {contributingFilteredCollections.length > 0 && <Divider label="Following" mt="sm" ml="sm" />}
       {contributingFilteredCollections.map((c) => (
         <NavLink
           key={c.id}
-          className={classes.navItem}
+          radius="sm"
           onClick={() => selectCollection(c.id)}
           active={router.query?.collectionId === c.id.toString()}
           label={<Text>{c.name}</Text>}
@@ -93,7 +91,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
           <ThemeIcon color="gray" size="md" radius="xl">
             <IconPlaylistX size={20} />
           </ThemeIcon>
-          <Text color="dimmed">No collections found</Text>
+          <Text c="dimmed">No collections found</Text>
         </Group>
       )}
     </Skeleton>
@@ -110,7 +108,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
   }
 
   return (
-    <Stack spacing={4}>
+    <Stack gap={4}>
       {FilterBox}
       <ScrollArea>{Collections}</ScrollArea>
     </Stack>
@@ -131,10 +129,3 @@ type MyCollectionsProps = {
   pathnameOverride?: string;
   sortOrder?: SortOrder; // <-- ADDED THIS
 };
-
-const useStyles = createStyles((theme) => ({
-  navItem: {
-    borderRadius: theme.radius.sm,
-  },
-  header: {},
-}));

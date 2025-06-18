@@ -1,5 +1,5 @@
-import type { CSSObject, InputWrapperProps, MantineSize } from '@mantine/core';
-import { createStyles, Group, Input, Text } from '@mantine/core';
+import type { InputWrapperProps, MantineSize } from '@mantine/core';
+import { Group, Input, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import type { RichTextEditorProps } from '@mantine/tiptap';
@@ -15,7 +15,8 @@ import Youtube from '@tiptap/extension-youtube';
 import type { Editor, Extensions } from '@tiptap/react';
 import { BubbleMenu, Extension, mergeAttributes, nodePasteRule, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect, useImperativeHandle, useRef } from 'react';
+import React, { useEffect, useImperativeHandle, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import slugify from 'slugify';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
@@ -24,11 +25,12 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getRandomId, validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
+import classes from './RichTextEditorComponent.module.scss';
+import clsx from 'clsx';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -37,7 +39,7 @@ import { getSuggestions } from './suggestion';
 //   xl: '90px',
 // };
 
-const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
+const mapEditorSize: Omit<Record<MantineSize, CSSProperties>, 'xs'> = {
   sm: {
     minHeight: 30,
     fontSize: 14,
@@ -53,36 +55,10 @@ const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
   },
 };
 
-const useStyles = createStyles((theme) => ({
-  mention: {
-    color: theme.colors.blue[4],
-  },
-  instagramEmbed: {
-    aspectRatio: '9/16',
-    maxHeight: 1060,
-    maxWidth: '50%',
-    overflow: 'hidden',
-
-    [containerQuery.smallerThan('sm')]: {
-      maxWidth: '100%',
-    },
-  },
-  strawPollEmbed: {
-    aspectRatio: '4/3',
-    maxHeight: 480,
-    // Ignoring because we want to use !important, if not then it complaints about it
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    pointerEvents: 'auto !important' as any,
-  },
-  bubbleTooltip: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-  },
-}));
-
 function openLinkWhitelistRequestModal() {
   return openModal({
     title: (
-      <Group spacing="xs">
+      <Group gap="xs">
         <IconAlertTriangle color="gold" />
         <Text size="lg">Blocked URL</Text>
       </Group>
@@ -93,7 +69,6 @@ function openLinkWhitelistRequestModal() {
         Please follow{' '}
         <Text
           component="a"
-          variant="link"
           href="https://forms.gle/MzMCVA4mq3r4osv6A"
           target="_blank"
           rel="nofollow noreferrer"
@@ -150,11 +125,10 @@ export function RichTextEditor({
   onSuperEnter,
   withLinkValidation,
   stickyToolbar,
-  toolbarOffset = 70,
+  toolbarOffset = 0,
   inputClasses,
   ...props
 }: Props) {
-  const { classes } = useStyles();
   const addHeading = includeControls.includes('heading');
   const addFormatting = includeControls.includes('formatting');
   const addColors = addFormatting && includeControls.includes('colors');
@@ -238,7 +212,7 @@ export function RichTextEditor({
               showNotification({
                 id: UPLOAD_NOTIFICATION_ID,
                 loading: true,
-                disallowClose: true,
+                withCloseButton: false,
                 autoClose: false,
                 message: 'Uploading images...',
               });
@@ -301,6 +275,7 @@ export function RichTextEditor({
     content: value,
     onUpdate: onChange ? ({ editor }) => onChange(editor.getHTML()) : undefined,
     editable: !disabled,
+    immediatelyRender: false,
   });
 
   const editorRef = useRef<Editor>();
@@ -339,6 +314,8 @@ export function RichTextEditor({
     },
   }));
 
+  const editorSizeStyles = mapEditorSize[editorSize] || mapEditorSize.sm;
+
   return (
     <Input.Wrapper
       id={id}
@@ -353,30 +330,27 @@ export function RichTextEditor({
         {...props}
         editor={editor}
         id={id}
-        sx={(theme) => ({
-          marginTop: description ? 5 : undefined,
-          marginBottom: error ? 5 : undefined,
-          borderColor: error ? theme.colors.red[8] : undefined,
-
-          // Fixes gapcursor color for dark mode
-          '& .ProseMirror-gapcursor:after': {
-            borderTop: `1px solid ${theme.colorScheme === 'dark' ? 'white' : 'black'}`,
-          },
-
-          '& .ProseMirror': {
-            ...mapEditorSize[editorSize],
-            // minHeight: mapEditorSizeHeight[editorSize],
-
-            '& p.is-editor-empty:first-of-type::before': {
-              color: error ? theme.colors.red[8] : undefined,
-              fontSize: 14,
-            },
-          },
-
-          '& iframe': {
-            pointerEvents: 'none',
-          },
-        })}
+        classNames={{
+          ...props.classNames,
+          content: clsx(
+            classes.richTextEditor,
+            props.classNames && 'content' in props.classNames ? props.classNames.content : undefined
+          ),
+          toolbar: clsx(
+            'border-l border-l-gray-4 dark:border-l-dark-4',
+            props.classNames && 'toolbar' in props.classNames ? props.classNames.toolbar : undefined
+          ),
+        }}
+        style={
+          {
+            '--editor-min-height': editorSizeStyles.minHeight
+              ? `${editorSizeStyles.minHeight}px`
+              : undefined,
+            '--editor-font-size': editorSizeStyles.fontSize
+              ? `${editorSizeStyles.fontSize}px`
+              : undefined,
+          } as React.CSSProperties
+        }
       >
         {!hideToolbar && (
           <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
@@ -478,7 +452,7 @@ type ControlType =
   | 'mentions'
   | 'polls'
   | 'colors';
-type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
+export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
     includeControls?: ControlType[];

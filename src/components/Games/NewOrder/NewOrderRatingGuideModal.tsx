@@ -134,7 +134,7 @@ function BrowsingLevelCarousel({
                         {image.hasMeta && (
                           <div className="absolute bottom-0.5 right-0.5 z-10">
                             <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                              <ActionIcon variant="transparent" size="lg">
+                              <ActionIcon component="div" variant="transparent" size="lg">
                                 <IconInfoCircle
                                   color="white"
                                   filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"

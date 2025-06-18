@@ -1,0 +1,29 @@
+.profileDetailsContainer {
+  background: alpha(var(--mantine-color-dark-9), 0.8);
+  /* Replace with Mantine's dark[9] RGBA variable */
+  margin: calc(-1 * var(--mantine-spacing-md));
+  /* Replace with Mantine's medium spacing variable */
+  margin-top: 0;
+  min-height: 50px;
+  display: flex;
+  justify-content: center;
+  flex-direction: column;
+  color: var(--mantine-color-white);
+  /* Replace with Mantine's white color variable */
+  z-index: 10;
+}
+
+.profileDetails {
+  padding: var(--mantine-spacing-md);
+  /* Replace with Mantine's medium spacing variable */
+  padding-top: var(--mantine-spacing-xs);
+  /* Replace with Mantine's extra-small spacing variable */
+  padding-bottom: var(--mantine-spacing-xs);
+  position: relative;
+}
+
+.avatar {
+  position: absolute;
+  bottom: 4px;
+  overflow: visible;
+}

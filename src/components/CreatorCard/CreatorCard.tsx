@@ -1,15 +1,14 @@
 import { uniqBy } from 'lodash-es';
 import type { CardProps } from '@mantine/core';
 import {
-  ActionIcon,
-  BackgroundImage,
   Box,
   Card,
   Group,
   Stack,
-  createStyles,
   Text,
   Image,
+  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 
@@ -17,7 +16,7 @@ import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
-import { constants, creatorCardStats, creatorCardStatsDefaults } from '~/server/common/constants';
+import { constants, creatorCardStatsDefaults } from '~/server/common/constants';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -29,38 +28,13 @@ import type {
   ProfileBackgroundCosmetic,
   SimpleCosmetic,
 } from '~/server/selectors/cosmetic.selector';
-import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { BadgeDisplay, Username } from '../User/Username';
 import type { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-
-const useStyles = createStyles((theme) => ({
-  profileDetailsContainer: {
-    background: theme.fn.rgba(theme.colors.dark[9], 0.8),
-    margin: -theme.spacing.md,
-    marginTop: 0,
-    minHeight: 50,
-    display: 'flex',
-    justifyContent: 'center',
-    flexDirection: 'column',
-    color: theme.white,
-    zIndex: 10,
-  },
-
-  profileDetails: {
-    padding: theme.spacing.md,
-    paddingTop: theme.spacing.xs,
-    paddingBottom: theme.spacing.xs,
-    position: 'relative',
-  },
-  avatar: {
-    position: 'absolute',
-    bottom: 4,
-    overflow: 'visible',
-  },
-}));
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import classes from './CreatorCard.module.css';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function CreatorCard({
   user,
@@ -75,6 +49,8 @@ export function CreatorCard({
     { id: user.id },
     { enabled: user.id !== constants.system.user.id }
   );
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const creator = data || {
     ...user,
@@ -97,8 +73,8 @@ export function CreatorCard({
   return (
     <Card p="xs" withBorder {...cardProps}>
       <Card.Section>
-        <Stack spacing="xs" p="xs">
-          <Group align="center" position="apart">
+        <Stack gap="xs" p="xs">
+          <Group align="center" justify="space-between">
             <UserAvatar
               size="sm"
               avatarProps={{ size: 32 }}
@@ -111,23 +87,22 @@ export function CreatorCard({
               linkToProfile
             />
             {withActions && (
-              <Group spacing={8} noWrap>
+              <Group gap={8} wrap="nowrap">
                 {tipsEnabled && (
                   <TipBuzzButton
                     toUserId={creator.id}
-                    size="xs"
                     entityId={tipBuzzEntityId}
                     label=""
                     entityType={tipBuzzEntityType}
-                    compact
+                    size="compact-xs"
                   />
                 )}
-                <ChatUserButton user={creator} size="xs" label="" compact />
-                <FollowUserButton userId={creator.id} size="xs" compact />
+                <ChatUserButton user={creator} label="" size="compact-xs" />
+                <FollowUserButton userId={creator.id} size="compact-xs" />
               </Group>
             )}
           </Group>
-          <Group spacing={8}>
+          <Group gap={8}>
             <RankBadge size="md" rank={creator.rank} />
             {stats && (
               <UserStatBadges
@@ -144,14 +119,14 @@ export function CreatorCard({
         <Card.Section
           withBorder
           inheritPadding
-          sx={(theme) => ({
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          })}
+          style={{
+            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+          }}
           py={5}
         >
-          <Group spacing={4}>
+          <Group gap={4}>
             {sortDomainLinks(creator.links).map((link, index) => (
-              <ActionIcon
+              <LegacyActionIcon
                 key={index}
                 component="a"
                 href={link.url}
@@ -160,7 +135,7 @@ export function CreatorCard({
                 size={32}
               >
                 <DomainIcon domain={link.domain} size={20} />
-              </ActionIcon>
+              </LegacyActionIcon>
             ))}
           </Group>
         </Card.Section>
@@ -181,7 +156,8 @@ export const CreatorCardV2 = ({
   subText,
   ...cardProps
 }: CreatorCardPropsV2) => {
-  const { classes, theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { data } = trpc.user.getCreator.useQuery(
     { id: user.id },
     { enabled: user.id !== constants.system.user.id }
@@ -282,16 +258,14 @@ export const CreatorCardV2 = ({
             w="100%"
             h="100%"
             styles={{
-              figure: { height: '100%' },
-              imageWrapper: { height: '100%' },
-              image: { objectFit: 'cover', height: '100% !important' },
+              root: { objectFit: 'cover', height: '100% !important' },
             }}
           />
         )}
         <Stack p="md">
-          <Group position="apart" align="flex-start" mih={60} style={{ zIndex: 1 }}>
+          <Group justify="space-between" align="flex-start" mih={60} style={{ zIndex: 1 }}>
             <Group>
-              <Group spacing={4}>
+              <Group gap={4}>
                 <RankBadge size="md" rank={creator.rank} />
                 {stats && displayStats.length > 0 && (
                   <UserStatBadgesV2
@@ -321,10 +295,10 @@ export const CreatorCardV2 = ({
             />
           </Group>
           <Box className={classes.profileDetailsContainer}>
-            <Stack spacing="xs" className={classes.profileDetails} py={8} h="100%">
-              <Group align="center" position="apart" noWrap>
+            <Stack gap="xs" className={classes.profileDetails} py={8} h="100%">
+              <Group align="center" justify="space-between" wrap="nowrap">
                 <UserProfileLink user={creator} linkToProfile>
-                  <Group noWrap>
+                  <Group wrap="nowrap">
                     <Box className={classes.avatar}>
                       <UserAvatar
                         size="lg"
@@ -338,7 +312,7 @@ export const CreatorCardV2 = ({
                         user={creatorWithCosmetics}
                       />
                     </Box>
-                    <Stack spacing={0} ml={70}>
+                    <Stack gap={0} ml={70}>
                       <Username
                         username={creator?.username}
                         deletedAt={creator?.deletedAt}
@@ -351,12 +325,7 @@ export const CreatorCardV2 = ({
                       ) : (
                         <>
                           {creator.createdAt && (
-                            <Text
-                              size="xs"
-                              lh={1}
-                              lineClamp={1}
-                              style={{ color: theme.fn.rgba(theme.white, 0.75) }}
-                            >
+                            <Text size="xs" lh={1} lineClamp={1} className="text-white/75">
                               Joined {formatDate(creator.createdAt)}
                             </Text>
                           )}
@@ -366,7 +335,7 @@ export const CreatorCardV2 = ({
                   </Group>
                 </UserProfileLink>
                 {withActions && (
-                  <Group spacing={8} noWrap>
+                  <Group gap={8} wrap="nowrap">
                     {tipsEnabled && (
                       <TipBuzzButton
                         toUserId={creator.id}
@@ -409,14 +378,14 @@ export const CreatorCardV2 = ({
         <Card.Section
           withBorder
           inheritPadding
-          sx={(theme) => ({
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          })}
+          style={{
+            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+          }}
           py={5}
         >
-          <Group spacing={4}>
+          <Group gap={4}>
             {sortDomainLinks(creator.links).map((link, index) => (
-              <ActionIcon
+              <LegacyActionIcon
                 key={index}
                 component="a"
                 href={link.url}
@@ -425,7 +394,7 @@ export const CreatorCardV2 = ({
                 size={32}
               >
                 <DomainIcon domain={link.domain} size={20} />
-              </ActionIcon>
+              </LegacyActionIcon>
             ))}
           </Group>
         </Card.Section>

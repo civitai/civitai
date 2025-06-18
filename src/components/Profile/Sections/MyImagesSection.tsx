@@ -13,10 +13,11 @@ import {
   ProfileSection,
   ProfileSectionNoResults,
   ProfileSectionPreview,
-  useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { ImageSort } from '~/server/common/enums';
+import classes from '~/components/Profile/ProfileSection.module.css';
+import clsx from 'clsx';
 
 const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7
 
@@ -48,12 +49,6 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
 
   const images = useMemo(() => _images.slice(0, MAX_IMAGES_DISPLAY), [_images]);
 
-  const { classes, cx } = useProfileSectionStyles({
-    count: images.length,
-    rowCount: 2,
-    widthGrid: '280px',
-  });
-
   const isNullState = !isLoading && !images.length;
 
   if (isNullState) {
@@ -61,7 +56,17 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
   }
 
   return (
-    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
+    <div
+      ref={ref}
+      className={isNullState ? undefined : classes.profileSection}
+      style={
+        {
+          '--count': images.length,
+          '--row-count': 2,
+          '--width-grid': '280px',
+        } as React.CSSProperties
+      }
+    >
       {inView &&
         (isLoading ? (
           <ProfileSectionPreview rowCount={2} />
@@ -80,7 +85,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
                     h={34}
                     component="a"
                     variant="subtle"
-                    rightIcon={<IconArrowRight size={16} />}
+                    rightSection={<IconArrowRight size={16} />}
                   >
                     <Text inherit> View all images</Text>
                   </Button>
@@ -91,7 +96,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
             <ShowcaseGrid
               itemCount={images.length}
               rows={2}
-              className={cx({
+              className={clsx({
                 [classes.nullState]: !images.length,
                 [classes.loading]: isRefetching,
               })}

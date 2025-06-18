@@ -116,14 +116,13 @@ export function FlaggedModelsList() {
         mantineTableBodyCellProps: { align: 'right' },
         Cell: ({ row: { original } }) => (
           <Button
-            size="sm"
             onClick={() =>
               dialogStore.trigger({
                 component: DetailsModal,
                 props: { model: original.model, details: original.details },
               })
             }
-            compact
+            size="compact-sm"
           >
             Resolve
           </Button>
@@ -150,9 +149,9 @@ export function FlaggedModelsList() {
       enableGlobalFilter={false}
       enableColumnFilters={false}
       mantineTableProps={{
-        sx: { tableLayout: 'fixed' },
+        style: { tableLayout: 'fixed' },
       }}
-      mantineTableContainerProps={{ sx: { maxHeight: 450 } }}
+      mantineTableContainerProps={{ style: { maxHeight: 450 } }}
       initialState={{
         density: 'xs',
         // Hiding these columns because they're irrelevant
@@ -171,11 +170,10 @@ export function FlaggedModelsList() {
       renderToolbarInternalActions={({ table }) =>
         table.getSelectedRowModel().rows.length > 0 ? (
           <Button
-            size="sm"
             ml="auto"
             onClick={() => handleResolveSelectedModels(table)}
             loading={resolveFlaggedModelMutation.isLoading}
-            compact
+            size="compact-sm"
           >
             Resolve Selected
           </Button>
@@ -293,8 +291,8 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
               withAsterisk
             />
             <Paper radius="md" p="xl" withBorder>
-              <Stack spacing="xs">
-                <Text size="md" weight={500}>
+              <Stack gap="xs">
+                <Text size="md" fw={500}>
                   This resource:
                 </Text>
                 <InputCheckbox
@@ -341,7 +339,7 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
         </Form>
 
         <div className="w-64 flex-none">
-          <Text size="md" weight={600} className="mb-2">
+          <Text size="md" fw={600} className="mb-2">
             Scan Details
           </Text>
           <JsonInput value={JSON.stringify(details, null, 2)} minRows={4} formatOnBlur autosize />

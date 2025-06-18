@@ -29,11 +29,11 @@ export function CreateComment({
   if (!currentUser)
     return (
       <Alert>
-        <Group align="center" position="center" spacing="xs">
+        <Group align="center" justify="center" gap="xs">
           <Text size="sm">
             You must{' '}
             <Text
-              variant="link"
+              c="blue.4"
               component={Link}
               href={`/login?returnUrl=${router.asPath}`}
               rel="nofollow"
@@ -69,7 +69,7 @@ export function CreateComment({
     );
 
   return (
-    <Group align="flex-start" noWrap spacing="sm" className={className}>
+    <Group align="flex-start" wrap="nowrap" gap="sm" className={className}>
       <UserAvatar user={currentUser} size={replyToCommentId ? 'sm' : 'md'} />
       <CommentForm
         onCancel={onCancel}

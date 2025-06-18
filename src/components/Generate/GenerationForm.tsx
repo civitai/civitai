@@ -10,6 +10,7 @@ import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvi
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 import { useIsClient } from '~/providers/IsClientProvider';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
   generationFormStore,
   useGenerationFormStore,
@@ -52,7 +53,7 @@ export function GenerationForm() {
               {/* <RemixOfControl /> */}
               <SegmentedControl
                 value={type}
-                onChange={generationFormStore.setType}
+                onChange={(v) => generationFormStore.setType(v as MediaType)}
                 className="overflow-visible"
                 color="blue"
                 data={[

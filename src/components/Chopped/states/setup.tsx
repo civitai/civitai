@@ -26,6 +26,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useChoppedServer } from '~/components/Chopped/chopped.connection';
 import { ChoppedLayout } from '~/components/Chopped/chopped.components';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function Setup() {
   const global = useChoppedStore((state) => state.global);
@@ -95,18 +96,17 @@ export function Setup() {
     <ChoppedLayout title="New Game" canBack>
       <Stack>
         <Group mb={-12}>
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Rounds
           </Text>
           <Button
-            size="xs"
             ml="auto"
-            compact
+            size="compact-xs"
             variant="light"
             onClick={addRound}
             disabled={!canAddRounds}
           >
-            <Group spacing={4}>
+            <Group gap={4}>
               <IconPlus size={14} strokeWidth={2.5} />
               Add
             </Group>
@@ -123,7 +123,7 @@ export function Setup() {
           {newGameState.themeIds.map((themeId, i) => {
             return (
               <Card.Section key={i} withBorder pr="xs">
-                <Group spacing={0}>
+                <Group gap={0}>
                   <Select
                     size="md"
                     data={themeOptions}
@@ -137,9 +137,9 @@ export function Setup() {
                     }}
                     className="flex-1"
                   />
-                  <ActionIcon size="xs" onClick={() => removeRound(i)}>
+                  <LegacyActionIcon size="xs" onClick={() => removeRound(i)}>
                     <IconX strokeWidth={2.5} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Group>
               </Card.Section>
             );
@@ -147,13 +147,12 @@ export function Setup() {
         </Card>
 
         <Group mb={-12}>
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Judges
           </Text>
           <Button
-            size="xs"
             ml="auto"
-            compact
+            size="compact-xs"
             variant="light"
             pl={4}
             color={newGameState.includeAudio ? 'blue' : 'gray'}
@@ -161,7 +160,7 @@ export function Setup() {
               setNewGameState((state) => ({ ...state, includeAudio: !state.includeAudio }))
             }
           >
-            <Group spacing={4}>
+            <Group gap={4}>
               {newGameState.includeAudio ? (
                 <IconCheck size={14} strokeWidth={2.5} />
               ) : (
@@ -185,13 +184,13 @@ export function Setup() {
               <Card.Section key={judge.id} withBorder px="xs" py="xs">
                 <Group>
                   <EdgeMedia src={judge.avatar} width={48} />
-                  <Stack spacing={0}>
-                    <Text weight={500}>{judge.name}</Text>
-                    <Text size="xs" color="dimmed">
+                  <Stack gap={0}>
+                    <Text fw={500}>{judge.name}</Text>
+                    <Text size="xs" c="dimmed">
                       {judge.shortDescription}
                     </Text>
                   </Stack>
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="md"
                     variant="filled"
                     color={isSelected ? 'blue' : 'gray'}
@@ -200,7 +199,7 @@ export function Setup() {
                     ml="auto"
                   >
                     {isSelected ? <IconCheck strokeWidth={2.5} /> : <IconX strokeWidth={2.5} />}
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Group>
               </Card.Section>
             );
@@ -208,19 +207,18 @@ export function Setup() {
         </Card>
 
         <Group mb={-12}>
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Are you going to play?
           </Text>
           <Button
-            size="lg"
             ml="auto"
-            compact
+            size="compact-lg"
             variant="light"
             pl={4}
             color={newGameState.viewOnly ? 'gray' : 'blue'}
             onClick={() => setNewGameState((state) => ({ ...state, viewOnly: !state.viewOnly }))}
           >
-            <Group spacing={4}>
+            <Group gap={4}>
               {newGameState.viewOnly ? <IconX /> : <IconCheck />}
               {newGameState.viewOnly ? 'No' : 'Yes'}
             </Group>
@@ -229,7 +227,7 @@ export function Setup() {
 
         {!newGameState.viewOnly && (
           <>
-            <Text size="lg" weight={500} mb={-12}>
+            <Text size="lg" fw={500} mb={-12}>
               {`What's your name?`}
             </Text>
             <TextInput
@@ -244,14 +242,14 @@ export function Setup() {
         )}
 
         <Group mb={-12}>
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Max Players
           </Text>
         </Group>
         <NumberInput
           value={newGameState.maxPlayers}
           onChange={(value) => {
-            setNewGameState((state) => ({ ...state, maxPlayers: value! }));
+            setNewGameState((state) => ({ ...state, maxPlayers: Number(value!) }));
           }}
           size="md"
           min={2}

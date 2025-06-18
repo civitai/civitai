@@ -39,6 +39,7 @@ import type {
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function CosmeticStoreProducts() {
   const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticShopItemInput, 'limit'>>({
@@ -65,16 +66,14 @@ export default function CosmeticStoreProducts() {
     openConfirmModal({
       title: 'Delete Item',
       children: (
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text size="sm">Are you sure you want to delete this Shop item?</Text>
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             Items with purchases cannot be deleted. Instead, please mark them as archived.
           </Text>
         </Stack>
       ),
-      groupProps: {
-        position: 'center',
-      },
+      groupProps: { justify: 'center' },
       labels: { confirm: 'Delete Shop Item', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => onDelete(),
@@ -85,12 +84,12 @@ export default function CosmeticStoreProducts() {
     <>
       <Meta title="Cosmetic Shop Products" deIndex />
       <Container size="lg">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Group>
             <BackButton url="/moderator/cosmetic-store" />
             <Title order={1}>Cosmetic Shop Products</Title>
           </Group>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You can add and manage shop products here. A cosmetic must be created before hand for it
             to be created into a shop product. After creating, remember to add it to a section{' '}
             <Anchor component={Link} href="/moderator/cosmetic-store/sections">
@@ -98,7 +97,7 @@ export default function CosmeticStoreProducts() {
             </Anchor>
           </Text>
         </Stack>
-        <Group position="apart" mb="md">
+        <Group justify="space-between" mb="md">
           <Group align="flex-end">
             <Button component={Link} href="/moderator/cosmetic-store/products/create" radius="xl">
               <IconPlus />
@@ -130,92 +129,96 @@ export default function CosmeticStoreProducts() {
             <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
             <Table>
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Cosmetic Name</th>
-                  <th>Type</th>
-                  <th>
-                    <Text align="center">Sample</Text>
-                  </th>
-                  <th>Price</th>
-                  <th>Purchases</th>
-                  <th>Available From</th>
-                  <th>Available To</th>
-                  <th>Remaining Quantity</th>
-                  <th>Archived At</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Title</Table.Th>
+                  <Table.Th>Cosmetic Name</Table.Th>
+                  <Table.Th>Type</Table.Th>
+                  <Table.Th>Sample</Table.Th>
+                  <Table.Th style={{ width: '135px' }}>Price</Table.Th>
+                  <Table.Th>Purchases</Table.Th>
+                  <Table.Th>Available From</Table.Th>
+                  <Table.Th>Available To</Table.Th>
+                  <Table.Th>Remaining Quantity</Table.Th>
+                  <Table.Th>Archived At</Table.Th>
+                  <Table.Th>&nbsp;</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {cosmeticShopItems.map((shopItem) => {
                   const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
                   return (
-                    <tr key={shopItem.id}>
-                      <td>
-                        <Stack spacing={0} maw={350}>
-                          <Text weight="bold">{shopItem.title}</Text>
+                    <Table.Tr key={shopItem.id}>
+                      <Table.Td>
+                        <Stack gap={0} maw={350}>
+                          <Text fw="bold">{shopItem.title}</Text>
                           {shopItem.description && (
                             <ContentClamp maxHeight={200}>
                               <RenderHtml html={shopItem.description} />
                             </ContentClamp>
                           )}
                         </Stack>
-                      </td>
-                      <td>
-                        <Stack spacing={0} maw={350} align="flex-start">
+                      </Table.Td>
+                      <Table.Td>
+                        <Stack gap={0} maw={350} align="flex-start">
                           <Text>{shopItem.cosmetic.name}</Text>
                         </Stack>
-                      </td>
-                      <td>{getDisplayName(shopItem.cosmetic.type)}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{getDisplayName(shopItem.cosmetic.type)}</Table.Td>
+                      <Table.Td>
                         <Center>
                           <CosmeticSample cosmetic={shopItem.cosmetic} />
                         </Center>
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <CurrencyBadge unitAmount={shopItem.unitAmount} currency={Currency.BUZZ} />
-                      </td>
-                      <td>{meta.purchases ?? 0}</td>
-                      <td>{shopItem.availableFrom ? formatDate(shopItem.availableFrom) : '-'}</td>
-                      <td>{shopItem.availableTo ? formatDate(shopItem.availableTo) : '-'}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{meta.purchases ?? 0}</Table.Td>
+                      <Table.Td>
+                        {shopItem.availableFrom ? formatDate(shopItem.availableFrom) : '-'}
+                      </Table.Td>
+                      <Table.Td>
+                        {shopItem.availableTo ? formatDate(shopItem.availableTo) : '-'}
+                      </Table.Td>
+                      <Table.Td>
                         {(shopItem.availableQuantity ?? null) !== null
                           ? `${Math.max(
                               0,
                               (shopItem.availableQuantity ?? 0) - (meta.purchases ?? 0)
                             )}/${shopItem.availableQuantity}`
                           : '-'}
-                      </td>{' '}
-                      <td>{shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}</td>
-                      <td>
-                        <Group spacing={4} noWrap>
-                          <ActionIcon
+                      </Table.Td>{' '}
+                      <Table.Td>
+                        {shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap={4} wrap="nowrap">
+                          <LegacyActionIcon
                             component={Link}
                             href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
                           >
                             <IconEdit />
-                          </ActionIcon>
-                          <ActionIcon onClick={() => handleDeleteItem(shopItem.id)}>
+                          </LegacyActionIcon>
+                          <LegacyActionIcon onClick={() => handleDeleteItem(shopItem.id)}>
                             <IconTrash />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </Group>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   );
                 })}
-              </tbody>
-              {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
-                  <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
-                  <Pagination
-                    page={filters.page}
-                    onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
-                    total={pagination.totalPages}
-                  />
-                </Group>
-              )}
+              </Table.Tbody>
             </Table>
+            {pagination && pagination.totalPages > 1 && (
+              <Group className="mt-4" justify="space-between">
+                <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
+                <Pagination
+                  value={filters.page}
+                  onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
+                  total={pagination.totalPages}
+                />
+              </Group>
+            )}
           </div>
         ) : (
           <Stack align="center">

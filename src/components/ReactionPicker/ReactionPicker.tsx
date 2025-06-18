@@ -32,11 +32,11 @@ export function ReactionPicker({ reactions, disabled = false, onSelect }: Reacti
     <ReactionPickerContext.Provider
       value={{ onEmojiClick: onSelect, user: currentUser, reactions, disabled }}
     >
-      <Group spacing={4} align="center">
+      <Group gap={4} align="center">
         <Popover shadow="md" position="top-start" withArrow withinPortal>
           <Popover.Target>
-            <Button variant="subtle" size="xs" color="gray" radius="xl" compact>
-              <Group spacing={2}>
+            <Button variant="subtle" color="gray" radius="xl" size="compact-xs">
+              <Group gap={2}>
                 <IconPlus size={14} stroke={1.5} />
                 <IconMoodSmile size={14} stroke={1.5} />
               </Group>
@@ -46,7 +46,7 @@ export function ReactionPicker({ reactions, disabled = false, onSelect }: Reacti
             {session ? (
               <ReactionSelector />
             ) : (
-              <Text color="dimmed" size="xs" px="xs">
+              <Text c="dimmed" size="xs" px="xs">
                 You must be logged in to react
               </Text>
             )}
@@ -79,14 +79,13 @@ function ReactionBadge({ reaction, reactions }: ReactionBadgeProps) {
   return (
     <Tooltip label={tooltip} withArrow withinPortal maw={300} multiline>
       <Button
-        size="xs"
         radius="xl"
         variant="light"
         color={reacted ? 'blue' : 'gray'}
         onClick={canClick ? () => onEmojiClick(reaction) : undefined}
-        compact
+        size="compact-xs"
       >
-        <Group spacing={4} align="center">
+        <Group gap={4} align="center">
           <Text inherit>{constants.availableReactions[reaction]}</Text>
           <Text inherit>{reactions.length}</Text>
         </Group>
@@ -105,7 +104,7 @@ function ReactionSelector() {
   const canClick = user && !disabled;
 
   return (
-    <Group spacing={4}>
+    <Group gap={4}>
       {Object.entries(constants.availableReactions).map(([reaction, emoji], index) => (
         <Tooltip key={index} label={reaction}>
           <Button

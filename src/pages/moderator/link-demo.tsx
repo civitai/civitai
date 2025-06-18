@@ -95,11 +95,11 @@ function Home() {
   return (
     <>
       <Container size="xl">
-        <Stack spacing={4}>
-          <Title order={3} mb={0} sx={{ lineHeight: 1 }}>
+        <Stack gap={4}>
+          <Title order={3} mb={0} lh={1}>
             Link your account
           </Title>
-          <Text mb="md" color="dimmed">
+          <Text mb="md" c="dimmed">
             Time to connect your Stable Diffusion & Flux model library to your Civitai Account.
           </Text>
           <List type="ordered">
@@ -128,7 +128,7 @@ function Home() {
               your settings
             </List.Item>
           </List>
-          <Stack align="center" spacing={5} my="lg">
+          <Stack align="center" gap={5} my="lg">
             <Title order={4}>Link Key</Title>
             {instance?.key ? (
               <CopyButton value={instance.key}>
@@ -139,7 +139,7 @@ function Home() {
                       onClick={copy}
                       size="lg"
                       px="sm"
-                      rightIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                      rightSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
                     >
                       {!copied ? instance.key : 'Copied'}
                     </Button>
@@ -148,7 +148,7 @@ function Home() {
               </CopyButton>
             ) : (
               <Button variant="default" size="lg" px="sm">
-                <Group spacing="xs" align="center">
+                <Group gap="xs" align="center">
                   <Loader size="sm" />
                   <span>Generating key</span>
                 </Group>

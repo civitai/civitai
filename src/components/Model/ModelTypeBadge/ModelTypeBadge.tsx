@@ -46,14 +46,14 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
 export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {
   const baseModelIndicator = BaseModelIndicator[baseModel];
   return (
-    <Badge variant="light" radius="xl" {...badgeProps}>
-      <Text size="xs" transform="capitalize">
+    <Badge variant="light" radius="xl" {...badgeProps} classNames={{ label: 'flex items-center gap-2'}}>
+      <Text size="xs" tt="capitalize" fw="bold">
         {getDisplayName(type)}
       </Text>
 
       {baseModelIndicator && (
         <>
-          <Divider orientation="vertical" />
+          <Divider className="border-l-white/30 border-r-black/20" orientation="vertical" />
           {typeof baseModelIndicator === 'string' ? (
             <Text size="xs" inherit>
               {baseModelIndicator}

@@ -36,8 +36,8 @@ export function AddToClubMenuItem({ entityType, entityId, resource }: Props) {
 
   return (
     <Menu.Item
-      icon={<IconClubs size={14} stroke={1.5} />}
-      onClick={(e) => {
+      leftSection={<IconClubs size={14} stroke={1.5} />}
+      onClick={(e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         onClick();

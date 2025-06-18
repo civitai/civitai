@@ -35,7 +35,7 @@ export const ClearableTextInput = forwardRef<HTMLInputElement, ClearableTextInpu
         {...props}
         rightSection={
           (clearable || rightSection) && (
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               {clearable && closeButton}
               {rightSection}
             </Group>
@@ -78,7 +78,7 @@ ClearableTextInput.displayName = 'ClearableTextInput';
 //       {...props}
 //       rightSection={
 //         (clearable || rightSection) && (
-//           <Group spacing={4} noWrap>
+//           <Group gap={4} wrap="nowrap">
 //             {clearable && closeButton}
 //             {rightSection}
 //           </Group>

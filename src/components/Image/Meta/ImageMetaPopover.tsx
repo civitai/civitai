@@ -1,6 +1,6 @@
 import { CloseButton, Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import type { ButtonProps } from '@mantine/core';
-import { Button, Card, Divider } from '@mantine/core';
+import { Button, Card, Divider, Group } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
@@ -26,7 +26,9 @@ export function ImageMetaPopover2({
 
   return (
     <Popover className="relative flex items-center">
-      <PopoverButton>{children}</PopoverButton>
+      <PopoverButton className="flex cursor-pointer items-center justify-center border-none bg-transparent">
+        {children}
+      </PopoverButton>
       <PopoverPanel
         className="z-[500]"
         anchor="top end"
@@ -83,8 +85,8 @@ function ImageMetaPopoverInner({ imageId }: { imageId: number }) {
       <ImageMeta imageId={imageId} />
       <Button.Group>
         {canRemix && (
-          <CloseButton
-            as={Button}
+          <Button
+            as={CloseButton}
             {...sharedButtonProps}
             data-activity="remix:image-meta"
             // @ts-ignore eslint-disable-next-line
@@ -93,14 +95,16 @@ function ImageMetaPopoverInner({ imageId }: { imageId: number }) {
             }}
             className="flex-1"
           >
-            <IconBrush size={16} />
-            Remix
-          </CloseButton>
+            <Group gap={4} align="center">
+              <IconBrush size={16} />
+              Remix
+            </Group>
+          </Button>
         )}
         {meta && (
           <CopyButton value={() => encodeMetadata(meta)}>
             {({ copy, copied, color, Icon }) => (
-              <Button {...sharedButtonProps} onClick={copy} color={color}>
+              <Button {...sharedButtonProps} className="-ml-px" onClick={copy} color={color}>
                 <Icon size={16} />
                 {!canRemix && (!copied ? 'Copy Generation Data' : 'Copied')}
               </Button>

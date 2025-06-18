@@ -3,12 +3,13 @@ import {
   Chip,
   Divider,
   Drawer,
+  Group,
   Indicator,
   Popover,
   Stack,
-  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
-import { DatePicker } from '@mantine/dates';
+import { DatePickerInput } from '@mantine/dates';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
@@ -36,6 +37,7 @@ const ChangelogTagSelect = ({
       loading={isLoading}
       placeholder="Select tags..."
       data={data}
+      comboboxProps={{ withinPortal: false }}
       searchable
       clearable
     />
@@ -43,9 +45,9 @@ const ChangelogTagSelect = ({
 };
 
 export function ChangelogFiltersDropdown() {
-  const theme = useMantineTheme();
   const mobile = useIsMobile();
   const [opened, setOpened] = useState(false);
+  const colorScheme = useComputedColorScheme('dark');
 
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state.changelogs,
@@ -75,8 +77,7 @@ export function ChangelogFiltersDropdown() {
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
+      disabled={!filterLength}
       inline
     >
       <FilterButton
@@ -91,37 +92,38 @@ export function ChangelogFiltersDropdown() {
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
-        <Divider label="Types" labelProps={{ weight: 'bold', size: 'sm' }} />
+    <Stack gap="lg">
+      <Stack gap="md">
+        <Divider label="Types" className="text-sm font-bold" />
         <Chip.Group
-          spacing={8}
           multiple
           value={filters.types ?? []}
-          onChange={(types: ChangelogType[]) => {
+          onChange={(types) => {
             setFilters({
               ...filters,
-              types,
+              types: types as ChangelogType[],
             });
           }}
         >
-          {Object.values(ChangelogType).map((type, index) => (
-            <FilterChip key={index} value={type}>
-              <span>{getDisplayName(type)}</span>
-            </FilterChip>
-          ))}
+          <Group gap={8}>
+            {Object.values(ChangelogType).map((type, index) => (
+              <FilterChip key={index} value={type}>
+                <span>{getDisplayName(type)}</span>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
-      <Stack spacing="md">
-        <Divider label="Tags" labelProps={{ weight: 'bold', size: 'sm' }} />
+      <Stack gap="md">
+        <Divider label="Tags" className="text-sm font-bold" />
         <ChangelogTagSelect
           value={filters.tags ?? []}
           onChange={(tags) => setFilters({ ...filters, tags })}
         />
       </Stack>
-      <Stack spacing="md">
-        <Divider label="Before" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <DatePicker
+      <Stack gap="md">
+        <Divider label="Before" className="text-sm font-bold" />
+        <DatePickerInput
           placeholder="Choose a date..."
           value={filters.dateBefore ?? null}
           onChange={(x) => {
@@ -132,9 +134,9 @@ export function ChangelogFiltersDropdown() {
           }}
         />
       </Stack>
-      <Stack spacing="md">
-        <Divider label="After" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <DatePicker
+      <Stack gap="md">
+        <Divider label="After" className="text-sm font-bold" />
+        <DatePickerInput
           placeholder="Choose a date..."
           value={filters.dateAfter ?? null}
           onChange={(x) => {
@@ -148,7 +150,7 @@ export function ChangelogFiltersDropdown() {
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -168,14 +170,14 @@ export function ChangelogFiltersDropdown() {
           size="90%"
           position="bottom"
           styles={{
-            drawer: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -191,6 +193,7 @@ export function ChangelogFiltersDropdown() {
       radius={12}
       onClose={() => setOpened(false)}
       middlewares={{ flip: true, shift: true }}
+      trapFocus
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p="md" w="100%">

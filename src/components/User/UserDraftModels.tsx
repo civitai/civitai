@@ -3,7 +3,6 @@ import {
   Anchor,
   Badge,
   Center,
-  createStyles,
   Divider,
   Group,
   LoadingOverlay,
@@ -23,35 +22,12 @@ import { getModelWizardUrl } from '~/server/common/model-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles((theme) => ({
-  header: {
-    position: 'sticky',
-    top: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    transition: 'box-shadow 150ms ease',
-    zIndex: 10,
-
-    '&::after': {
-      content: '""',
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2]
-      }`,
-    },
-  },
-
-  scrolled: {
-    boxShadow: theme.shadows.sm,
-  },
-}));
+import styles from './UserModelsTable.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function UserDraftModels() {
-  const { classes, cx } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
@@ -93,25 +69,25 @@ export function UserDraftModels() {
         style={{ height: 'max(400px, calc(100vh - 600px))' }}
         onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
       >
-        <Table verticalSpacing="md" fontSize="md" striped={hasDrafts}>
-          <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
-            <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th>Last Updated</th>
-              <th>Missing Info</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
+        <Table verticalSpacing="md" className="text-base" striped={hasDrafts}>
+          <Table.Thead className={clsx(styles.header, { [styles.scrolled]: scrolled })}>
+            <Table.Tr>
+              <Table.Th>Name</Table.Th>
+              <Table.Th>Type</Table.Th>
+              <Table.Th>Status</Table.Th>
+              <Table.Th>Created</Table.Th>
+              <Table.Th>Last Updated</Table.Th>
+              <Table.Th>Missing Info</Table.Th>
+              <Table.Th />
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
             {isLoading && (
-              <tr>
-                <td colSpan={7}>
+              <Table.Tr>
+                <Table.Td colSpan={7}>
                   <LoadingOverlay visible />
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )}
             {hasDrafts ? (
               items.map((model) => {
@@ -120,14 +96,14 @@ export function UserDraftModels() {
                 const hasPosts = model.modelVersions.some((version) => version._count.posts > 0);
 
                 return (
-                  <tr key={model.id}>
-                    <td>
-                      <Stack spacing={0}>
+                  <Table.Tr key={model.id}>
+                    <Table.Td>
+                      <Stack gap={0}>
                         <Text lineClamp={2}> {model.name}</Text>
                         <Divider my={4} />
                         <Link legacyBehavior href={getModelWizardUrl(model)} passHref>
                           <Anchor target="_blank" lineClamp={2}>
-                            <Group spacing="xs" noWrap>
+                            <Group gap="xs" wrap="nowrap">
                               <Text size="xs">Continue Wizard</Text>{' '}
                               <IconExternalLink size={16} stroke={1.5} />
                             </Group>
@@ -135,65 +111,65 @@ export function UserDraftModels() {
                         </Link>
                         <Link legacyBehavior href={`/models/${model.id}`} passHref>
                           <Anchor target="_blank" lineClamp={2}>
-                            <Group spacing="xs" noWrap>
+                            <Group gap="xs" wrap="nowrap">
                               <Text size="xs">Go to model page</Text>
                               <IconExternalLink size={16} stroke={1.5} />
                             </Group>
                           </Anchor>
                         </Link>
                       </Stack>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <Badge>{splitUppercase(model.type)}</Badge>
-                    </td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>
                       <Badge color="yellow">{splitUppercase(model.status)}</Badge>
-                    </td>
-                    <td>{formatDate(model.createdAt)}</td>
-                    <td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</td>
-                    <td>
+                    </Table.Td>
+                    <Table.Td>{formatDate(model.createdAt)}</Table.Td>
+                    <Table.Td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</Table.Td>
+                    <Table.Td>
                       <Group>
                         {(!hasVersion || !hasFiles || !hasPosts) && (
                           <IconAlertCircle size={16} color="orange" />
                         )}
-                        <Stack spacing={4}>
+                        <Stack gap={4}>
                           {!hasVersion && <Text inherit>Needs model version</Text>}
                           {!hasFiles && <Text inherit>Needs model files</Text>}
                           {!hasPosts && <Text inherit>Needs model post</Text>}
                         </Stack>
                       </Group>
-                    </td>
-                    <td>
-                      <Group position="right" pr="xs">
-                        <ActionIcon
+                    </Table.Td>
+                    <Table.Td>
+                      <Group justify="flex-end" pr="xs">
+                        <LegacyActionIcon
                           color="red"
                           variant="subtle"
                           size="sm"
                           onClick={() => handleDeleteModel(model)}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 );
               })
             ) : (
-              <tr>
-                <td colSpan={7}>
+              <Table.Tr>
+                <Table.Td colSpan={7}>
                   <Center py="md">
                     <NoContent message="You have no draft models" />
                   </Center>
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )}
-          </tbody>
+          </Table.Tbody>
         </Table>
       </ScrollArea>
       {pagination.totalPages > 1 && (
-        <Group position="apart">
+        <Group justify="space-between">
           <Text>Total {pagination.totalItems} items</Text>
-          <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
+          <Pagination value={page} onChange={setPage} total={pagination.totalPages} />
         </Group>
       )}
     </Stack>

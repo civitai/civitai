@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Badge,
   Center,
   Checkbox,
@@ -12,7 +11,7 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import type { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
+import type { TooltipProps } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import {
   IconCheck,
@@ -29,13 +28,14 @@ import { immer } from 'zustand/middleware/immer';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { CollectionItemStatus, CollectionMode, CollectionType } from '~/shared/utils/prisma/enums';
 import type { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import {
   getCollectionItemReviewData,
   useCollection,
@@ -61,6 +61,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
+import clsx from 'clsx';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -169,7 +170,7 @@ const ReviewCollection = () => {
               withBorder
               shadow="lg"
               p="xs"
-              sx={{
+              style={{
                 display: 'inline-flex',
                 float: 'right',
                 alignSelf: 'flex-end',
@@ -183,12 +184,12 @@ const ReviewCollection = () => {
               <ModerationControls collectionItems={collectionItems} filters={filters} />
             </Paper>
 
-            <Stack spacing="sm" mb="lg">
-              <Group spacing="xs">
+            <Stack gap="sm" mb="lg">
+              <Group gap="xs">
                 <BackButton url={`/collections/${collectionId}`} />
                 <Title order={1}>Collection items that need review</Title>
               </Group>
-              <Text color="dimmed">
+              <Text c="dimmed">
                 You are reviewing items on the collection that are either pending review or have
                 been rejected. You can change the status of these to be accepted or rejected.
               </Text>
@@ -201,17 +202,19 @@ const ReviewCollection = () => {
                   }
                 />
               )}
-              <Group position="apart">
+              <Group justify="space-between">
                 <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
-                  <Chip value={CollectionItemStatus.REVIEW}>
-                    <span>Review</span>
-                  </Chip>
-                  <Chip value={CollectionItemStatus.REJECTED}>
-                    <span>Rejected</span>
-                  </Chip>
-                  <Chip value={CollectionItemStatus.ACCEPTED}>
-                    <span>Accepted</span>
-                  </Chip>
+                  <Group gap="xs">
+                    <Chip value={CollectionItemStatus.REVIEW}>
+                      <span>Review</span>
+                    </Chip>
+                    <Chip value={CollectionItemStatus.REJECTED}>
+                      <span>Rejected</span>
+                    </Chip>
+                    <Chip value={CollectionItemStatus.ACCEPTED}>
+                      <span>Accepted</span>
+                    </Chip>
+                  </Group>
                 </Chip.Group>
 
                 <SelectMenuV2
@@ -239,7 +242,7 @@ const ReviewCollection = () => {
                     loadCondition={!isFetching}
                     style={{ gridColumn: '1/-1' }}
                   >
-                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                    <Center p="xl" style={{ height: 36 }} mt="md">
                       <Loader />
                     </Center>
                   </InViewLoader>
@@ -264,7 +267,6 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
     useCallback((state) => state.selected[collectionItem.id] ?? false, [collectionItem.id])
   );
   const toggleSelected = useStore((state) => state.toggleSelected);
-  const { classes: sharedClasses, cx } = useCardStyles({ aspectRatio: 1 });
   const reviewData = getCollectionItemReviewData(collectionItem);
   const badgeColor = {
     [CollectionItemStatus.ACCEPTED]: 'green',
@@ -304,7 +306,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
       />
       <AspectRatioImageCard
         onClick={() => toggleSelected(collectionItem.id)}
-        className={cx({
+        className={clsx({
           ['opacity-60']:
             selected || (collectionItem.status && !statuses.includes(collectionItem.status)),
         })}
@@ -330,12 +332,12 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
               <div>
                 {reviewData.url && (
                   <Link href={reviewData.url} passHref legacyBehavior>
-                    <ActionIcon
+                    <LegacyActionIcon
                       component="a"
                       variant="transparent"
                       size="lg"
                       target="_blank"
-                      onClick={(e) => {
+                      onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
                         e.stopPropagation();
                       }}
                     >
@@ -346,7 +348,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                         strokeWidth={2.5}
                         size={26}
                       />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </Link>
                 )}
                 <Checkbox checked={selected} readOnly size="lg" />
@@ -358,20 +360,14 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
         footer={
           <div className="flex flex-col gap-1">
             {reviewData.title && (
-              <Text
-                className={sharedClasses.dropShadow}
-                size="xl"
-                weight={700}
-                lineClamp={2}
-                inline
-              >
+              <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} inline>
                 {reviewData.title}
               </Text>
             )}
             {reviewData.user && reviewData.user.id !== -1 && (
               <UnstyledButton
-                sx={{ color: 'white' }}
-                onClick={(e) => {
+                className="text-white"
+                onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                   e.preventDefault();
                   e.stopPropagation();
 
@@ -527,20 +523,20 @@ function ModerationControls({
   };
 
   return (
-    <Group noWrap spacing="xs">
+    <Group wrap="nowrap" gap="xs">
       <ButtonTooltip label="Select all" {...tooltipProps}>
-        <ActionIcon
+        <LegacyActionIcon
           variant="outline"
           onClick={handleSelectAll}
           disabled={selected.length === collectionItems.length}
         >
           <IconSquareCheck size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <ButtonTooltip label="Clear selection" {...tooltipProps}>
-        <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+        <LegacyActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
           <IconSquareOff size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <PopConfirm
         message={`Are you sure you want to approve ${selected.length} image(s)?`}
@@ -549,9 +545,9 @@ function ModerationControls({
         withArrow
       >
         <ButtonTooltip label="Accept" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
             <IconCheck size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <PopConfirm
@@ -561,15 +557,15 @@ function ModerationControls({
         withArrow
       >
         <ButtonTooltip label="Reject" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
             <IconTrash size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <ButtonTooltip label="Refresh" {...tooltipProps}>
-        <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+        <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
           <IconReload size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
     </Group>
   );

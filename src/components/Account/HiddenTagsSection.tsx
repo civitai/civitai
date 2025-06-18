@@ -1,4 +1,4 @@
-import { ActionIcon, Autocomplete, Badge, Card, Loader, Stack, Text } from '@mantine/core';
+import { Autocomplete, Badge, Card, Loader, Portal, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
@@ -7,8 +7,8 @@ import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { getTagDisplayName } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
-
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -46,10 +46,10 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
     <Card withBorder>
       {withTitle && (
         <Card.Section withBorder inheritPadding py="xs">
-          <Text weight={500}>Hidden Tags</Text>
+          <Text fw={500}>Hidden Tags</Text>
         </Card.Section>
       )}
-      <Card.Section withBorder sx={{ marginTop: -1 }}>
+      <Card.Section withBorder style={{ marginTop: -1 }}>
         <Autocomplete
           name="tag"
           ref={searchInputRef}
@@ -57,19 +57,22 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
           data={modelTags}
           value={search}
           onChange={setSearch}
-          icon={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
-          onItemSubmit={(item: { value: string; id: number }) => {
-            handleToggleBlockedTag({ id: item.id, name: item.value });
+          leftSection={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
+          onOptionSubmit={(value: string) => {
+            const record = modelTags.find((x) => x.value === value);
+            if (!record) return;
+            handleToggleBlockedTag({ id: record.id, name: record.value });
             searchInputRef.current?.focus();
           }}
-          withinPortal
           variant="unstyled"
-          zIndex={400}
+          style={{
+            zIndex: 400,
+          }}
           limit={10}
         />
       </Card.Section>
       <Card.Section inheritPadding py="md">
-        <Stack spacing={5}>
+        <Stack gap={5}>
           <BasicMasonryGrid
             items={hiddenTags}
             render={TagBadge}
@@ -77,7 +80,7 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
             columnGutter={4}
             columnWidth={140}
           />
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             {`We'll hide content with these tags throughout the site.`}
           </Text>
         </Stack>
@@ -96,10 +99,10 @@ function TagBadge({ data, width }: { data: { id: number; name: string }; width: 
   return (
     <Badge
       key={data.id}
-      sx={{ paddingRight: 3 }}
+      style={{ paddingRight: 3 }}
       w={width}
       rightSection={
-        <ActionIcon
+        <LegacyActionIcon
           size="xs"
           color="blue"
           radius="xl"
@@ -107,7 +110,7 @@ function TagBadge({ data, width }: { data: { id: number; name: string }; width: 
           onClick={() => handleToggleBlocked(data)}
         >
           <IconX size={10} />
-        </ActionIcon>
+        </LegacyActionIcon>
       }
     >
       {getTagDisplayName(data.name ?? '[deleted]')}

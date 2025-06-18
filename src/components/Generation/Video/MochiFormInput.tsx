@@ -13,6 +13,7 @@ export function MochiFormInput() {
         name="prompt"
         label="Prompt"
         placeholder="Your prompt goes here..."
+        minRows={2}
         autosize
       />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />

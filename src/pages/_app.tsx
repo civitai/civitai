@@ -1,6 +1,5 @@
 // src/pages/_app.tsx
-import type { ColorScheme } from '@mantine/core';
-import { NotificationsProvider } from '@mantine/notifications';
+
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, getCookies } from 'cookies-next';
 import dayjs from 'dayjs';
@@ -70,9 +69,17 @@ import { parseCookies } from '~/shared/utils';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
-import '~/styles/globals.css';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
+
+import '~/styles/globals.css';
+import '@mantine/core/styles.layer.css';
+import '@mantine/dates/styles.layer.css';
+import '@mantine/dropzone/styles.layer.css';
+import '@mantine/notifications/styles.layer.css';
+import '@mantine/nprogress/styles.layer.css';
+import '@mantine/tiptap/styles.layer.css';
+import 'mantine-react-table/styles.css'; //import MRT styles
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -88,7 +95,7 @@ type CustomAppProps = {
   Component: CustomNextPage;
 } & AppProps<{
   session: Session | null;
-  colorScheme: ColorScheme;
+  colorScheme: 'light' | 'dark' | 'auto';
   cookies: ParsedCookies;
   flags: FeatureAccess;
   seed: number;
@@ -168,32 +175,25 @@ function MyApp(props: CustomAppProps) {
                                       <PaddleProvider>
                                         <HiddenPreferencesProvider>
                                           <CivitaiLinkProvider>
-                                            <NotificationsProvider
-                                              className="notifications-container"
-                                              zIndex={9999}
-                                            >
-                                              <BrowserRouterProvider>
-                                                <IntersectionObserverProvider>
-                                                  <ToursProvider>
-                                                    <AuctionContextProvider>
-                                                      <BaseLayout>
-                                                        {isProd && <TrackPageView />}
-                                                        <ChatContextProvider>
-                                                          <CustomModalsProvider>
-                                                            {getLayout(
-                                                              <Component {...pageProps} />
-                                                            )}
-                                                            {/* <StripeSetupSuccessProvider /> */}
-                                                            <DialogProvider />
-                                                            <RoutedDialogProvider />
-                                                          </CustomModalsProvider>
-                                                        </ChatContextProvider>
-                                                      </BaseLayout>
-                                                    </AuctionContextProvider>
-                                                  </ToursProvider>
-                                                </IntersectionObserverProvider>
-                                              </BrowserRouterProvider>
-                                            </NotificationsProvider>
+                                            <BrowserRouterProvider>
+                                              <IntersectionObserverProvider>
+                                                <ToursProvider>
+                                                  <AuctionContextProvider>
+                                                    <BaseLayout>
+                                                      {isProd && <TrackPageView />}
+                                                      <ChatContextProvider>
+                                                        <CustomModalsProvider>
+                                                          {getLayout(<Component {...pageProps} />)}
+                                                          {/* <StripeSetupSuccessProvider /> */}
+                                                          <DialogProvider />
+                                                          <RoutedDialogProvider />
+                                                        </CustomModalsProvider>
+                                                      </ChatContextProvider>
+                                                    </BaseLayout>
+                                                  </AuctionContextProvider>
+                                                </ToursProvider>
+                                              </IntersectionObserverProvider>
+                                            </BrowserRouterProvider>
                                           </CivitaiLinkProvider>
                                         </HiddenPreferencesProvider>
                                       </PaddleProvider>

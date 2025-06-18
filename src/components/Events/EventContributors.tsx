@@ -2,7 +2,6 @@ import {
   Button,
   Card,
   Center,
-  createStyles,
   Grid,
   Group,
   Loader,
@@ -27,7 +26,6 @@ const startTime = dayjs().startOf('hour').toDate();
 
 export function EventContributors({ event, endDate }: { event: string; endDate: Date }) {
   const { contributors, loading } = useQueryEventContributors({ event });
-  const { classes } = useStyles();
 
   const topDayContributors = contributors?.day.slice(0, 4) ?? [];
   const topAllTimeContributors = contributors?.allTime.slice(0, 4) ?? [];
@@ -39,15 +37,15 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
 
   return (
     <Grid gutter={48}>
-      <Grid.Col xs={12} sm="auto">
-        <Card p={32} radius="lg" h="100%" className={classes.card}>
-          <Stack spacing="xl">
-            <Stack spacing={0}>
-              <Text size={32} weight="bold">
+      <Grid.Col span={{ base: 12, sm: 'auto' }}>
+        <Card radius="lg" h="100%" className="bg-gray-0 p-4 md:p-8 dark:bg-dark-6">
+          <Stack gap="xl">
+            <Stack gap={0}>
+              <Text fz={32} fw="bold">
                 Top Donors All Time
               </Text>
               {!ended && (
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
                   <Countdown endTime={resetTime} format="short" />
                 </Text>
@@ -55,15 +53,15 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
             </Stack>
             {loading ? (
               Array.from({ length: 4 }).map((_, index) => (
-                <Group key={index} spacing={8} noWrap>
+                <Group key={index} gap={8} wrap="nowrap">
                   <Skeleton height={40} circle />
                   <Skeleton height={44} />
                 </Group>
               ))
             ) : topAllTimeContributors.length > 0 ? (
               topAllTimeContributors.map((contributor) => (
-                <Group key={contributor.userId} spacing="md" position="apart">
-                  <Group spacing={8}>
+                <Group key={contributor.userId} gap="md" justify="space-between">
+                  <Group gap={8}>
                     <UserAvatar
                       userId={contributor.userId}
                       user={contributor.user}
@@ -73,9 +71,9 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                       linkToProfile
                     />
                   </Group>
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <CurrencyIcon currency={Currency.BUZZ} />
-                    <Text size="xl" weight={500} color="dimmed">
+                    <Text size="xl" fw={500} c="dimmed">
                       {abbreviateNumber(contributor.amount ?? 0)}
                     </Text>
                   </Group>
@@ -84,13 +82,13 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
             ) : (
               <Paper p="xl">
                 <Center>
-                  <Text color="dimmed">No donors yet</Text>
+                  <Text c="dimmed">No donors yet</Text>
                 </Center>
               </Paper>
             )}
-            <Group position="right">
+            <Group justify="flex-end">
               <Link href={`/leaderboard/${event}:all-time`}>
-                <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
+                <Button variant="subtle" size="xs" rightSection={<IconArrowRight size={16} />}>
                   View All
                 </Button>
               </Link>
@@ -99,15 +97,15 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
         </Card>
       </Grid.Col>
       {!ended && (
-        <Grid.Col xs={12} sm="auto">
-          <Card p={32} radius="lg" h="100%" className={classes.card}>
-            <Stack spacing="xl">
-              <Stack spacing={0}>
-                <Text size={32} weight="bold">
+        <Grid.Col span={{ base: 12, sm: 'auto' }}>
+          <Card p={32} radius="lg" h="100%" className="bg-gray-0 dark:bg-dark-6">
+            <Stack gap="xl">
+              <Stack gap={0}>
+                <Text fz={32} fw="bold">
                   Top Donors Today
                 </Text>
                 {!ended && (
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
                     <Countdown endTime={resetTime} format="short" />
                   </Text>
@@ -115,14 +113,14 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
               </Stack>
               {loading ? (
                 Array.from({ length: 4 }).map((_, index) => (
-                  <Group key={index} spacing={8} noWrap>
+                  <Group key={index} gap={8} wrap="nowrap">
                     <Skeleton height={40} circle />
                     <Skeleton height={44} />
                   </Group>
                 ))
               ) : topDayContributors.length > 0 ? (
                 topDayContributors.map((contributor) => (
-                  <Group key={contributor.userId} spacing="md" position="apart">
+                  <Group key={contributor.userId} gap="md" justify="space-between">
                     <UserAvatar
                       userId={contributor.userId}
                       user={contributor.user}
@@ -131,9 +129,9 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                       withUsername
                       linkToProfile
                     />
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <CurrencyIcon currency={Currency.BUZZ} />
-                      <Text size="xl" weight={500} color="dimmed">
+                      <Text size="xl" fw={500} c="dimmed">
                         {abbreviateNumber(contributor.amount ?? 0)}
                       </Text>
                     </Group>
@@ -142,13 +140,13 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
               ) : (
                 <Paper p="xl">
                   <Center>
-                    <Text color="dimmed">No donors yet</Text>
+                    <Text c="dimmed">No donors yet</Text>
                   </Center>
                 </Paper>
               )}
-              <Group position="right">
+              <Group justify="flex-end">
                 <Link href={`/leaderboard/${event}:day`}>
-                  <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
+                  <Button variant="subtle" size="xs" rightSection={<IconArrowRight size={16} />}>
                     View All
                   </Button>
                 </Link>
@@ -158,14 +156,14 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
         </Grid.Col>
       )}
       <Grid.Col span={12}>
-        <Card p={32} radius="lg" className={classes.card}>
+        <Card p={32} radius="lg" className="bg-gray-0 dark:bg-dark-6">
           <Grid gutter="xl">
             <Grid.Col span={12}>
-              <Stack spacing={0}>
-                <Text size={32} weight="bold">
+              <Stack gap={0}>
+                <Text fz={32} fw="bold">
                   Top Donors by Team
                 </Text>
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   As of {formatDate(startTime, 'h:mma')}. Refreshes in:{' '}
                   <Countdown endTime={resetTime} format="short" />
                 </Text>
@@ -174,19 +172,19 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
             {loading ? (
               <Grid.Col span={12}>
                 <Center>
-                  <Loader variant="bars" />
+                  <Loader type="bars" />
                 </Center>
               </Grid.Col>
             ) : (
               topTeamContributors.map(([team, contributors]) => (
-                <Grid.Col key={team} xs={12} sm="auto">
-                  <Stack spacing="xl" h="100%">
-                    <Text size={24} weight="bold">
+                <Grid.Col key={team} span={{ base: 12, sm: 'auto' }}>
+                  <Stack gap="xl" className="h-full">
+                    <Text fz={24} fw="bold">
                       {team} Team
                     </Text>
 
                     {contributors.length > 0 ? (
-                      <Stack spacing="sm">
+                      <Stack gap="sm">
                         {contributors.map((contributor) => (
                           <UserAvatar
                             key={contributor.userId}
@@ -200,14 +198,18 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                     ) : (
                       <Paper py="md">
                         <Center>
-                          <Text color="dimmed">No donors yet</Text>
+                          <Text c="dimmed">No donors yet</Text>
                         </Center>
                       </Paper>
                     )}
 
-                    <Group position="right" mt="auto">
+                    <Group justify="flex-end" mt="auto">
                       <Link href={`/leaderboard/${event}:${team.toLowerCase()}`}>
-                        <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
+                        <Button
+                          variant="subtle"
+                          size="xs"
+                          rightSection={<IconArrowRight size={16} />}
+                        >
                           View All
                         </Button>
                       </Link>
@@ -222,9 +224,3 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
     </Grid>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-  },
-}));

@@ -54,7 +54,7 @@ export const CryptoTransactions = () => {
 
   return (
     <Modal {...dialog} size="lg" withCloseButton={true} radius="md">
-      <Stack spacing={0} mb="xl">
+      <Stack gap={0} mb="xl">
         <Group>
           <Title order={3}>Debit Card Transactions</Title>
         </Group>
@@ -119,9 +119,9 @@ export const CryptoTransactions = () => {
             </tbody>
           </Table>
           {pagination && pagination.totalPages > 1 && (
-            <Group position="apart" mt="md" noWrap>
+            <Group justify="space-between" mt="md" wrap="nowrap">
               <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
-              <Pagination page={page} onChange={(p) => setPage(p)} total={pagination.totalPages} />
+              <Pagination value={page} onChange={(p) => setPage(p)} total={pagination.totalPages} />
             </Group>
           )}
         </div>

@@ -1,4 +1,4 @@
-import { Badge, Button, Group, Stack, Text, createStyles } from '@mantine/core';
+import { Badge, Button, Group, Stack, Text } from '@mantine/core';
 import React, { useMemo } from 'react';
 import {
   useBrowsingLevelDebounced,
@@ -22,7 +22,6 @@ export function ExplainHiddenImages({
   hiddenByTags,
   hasHidden,
 }: ReturnType<typeof useExplainHiddenImages>) {
-  const { classes } = useStyles();
   const { data } = useQueryHiddenPreferences();
   const currentUser = useCurrentUser();
   const browsingLevel = useBrowsingLevelDebounced();
@@ -45,19 +44,25 @@ export function ExplainHiddenImages({
   };
 
   return (
-    <Stack spacing="sm" align="center">
+    <Stack gap="sm" align="center">
       {showHiddenBrowsingLevels && (
-        <Stack spacing={4}>
-          <Text size="sm" color="dimmed" ta="center">
+        <Stack gap={4}>
+          <Text size="sm" c="dimmed" ta="center">
             Hidden by your browsing level:
           </Text>
-          <Group spacing="xs" position="center">
+          <Group gap="xs" justify="center">
             {hiddenByBrowsingLevel.map(({ browsingLevel, count }) => (
               <Badge
                 key={browsingLevel}
                 rightSection={count}
                 variant="outline"
-                classNames={classes}
+                styles={{
+                  section: {
+                    marginLeft: 10,
+                    paddingLeft: 10,
+                    borderLeft: '1px solid',
+                  },
+                }}
               >
                 {browsingLevelLabels[browsingLevel as BrowsingLevel]}
               </Badge>
@@ -69,13 +74,24 @@ export function ExplainHiddenImages({
         </Stack>
       )}
       {!showHiddenBrowsingLevels && currentUser && totalHiddenByTags > 0 && (
-        <Stack spacing={4}>
-          <Text size="sm" color="dimmed" ta="center">
+        <Stack gap={4}>
+          <Text size="sm" c="dimmed" ta="center">
             Hidden by your tag preferences:
           </Text>
-          <Group spacing="xs" position="center">
+          <Group gap="xs" justify="center">
             {hiddenByTags.map(({ tagId, count }) => (
-              <Badge key={tagId} rightSection={count} variant="outline" classNames={classes}>
+              <Badge
+                key={tagId}
+                rightSection={count}
+                variant="outline"
+                styles={{
+                  section: {
+                    marginLeft: 10,
+                    paddingLeft: 10,
+                    borderLeft: '1px solid',
+                  },
+                }}
+              >
                 {data?.hiddenTags.find((x) => x.id === Number(tagId))?.name}
               </Badge>
             ))}
@@ -86,14 +102,6 @@ export function ExplainHiddenImages({
     </Stack>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  rightSection: {
-    marginLeft: 10,
-    paddingLeft: 10,
-    borderLeft: '1px solid',
-  },
-}));
 
 export function useExplainHiddenImages<
   T extends { id: number; nsfwLevel: number; tagIds?: number[]; poi?: boolean }

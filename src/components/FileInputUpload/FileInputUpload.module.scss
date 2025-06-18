@@ -1,0 +1,41 @@
+.stackedProgress {
+  position: relative;
+  overflow: hidden;
+}
+
+.stackedProgressProgress {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  bottom: 1px;
+  width: calc(100% - 32px);
+  z-index: 2;
+  opacity: 1;
+}
+
+.stackedProgressBar {
+  position: absolute;
+  top: 0;
+  width: 100%;
+}
+
+.stackedProgressStatus {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  margin-bottom: 0;
+  padding-left: 12px;
+  padding-right: 12px;
+  z-index: 3;
+}
+
+.stackedProgressStatusText {
+  font-size: 10px;
+  color: #fff;
+  text-shadow: 0 0 2px #000;
+  font-weight: 500;
+}
+
+.grow {
+  flex-grow: 1;
+}

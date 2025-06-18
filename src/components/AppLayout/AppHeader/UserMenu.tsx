@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Avatar,
   Badge,
   Button,
@@ -7,8 +6,10 @@ import {
   Popover,
   Tooltip,
   UnstyledButton,
-  useMantineColorScheme,
+  useComputedColorScheme,
   useMantineTheme,
+  getPrimaryShade,
+  useMantineColorScheme,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import {
@@ -40,6 +41,7 @@ import {
   useAccountContext,
 } from '~/components/CivitaiWrapped/AccountProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { UserBuzz } from '~/components/User/UserBuzz';
@@ -69,7 +71,10 @@ export function UserMenu() {
     <Popover width={isMobile ? '100%' : 260} position="bottom-end" opened={open} onChange={setOpen}>
       <Popover.Target>
         <UnstyledButton
-          className="flex items-center @md:rounded-[32px]"
+          className={clsx(
+            'flex items-center hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
+            { ['bg-gray-1 dark:bg-dark-5']: open }
+          )}
           type="button"
           onClick={() => setOpen((o) => !o)}
         >
@@ -141,7 +146,8 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
-  const { colorScheme, toggleColorScheme } = useMantineColorScheme();
+  const { toggleColorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { logout } = useAccountContext();
 
   const { handleClose } = useUserMenuContext();
@@ -182,27 +188,23 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
         )}
       </div>
       <div className="flex gap-3 border-t border-gray-3 px-3 py-2 dark:border-dark-4">
-        <Tooltip label="Color scheme">
-          <ActionIcon
+        <Tooltip label={colorScheme === 'dark' ? 'Light mode' : 'Dark mode'}>
+          <LegacyActionIcon
+            color="gray"
             variant="default"
             onClick={() => toggleColorScheme()}
             size="lg"
             className="flex-1"
-            sx={(theme) => ({
-              color:
-                theme.colorScheme === 'dark'
-                  ? theme.colors.yellow[theme.fn.primaryShade()]
-                  : theme.colors.blue[theme.fn.primaryShade()],
-            })}
           >
             {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
-          </ActionIcon>
+          </LegacyActionIcon>
         </Tooltip>
         {currentUser && (
           <>
             <Tooltip label="Account settings">
-              <ActionIcon
+              <LegacyActionIcon
                 variant="default"
+                color="gray"
                 size="lg"
                 onClick={handleClose}
                 component={NextLink}
@@ -210,12 +212,21 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
                 className="flex-1"
               >
                 <IconSettings stroke={1.5} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
             <Tooltip label="Logout">
-              <ActionIcon variant="default" onClick={() => logout()} size="lg" className="flex-1">
-                <IconLogout stroke={1.5} color={theme.colors.red[theme.fn.primaryShade()]} />
-              </ActionIcon>
+              <LegacyActionIcon
+                variant="default"
+                color="gray"
+                onClick={() => logout()}
+                size="lg"
+                className="flex-1"
+              >
+                <IconLogout
+                  stroke={1.5}
+                  color={theme.colors.red[getPrimaryShade(theme, colorScheme)]}
+                />
+              </LegacyActionIcon>
             </Tooltip>
           </>
         )}
@@ -345,7 +356,7 @@ function ActionButtons({ close }: { close: () => void }) {
       </Button>
       <Button
         variant="default"
-        leftIcon={<IconLogout stroke={1.5} size={18} />}
+        leftSection={<IconLogout stroke={1.5} size={18} />}
         loading={loggingOut}
         disabled={loggingOutAll}
         onClick={handleLogout}
@@ -354,7 +365,7 @@ function ActionButtons({ close }: { close: () => void }) {
       </Button>
       <Button
         variant="default"
-        leftIcon={<IconLogout2 stroke={1.5} size={18} />}
+        leftSection={<IconLogout2 stroke={1.5} size={18} />}
         loading={loggingOutAll}
         disabled={loggingOut}
         onClick={handleLogoutAll}
@@ -366,11 +377,10 @@ function ActionButtons({ close }: { close: () => void }) {
 }
 
 function CustomUserAvatar({ data }: { data: CivitaiAccount }) {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { avatarUrl, email, username } = data;
   const imageUrl = useGetEdgeUrl(avatarUrl, { width: 96 });
-  const avatarBgColor =
-    theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
+  const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   return (
     <Tooltip label={email}>
@@ -380,7 +390,7 @@ function CustomUserAvatar({ data }: { data: CivitaiAccount }) {
         radius="xl"
         size="sm"
         imageProps={{ loading: 'lazy', referrerPolicy: 'no-referrer' }}
-        sx={{ backgroundColor: avatarBgColor }}
+        style={{ backgroundColor: avatarBgColor }}
       >
         {getInitials(username)}
       </Avatar>
@@ -395,7 +405,7 @@ function MenuItemButton({
 }: React.HTMLAttributes<HTMLButtonElement>) {
   const { handleClose } = useUserMenuContext();
   return (
-    <button
+    <UnstyledButton
       className={clsx(
         'flex items-center gap-2.5 px-4 py-3 hover:bg-gray-1 @md:px-3 @md:py-2.5 hover:dark:bg-dark-4',
         className
@@ -404,7 +414,7 @@ function MenuItemButton({
       {...props}
     >
       {children}
-    </button>
+    </UnstyledButton>
   );
 }
 
@@ -463,10 +473,9 @@ function BuzzMenuItem() {
         component="div"
         variant="white"
         radius="xl"
-        size="xs"
         px={12}
-        compact
-        onClick={(e) => {
+        size="compact-xs"
+        onClick={(e: React.MouseEvent) => {
           e.preventDefault();
           e.stopPropagation();
           onBuyBuzz({});

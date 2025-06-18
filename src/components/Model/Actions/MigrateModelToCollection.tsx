@@ -47,17 +47,19 @@ export default function MigrateModelToCollection({ modelId }: { modelId: number 
       closeOnClickOutside={!migrateMutation.isLoading}
       closeOnEscape={!migrateMutation.isLoading}
       withCloseButton={!migrateMutation.isLoading}
-      closeButtonLabel="Close migrate to collection modal"
+      closeButtonProps={{
+        'aria-label': 'Close migrate to collection modal',
+      }}
       withinPortal
     >
       {migrateMutation.isLoading ? (
         <div className="flex flex-col items-center justify-center gap-4 p-8">
           <Loader size={64} />
           <div className="text-center">
-            <Text size="md" weight={600}>
+            <Text size="md" fw={600}>
               Migrating...
             </Text>
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               This may take a few minutes. Please do not close this window.
             </Text>
           </div>

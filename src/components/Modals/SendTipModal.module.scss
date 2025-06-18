@@ -1,0 +1,69 @@
+.presetCard {
+  position: relative;
+  width: 100%;
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+
+  &:hover:not([disabled]) {
+    border-color: var(--mantine-color-blue-6);
+  }
+
+  &[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.sendIcon {
+  background-color: var(--mantine-color-blue-5);
+  color: var(--mantine-color-white);
+  border-top-right-radius: var(--mantine-radius-sm);
+  border-bottom-right-radius: var(--mantine-radius-sm);
+}
+
+.label {
+  padding: 0 var(--mantine-spacing-xs);
+
+  &[data-checked] {
+    border: 2px solid var(--mantine-color-accent-5);
+    color: var(--mantine-color-accent-5);
+    background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
+  }
+}
+
+.iconWrapper {
+  display: none;
+}
+
+.chipGroup {
+  gap: 8px;
+
+  @container (max-width: theme('screens.sm')) {
+    gap: var(--mantine-spacing-md);
+  }
+}
+
+.actions {
+  @container (max-width: theme('screens.sm')) {
+    flex-direction: column;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    padding: var(--mantine-spacing-md);
+  }
+}
+
+.cancelButton {
+  @container (max-width: theme('screens.sm')) {
+    width: 100%;
+    order: 2;
+  }
+}
+
+.submitButton {
+  @container (max-width: theme('screens.sm')) {
+    width: 100%;
+    order: 1;
+  }
+}

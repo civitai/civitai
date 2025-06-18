@@ -6,7 +6,7 @@ import { trpc } from '~/utils/trpc';
 
 export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
   const dialog = useDialogContext();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const handleClose = dialog.onClose;
   const [publishVersions, setPublishVersions] = useState(true);
 
@@ -29,7 +29,7 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
     return (
       <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
         <Stack>
-          <Text size="lg" weight="bold">
+          <Text size="lg" fw="bold">
             Model is already public
           </Text>
           <Divider mx="-lg" mb="md" />
@@ -44,8 +44,8 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
 
   return (
     <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
-      <Stack spacing="md">
-        <Text size="lg" weight="bold">
+      <Stack gap="md">
+        <Text size="lg" fw="bold">
           Publish this model?
         </Text>
         <Divider mx="-lg" mb="md" />

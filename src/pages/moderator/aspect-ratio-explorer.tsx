@@ -2,6 +2,7 @@ import { ActionIcon, Button, NumberInput, TextInput } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconX } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AspectRatio, AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
 
 export default function AspectRatioExplorer() {
@@ -40,8 +41,16 @@ export default function AspectRatioExplorer() {
         <Button onClick={addAspectRatio}>Add</Button>
       </div>
       <div className="flex gap-3">
-        <NumberInput label="Multiplier" value={multiplier} onChange={setMultiplier} />
-        <NumberInput label="Resolution" value={resolution} onChange={setResolution} />
+        <NumberInput
+          label="Multiplier"
+          value={multiplier}
+          onChange={(value) => setMultiplier(typeof value === 'number' ? value : undefined)}
+        />
+        <NumberInput
+          label="Resolution"
+          value={resolution}
+          onChange={(value) => setResolution(typeof value === 'number' ? value : undefined)}
+        />
       </div>
 
       {!!aspectRatioList.length && resolution && (
@@ -55,9 +64,9 @@ export default function AspectRatioExplorer() {
                   <span>
                     {key} - {width}:{height}
                   </span>
-                  <ActionIcon color="red" onClick={() => removeAspectRatio(key)}>
+                  <LegacyActionIcon color="red" onClick={() => removeAspectRatio(key)}>
                     <IconX />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </li>
               );
             } catch (e: any) {
@@ -66,9 +75,9 @@ export default function AspectRatioExplorer() {
                   <span>
                     {key} - {e.message}
                   </span>
-                  <ActionIcon color="red" onClick={() => removeAspectRatio(key)}>
+                  <LegacyActionIcon color="red" onClick={() => removeAspectRatio(key)}>
                     <IconX />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </li>
               );
             }

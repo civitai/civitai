@@ -1,0 +1,41 @@
+.root {
+  z-index: 400;
+}
+
+.content {
+  height: auto;
+  max-height: calc(100dvh - var(--header-height));
+  overflow-y: auto;
+}
+
+.body {
+  padding: 0;
+  overflow-y: auto;
+}
+
+.header {
+  padding: 4px 8px;
+}
+
+.close {
+  width: 32px;
+  height: 32px;
+
+  > svg {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+.indicatorRoot {
+  line-height: 1;
+}
+
+.indicatorIndicator {
+  line-height: 1.6;
+}
+
+.opened {
+  transform: rotate(180deg);
+  transition: transform 200ms ease;
+}

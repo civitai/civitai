@@ -1,5 +1,14 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, Divider, Drawer, Indicator, Popover, Stack, useMantineTheme } from '@mantine/core';
+import {
+  Button,
+  Divider,
+  Drawer,
+  Indicator,
+  Popover,
+  Stack,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
@@ -12,6 +21,7 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
   const theme = useMantineTheme();
   const mobile = useIsMobile();
+  const colorScheme = useComputedColorScheme('dark');
 
   const [opened, setOpened] = useState(false);
 
@@ -41,8 +51,8 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
+      disabled={!filterLength}
+      processing
       inline
     >
       <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
@@ -52,9 +62,17 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
-        <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
+    <Stack gap="lg">
+      <Stack gap="md">
+        <Divider
+          label="Time period"
+          styles={{
+            label: {
+              fontSize: theme.fontSizes.sm,
+              fontWeight: 700,
+            },
+          }}
+        />
         {query?.period && onChange ? (
           <PeriodFilter
             type="articles"
@@ -69,7 +87,7 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -88,15 +106,24 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
+          closeButtonProps={{
+            style: {
+              height: 32,
+              width: 32,
+              '& > svg': {
+                width: 24,
+                height: 24,
+              },
+            },
+          }}
           styles={{
-            drawer: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}

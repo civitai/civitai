@@ -9,15 +9,13 @@ import { Meta } from '~/components/Meta/Meta';
 import type { ActionIconProps, BadgeProps } from '@mantine/core';
 import {
   Accordion,
-  ActionIcon,
   Alert,
   Anchor,
-  Box,
   Button,
   Card,
   Center,
   CloseButton,
-  createStyles,
+  ColorSchemeScript,
   Group,
   Loader,
   MantineProvider,
@@ -29,7 +27,9 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  useComputedColorScheme,
 } from '@mantine/core';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -65,7 +65,6 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
@@ -80,6 +79,7 @@ import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { Notifications } from '@mantine/notifications';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -105,75 +105,12 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = containerQuery.smallerThan('md');
-  const isDesktop = containerQuery.largerThan('md');
-  return {
-    root: {
-      width: '100vw',
-      height: '100vh',
-      display: 'flex',
-      position: 'relative',
-      overflow: 'hidden',
-
-      [isMobile]: {
-        overflow: 'scroll',
-      },
-    },
-    carousel: {
-      flex: 1,
-      alignItems: 'stretch',
-    },
-    active: { ref: getRef('active') },
-    imageLoading: {
-      opacity: '50%',
-    },
-    sidebar: {
-      width: 457,
-      borderRadius: 0,
-      borderLeft: `1px solid ${theme.colors.dark[4]}`,
-      display: 'flex',
-      flexDirection: 'column',
-
-      [isMobile]: {
-        position: 'absolute',
-        overflow: 'auto',
-        top: '100%',
-        left: 0,
-        width: '100%',
-        height: '100%',
-        transition: '.3s ease transform',
-        // transform: 'translateY(100%)',
-        zIndex: 20,
-
-        [`&.${getRef('active')}`]: {
-          transform: 'translateY(-100%)',
-        },
-      },
-    },
-    mobileOnly: { [isDesktop]: { display: 'none' } },
-    desktopOnly: { [isMobile]: { display: 'none' } },
-    info: {
-      position: 'absolute',
-      bottom: theme.spacing.md,
-      right: theme.spacing.md,
-    },
-    // Overwrite scrollArea generated styles
-    scrollViewport: {
-      '& > div': {
-        minHeight: '100%',
-        display: 'flex !important',
-      },
-    },
-  };
-});
-
 export default function BountyEntryDetailsPage({
   id,
   entryId,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
-  const { theme } = useStyles();
+  const colorScheme = useComputedColorScheme('dark');
   const { data: bounty, isLoading: isLoadingBounty } = trpc.bounty.getById.useQuery({ id });
   const { data: bountyEntry, isLoading: isLoadingEntry } = trpc.bountyEntry.getById.useQuery({
     id: entryId,
@@ -244,7 +181,7 @@ export default function BountyEntryDetailsPage({
 
   const navigateBackSection = (
     <div className="flex items-center justify-between">
-      <Text size="xs" color="dimmed">
+      <Text className="text-xs" c="dimmed">
         Entry added on {formatDate(bountyEntry.createdAt)} by
       </Text>
       <NavigateBack url={`/bounties/${bounty.id}`}>
@@ -271,12 +208,8 @@ export default function BountyEntryDetailsPage({
 
   const awardSection = benefactor && benefactor.awardedToId === bountyEntry.id && (
     <Alert color="yellow" radius={0}>
-      <Group spacing="xs">
-        <ThemeIcon
-          // @ts-ignore: transparent variant does work
-          variant="transparent"
-          color="yellow.6"
-        >
+      <Group gap="xs">
+        <ThemeIcon variant="transparent" color="yellow.6">
           <IconTrophy size={20} fill="currentColor" />
         </ThemeIcon>
         <Text>You awarded this entry</Text>
@@ -285,7 +218,7 @@ export default function BountyEntryDetailsPage({
   );
 
   const shareSection = (
-    <Group spacing={8} noWrap>
+    <Group gap={8} wrap="nowrap">
       {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
         <Link
           legacyBehavior
@@ -293,30 +226,28 @@ export default function BountyEntryDetailsPage({
           passHref
         >
           <Button
-            size="md"
             radius="xl"
             color="gray"
-            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-            compact
+            variant={colorScheme === 'dark' ? 'filled' : 'light'}
+            size="compact-sm"
             fullWidth
             component="a"
           >
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               <IconPencilMinus size={14} />
-              <Text size="xs">Edit</Text>
+              <Text className="text-xs">Edit</Text>
             </Group>
           </Button>
         </Link>
       )}
       {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
         <Button
-          size="md"
           radius="xl"
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-          compact
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
+          size="compact-sm"
           fullWidth
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             e.preventDefault();
             e.stopPropagation();
 
@@ -325,7 +256,7 @@ export default function BountyEntryDetailsPage({
               children: (
                 <Stack>
                   <Text size="sm">Are you sure you want to delete this entry?</Text>
-                  <Text color="red.4" size="sm">
+                  <Text c="red.4" size="sm">
                     This action is not reversible. If you still want to participate in the hunt, you
                     will have to create a new submission.
                   </Text>
@@ -340,9 +271,9 @@ export default function BountyEntryDetailsPage({
             });
           }}
         >
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <IconTrash size={14} />
-            <Text size="xs">Delete</Text>
+            <Text className="text-xs">Delete</Text>
           </Group>
         </Button>
       )}
@@ -354,55 +285,48 @@ export default function BountyEntryDetailsPage({
         {({ onClick, isLoading }) => (
           <Button
             disabled={isLoading}
-            size="md"
+            size="compact-sm"
             radius="xl"
             color="gray"
-            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-            compact
+            variant={colorScheme === 'dark' ? 'filled' : 'light'}
             fullWidth
             onClick={onClick}
           >
-            <Group spacing={4} noWrap>
-              <ThemeIcon
-                // @ts-ignore: transparent variant does work
-                variant="transparent"
-                // @ts-ignore: overrides size to fit content
-                size="auto"
-                color="yellow.6"
-              >
+            <Group gap={4} wrap="nowrap">
+              <ThemeIcon variant="transparent" size="auto" color="yellow.6">
                 <IconTrophy size={14} fill="currentColor" />
               </ThemeIcon>
-              <Text size="xs">Award bounty</Text>
+              <Text className="text-xs">Award bounty</Text>
             </Group>
           </Button>
         )}
       </AwardBountyAction>
       <ShareButton url={router.asPath} title={bounty.name}>
         <Button
-          size="md"
+          size="compact-sm"
           radius="xl"
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-          compact
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           fullWidth
         >
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <IconShare3 size={14} />
-            <Text size="xs">Share</Text>
+            <Text className="text-xs">Share</Text>
           </Group>
         </Button>
       </ShareButton>
       {!isOwner && (
         <Menu>
           <Menu.Target>
-            <ActionIcon
+            <LegacyActionIcon
               radius="xl"
               color="gray"
               size="md"
-              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              className="shrink-0"
+              variant={colorScheme === 'dark' ? 'filled' : 'light'}
             >
               <IconDotsVertical size={16} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
             <ReportMenuItem
@@ -426,46 +350,40 @@ export default function BountyEntryDetailsPage({
       multiple
       defaultValue={['files']}
       my={0}
-      styles={(theme) => ({
-        content: { padding: 0 },
-        item: {
-          overflow: 'hidden',
-          borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-          boxShadow: theme.shadows.sm,
-        },
-        control: {
-          padding: theme.spacing.sm,
-        },
-      })}
+      classNames={{
+        content: 'p-0',
+        item: 'overflow-hidden border-gray-3 shadow-sm dark:border-dark-4',
+        control: 'p-3',
+      }}
     >
       <Accordion.Item
         value="files"
-        sx={(theme) => ({
+        style={{
           borderColor:
-            !isLoadingFiles && !filesCount ? `${theme.colors.red[4]} !important` : undefined,
-        })}
+            !isLoadingFiles && !filesCount ? 'var(--mantine-color-red-4) !important' : undefined,
+        }}
       >
         <Accordion.Control>
-          <Group position="apart">
+          <Group justify="space-between">
             {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
           </Group>
         </Accordion.Control>
         <Accordion.Panel>
-          <Stack spacing={2}>
+          <Stack gap={2}>
             {isLoadingFiles ? (
               <Center p="md">
-                <Loader size="md" variant="bars" />
+                <Loader size="md" type="bars" />
               </Center>
             ) : filesCount > 0 ? (
-              <ScrollArea.Autosize maxHeight={300}>
+              <ScrollArea.Autosize mah={300}>
                 <SimpleGrid cols={1} spacing={2}>
                   {files.map((file) => {
                     const isLocked = !file.url;
                     return (
                       <Paper key={file.id} radius={0} p={8} w="100%" bg="dark.4">
                         <Stack>
-                          <Group position="apart" noWrap>
-                            <Group noWrap>
+                          <Group justify="space-between" wrap="nowrap">
+                            <Group wrap="nowrap">
                               {isLocked ? (
                                 <Tooltip
                                   label="This file has not been unlocked yet"
@@ -479,7 +397,7 @@ export default function BountyEntryDetailsPage({
                               ) : (
                                 <IconLockOpen style={{ minWidth: '24px' }} />
                               )}
-                              <Stack spacing={0}>
+                              <Stack gap={0}>
                                 {file.url && !isLocked ? (
                                   <Anchor
                                     href={`/api/download/attachments/${file.id}`}
@@ -490,16 +408,16 @@ export default function BountyEntryDetailsPage({
                                     {file.name}
                                   </Anchor>
                                 ) : (
-                                  <Text size="sm" weight={500} lineClamp={1}>
+                                  <Text size="sm" fw={500} lineClamp={1}>
                                     {file.name}
                                   </Text>
                                 )}
-                                <Text color="dimmed" size="xs">
+                                <Text c="dimmed" size="xs">
                                   {formatKBytes(file.sizeKB)}
                                 </Text>
                               </Stack>
                             </Group>
-                            <Group spacing={0} noWrap>
+                            <Group gap={0} wrap="nowrap">
                               {file.metadata.benefactorsOnly && (
                                 <Tooltip
                                   label="Only users who award this entry will have access to this file"
@@ -513,13 +431,6 @@ export default function BountyEntryDetailsPage({
                                   </ThemeIcon>
                                 </Tooltip>
                               )}
-                              {/* TODO.bounty: bring this back once we allowing split bounties */}
-                              {/* {(file.metadata.unlockAmount ?? 0) > 0 && (
-                                <CurrencyBadge
-                                  currency={file.metadata.currency ?? Currency.BUZZ}
-                                  unitAmount={file.metadata.unlockAmount ?? 0}
-                                />
-                              )} */}
                             </Group>
                           </Group>
                         </Stack>
@@ -530,7 +441,7 @@ export default function BountyEntryDetailsPage({
               </ScrollArea.Autosize>
             ) : (
               <Center p="xl">
-                <Text size="md" color="dimmed">
+                <Text size="md" c="dimmed">
                   No files were provided for this bounty
                 </Text>
               </Center>
@@ -548,7 +459,7 @@ export default function BountyEntryDetailsPage({
         <span>Entry notes</span>
       </Text>
       <Card.Section pl="md" pb="md">
-        <ScrollArea.Autosize maxHeight={200} offsetScrollbars>
+        <ScrollArea.Autosize mah={200} offsetScrollbars>
           <RenderHtml html={bountyEntry.description} />
         </ScrollArea.Autosize>
       </Card.Section>
@@ -609,16 +520,20 @@ export default function BountyEntryDetailsPage({
 }
 
 BountyEntryDetailsPage.getLayout = (page: React.ReactElement) => (
-  <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
-    {page}
-  </MantineProvider>
+  <>
+    <ColorSchemeScript forceColorScheme="dark" />
+    <MantineProvider forceColorScheme="dark">
+      <Notifications />
+      {page}
+    </MantineProvider>
+  </>
 );
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
   color: 'gray',
   className: 'h-9 min-w-9 rounded-full normal-case',
-  classNames: { inner: 'flex gap-1 items-center' },
+  classNames: { label: 'flex gap-1 items-center' },
 };
 
 const sharedActionIconProps: Partial<Omit<ActionIconProps, 'children'>> = {
@@ -657,7 +572,6 @@ export function BountyEntryCarousel({
   } | null;
 }) {
   const { images } = bountyEntry;
-  const { classes } = useCarrouselStyles();
   const queryUtils = trpc.useUtils();
 
   const carouselNavigation = useCarouselNavigation({ items: images, onChange: onImageChange });
@@ -690,9 +604,9 @@ export function BountyEntryCarousel({
             <div className="absolute inset-x-0 top-0 z-10 flex justify-between p-3">
               <ImageGuard2.BlurToggle {...sharedBadgeProps} />
               <ImageContextMenu image={image}>
-                <ActionIcon {...sharedActionIconProps}>
+                <LegacyActionIcon {...sharedActionIconProps}>
                   <IconDotsVertical {...sharedIconProps} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </ImageContextMenu>
             </div>
             <ImageDetailCarousel images={images} connect={connect} {...carouselNavigation} />
@@ -719,95 +633,12 @@ export function BountyEntryCarousel({
         )}
       </ImageGuard2>
       {isDeletingImage && (
-        <Box className={classes.loader}>
+        <div className="absolute left-1/2 top-1/2 z-[1] -translate-x-1/2 -translate-y-1/2">
           <Center>
             <Loader />
           </Center>
-        </Box>
+        </div>
       )}
     </div>
   );
 }
-
-const useCarrouselStyles = createStyles((theme, _props, getRef) => {
-  return {
-    root: {
-      position: 'relative',
-    },
-    loader: {
-      position: 'absolute',
-      top: '50%',
-      left: '50%',
-      transform: 'translate(-50%,-50%)',
-      zIndex: 1,
-    },
-    imageLoading: {
-      pointerEvents: 'none',
-      opacity: 0.5,
-    },
-    center: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-
-    prev: { ref: getRef('prev') },
-    next: { ref: getRef('next') },
-    control: {
-      position: 'absolute',
-      // top: 0,
-      // bottom: 0,
-      top: '50%',
-      transform: 'translateY(-50%)',
-      zIndex: 10,
-
-      svg: {
-        height: 50,
-        width: 50,
-      },
-
-      [`&.${getRef('prev')}`]: {
-        left: 0,
-      },
-      [`&.${getRef('next')}`]: {
-        right: 0,
-      },
-
-      '&:hover': {
-        color: theme.colors.blue[3],
-      },
-    },
-    indicators: {
-      position: 'absolute',
-      bottom: theme.spacing.md,
-      top: undefined,
-      left: 0,
-      right: 0,
-      display: 'flex',
-      flexDirection: 'row',
-      justifyContent: 'center',
-      gap: 8,
-      pointerEvents: 'none',
-    },
-
-    indicator: {
-      pointerEvents: 'all',
-      width: 25,
-      height: 5,
-      borderRadius: 10000,
-      backgroundColor: theme.white,
-      boxShadow: theme.shadows.sm,
-      opacity: 0.6,
-      transition: `opacity 150ms ${theme.transitionTimingFunction}`,
-
-      '&[data-active]': {
-        opacity: 1,
-      },
-    },
-  };
-});

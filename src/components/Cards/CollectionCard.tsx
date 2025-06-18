@@ -1,7 +1,8 @@
 import { ActionIcon, Badge, Group, Text } from '@mantine/core';
 import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { truncate } from 'lodash-es';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -15,6 +16,7 @@ import type { SimpleUser } from '~/server/selectors/user.selector';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { CollectionGetInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type ImageProps = {
   id: number;
@@ -32,8 +34,6 @@ type ImageProps = {
 };
 
 export function CollectionCard({ data }: Props) {
-  const { classes, cx } = useCardStyles({ aspectRatio: 7 / 9 });
-
   const getCoverImages = () => {
     if (data.image) return [data.image];
 
@@ -63,23 +63,23 @@ export function CollectionCard({ data }: Props) {
 
   return (
     <FeedCard
-      className={coverImages.length === 0 ? classes.noImage : undefined}
+      className={coverImages.length === 0 ? cardClasses.noImage : undefined}
       href={`/collections/${data.id}`}
     >
       <div
-        className={cx({
-          [classes.root]: true,
-          [classes.noHover]: isMultiImage,
+        className={clsx({
+          [cardClasses.root]: true,
+          [cardClasses.noHover]: isMultiImage,
         })}
       >
         <div
           className={
             isMultiImage
-              ? cx({
-                  [classes.imageGroupContainer]: true,
-                  [classes.imageGroupContainer4x4]: coverImagesCount > 2,
+              ? clsx({
+                  [cardClasses.imageGroupContainer]: true,
+                  [cardClasses.imageGroupContainer4x4]: coverImagesCount > 2,
                 })
-              : classes.imageGroupContainer
+              : cardClasses.imageGroupContainer
           }
         >
           {coverImages.length > 0 && (
@@ -90,20 +90,31 @@ export function CollectionCard({ data }: Props) {
           )}
         </div>
 
-        <div className={cx('flex flex-col gap-2', classes.contentOverlay, classes.bottom)}>
+        <div
+          className={clsx('flex flex-col gap-2', cardClasses.contentOverlay, cardClasses.bottom)}
+        >
           {data.user.id !== -1 && <UserAvatarSimple {...data.user} />}
-          <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
+          <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} lh={1.2}>
             {data.name}
           </Text>
           <div className="flex flex-nowrap gap-1">
-            <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
-              <Group spacing={2}>
+            <Badge
+              className={clsx(cardClasses.statChip, cardClasses.chip)}
+              classNames={{ label: 'flex flex-nowrap gap-2' }}
+              variant="light"
+              radius="xl"
+            >
+              <Group gap={2}>
                 <IconLayoutGrid size={14} stroke={2.5} />
-                <Text size="xs">{abbreviateNumber(itemCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(itemCount)}
+                </Text>
               </Group>
-              <Group spacing={2}>
+              <Group gap={2}>
                 <IconUser size={14} stroke={2.5} />
-                <Text size="xs">{abbreviateNumber(contributorCount)}</Text>
+                <Text fw="bold" size="xs">
+                  {abbreviateNumber(contributorCount)}
+                </Text>
               </Group>
             </Badge>
           </div>
@@ -122,14 +133,17 @@ function CollectionCardHeader({
   data: HeaderData;
   withinImageGuard?: boolean;
 }) {
-  const { classes, cx } = useCardStyles({ aspectRatio: 7 / 9 });
-
   return (
-    <Group spacing={4} position="apart" className={cx(classes.contentOverlay, classes.top)} noWrap>
-      <Group spacing="xs">
-        {withinImageGuard && <ImageGuard2.BlurToggle className={classes.chip} radius="xl" />}
-        <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
-          <Text color="white" size="xs" transform="capitalize">
+    <Group
+      gap={4}
+      justify="space-between"
+      className={clsx(cardClasses.contentOverlay, cardClasses.top)}
+      wrap="nowrap"
+    >
+      <Group gap="xs">
+        {withinImageGuard && <ImageGuard2.BlurToggle className={cardClasses.chip} radius="xl" />}
+        <Badge className={clsx(cardClasses.infoChip, cardClasses.chip)} variant="light" radius="xl">
+          <Text c="white" size="xs" tt="capitalize">
             {data.type ? data.type + 's' : 'Mixed'}
           </Text>
         </Badge>
@@ -140,23 +154,22 @@ function CollectionCardHeader({
         position="left-start"
         mode={data.mode}
       >
-        <ActionIcon
+        <LegacyActionIcon
           variant="transparent"
           p={0}
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
           }}
         >
           <IconDotsVertical />
-        </ActionIcon>
+        </LegacyActionIcon>
       </CollectionContextMenu>
     </Group>
   );
 }
 
 export function ImageCover({ data, coverImages }: { data: HeaderData; coverImages: ImageProps[] }) {
-  const { classes } = useCardStyles({ aspectRatio: 7 / 9 });
   const isMultiImage = coverImages.length > 1;
   const coverImagesCount = coverImages.length;
 
@@ -172,7 +185,7 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
                 <EdgeMedia
                   src={image.url}
                   type="image"
-                  className={classes.image}
+                  className={cardClasses.image}
                   name={image.name ?? image.id.toString()}
                   alt={
                     image.meta
@@ -204,7 +217,7 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
       ))}
 
       {coverImages.length === 0 && (
-        <Text color="dimmed" sx={{ width: '100%', height: '100%' }}>
+        <Text c="dimmed" style={{ width: '100%', height: '100%' }}>
           This collection has no images
         </Text>
       )}
@@ -213,8 +226,6 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
 }
 
 export function ImageSrcCover({ data, coverSrcs }: { data: HeaderData; coverSrcs: string[] }) {
-  const { classes } = useCardStyles({ aspectRatio: 7 / 9 });
-
   return (
     <>
       {coverSrcs.map((src) => (
@@ -223,7 +234,7 @@ export function ImageSrcCover({ data, coverSrcs }: { data: HeaderData; coverSrcs
           type="image"
           width={DEFAULT_EDGE_IMAGE_WIDTH}
           placeholder="empty"
-          className={classes.image}
+          className={cardClasses.image}
           loading="lazy"
           key={src}
           anim={false}

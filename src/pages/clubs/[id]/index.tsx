@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { useRouter } from 'next/router';
 import { trpc } from '~/utils/trpc';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -8,7 +8,7 @@ import {
   Button,
   Center,
   Container,
-  createStyles,
+  // createStyles,
   Divider,
   Grid,
   Group,
@@ -17,17 +17,16 @@ import {
   Stack,
   Text,
   Title,
+  useStyles,
 } from '@mantine/core';
-import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { IconClock, IconClubs, IconPlus, IconSettings } from '@tabler/icons-react';
 import { ClubFeedNavigation } from '~/components/Club/ClubFeedNavigation';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useClubContributorStatus, useQueryClubPosts } from '~/components/Club/club.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { ClubPostItem, useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
+import { ClubPostItem } from '~/components/Club/ClubPost/ClubFeed';
 import { ClubMembershipStatus, ClubTierItem } from '~/components/Club/ClubTierItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -58,9 +57,6 @@ const Feed = () => {
   const { clubPosts, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryClubPosts(id);
   const { data: club, isLoading: isLoadingClub } = trpc.club.getById.useQuery({ id });
 
-  const { data: userClubs = [], isLoading: isLoadingUserClubs } =
-    trpc.club.userContributingClubs.useQuery();
-
   return (
     <>
       {isLoading || isLoadingClub ? (
@@ -70,7 +66,7 @@ const Feed = () => {
       ) : !!clubPosts.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <Stack spacing="md" mt="md" align="center">
+          <Stack gap="md" mt="md" align="center">
             {clubPosts.map((clubPost) => (
               <ClubPostItem key={clubPost.id} clubPost={clubPost} />
             ))}
@@ -81,7 +77,7 @@ const Feed = () => {
               loadCondition={!isRefetching}
               style={{ gridColumn: '1/-1' }}
             >
-              <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Center p="xl" style={{ height: 36 }} mt="md">
                 <Loader />
               </Center>
             </InViewLoader>
@@ -91,15 +87,14 @@ const Feed = () => {
               <Divider
                 size="sm"
                 label={
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconClock size={16} stroke={1.5} />
                     You are all caught up
                   </Group>
                 }
                 labelPosition="center"
-                labelProps={{ size: 'sm' }}
               />
-              <Text color="dimmed" align="center" size="sm">
+              <Text c="dimmed" align="center" size="sm">
                 Looks like you&rsquo;re all caught up for now. Come back later and the owner might
                 have added more stuff
               </Text>
@@ -113,17 +108,16 @@ const Feed = () => {
               <Divider
                 size="sm"
                 label={
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconClubs size={16} stroke={1.5} />
                     This club has a total of {club?.stats?.clubPostCountAllTime} posts.
                   </Group>
                 }
                 labelPosition="center"
-                labelProps={{ size: 'sm' }}
               />
               <Center>
-                <Stack spacing={0} align="center">
-                  <Text size="sm" color="dimmed">
+                <Stack gap={0} align="center">
+                  <Text size="sm" c="dimmed">
                     If you cannot see posts, it means you are not a member of this club or your
                     settings are hiding some of these posts.
                   </Text>
@@ -135,17 +129,16 @@ const Feed = () => {
               <Divider
                 size="sm"
                 label={
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconClubs size={16} stroke={1.5} />
                     Looks like this club has not posted anything yet
                   </Group>
                 }
                 labelPosition="center"
-                labelProps={{ size: 'sm' }}
               />
               <Center>
-                <Stack spacing={0} align="center">
-                  <Text size="sm" color="dimmed">
+                <Stack gap={0} align="center">
+                  <Text size="sm" c="dimmed">
                     Check back later and the owner might have posted something
                   </Text>
                 </Stack>
@@ -158,26 +151,27 @@ const Feed = () => {
   );
 };
 
-const useStyles = createStyles<string, { hasHeaderImage: boolean }>(
-  (theme, { hasHeaderImage }) => ({
-    mainContainer: {
-      position: 'relative',
-      top: hasHeaderImage ? -constants.clubs.avatarDisplayWidth / 2 : undefined,
+// const useStyles = createStyles<string, { hasHeaderImage: boolean }>(
+//   (theme, { hasHeaderImage }) => ({
+//     mainContainer: {
+//       position: 'relative',
+//       top: hasHeaderImage ? -constants.clubs.avatarDisplayWidth / 2 : undefined,
 
-      [containerQuery.smallerThan('sm')]: {
-        top: hasHeaderImage ? -constants.clubs.avatarDisplayWidth / 4 : undefined,
-      },
-    },
+//       [containerQuery.smallerThan('sm')]: {
+//         top: hasHeaderImage ? -constants.clubs.avatarDisplayWidth / 4 : undefined,
+//       },
+//     },
 
-    avatar: {
-      width: constants.clubs.avatarDisplayWidth,
+//     avatar: {
+//       width: constants.clubs.avatarDisplayWidth,
 
-      [containerQuery.smallerThan('sm')]: {
-        margin: 'auto',
-      },
-    },
-  })
-);
+//       [containerQuery.smallerThan('sm')]: {
+//         margin: 'auto',
+//       },
+//     },
+//   })
+// );
+
 export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
   const { id: stringId } = router.query as {
@@ -189,18 +183,16 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
     clubId: id,
   });
 
-  const { classes } = useStyles({ hasHeaderImage: !!club?.headerImage });
+  // const { classes } = useStyles({ hasHeaderImage: !!club?.headerImage });
   const canPost = isOwner || isModerator || isClubAdmin;
 
-  const { data: tiers = [], isLoading: isLoadingTiers } = trpc.club.getTiers.useQuery(
+  const { data: tiers = [] } = trpc.club.getTiers.useQuery(
     {
       clubId: club?.id as number,
       listedOnly: true,
       joinableOnly: true,
     },
-    {
-      enabled: !!club?.id,
-    }
+    { enabled: !!club?.id }
   );
 
   if (loading) {
@@ -255,7 +247,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
             />
           </ImageCSSAspectRatioWrap>
         )} */}
-        <Container size="xl" className={classes.mainContainer}>
+        <Container size="xl">
           {/* {club.avatar && (
             <ImageCSSAspectRatioWrap aspectRatio={1} className={classes.avatar}>
               <ImageGuard
@@ -289,10 +281,10 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
               />
             </ImageCSSAspectRatioWrap>
           )} */}
-          <Stack spacing="md" mt="md">
+          <Stack gap="md" mt="md">
             <Grid>
-              <Grid.Col xs={12} md={9}>
-                <Stack spacing="lg">
+              <Grid.Col span={{ base: 12, md: 9 }}>
+                <Stack gap="lg">
                   <Title order={1}>{club.name}</Title>
                   {club.description && (
                     <ContentClamp maxHeight={500}>
@@ -310,7 +302,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                             },
                           });
                         }}
-                        leftIcon={<IconPlus />}
+                        leftSection={<IconPlus />}
                       >
                         Add content
                       </Button>
@@ -319,7 +311,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                       <Button
                         component={'a'}
                         href={`/clubs/manage/${club.id}`}
-                        leftIcon={<IconSettings />}
+                        leftSection={<IconSettings />}
                         color="gray"
                       >
                         Manage
@@ -330,7 +322,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                 </Stack>
                 {children}
               </Grid.Col>
-              <Grid.Col xs={12} md={3}>
+              <Grid.Col span={{ base: 12, md: 3 }}>
                 <Stack>
                   <Title order={3}>Membership Tiers</Title>
                   <ClubMembershipStatus clubId={club.id} />
@@ -341,9 +333,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                       ))}
                     </>
                   ) : (
-                    <Text color="dimmed">
-                      The owner of this club has not added any club tiers yet.
-                    </Text>
+                    <Text c="dimmed">The owner of this club has not added any club tiers yet.</Text>
                   )}
                 </Stack>
               </Grid.Col>

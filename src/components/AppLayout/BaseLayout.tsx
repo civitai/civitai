@@ -5,7 +5,6 @@ import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSideba
 import { MetaPWA } from '~/components/Meta/MetaPWA';
 import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Flags } from '~/shared/utils';
 
 const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 const OnboardingWizard = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));

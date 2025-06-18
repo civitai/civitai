@@ -7,6 +7,8 @@ import {
   Stack,
   Title,
   TypographyStylesProvider,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -18,10 +20,13 @@ import rehypeRaw from 'rehype-raw';
 
 import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
+import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 
 export function OnboardingRedTos() {
   const { next } = useOnboardingContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const handleStepComplete = () => {
     mutate({ step: OnboardingSteps.RedTOS }, { onSuccess: () => next() });
@@ -36,14 +41,14 @@ export function OnboardingRedTos() {
         description="Please take a moment to review and accept our terms of service."
       />
       <ScrollArea
-        style={{ height: 400 }}
         type="auto"
         p="md"
-        sx={(theme) => ({
+        style={{
+          height: 400,
           border: `1px solid ${
-            theme.colorScheme === 'light' ? theme.colors.gray[9] : theme.colors.gray[7]
+            colorScheme === 'light' ? theme.colors.gray[9] : theme.colors.gray[7]
           }`,
-        })}
+        }}
       >
         {termsLoading ? (
           <Center h={366}>
@@ -53,18 +58,18 @@ export function OnboardingRedTos() {
           terms && (
             <>
               <Title order={1}>{terms.title}</Title>
-              <TypographyStylesProvider>
+              <TypographyStylesWrapper>
                 <CustomMarkdown rehypePlugins={[rehypeRaw]}>{terms.content}</CustomMarkdown>
-              </TypographyStylesProvider>
+              </TypographyStylesWrapper>
             </>
           )
         )}
       </ScrollArea>
       {!termsLoading && (
-        <Group position="apart" align="flex-start">
+        <Group justify="space-between" align="flex-start">
           <OnboardingAbortButton showWarning>Decline</OnboardingAbortButton>
           <Button
-            rightIcon={<IconCheck />}
+            rightSection={<IconCheck />}
             size="lg"
             onClick={handleStepComplete}
             loading={isLoading}

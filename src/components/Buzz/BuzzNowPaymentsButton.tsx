@@ -37,7 +37,7 @@ export const BuzzNowPaymentsButton = ({
   // const crypto;
 
   return (
-    <Stack spacing={0} align="center">
+    <Stack gap={0} align="center">
       <Button
         disabled={disabled || isLoading}
         loading={creatingPaymentInvoice}

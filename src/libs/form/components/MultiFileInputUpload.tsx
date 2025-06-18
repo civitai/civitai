@@ -1,14 +1,5 @@
 import type { InputWrapperProps } from '@mantine/core';
-import {
-  ActionIcon,
-  Group,
-  Input,
-  Progress,
-  Stack,
-  Text,
-  Tooltip,
-  useMantineTheme,
-} from '@mantine/core';
+import { Group, Input, Progress, Stack, Text, Tooltip } from '@mantine/core';
 import type { DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
@@ -20,6 +11,9 @@ import { MIME_TYPES } from '~/server/common/mime-types';
 import type { BaseFileSchema } from '~/server/schema/file.schema';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { bytesToKB, formatBytes, formatSeconds } from '~/utils/number-helpers';
+import classes from './MultiFileInputUpload.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: BaseFileSchema[];
@@ -45,7 +39,6 @@ export function MultiFileInputUpload({
   onFilesValidate,
   ...props
 }: Props) {
-  const theme = useMantineTheme();
   const { uploadToS3, files: trackedFiles } = useS3Upload();
 
   const [files, filesHandlers] = useListState<BaseFileSchema>(value || []);
@@ -130,51 +123,26 @@ export function MultiFileInputUpload({
             ).map((error) => error.message);
             setErrors(errors);
           }}
-          styles={(theme) => ({
-            root:
-              !!props.error || hasErrors
-                ? {
-                    borderColor: theme.colors.red[6],
-                    marginBottom: theme.spacing.xs / 2,
-                  }
-                : undefined,
-          })}
-          sx={
-            !showDropzoneStatus
-              ? (theme) => ({
-                  '&[data-reject], &[data-reject]:hover, &[data-accept], &[data-accept]:hover': {
-                    background: theme.colors.dark[5],
-                    borderColor: theme.colors.dark[4],
-                  },
-                })
-              : undefined
-          }
+          className={clsx(dropzoneProps?.className, !showDropzoneStatus && classes.dropzone)}
+          classNames={{ root: props.error || hasErrors ? 'border-red-6 mb-[5px]' : undefined }}
         >
           <Group
-            position="center"
-            spacing={verticalOrientation ? 8 : 'xl'}
+            justify="center"
+            gap={verticalOrientation ? 8 : 'xl'}
             style={{
               minHeight: 120,
               pointerEvents: 'none',
               flexDirection: verticalOrientation ? 'column' : 'row',
             }}
-            noWrap
+            wrap="nowrap"
           >
             {showDropzoneStatus ? (
               <>
                 <Dropzone.Accept>
-                  <IconUpload
-                    size={50}
-                    stroke={1.5}
-                    color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
-                  />
+                  <IconUpload size={50} stroke={1.5} className="text-blue-6 dark:text-blue-4" />
                 </Dropzone.Accept>
                 <Dropzone.Reject>
-                  <IconX
-                    size={50}
-                    stroke={1.5}
-                    color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
-                  />
+                  <IconX size={50} stroke={1.5} className="text-red-6 dark:text-red-4" />
                 </Dropzone.Reject>
                 <Dropzone.Idle>
                   <IconFileUpload size={50} stroke={1.5} />
@@ -183,9 +151,9 @@ export function MultiFileInputUpload({
             ) : (
               <IconFileUpload size={50} stroke={1.5} />
             )}
-            <Stack spacing={4} align={verticalOrientation ? 'center' : 'flex-start'}>
+            <Stack gap={4} align={verticalOrientation ? 'center' : 'flex-start'}>
               <Text size="xl">Drop your files or click to select</Text>
-              <Text color="dimmed" size="sm">
+              <Text c="dimmed" size="sm">
                 {maxFiles ? `Attach up to ${maxFiles} files` : 'Attach as many files as you like'}
                 {maxSize && `. Each file should not exceed ${formatBytes(maxSize ?? 0)}`}
                 {fileExtensions.length > 0 && `. Accepted file types: ${fileExtensions.join(', ')}`}
@@ -194,9 +162,9 @@ export function MultiFileInputUpload({
           </Group>
         </Dropzone>
       </Input.Wrapper>
-      <Stack spacing={8}>
+      <Stack gap={8}>
         {files.map((file, index) => (
-          <Group key={file.id ?? file.url} spacing={8} position="apart" noWrap>
+          <Group key={file.id ?? file.url} gap={8} justify="space-between" wrap="nowrap">
             {renderItem ? (
               renderItem(
                 file,
@@ -207,18 +175,18 @@ export function MultiFileInputUpload({
               )
             ) : (
               <>
-                <Text size="sm" weight={500} lineClamp={1}>
+                <Text size="sm" fw={500} lineClamp={1}>
                   {file.name}
                 </Text>
                 <Tooltip label="Remove">
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="sm"
                     color="red"
                     variant="transparent"
                     onClick={() => handleRemove(index)}
                   >
                     <IconTrash />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               </>
             )}
@@ -235,30 +203,31 @@ export function MultiFileInputUpload({
 type UploadItemProps = Pick<TrackedFile, 'progress' | 'speed' | 'timeRemaining' | 'abort' | 'name'>;
 function UploadItem({ progress, speed, timeRemaining, abort, name }: UploadItemProps) {
   return (
-    <Stack spacing={4}>
-      <Group spacing={8} position="apart" noWrap>
-        <Text size="sm" weight={500} lineClamp={1}>
+    <Stack gap={4}>
+      <Group gap={8} justify="space-between" wrap="nowrap">
+        <Text size="sm" fw={500} lineClamp={1}>
           {name}
         </Text>
         <Tooltip label="Cancel">
-          <ActionIcon size="sm" color="red" variant="transparent" onClick={() => abort()}>
+          <LegacyActionIcon size="sm" color="red" variant="transparent" onClick={() => abort()}>
             <IconX />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Tooltip>
       </Group>
-      <Stack spacing={2}>
-        <Progress
-          sx={{ width: '100%' }}
-          size="xl"
-          value={progress}
-          label={`${Math.floor(progress)}%`}
-          color={progress < 100 ? 'blue' : 'green'}
-          striped
-          animate
-        />
-        <Group position="apart">
-          <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
-          <Text size="xs" color="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
+      <Stack gap={2}>
+        <Progress.Root className="w-full" size="xl">
+          <Progress.Section
+            value={progress}
+            color={progress < 100 ? 'blue' : 'green'}
+            striped
+            animated
+          >
+            <Progress.Label>{Math.floor(progress)}</Progress.Label>
+          </Progress.Section>
+        </Progress.Root>
+        <Group justify="space-between">
+          <Text size="xs" c="dimmed">{`${formatBytes(speed)}/s`}</Text>
+          <Text size="xs" c="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
         </Group>
       </Stack>
     </Stack>

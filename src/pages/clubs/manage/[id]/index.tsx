@@ -26,7 +26,6 @@ import {
   useQueryClub,
 } from '~/components/Club/club.utils';
 import { ClubManagementNavigation } from '~/components/Club/ClubManagementNavigation';
-import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -35,6 +34,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from '~/components/Club/ClubPost/ClubFeed.module.scss';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -95,7 +95,6 @@ export const getServerSideProps = createServerSideProps({
 export default function ManageClub({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
   const { club, loading } = useQueryClub({ id });
-  const { classes } = useClubFeedStyles();
   const { deleteClub, deletingClub } = useMutateClub();
   const { isOwner, isModerator, permissions } = useClubContributorStatus({ clubId: id });
 
@@ -121,7 +120,7 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
             Buzz in this club will be transfered to your account, but will not be refunded to your
             members.
           </Text>
-          <Text color="red" weight="bold">
+          <Text c="red" fw="bold">
             This action is not reversible
           </Text>
         </Stack>
@@ -161,14 +160,14 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
         <>
           <Divider labelPosition="center" label="Danger zone" color="red" />
           <Paper className={classes.feedContainer}>
-            <Stack spacing="lg">
+            <Stack gap="lg">
               <Title order={3}>Delete this club</Title>
               <Text>
                 By deleting this club, all resources in it will be automatically be made publicly
                 available, meaning users will not lose access to the resources, however, Buzz will
                 not be refunded to any of your members, so use with care.
               </Text>
-              <Button color="red" mt="lg" fullWidth onClick={onDelete} leftIcon={<IconTrash />}>
+              <Button color="red" mt="lg" fullWidth onClick={onDelete} leftSection={<IconTrash />}>
                 Delete this club
               </Button>
             </Stack>
@@ -200,11 +199,11 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
   return (
     <AppLayout>
       <Container size="xl">
-        <Stack spacing="md">
-          <Stack spacing="md">
+        <Stack gap="md">
+          <Stack gap="md">
             <Link legacyBehavior href={`/clubs/${club.id}`} passHref shallow>
               <Anchor size="sm">
-                <Group spacing={4}>
+                <Group gap={4}>
                   <IconArrowLeft />
                   <Text inherit>Back to clubs feed page</Text>
                 </Group>
@@ -269,12 +268,10 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
             )}
           </Stack>
           <Grid>
-            <Grid.Col xs={12} md={2}>
+            <Grid.Col span={{ base: 12, md: 2 }}>
               <ClubManagementNavigation id={id} />
             </Grid.Col>
-            <Grid.Col xs={12} md={10}>
-              {children}
-            </Grid.Col>
+            <Grid.Col span={{ base: 12, md: 10 }}>{children}</Grid.Col>
           </Grid>
         </Stack>
       </Container>

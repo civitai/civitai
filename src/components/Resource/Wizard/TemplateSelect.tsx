@@ -7,25 +7,13 @@ import {
   Text,
   TextInput,
   UnstyledButton,
-  createStyles,
 } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
 
-const useStyles = createStyles((theme) => ({
-  option: {
-    ...theme.fn.focusStyles(),
-
-    '&:hover': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-    },
-  },
-}));
-
 export function TemplateSelect({ userId, onSelect }: Props) {
-  const { classes } = useStyles();
   const [query, setQuery] = useDebouncedState('', 300);
 
   const {
@@ -35,27 +23,27 @@ export function TemplateSelect({ userId, onSelect }: Props) {
   } = trpc.model.getAllInfiniteSimple.useQuery({ userId, query }, { keepPreviousData: true });
 
   return (
-    <Stack spacing={0}>
-      <Stack spacing={8} px="sm" pt={8}>
-        <Text size="sm" weight={600}>
+    <Stack gap={0}>
+      <Stack gap={8} px="sm" pt={8}>
+        <Text size="sm" fw={600}>
           Your models
         </Text>
         <TextInput
           placeholder="Search models"
           defaultValue={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
-          icon={<IconSearch size={18} />}
+          leftSection={<IconSearch size={18} />}
           rightSection={isLoading || isRefetching ? <Loader size="xs" /> : undefined}
         />
       </Stack>
       <Divider mx={-4} mt="sm" />
       {models.length ? (
-        <ScrollArea.Autosize maxHeight={300}>
-          <Stack spacing={0} mt={4}>
+        <ScrollArea.Autosize mah={300}>
+          <Stack gap={0} mt={4}>
             {models.map((model) => (
               <Link key={model.id} href={`?templateId=${model.id}`} shallow>
                 <UnstyledButton
-                  className={classes.option}
+                  className="hover:bg-gray-100 dark:hover:bg-gray-700"
                   py="xs"
                   px="sm"
                   onClick={() => onSelect(model.id)}
@@ -70,7 +58,7 @@ export function TemplateSelect({ userId, onSelect }: Props) {
         </ScrollArea.Autosize>
       ) : (
         <Center p="sm" mt={4}>
-          <Text color="dimmed" size="sm">
+          <Text c="dimmed" size="sm">
             No models found
           </Text>
         </Center>

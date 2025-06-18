@@ -84,7 +84,7 @@ export function RootThreadProvider({
   const expanded = useNewCommentStore((state) => state.expandedComments);
   const toggleExpanded = useNewCommentStore((state) => state.toggleExpanded);
   const setExpanded = useNewCommentStore((state) => state.setExpanded);
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const isInitialThread =
     entity.entityId === initialEntityId && entity.entityType === initialEntityType;
   const queryType = router.query.commentParentType as CommentConnectorInput['entityType'];

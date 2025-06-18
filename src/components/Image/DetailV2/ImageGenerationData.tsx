@@ -33,7 +33,7 @@ export function ImageGenerationData({
                 color={color}
                 onClick={copy}
                 data-activity="copy:image-meta"
-                variant="link"
+                c="blue.4"
               >
                 <Icon size={14} />
                 <span>{copied ? 'COPIED' : 'COPY ALL'}</span>

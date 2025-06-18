@@ -1,4 +1,4 @@
-import { Box, createStyles, Group, Stack, Text } from '@mantine/core';
+import { Box, Group, Stack, Text, useMantineTheme } from '@mantine/core';
 import { IconCrown, IconTrophy } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
@@ -7,13 +7,7 @@ import type { LeaderboardGetModel } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import type { LeaderboardWithResults } from '~/server/services/leaderboard.service';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-
-const useStyles = createStyles(() => ({
-  wrapper: {
-    minHeight: 42,
-  },
-}));
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 export const LeaderHomeBlockCreatorItem = ({
   data: { position, user, score },
@@ -22,8 +16,7 @@ export const LeaderHomeBlockCreatorItem = ({
   leaderboard: LeaderboardWithResults;
   data: LeaderboardGetModel;
 }) => {
-  const { classes, theme } = useStyles();
-
+  const theme = useMantineTheme();
   const link = `/user/${user.username}`;
   const cosmetic = leaderboard.cosmetics.find(
     (cosmetic) => cosmetic.leaderboardPosition && cosmetic.leaderboardPosition >= position
@@ -37,12 +30,12 @@ export const LeaderHomeBlockCreatorItem = ({
   ][position - 1];
 
   return (
-    <div className={classes.wrapper}>
+    <div style={{ minHeight: 42 }}>
       <Link legacyBehavior href={link} passHref>
-        <Box sx={{ cursor: 'pointer' }}>
-          <ContainerGrid align="center">
-            <ContainerGrid.Col span={8}>
-              <Group spacing="xs" noWrap>
+        <Box style={{ cursor: 'pointer' }}>
+          <ContainerGrid2 align="center">
+            <ContainerGrid2.Col span={8}>
+              <Group gap="xs" wrap="nowrap">
                 <UserAvatar
                   avatarProps={{
                     radius: 'xl',
@@ -51,7 +44,7 @@ export const LeaderHomeBlockCreatorItem = ({
                   textSize="lg"
                   size="md"
                 />
-                <Stack spacing={4} style={{ overflow: 'hidden' }}>
+                <Stack gap={4} style={{ overflow: 'hidden' }}>
                   <Text
                     style={{
                       whiteSpace: 'nowrap',
@@ -61,14 +54,14 @@ export const LeaderHomeBlockCreatorItem = ({
                   >
                     {user.username}
                   </Text>
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconTrophy size={12} />
                     <Text size="xs">{abbreviateNumber(score)}</Text>
                   </Group>
                 </Stack>
               </Group>
-            </ContainerGrid.Col>
-            <ContainerGrid.Col span={3}>
+            </ContainerGrid2.Col>
+            <ContainerGrid2.Col span={3}>
               <Stack align="flex-end">
                 {cosmetic && cosmeticData ? (
                   <RankBadge
@@ -84,8 +77,8 @@ export const LeaderHomeBlockCreatorItem = ({
                   <IconCrown size={24} color={iconColor} style={{ fill: iconColor }} />
                 ) : null}
               </Stack>
-            </ContainerGrid.Col>
-          </ContainerGrid>
+            </ContainerGrid2.Col>
+          </ContainerGrid2>
         </Box>
       </Link>
     </div>

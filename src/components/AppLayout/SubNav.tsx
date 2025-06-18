@@ -29,7 +29,7 @@ export function SubNav2() {
 
   return (
     <div
-      className={clsx('flex justify-between gap-2 px-2 py-1', {
+      className={clsx('flex items-center justify-between gap-2 px-2 py-1', {
         ['flex-wrap']: router.pathname !== '/',
       })}
     >

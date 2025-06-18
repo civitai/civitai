@@ -21,6 +21,7 @@ import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem'
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import type { ArticleGetById } from '~/types/router';
 import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();
@@ -97,17 +98,18 @@ export function ArticleContextMenu({ article, ...props }: Props) {
   return (
     <Menu position="left-start" withArrow offset={-5} withinPortal>
       <Menu.Target>
-        <ActionIcon
+        <LegacyActionIcon
           {...props}
+          color="gray.2"
           variant="transparent"
           p={0}
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
           }}
         >
           <IconDotsVertical size={24} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         {features.collections && (
@@ -140,8 +142,8 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             )}
             <Menu.Item
               color="red"
-              icon={<IconTrash size={14} stroke={1.5} />}
-              onClick={(e) => {
+              leftSection={<IconTrash size={14} stroke={1.5} />}
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 handleDeleteArticle();
@@ -153,14 +155,14 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             {showUnpublish && (
               <Menu.Item
                 color="yellow"
-                icon={
+                leftSection={
                   unpublishArticleMutation.isLoading ? (
                     <Loader size={14} />
                   ) : (
                     <IconBan size={14} stroke={1.5} />
                   )
                 }
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   handleUnpublishArticle();
@@ -174,7 +176,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             <Menu.Item
               component={Link}
               href={`/articles/${article.id}/edit`}
-              icon={<IconPencil size={14} stroke={1.5} />}
+              leftSection={<IconPencil size={14} stroke={1.5} />}
             >
               Edit
             </Menu.Item>
@@ -183,7 +185,9 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                 {({ toggle, locked, isLoading }) => {
                   return (
                     <Menu.Item
-                      icon={isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />}
+                      leftSection={
+                        isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />
+                      }
                       onClick={toggle}
                       disabled={isLoading}
                       closeMenuOnClick={false}
@@ -199,8 +203,8 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         {(!isOwner || isModerator) && (
           <LoginRedirect reason="report-article">
             <Menu.Item
-              icon={<IconFlag size={14} stroke={1.5} />}
-              onClick={(e) => {
+              leftSection={<IconFlag size={14} stroke={1.5} />}
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 openReportModal({ entityType: ReportEntity.Article, entityId: article.id });

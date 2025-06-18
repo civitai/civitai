@@ -82,7 +82,7 @@ export default function ManageClubMembers({
   if (loading) return <PageLoader />;
 
   return (
-    <Stack spacing="md">
+    <Stack gap="md">
       <Title order={2}>Manage Members</Title>
       <Text>
         You can see who has joined your club, how long they&apos;ve been a member, and the club tier

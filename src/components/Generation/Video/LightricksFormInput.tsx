@@ -26,6 +26,7 @@ export function LightricksFormInput() {
       <InputTextArea
         required={isTxt2Img}
         name="prompt"
+        minRows={2}
         description={
           <span>
             If you see poor results, please refer to the{' '}

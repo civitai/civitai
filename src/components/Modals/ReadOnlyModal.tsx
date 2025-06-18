@@ -1,4 +1,4 @@
-import { Button, Modal } from '@mantine/core';
+import { Button, Modal, Text, Title } from '@mantine/core';
 import { IconWorldExclamation, IconAlertCircle } from '@tabler/icons-react';
 
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -15,23 +15,21 @@ export default function ReadOnlyModal() {
             <IconWorldExclamation className="size-20 text-amber-600" />
           </div>
         </div>
-        <h1 className="mt-6 text-2xl font-bold tracking-tight sm:text-3xl">
+        <Title order={1} className="text-2xl font-bold tracking-tight sm:text-3xl">
           We are in read-only mode
-        </h1>
+        </Title>
         <AlertWithIcon
           color="yellow"
           icon={<IconAlertCircle className="size-4" />}
           iconColor="yellow"
         >
-          <p>
-            Due to a technical issue, we&apos;re temporarily in read-only mode. This means some
-            features will be limited or unavailable.
-          </p>
+          Due to a technical issue, we&apos;re temporarily in read-only mode. This means some
+          features will be limited or unavailable.
         </AlertWithIcon>
         <div className="flex w-full flex-col justify-start gap-2">
           <div>
-            <p className="font-medium">Available</p>
-            <ul className="list-disc pl-8">
+            <Text className="font-medium">Available</Text>
+            <ul className="m-0 list-disc pl-8">
               <li>Browsing</li>
               <li>Generating</li>
               <li>Training</li>
@@ -39,8 +37,8 @@ export default function ReadOnlyModal() {
             </ul>
           </div>
           <div>
-            <p className="font-medium">Unavailable</p>
-            <ul className="list-disc pl-8">
+            <Text className="font-medium">Unavailable</Text>
+            <ul className="m-0 list-disc pl-8">
               <li>Publishing Posts</li>
               <li>Publishing Models</li>
               <li>Publishing Articles</li>
@@ -50,8 +48,8 @@ export default function ReadOnlyModal() {
             </ul>
           </div>
           <div>
-            <p className="font-medium">Not updating </p>
-            <ul className="list-disc pl-8">
+            <Text className="font-medium">Not updating </Text>
+            <ul className="m-0 list-disc pl-8">
               <li>Reaction Counts</li>
               <li>Buzz Tip Counts</li>
               <li>Model Stats</li>
@@ -60,7 +58,7 @@ export default function ReadOnlyModal() {
           </div>
         </div>
 
-        <div className="flex w-full justify-center pb-6">
+        <div className="flex w-full justify-center">
           <Button onClick={dialog.onClose} size="lg" fullWidth>
             Understood
           </Button>

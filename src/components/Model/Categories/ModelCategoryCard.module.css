@@ -1,0 +1,108 @@
+.card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.blur {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.image {
+  width: 100%;
+  object-position: top;
+}
+
+.link {
+  display: block;
+}
+
+.content {
+  background: linear-gradient(0deg, rgba(37, 38, 43, 0.8) 0%, rgba(37, 38, 43, 0) 100%);
+  /* backdrop-filter: blur(13px) saturate(160%); */
+  box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
+}
+
+.info {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  left: 0;
+  z-index: 10;
+}
+
+.cardBadges {
+  position: absolute;
+  top: var(--mantine-spacing-xs);
+  left: var(--mantine-spacing-xs);
+  z-index: 10;
+}
+
+.typeBadge {
+  background: rgb(30 133 230 / 40%);
+}
+
+.floatingBadge {
+  color: white;
+  /* backdrop-filter: blur(7px); */
+  box-shadow: 1px 2px 3px -1px rgba(37, 38, 43, 0.2);
+}
+
+.statusBadge {
+  background: alpha(var(--mantine-color-yellow-6), 0.4);
+}
+
+.earlyAccessBadge {
+  background: alpha(var(--mantine-color-green-6), 0.4);
+}
+
+.floatingAvatar {
+  position: absolute;
+  bottom: var(--mantine-spacing-xs);
+  right: var(--mantine-spacing-xs);
+  z-index: 10;
+}
+
+.statBadge {
+  background: rgba(212, 212, 212, 0.2);
+  color: white;
+}
+
+.userAvatar {
+  opacity: 0.8;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 50%), 0px 8px 15px -5px rgb(0 0 0 / 50%);
+  transition: opacity .25s ease;
+  position: relative;
+
+  &::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: var(--mantine-radius-xl);
+    box-shadow: inset 0 0 0px 1px rgba(255, 255, 255, 0.8);
+  }
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+.hoverable {
+  opacity: 0.8;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 50%), 0px 8px 15px -5px rgb(0 0 0 / 50%);
+  transition: opacity .25s ease;
+  position: relative;
+
+  &:hover {
+    opacity: 1;
+  }
+}

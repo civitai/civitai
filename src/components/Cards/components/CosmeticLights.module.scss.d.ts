@@ -1,0 +1,13 @@
+export declare const blue: string;
+export declare const brightness100: string;
+export declare const brightness25: string;
+export declare const brightness50: string;
+export declare const brightness75: string;
+export declare const flicker100: string;
+export declare const flicker25: string;
+export declare const flicker50: string;
+export declare const flicker75: string;
+export declare const green: string;
+export declare const light: string;
+export declare const red: string;
+export declare const yellow: string;

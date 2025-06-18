@@ -102,7 +102,7 @@ function ProfileOverview() {
           </Stack>
         </Stack>
       ) : (
-        <Stack spacing={0}>
+        <Stack gap={0}>
           {sections.map((section) => {
             const Section = ProfileSectionComponent[section.key as ProfileSectionType];
 

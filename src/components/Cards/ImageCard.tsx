@@ -1,6 +1,4 @@
-import { ActionIcon } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -10,11 +8,11 @@ import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import cardClasses from '~/components/Cards/Cards.module.css';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ThemeIcon } from '@mantine/core';
 
 export function ImageCard({ data }: Props) {
-  const { classes: sharedClasses } = useCardStyles({
-    aspectRatio: data.width && data.height ? data.width / data.height : 1,
-  });
   const context = useImagesContext();
 
   return (
@@ -25,7 +23,7 @@ export function ImageCard({ data }: Props) {
       header={
         <div className="flex w-full items-start justify-between">
           {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
-            <DurationBadge duration={data.metadata.duration ?? 0} className={sharedClasses.chip} />
+            <DurationBadge duration={data.metadata.duration ?? 0} className={cardClasses.chip} />
           )}
           <div className="ml-auto flex flex-col gap-2">
             <ImageContextMenu image={data} />
@@ -38,7 +36,7 @@ export function ImageCard({ data }: Props) {
           <UserAvatarSimple {...data.user} />
           <div className="flex flex-wrap justify-between gap-1">
             <Reactions
-              className={sharedClasses.reactions}
+              className={cardClasses.reactions}
               entityId={data.id}
               entityType="image"
               reactions={data.reactions}
@@ -55,9 +53,9 @@ export function ImageCard({ data }: Props) {
             />
             {data.hasMeta && (
               <ImageMetaPopover2 imageId={data.id} type={data.type}>
-                <ActionIcon className={sharedClasses.infoChip} variant="light">
+                <ThemeIcon className={cardClasses.infoChip} variant="light">
                   <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                </ActionIcon>
+                </ThemeIcon>
               </ImageMetaPopover2>
             )}
           </div>

@@ -1,4 +1,4 @@
-import { Container, createStyles, Group, Loader, Stack, Title, Center } from '@mantine/core';
+import { Container, Group, Loader, Stack, Title, Center } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -85,10 +85,9 @@ export default function QuestionPage(
   const router = useRouter();
   const user = useCurrentUser();
   const editing = router.query.edit;
-  const { classes } = useStyles();
 
   const { data: question, isLoading: questionsLoading } = trpc.question.getById.useQuery({ id });
-  const { data: answers, isLoading: answersLoading } = trpc.answer.getAll.useQuery({
+  const { data: answers } = trpc.answer.getAll.useQuery({
     questionId: id,
   });
 
@@ -118,8 +117,8 @@ export default function QuestionPage(
         <Stack>
           <QuestionDetails question={question} />
           {!!answers?.length && (
-            <div className={classes.fullWidth}>
-              <Group noWrap>
+            <div className="col-span-full">
+              <Group wrap="nowrap">
                 <Title order={2}>
                   {answers.length} {answers.length === 1 ? 'Answer' : 'Answers'}
                 </Title>
@@ -140,18 +139,3 @@ export default function QuestionPage(
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'min-content 1fr',
-    columnGap: theme.spacing.md,
-    rowGap: theme.spacing.md,
-  },
-  fullWidth: {
-    gridColumn: '1/-1',
-  },
-  row: {
-    display: 'contents',
-  },
-}));

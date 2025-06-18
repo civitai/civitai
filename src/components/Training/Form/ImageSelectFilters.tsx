@@ -9,6 +9,7 @@ import {
   Popover,
   ScrollArea,
   Stack,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
@@ -18,7 +19,6 @@ import type {
   ImageSelectProfileFilter,
   ImageSelectTrainingFilter,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { useFilterStyles } from '~/components/ImageGeneration/GenerationForm/ResourceSelectFilters';
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -29,6 +29,7 @@ import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { titleCase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
 import { isDefined } from '~/utils/type-guards';
+import classes from './ImageSelectFilters.module.scss';
 
 export function ImageSelectFiltersTrainingDropdown({
   selectFilters,
@@ -37,9 +38,9 @@ export function ImageSelectFiltersTrainingDropdown({
   selectFilters: ImageSelectTrainingFilter;
   setSelectFilters: React.Dispatch<React.SetStateAction<ImageSelectTrainingFilter>>;
 }) {
-  const { classes, theme, cx } = useFilterStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
+  const colorScheme = useComputedColorScheme('dark');
 
   const [opened, setOpened] = useState(false);
 
@@ -80,21 +81,20 @@ export function ImageSelectFiltersTrainingDropdown({
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
+      disabled={!filterLength}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
       <Button
         color="gray"
         radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
+        rightSection={<IconChevronDown className={opened ? classes.opened : undefined} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
-        compact
+        size="compact-sm"
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} wrap="nowrap">
           <IconFilter size={16} />
           Filters
         </Group>
@@ -103,9 +103,9 @@ export function ImageSelectFiltersTrainingDropdown({
   );
 
   const dropdown = (
-    <Stack spacing="lg" p="md">
-      <Stack spacing="md">
-        <Divider label="Labels" labelProps={{ weight: 'bold', size: 'sm' }} />
+    <Stack gap="lg" p="md">
+      <Stack gap="md">
+        <Divider label="Labels" classNames={{ label: 'font-bold text-sm' }} />
         <Chip
           {...chipProps}
           checked={selectFilters.hasLabels === true}
@@ -115,8 +115,8 @@ export function ImageSelectFiltersTrainingDropdown({
           <span>Has Labels</span>
         </Chip>
 
-        <Divider label="Label Type" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group spacing={8} my={4}>
+        <Divider label="Label Type" classNames={{ label: 'font-bold text-sm' }} />
+        <Group gap={8} my={4}>
           {constants.autoLabel.labelTypes.map((lt) => (
             <Chip
               {...chipProps}
@@ -131,80 +131,80 @@ export function ImageSelectFiltersTrainingDropdown({
           ))}
         </Group>
 
-        <Divider label="Training Status" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Training Status" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          spacing={8}
           value={selectFilters.statuses}
-          onChange={(sts: TrainingStatus[]) => setSelectFilters((f) => ({ ...f, statuses: sts }))}
+          onChange={(sts) => setSelectFilters((f) => ({ ...f, statuses: sts as TrainingStatus[] }))}
           multiple
-          my={4}
         >
-          {Object.values(TrainingStatus).map((ts) => (
-            <Chip
-              key={ts}
-              value={ts}
-              {...chipProps}
-              color={trainingStatusFields[ts]?.color ?? 'gray'}
-            >
-              <span>{ts === 'InReview' ? 'Ready' : ts}</span>
-            </Chip>
-          ))}
+          <Group gap={8} my={4}>
+            {Object.values(TrainingStatus).map((ts) => (
+              <Chip
+                key={ts}
+                value={ts}
+                {...chipProps}
+                color={trainingStatusFields[ts]?.color ?? 'gray'}
+              >
+                <span>{ts === 'InReview' ? 'Ready' : ts}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
 
-        <Divider label="Media Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Media Type" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          spacing={8}
           value={selectFilters.mediaTypes}
-          onChange={(ts: TrainingDetailsObj['mediaType'][]) =>
-            setSelectFilters((f) => ({ ...f, mediaTypes: ts }))
+          onChange={(ts) =>
+            setSelectFilters((f) => ({ ...f, mediaTypes: ts as TrainingDetailsObj['mediaType'][] }))
           }
           multiple
-          my={4}
         >
-          {constants.trainingMediaTypes.map((ty) => (
-            <Chip key={ty} value={ty} {...chipProps}>
-              <span>{titleCase(ty)}</span>
-            </Chip>
-          ))}
+          <Group gap={8} my={4}>
+            {constants.trainingMediaTypes.map((ty) => (
+              <Chip key={ty} value={ty} {...chipProps}>
+                <span>{titleCase(ty)}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
 
-        <Divider label="Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Type" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          spacing={8}
           value={selectFilters.types}
-          onChange={(ts: TrainingDetailsObj['type'][]) =>
-            setSelectFilters((f) => ({ ...f, types: ts }))
+          onChange={(ts) =>
+            setSelectFilters((f) => ({ ...f, types: ts as TrainingDetailsObj['type'][] }))
           }
           multiple
-          my={4}
         >
-          {constants.trainingModelTypes.map((ty) => (
-            <Chip key={ty} value={ty} {...chipProps}>
-              <span>{ty}</span>
-            </Chip>
-          ))}
+          <Group gap={8} my={4}>
+            {constants.trainingModelTypes.map((ty) => (
+              <Chip key={ty} value={ty} {...chipProps}>
+                <span>{ty}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
 
-        <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Base model" classNames={{ label: 'font-bold text-sm' }} />
         <Chip.Group
-          spacing={8}
           value={selectFilters.baseModels}
-          onChange={(bms: BaseModel[]) => setSelectFilters((f) => ({ ...f, baseModels: bms }))}
+          onChange={(bms) => setSelectFilters((f) => ({ ...f, baseModels: bms as BaseModel[] }))}
           multiple
-          my={4}
         >
-          {baseModelsList.map((baseModel, index) => (
-            <Chip key={index} value={baseModel} {...chipProps}>
-              <span>{baseModel}</span>
-            </Chip>
-          ))}
+          <Group gap={8} my={4}>
+            {baseModelsList.map((baseModel, index) => (
+              <Chip key={index} value={baseModel} {...chipProps}>
+                <span>{baseModel}</span>
+              </Chip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
 
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -223,18 +223,12 @@ export function ImageSelectFiltersTrainingDropdown({
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          styles={{
-            root: {
-              zIndex: 400,
-            },
-            drawer: {
-              height: 'auto',
-              maxHeight: 'calc(100dvh - var(--header-height))',
-              overflowY: 'auto',
-            },
-            body: { padding: 0, overflowY: 'auto' },
-            header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          classNames={{
+            root: classes.root,
+            content: classes.content,
+            body: classes.body,
+            header: classes.header,
+            close: classes.close,
           }}
         >
           {dropdown}
@@ -254,7 +248,7 @@ export function ImageSelectFiltersTrainingDropdown({
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p={0} w="100%">
-        <ScrollArea.Autosize type="hover" maxHeight={'calc(90vh - var(--header-height) - 56px)'}>
+        <ScrollArea.Autosize type="hover" mah={'calc(90vh - var(--header-height) - 56px)'}>
           {dropdown}
         </ScrollArea.Autosize>
       </Popover.Dropdown>
@@ -269,9 +263,10 @@ export function ImageSelectFiltersProfileDropdown({
   selectFilters: ImageSelectProfileFilter;
   setSelectFilters: React.Dispatch<React.SetStateAction<ImageSelectProfileFilter>>;
 }) {
-  const { classes, theme, cx } = useFilterStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
+  const colorScheme = useComputedColorScheme('dark');
+
   const [opened, setOpened] = useState(false);
 
   const filterLength = (selectFilters.mediaTypes?.length ?? 0) > 0 ? 1 : 0;
@@ -289,21 +284,20 @@ export function ImageSelectFiltersProfileDropdown({
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
+      disabled={!filterLength}
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
       <Button
         color="gray"
         radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
+        rightSection={<IconChevronDown className={opened ? classes.opened : undefined} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
         compact
       >
-        <Group spacing={4} noWrap>
+        <Group gap={4} className="flex-nowrap">
           <IconFilter size={16} />
           Filters
         </Group>
@@ -312,9 +306,9 @@ export function ImageSelectFiltersProfileDropdown({
   );
 
   const dropdown = (
-    <Stack spacing="lg" p="md">
-      <Stack spacing="md">
-        <Divider label="Media Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+    <Stack gap="lg" p="md">
+      <Stack gap="md">
+        <Divider label="Media Type" className="text-sm font-bold" />
         <div className="flex gap-2">
           <FilterChip
             checked={!selectFilters.mediaTypes.length}
@@ -340,7 +334,7 @@ export function ImageSelectFiltersProfileDropdown({
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -359,18 +353,12 @@ export function ImageSelectFiltersProfileDropdown({
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          styles={{
-            root: {
-              zIndex: 400,
-            },
-            drawer: {
-              height: 'auto',
-              maxHeight: 'calc(100dvh - var(--header-height))',
-              overflowY: 'auto',
-            },
-            body: { padding: 0, overflowY: 'auto' },
-            header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+          classNames={{
+            root: classes.root,
+            content: classes.content,
+            body: classes.body,
+            header: classes.header,
+            close: classes.close,
           }}
         >
           {dropdown}
@@ -386,11 +374,10 @@ export function ImageSelectFiltersProfileDropdown({
       radius={12}
       onClose={() => setOpened(false)}
       middlewares={{ flip: true, shift: true }}
-      // withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p={0} w="100%">
-        <ScrollArea.Autosize type="hover" maxHeight={'calc(90vh - var(--header-height) - 56px)'}>
+        <ScrollArea.Autosize type="hover" mah="calc(90vh - var(--header-height) - 56px)">
           {dropdown}
         </ScrollArea.Autosize>
       </Popover.Dropdown>

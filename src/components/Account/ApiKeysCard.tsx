@@ -11,13 +11,13 @@ import {
   Box,
   LoadingOverlay,
   Table,
-  ActionIcon,
   Center,
   Paper,
 } from '@mantine/core';
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import { ApiKeyModal } from '~/components/Account/ApiKeyModal';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ApiKeysCard() {
   const utils = trpc.useUtils();
@@ -46,60 +46,61 @@ export function ApiKeysCard() {
   return (
     <>
       <Card withBorder>
-        <Stack spacing={0}>
-          <Group align="start" position="apart">
+        <Stack gap={0}>
+          <Group align="start" justify="space-between">
             <Title order={2}>API Keys</Title>
             <Button
-              variant="outline"
-              leftIcon={<IconPlus size={14} stroke={1.5} />}
+              size="compact-sm"
+              leftSection={<IconPlus size={14} stroke={1.5} />}
               onClick={() => toggle()}
-              compact
             >
               Add API key
             </Button>
           </Group>
-          <Text color="dimmed" size="sm">
+          <Text c="dimmed" size="sm">
             You can use API keys to interact with the site through the API as your user. These
             should not be shared with anyone.
           </Text>
         </Stack>
-        <Box mt="md" sx={{ position: 'relative' }}>
+        <Box mt="md" style={{ position: 'relative' }}>
           <LoadingOverlay visible={isLoading} />
           {apiKeys.length > 0 ? (
-            <Table highlightOnHover withBorder>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Created at</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
+            <Table highlightOnHover withTableBorder>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Created at</Table.Th>
+                  <Table.Th />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {apiKeys.map((apiKey, index) => (
-                  <tr key={index}>
-                    <td>
-                      <Group spacing={4}>
-                        <Text>{apiKey.name}</Text>
-                      </Group>
-                    </td>
-                    <td>{formatDate(apiKey.createdAt)}</td>
-                    <td>
-                      <Group position="right">
-                        <ActionIcon color="red" onClick={() => handleDeleteApiKey(apiKey.id)}>
+                  <Table.Tr key={index}>
+                    <Table.Td>
+                      <Text size="sm">{apiKey.name}</Text>
+                    </Table.Td>
+                    <Table.Td>{formatDate(apiKey.createdAt)}</Table.Td>
+                    <Table.Td>
+                      <Group justify="flex-end">
+                        <LegacyActionIcon
+                          variant="subtle"
+                          color="red"
+                          onClick={() => handleDeleteApiKey(apiKey.id)}
+                        >
                           <IconTrash size="16" stroke={1.5} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 ))}
-              </tbody>
+              </Table.Tbody>
             </Table>
           ) : (
-            <Paper radius="md" mt="lg" p="lg" sx={{ position: 'relative' }} withBorder>
+            <Paper radius="md" mt="lg" p="lg" style={{ position: 'relative' }} withBorder>
               <Center>
-                <Stack spacing={2}>
-                  <Text weight="bold">There are no API keys in your account</Text>
-                  <Text size="sm" color="dimmed">
+                <Stack gap={2}>
+                  <Text fw="bold">There are no API keys in your account</Text>
+                  <Text size="sm" c="dimmed">
                     Start by creating your first API Key to connect your apps.
                   </Text>
                 </Stack>

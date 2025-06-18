@@ -24,6 +24,7 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -90,32 +91,32 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               // TODO.briant: this fixes the issue with rendering the SegmentedControl
               key={tabEntries.map(([, item]) => item.label).join('-')}
               className="shrink-0"
-              sx={{ overflow: 'visible' }}
+              style={{ overflow: 'visible' }}
               data-tour="gen:results"
               data={tabEntries.map(([key, { Icon, label }]) => ({
                 label: (
                   <Tooltip label={label} position="bottom" color="dark" openDelay={200} offset={10}>
-                    <div data-tour={`gen:${key}`}>
+                    <div data-tour={`gen:${key}`} className="flex items-center justify-center">
                       <Icon size={16} />
                     </div>
                   </Tooltip>
                 ),
                 value: key,
               }))}
-              onChange={(key: GenerationPanelView) => setView(key)}
+              onChange={(key) => setView(key as GenerationPanelView)}
               value={view}
             />
           )}
           <div className="flex flex-1 justify-end">
             {!fullScreen && !isGeneratePage && (
               <Tooltip label="Maximize">
-                <ActionIcon
+                <LegacyActionIcon
                   size="lg"
                   onClick={() => router.push('/generate')}
                   variant="transparent"
                 >
                   <IconArrowsDiagonal size={20} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
             )}
             <CloseButton

@@ -124,8 +124,8 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing="md">
-        <Stack spacing="md">
+      <Stack gap="md">
+        <Stack gap="md">
           <InputSimpleImageUpload
             name="coverImage"
             label="Post cover image"
@@ -190,11 +190,11 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
           <InputSwitch
             name="membersOnly"
             label={
-              <Stack spacing={4}>
-                <Group spacing={4}>
+              <Stack gap={4}>
+                <Group gap={4}>
                   <Text inline>Members only</Text>
                 </Group>
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   This post will only be visible to members of this club. People browsing the club
                   without a membership will not be able to see this post.
                 </Text>
@@ -202,11 +202,11 @@ export function ClubPostUpsertForm({ clubPost, clubId, onSuccess, onCancel, reso
             }
           />
         </Stack>
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button
               loading={upsertingClubPost}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onCancel?.();
@@ -263,7 +263,7 @@ export const ClubPostFromResourceModal = ({
         <Divider mx="-lg" />
         {isLoadingUserClubs && (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         )}
         {canCreateClubPostClubs?.length > 0 ? (
@@ -274,10 +274,12 @@ export const ClubPostFromResourceModal = ({
               label: club.name,
             }))}
             value={selectedClubId?.toString() ?? ''}
-            onChange={(clubId: string) => setSelectedClubId(Number(clubId))}
+            onChange={(clubId) => {
+              setSelectedClubId(Number(clubId));
+            }}
           />
         ) : (
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You are not a member of, or own, any clubs that allow you to create posts.
           </Text>
         )}

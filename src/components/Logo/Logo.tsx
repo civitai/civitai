@@ -55,8 +55,10 @@ export function Logo() {
     // Christmas
     if ((month === 10 && day >= thanksgivingDay) || (month === 11 && day <= 25)) return 'christmas';
 
-    // New Year
-    if (month === 11 && day >= 26) return 'newyear';
+    // New Year (no styles)
+    if (month === 11 && day >= 26) return null;
+
+    // St. Patrick's Day
     if (month === 2 && day >= 14 && day <= 17) return 'stpatty';
 
     // Pride

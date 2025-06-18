@@ -2,7 +2,7 @@ import { trpc } from '~/utils/trpc';
 import { showSuccessNotification } from '~/utils/notifications';
 
 export function useUpdateCollectionCoverImage() {
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
 
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation({
     onSuccess: async () => {

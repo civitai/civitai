@@ -10,14 +10,13 @@ import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRati
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
-import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { useMutateClub } from './club.utils';
 import { showSuccessNotification } from '../../utils/notifications';
 import { openConfirmModal } from '@mantine/modals';
+import classes from '~/components/Club/ClubPost/ClubFeed.module.scss';
 
 export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const [isEditing, setIsEditing] = useState<boolean>(false);
-  const { classes } = useClubFeedStyles();
   const { deleteClubTier, deletingTier } = useMutateClub();
 
   const onDeleteClubTier = async () => {
@@ -99,15 +98,13 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
           </ImageCSSAspectRatioWrap>
         )} */}
         <Stack style={{ flex: 1 }}>
-          <Group position="apart">
+          <Group justify="space-between">
             <Stack>
               <Group>
                 <Title order={3}>{clubTier.name}</Title>
-                <Group spacing={0}>
+                <Group gap={0}>
                   <IconUser />
-                  <Text color="dimmed">
-                    {numberWithCommas(clubTier._count?.memberships ?? 0) || 0}
-                  </Text>
+                  <Text c="dimmed">{numberWithCommas(clubTier._count?.memberships ?? 0) || 0}</Text>
                 </Group>
               </Group>
             </Stack>
@@ -126,7 +123,7 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
               onClick={() => {
                 setIsEditing(true);
               }}
-              leftIcon={<IconPencilMinus />}
+              leftSection={<IconPencilMinus />}
               disabled={deletingTier}
             >
               Edit
@@ -135,7 +132,7 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
               color="red"
               onClick={onDeleteClubTier}
               loading={deletingTier}
-              leftIcon={<IconTrash />}
+              leftSection={<IconTrash />}
             >
               Delete
             </Button>

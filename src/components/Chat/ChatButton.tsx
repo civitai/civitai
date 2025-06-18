@@ -4,6 +4,7 @@ import { useChatContext } from '~/components/Chat/ChatProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function ChatButton() {
   const { state, setState } = useChatContext();
@@ -18,7 +19,7 @@ export function ChatButton() {
 
   if (!currentUser || !features.chat) return <></>;
 
-  const totalUnread = unreadData?.reduce((accum, { cnt }) => accum + cnt, 0);
+  const totalUnread = unreadData?.reduce((accum, { cnt }) => accum + cnt, 0) ?? 0;
 
   return (
     <>
@@ -26,25 +27,21 @@ export function ChatButton() {
         color="red"
         disabled={unreadLoading || !totalUnread}
         // processing={unreadLoading} (this doesn't work)
-        label={totalUnread}
-        inline
+        label={totalUnread > 99 ? '99+' : totalUnread}
         size={16}
         offset={4}
+        className="flex items-center text-sm font-bold"
+        classNames={{ indicator: 'cursor-pointer h-5' }}
         withBorder
-        styles={{
-          indicator: {
-            height: '20px !important',
-            '> span': { marginBottom: '2px' },
-          },
-        }}
       >
-        <ActionIcon
-          variant={state.open ? 'filled' : undefined}
+        <LegacyActionIcon
+          variant={state.open ? 'filled' : 'subtle'}
+          color="gray"
           onClick={() => setState((prev) => ({ ...prev, open: !state.open }))}
           data-testid="open-chat"
         >
           <IconMessage2 />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Indicator>
     </>
   );

@@ -1,6 +1,11 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { Button, createStyles, useMantineTheme } from '@mantine/core';
+import {
+  Button,
+  useComputedColorScheme,
+  useMantineColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import React, { useMemo } from 'react';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
@@ -15,6 +20,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
+import classes from './MasonryGrid.module.scss';
 
 type Props<TData> = {
   data: TData[];
@@ -31,14 +37,8 @@ export function MasonryGrid<TData>({
   empty = null,
   withAds,
 }: Props<TData>) {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
-
-  const { classes } = useStyles({
-    columnWidth,
-    columnGap,
-    rowGap,
-  });
 
   const { adsEnabled } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
@@ -68,6 +68,8 @@ export function MasonryGrid<TData>({
           columnCount === 1
             ? `minmax(${columnWidth}px, ${maxSingleColumnWidth}px)`
             : `repeat(${columnCount}, ${columnWidth}px)`,
+        columnGap,
+        rowGap,
       }}
     >
       {items.map((item, index) => {
@@ -86,7 +88,7 @@ export function MasonryGrid<TData>({
             <TwCard className="mx-auto min-w-80 justify-between gap-2 border p-2 shadow">
               <div className="flex flex-col items-center  gap-2">
                 <Image
-                  src={`/images/logo_${theme.colorScheme}_mode.png`}
+                  src={`/images/logo_${colorScheme}_mode.png`}
                   alt="Civitai logo"
                   height={30}
                   width={142}
@@ -95,12 +97,12 @@ export function MasonryGrid<TData>({
                 <Button
                   component={Link}
                   href="/pricing"
-                  compact
+                  size="compact-sm"
                   color="green"
                   variant="outline"
                   className="w-24"
                 >
-                  <Text weight={500}>Do It</Text>
+                  <Text fw={500}>Do It</Text>
                   <IconCaretRightFilled size={16} />
                 </Button>
               </div>
@@ -133,7 +135,7 @@ export function MasonryGrid<TData>({
         //               variant="outline"
         //               className="w-24"
         //             >
-        //               <Text weight={500}>Do It</Text>
+        //               <Text fw={500}>Do It</Text>
         //               <IconCaretRightFilled size={16} />
         //             </Button>
         //           </div>
@@ -148,33 +150,9 @@ export function MasonryGrid<TData>({
       })}
     </div>
   ) : (
-    <div className={classes.empty}>{empty}</div>
+    <div style={{ height: columnWidth }}>{empty}</div>
   );
 }
-
-const useStyles = createStyles(
-  (
-    theme,
-    {
-      columnWidth,
-      columnGap,
-      rowGap,
-    }: {
-      columnWidth: number;
-      columnGap: number;
-      rowGap: number;
-    }
-  ) => ({
-    empty: { height: columnWidth },
-    grid: {
-      display: 'grid',
-
-      columnGap,
-      rowGap,
-      justifyContent: 'center',
-    },
-  })
-);
 
 const createRenderElement = trieMemoize(
   [OneKeyMap, {}, WeakMap, OneKeyMap, OneKeyMap],

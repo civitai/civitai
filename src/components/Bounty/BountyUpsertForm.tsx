@@ -3,7 +3,6 @@ import {
   Alert,
   Anchor,
   Button,
-  createStyles,
   Divider,
   Group,
   Input,
@@ -31,7 +30,7 @@ import { z } from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -83,6 +82,8 @@ import { InfoPopover } from '../InfoPopover/InfoPopover';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import classes from './BountyUpsertForm.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -124,78 +125,11 @@ const formSchema = upsertBountyInputSchema
     path: ['expiresAt'],
   });
 
-const useStyles = createStyles((theme) => ({
-  radioItemWrapper: {
-    '& .mantine-Group-root': {
-      alignItems: 'stretch',
-      [containerQuery.smallerThan('sm')]: {
-        flexDirection: 'column',
-      },
-    },
-  },
-
-  radioItem: {
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-    }`,
-    borderRadius: theme.radius.sm,
-    padding: theme.spacing.xs,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-    display: 'flex',
-    flex: 1,
-
-    '& > .mantine-Radio-body, & .mantine-Radio-label': {
-      width: '100%',
-    },
-
-    '& > .mantine-Switch-body, & .mantine-Switch-labelWrapper, & .mantine-Switch-label': {
-      width: '100%',
-    },
-  },
-
-  root: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-  },
-  label: {
-    textTransform: 'capitalize',
-  },
-  active: {
-    border: `2px solid ${theme.colors.blue[5]}`,
-    backgroundColor: 'transparent',
-  },
-
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  sectionTitle: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '18px',
-    },
-  },
-  fluid: {
-    [containerQuery.smallerThan('sm')]: {
-      maxWidth: '100% !important',
-    },
-  },
-  stickySidebar: {
-    position: 'sticky',
-    top: `calc(var(--header-height) + ${theme.spacing.md}px)`,
-
-    [containerQuery.smallerThan('md')]: {
-      position: 'relative',
-      top: 0,
-    },
-  },
-}));
-
 const lockableProperties = ['nsfw', 'poi'];
 
 export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const { classes } = useStyles();
   const features = useFeatureFlags();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
@@ -378,8 +312,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
           "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this bounty."
         }
       />
-      <Stack spacing={32}>
-        <Group spacing="md" noWrap>
+      <Stack gap={32}>
+        <Group gap="md" wrap="nowrap">
           <BackButton url="/bounties" />
           <Title className={classes.title}>
             {bounty ? `Editing ${bounty.name} bounty` : 'Create a new bounty'}
@@ -395,10 +329,10 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
             started or somebody submitted an entry to it.
           </AlertWithIcon>
         )}
-        <ContainerGrid gutter="xl">
-          <ContainerGrid.Col xs={12} md={8}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
+        <ContainerGrid2 gutter="xl">
+          <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
+            <Stack gap={32}>
+              <Stack gap="xl">
                 {!alreadyStarted && (
                   <>
                     <InputText
@@ -407,12 +341,12 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                       placeholder="e.g.:LoRA for XYZ"
                       withAsterisk
                     />
-                    <Group spacing="md" grow>
+                    <Group gap="md" grow>
                       <InputSelect
                         className={classes.fluid}
                         name="type"
                         label={
-                          <Group spacing={4} noWrap>
+                          <Group gap={4} wrap="nowrap">
                             <Input.Label required>Type</Input.Label>
                             <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                               <Text>
@@ -495,21 +429,18 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 {images.length > 0 && (
                   <SimpleGrid
                     spacing="sm"
-                    breakpoints={[
-                      { minWidth: 'xs', cols: 1 },
-                      { minWidth: 'sm', cols: 3 },
-                      {
-                        minWidth: 'md',
-                        cols: images.length > 3 ? 4 : images.length,
-                      },
-                    ]}
+                    cols={{
+                      base: 1,
+                      sm: 3,
+                      md: images.length > 3 ? 4 : images.length,
+                    }}
                   >
                     {bountyImages.map((image) => (
                       <Paper
                         key={image.id}
                         radius="sm"
                         p={0}
-                        sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                        style={{ position: 'relative', overflow: 'hidden', height: 332 }}
                         withBorder
                       >
                         <EdgeMedia
@@ -519,7 +450,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           style={{ objectFit: 'cover', height: '100%' }}
                         />
                         <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                          <ActionIcon
+                          <LegacyActionIcon
                             variant="filled"
                             size="lg"
                             color="red"
@@ -530,14 +461,14 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                             }}
                           >
                             <IconTrash size={26} strokeWidth={2.5} />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </div>
                         {image.meta && (
                           <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                             <ImageMetaPopover meta={image.meta}>
-                              <ActionIcon variant="light" color="dark" size="lg">
+                              <LegacyActionIcon variant="light" color="dark" size="lg">
                                 <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                              </ActionIcon>
+                              </LegacyActionIcon>
                             </ImageMetaPopover>
                           </div>
                         )}
@@ -551,7 +482,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           key={file.url}
                           radius="sm"
                           p={0}
-                          sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                          style={{ position: 'relative', overflow: 'hidden', height: 332 }}
                           withBorder
                         >
                           {file.status === 'success' ? (
@@ -563,21 +494,21 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                                 style={{ objectFit: 'cover', height: '100%' }}
                               />
                               <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                                <ActionIcon
+                                <LegacyActionIcon
                                   variant="filled"
                                   size="lg"
                                   color="red"
                                   onClick={() => removeImage(file.url)}
                                 >
                                   <IconTrash size={26} strokeWidth={2.5} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </div>
                               {file.type === 'image' && (
                                 <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                                   <ImageMetaPopover meta={file.meta}>
-                                    <ActionIcon variant="light" color="dark" size="lg">
+                                    <LegacyActionIcon variant="light" color="dark" size="lg">
                                       <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                                    </ActionIcon>
+                                    </LegacyActionIcon>
                                   </ImageMetaPopover>
                                 </div>
                               )}
@@ -585,14 +516,16 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           ) : (
                             <>
                               <MediaHash {...file} />
-                              <Progress
-                                size="xl"
-                                value={file.progress}
-                                label={`${Math.floor(file.progress)}%`}
-                                color={file.progress < 100 ? 'blue' : 'green'}
-                                striped
-                                animate
-                              />
+                              <Progress.Root size="xl">
+                                <Progress.Section
+                                  value={file.progress}
+                                  color={file.progress < 100 ? 'blue' : 'green'}
+                                  striped
+                                  animated
+                                >
+                                  <Progress.Label>{Math.floor(file.progress)}%</Progress.Label>
+                                </Progress.Section>
+                              </Progress.Root>
                             </>
                           )}
                         </Paper>
@@ -601,13 +534,13 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 )}
                 {!alreadyStarted && (
                   <Stack>
-                    <Group spacing="md" grow>
+                    <Group gap="md" grow>
                       <InputDatePicker
                         className={classes.fluid}
                         name="startsAt"
                         label="Start Date"
                         placeholder="Select a start date"
-                        icon={<IconCalendar size={16} />}
+                        leftSection={<IconCalendar size={16} />}
                         minDate={minStartDate}
                         maxDate={maxStartDate}
                         clearable={false}
@@ -618,22 +551,22 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         name="expiresAt"
                         label="Deadline"
                         placeholder="Select an end date"
-                        icon={<IconCalendarDue size={16} />}
+                        leftSection={<IconCalendarDue size={16} />}
                         minDate={minExpiresDate}
                         maxDate={maxExpiresDate}
-                        dateParser={(dateString) => new Date(Date.parse(dateString))}
+                        // dateParser={(dateString) => new Date(Date.parse(dateString))}
                         clearable={false}
                         withAsterisk
                       />
                     </Group>
                     {expiresAt && (
-                      <Text weight={590}>
+                      <Text fw={590}>
                         With the selected dates, your bounty will expire{' '}
-                        <Text weight="bold" color="red.5" span>
+                        <Text fw="bold" color="red.5" span>
                           <DaysFromNow date={stripTime(expiresAt)} inUtc />
                         </Text>
                         . All times are in{' '}
-                        <Text weight="bold" color="red.5" span>
+                        <Text fw="bold" color="red.5" span>
                           UTC
                         </Text>
                         .
@@ -642,15 +575,16 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Stack>
                 )}
 
-                <Stack spacing={4}>
+                <Stack gap={4}>
                   <Divider label="Bounty rewards" />
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     Learn more about the rewards and Buzz system{' '}
                     <Anchor
                       href="https://education.civitai.com/civitais-guide-to-on-site-currency-buzz-%e2%9a%a1/"
                       target="_blank"
                       rel="nofollow noreferrer"
                       span
+                      inherit
                     >
                       here
                     </Anchor>
@@ -681,7 +615,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         ))}
                       </InputRadioGroup>
                     )}
-                    <Group spacing="md" grow>
+                    <Group gap="md" grow>
                       <InputNumber
                         className={classes.fluid}
                         name="unitAmount"
@@ -690,7 +624,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         min={constants.bounties.minCreateAmount}
                         max={constants.bounties.maxCreateAmount}
                         step={100}
-                        icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                        leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                         format={currency !== Currency.BUZZ ? 'currency' : undefined}
                         withAsterisk
                       />
@@ -728,7 +662,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   />
                 )}
               </Stack>
-              <Stack spacing="xl">
+              <Stack gap="xl">
                 {bountyEntryModeEnabled && (
                   <InputRadioGroup name="entryMode" label="Entry Mode" withAsterisk>
                     {Object.values(BountyEntryMode).map((value) => (
@@ -750,7 +684,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 <Alert>
                   If uploading a data set to your bounty you attest that the Images contained within
                   adhere to our{' '}
-                  <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
+                  <Anchor href="/content/tos" target="_blank" rel="nofollow" span inherit>
                     TOS
                   </Anchor>
                   .
@@ -776,26 +710,26 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         <Anchor
                           href={`/api/download/attachments/${file.url}`}
                           size="sm"
-                          weight={500}
+                          fw={500}
                           lineClamp={1}
                           download
                         >
                           {file.name}
                         </Anchor>
                       ) : (
-                        <Text size="sm" weight={500} lineClamp={1}>
+                        <Text size="sm" fw={500} lineClamp={1}>
                           {file.name}
                         </Text>
                       )}
                       <Tooltip label="Remove">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="sm"
                           color="red"
                           variant="transparent"
                           onClick={() => onRemove()}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </>
                   )}
@@ -805,12 +739,12 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 )}
               </Stack>
             </Stack>
-          </ContainerGrid.Col>
-          <ContainerGrid.Col xs={12} md={4}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, sm: 4 }}>
             <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
-                <Stack spacing="xl">
+                <Stack gap="xl">
                   <Input.Wrapper
                     className={classes.fluid}
                     label="Preferred model format"
@@ -845,7 +779,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               <InputTags
                 name="tags"
                 label={
-                  <Group spacing={4} noWrap>
+                  <Group gap={4} wrap="nowrap">
                     <Input.Label>Tags</Input.Label>
                     <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
                       <Text>
@@ -862,11 +796,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 disabled={isLocked('poi')}
                 description={isLockedDescription('poi')}
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Depicts an actual person</Text>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       For example: Tom Cruise or Tom Cruise as Maverick
                     </Text>
                   </Stack>
@@ -880,7 +814,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               />
 
               {currentUser?.isModerator && (
-                <Paper radius="md" p="xl" withBorder>
+                <Paper radius="md" p="lg" withBorder>
                   <InputMultiSelect
                     name="lockedProperties"
                     label="Locked properties"
@@ -899,10 +833,10 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               )}
               <Text size="xs">
                 Bounty requests MUST adhere to the content rules defined in our{' '}
-                <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
+                <Anchor href="/content/tos" target="_blank" rel="nofollow" span inherit>
                   Terms of service
                 </Anchor>
-                .<br/>
+                .<br />
                 Illegal or exploitative content will be removed and reported.
               </Text>
               <List size="xs" spacing={8}>
@@ -917,13 +851,13 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   image posts on your resources.
                 </List.Item>
                 <List.Item>
-                  <ContentPolicyLink />
+                  <ContentPolicyLink inherit />
                 </List.Item>
               </List>
             </Stack>
-          </ContainerGrid.Col>
-        </ContainerGrid>
-        <Group position="right">
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
+        <Group justify="flex-end">
           <NavigateBack url="/bounties">
             {({ onClick }) => (
               <Button variant="light" color="gray" onClick={onClick}>
@@ -957,9 +891,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
 type RadioItemProps = { label: string; description: string };
 const RadioItem = ({ label, description }: RadioItemProps) => (
-  <Stack spacing={4}>
+  <Stack gap={4}>
     <Text inline>{label}</Text>
-    <Text size="xs" color="dimmed">
+    <Text size="xs" c="dimmed">
       {description}
     </Text>
   </Stack>

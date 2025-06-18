@@ -1,27 +1,16 @@
-import {
-  Container,
-  Stack,
-  Title,
-  Text,
-  Alert,
-  ThemeIcon,
-  Group,
-  Button,
-  Center,
-  Loader,
-} from '@mantine/core';
+import { Container, Stack, Title, Text, Group, Button, Center, Loader } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { CheckoutEventsData } from '@paddle/paddle-js';
-import { IconCancel, IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
+import { IconCancel, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { enterFall, jelloVertical } from '~/libs/animations';
 import { usePaddle } from '~/providers/PaddleProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import animationClasses from '~/libs/animations.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -79,7 +68,7 @@ export default function CompletePaddlePaymentTransaction() {
       <Meta title="Successful Payment | Civitai" deIndex />
       <Container size="xs" mb="lg">
         <Stack align="center">
-          <Title order={1} align="center" mb="xl">
+          <Title order={1} className="text-center" mb="xl">
             Complete your Payment
           </Title>
           {!closed && !success && (
@@ -90,7 +79,7 @@ export default function CompletePaddlePaymentTransaction() {
           {closed && !success && (
             <Stack align="center">
               <IconCancel color="red" size={32} />
-              <Title order={3} align="center">
+              <Title order={3} className="text-center">
                 Looks like you canceled the payment
               </Title>
               <Text align="center">
@@ -102,18 +91,10 @@ export default function CompletePaddlePaymentTransaction() {
           )}
           {success && (
             <>
-              <Center
-                sx={{
-                  // animation: `${jelloVerical} 2s 1s ease-in-out`,
-                  animationName: `${enterFall}, ${jelloVertical}`,
-                  animationDuration: `1.5s, 2s`,
-                  animationDelay: `0s, 1.5s`,
-                  animationIterationCount: '1, 1',
-                }}
-              >
+              <Center className={animationClasses.jelloFall}>
                 <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
               </Center>
-              <Title order={1} align="center">
+              <Title order={1} className="text-center">
                 Thank you! 🎉
               </Title>
               <Text size="lg" align="center" mb="lg">
@@ -125,7 +106,7 @@ export default function CompletePaddlePaymentTransaction() {
                   component={Link}
                   href="/models"
                   size="md"
-                  leftIcon={<IconLayoutDashboard />}
+                  leftSection={<IconLayoutDashboard />}
                 >
                   View Models
                 </Button>
@@ -134,14 +115,14 @@ export default function CompletePaddlePaymentTransaction() {
                   component={Link}
                   href="/user/account"
                   size="md"
-                  rightIcon={<IconRosette />}
+                  rightSection={<IconRosette />}
                 >
                   Customize Profile
                 </Button>
               </Group>
               <Text
                 size="xs"
-                color="dimmed"
+                c="dimmed"
               >{`*Cosmetics and other perks should be delivered within 2-3 minutes, but you may need to refresh the site before you're able to see them in your profile.`}</Text>
             </>
           )}

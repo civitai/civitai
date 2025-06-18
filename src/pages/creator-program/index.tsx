@@ -1,59 +1,48 @@
 import {
   Accordion,
-  Alert,
   Anchor,
   Button,
   Center,
   Container,
-  createStyles,
   Divider,
   Grid,
   Group,
-  List,
   Loader,
   Paper,
   Skeleton,
   Stack,
+  Table,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
 import {
-  IconQuestionMark,
   IconMoneybag,
   IconUserPlus,
   IconLogout,
-  IconCircleDashed,
   IconBolt,
   IconPig,
   IconBook,
   IconPercentage10,
   IconCaretRightFilled,
   IconCircleCheck,
-  IconInfoCircle,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { CurrencyIcon } from '../../components/Currency/CurrencyIcon';
 import { Meta } from '../../components/Meta/Meta';
-import { constants } from '../../server/common/constants';
 import {
   abbreviateNumber,
-  formatCurrencyForDisplay,
   formatToLeastDecimals,
   numberWithCommas,
 } from '../../utils/number-helpers';
-import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import {
   CompensationPoolCard,
   CreatorProgramRequirement,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { getDisplayName } from '~/utils/string-helpers';
 import { capitalize } from 'lodash-es';
 import { NextLink } from '~/components/NextLink/NextLink';
 import {
-  useCompensationPool,
   useCreatorProgramRequirements,
   usePrevMonthStats,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
@@ -61,11 +50,11 @@ import {
   CreatorProgramCapsInfo,
   openCreatorScoreModal,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
-import { formatDate } from '~/utils/date-helpers';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Countdown } from '~/components/Countdown/Countdown';
+import classes from './index.module.scss';
 
 const sizing = {
   header: {
@@ -87,26 +76,23 @@ const sizing = {
 } as const;
 
 function CreatorsClubV1() {
-  const { cx, classes, theme } = useStyles();
-  const currentUser = useCurrentUser();
   const applyFormUrl = `/user/buzz-dashboard`;
   const availability = getCreatorProgramAvailability();
-  // const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
 
   return (
     <>
       <Meta title="Creator Program | Civitai" />
       <Container>
-        <Stack spacing="lg">
-          <Title size={sizing.header.title} className={classes.highlightColor} lh={1} mb="sm">
-            <Text component="span" size={32} weight={700}>
+        <Stack gap="lg">
+          <Title fz={sizing.header.title} className={classes.highlightColor} lh={1} mb="sm">
+            <Text component="span" fz={32} fw={700}>
               Introducing the
             </Text>
             <br />
             Civitai Creator Program: Evolved!
           </Title>
 
-          <Text size={sizing.header.subtitle} lh={1.3} mb="xs">
+          <Text fz={sizing.header.subtitle} lh={1.3} mb="xs">
             The Civitai Creator Program is our way of supporting our talented Creator community by
             providing a path to earn from their work. Creators earn Buzz by developing and sharing
             models, and the Creator Program allows them to turn their contributions into real
@@ -116,12 +102,12 @@ function CreatorsClubV1() {
             <Grid.Col span={12}>
               <Paper
                 withBorder
-                className={cx(classes.card, classes.highlightCard, classes.earnBuzzCard)}
+                className={`${classes.card} ${classes.highlightCard} ${classes.earnBuzzCard}`}
                 h="100%"
               >
                 <Stack>
-                  <Group position="apart" noWrap>
-                    <Title order={3} color="yellow.8">
+                  <Group justify="space-between" wrap="nowrap">
+                    <Title order={3} c="yellow.8">
                       Turn your Buzz into earnings!{' '}
                       {!availability.isAvailable && (
                         <>
@@ -129,21 +115,21 @@ function CreatorsClubV1() {
                         </>
                       )}
                     </Title>
-                    <Group spacing={0} noWrap>
+                    <Group gap={0} wrap="nowrap">
                       <IconBolt
-                        style={{ fill: theme.colors.yellow[7] }}
-                        size={40}
+                        style={{ fill: 'var(--mantine-color-yellow-7)' }}
                         color="yellow.7"
+                        size={40}
                       />
                       <IconBolt
-                        style={{ fill: theme.colors.yellow[7], margin: '0 -20' }}
+                        style={{ fill: 'var(--mantine-color-yellow-7)' }}
+                        color="yellow.7"
                         size={64}
-                        color="yellow.7"
                       />
                       <IconBolt
-                        style={{ fill: theme.colors.yellow[7] }}
-                        size={40}
+                        style={{ fill: 'var(--mantine-color-yellow-7)' }}
                         color="yellow.7"
+                        size={40}
                       />
                     </Group>
                   </Group>
@@ -178,11 +164,9 @@ const HowItWorks: { text: string; icon: React.ReactNode }[] = [
 ];
 
 const HowItWorksSection = () => {
-  const { cx, classes, theme } = useStyles();
-
   return (
     <Stack className={classes.section}>
-      <Stack spacing={0} mb="sm">
+      <Stack gap={0} mb="sm">
         <Title size={sizing.sections.title} order={2} className={classes.highlightColor}>
           How it Works
         </Title>
@@ -190,8 +174,8 @@ const HowItWorksSection = () => {
       </Stack>
       <Grid>
         {HowItWorks.map(({ text, icon }, index) => (
-          <Grid.Col span={12} sm={4} key={index}>
-            <Paper withBorder className={cx(classes.card)} h="100%">
+          <Grid.Col span={{ base: 12, sm: 4 }} key={index}>
+            <Paper withBorder className={classes.card} h="100%">
               {icon}
               <Text className={classes.highlightColor} size={sizing.HowItWorks.text}>
                 {text}
@@ -201,18 +185,18 @@ const HowItWorksSection = () => {
         ))}
 
         <Grid.Col span={12}>
-          <Paper withBorder className={cx(classes.card)} h="100%">
+          <Paper withBorder className={classes.card} h="100%">
             <Group grow>
-              <Stack spacing="xs" maw="unset">
+              <Stack gap="xs" maw="unset">
                 <Title order={3} className={classes.highlightColor}>
                   The Basics
                 </Title>
-                <Group noWrap w="100%">
+                <Group wrap="nowrap" w="100%">
                   <IconUserPlus size={24} className="flex-none" />
                   <Text>If you meet the program requirements, join!</Text>
                 </Group>
                 <Divider />
-                <Group noWrap w="100%">
+                <Group wrap="nowrap" w="100%">
                   <IconPercentage10 size={24} className="flex-none" />
                   <Text>
                     Each month Civitai allocates a Creator Compensation Pool from a portion of our
@@ -220,7 +204,7 @@ const HowItWorksSection = () => {
                   </Text>
                 </Group>
                 <Divider />
-                <Group noWrap w="100%">
+                <Group wrap="nowrap" w="100%">
                   <IconPig size={24} className="flex-none" />
                   <Text>
                     During the Banking Phase, you Bank Buzz to secure your share of the Compensation
@@ -228,7 +212,7 @@ const HowItWorksSection = () => {
                   </Text>
                 </Group>
                 <Divider />
-                <Group noWrap w="100%">
+                <Group wrap="nowrap" w="100%">
                   <IconLogout size={24} className="flex-none" />
                   <Text>
                     During the Extraction Phase, you can choose to keep Buzz in the Bank to get paid
@@ -236,7 +220,7 @@ const HowItWorksSection = () => {
                   </Text>
                 </Group>
                 <Divider />
-                <Group noWrap w="100%">
+                <Group wrap="nowrap" w="100%">
                   <IconMoneybag size={24} className="flex-none" />
                   <Text fw={700}>Get paid!</Text>
                 </Group>
@@ -250,9 +234,7 @@ const HowItWorksSection = () => {
 };
 
 const FunStatsSection = () => {
-  const { cx, classes } = useStyles();
   const { prevMonthStats, isLoading } = usePrevMonthStats();
-  const currentUser = useCurrentUser();
 
   if (isLoading || !prevMonthStats) {
     return <Skeleton className={classes.section} width="100%" height="200px" />;
@@ -260,41 +242,41 @@ const FunStatsSection = () => {
 
   return (
     <Stack className={classes.section}>
-      <Stack spacing={0} mb="sm">
+      <Stack gap={0} mb="sm">
         <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
-          Highlights from last month&rsquo;s cycle{' '}
+          Highlights from last month&apos;s cycle{' '}
         </Title>
       </Stack>
-      <Paper withBorder className={cx(classes.card)} h="100%">
-        <table className="-mt-2 w-full table-auto">
-          <tbody>
-            <tr className="font-bold">
-              <td colSpan={2} className="border-b">
+      <Paper withBorder className={classes.card} h="100%">
+        <Table className="-mt-2 w-full table-auto text-base">
+          <Table.Tbody>
+            <Table.Tr className="font-bold">
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 Compensation Pool{' '}
-              </td>
-              <td className="border-b border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid  py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>
                     ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarValue))}
                   </span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-b">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 # of Creators who Banked Buzz
-              </td>
-              <td className="border-b border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>{numberWithCommas(prevMonthStats.creatorCount)}</span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-b">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 Total Banked Buzz
-              </td>
-              <td className="border-b border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>
@@ -303,105 +285,104 @@ const FunStatsSection = () => {
                     )}
                   </span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-b">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 # of Creators who Extracted Buzz
-              </td>
-              <td className="border-b border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>{numberWithCommas(prevMonthStats.extractedCreatorCount)}</span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-b">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 Total Buzz Extracted
-              </td>
-              <td className="border-b border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(prevMonthStats.totalExtractedBuzz)}</span>
                 </div>
-              </td>
-            </tr>
+              </Table.Td>
+            </Table.Tr>
 
-            <tr>
-              <td colSpan={2} className="border-b">
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>Total Payout Buzz</span>
                 </div>
-              </td>
-              <td className="border-b border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(prevMonthStats.totalBankedBuzz)}</span>
                 </div>{' '}
-              </td>
-            </tr>
+              </Table.Td>
+            </Table.Tr>
 
-            <tr>
-              <td colSpan={2} className="border-b">
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 # of Creators who cashed out
-              </td>
-              <td className="border-b border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
                   <span>{numberWithCommas(prevMonthStats.cashedOutCreatorCount)}</span>
                 </div>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-b">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>$ per 1,000 Buzz Banked</span>
                 </div>
-              </td>
-              <td className="border-b border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 $
                 {numberWithCommas(
                   formatToLeastDecimals(prevMonthStats.dollarAmountPerThousand ?? 0)
                 )}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-b">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>Highest payout</span>
                 </div>
-              </td>
-              <td className="border-b border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarHighestEarned ?? 0))}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border-b">
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
                   <span>Average payout</span>
                 </div>
-              </td>
-              <td className="border-b border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarAverageEarned ?? 0))}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2}>
+              </Table.Td>
+            </Table.Tr>
+            <Table.Tr>
+              <Table.Td colSpan={2}>
                 <div className="flex items-center gap-1">
                   <span>Median payout</span>
                 </div>
-              </td>
-              <td className="border-l py-2 pl-2">
+              </Table.Td>
+              <Table.Td className="border-0 border-l border-solid py-2 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(prevMonthStats.dollarMedianEarned ?? 0))}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </Table.Td>
+            </Table.Tr>
+          </Table.Tbody>
+        </Table>
       </Paper>
     </Stack>
   );
 };
 const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
-  const { cx, classes, theme } = useStyles();
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
   const hasValidMembership = requirements?.validMembership;
   const membership = requirements?.membership;
@@ -417,15 +398,15 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
 
   return (
     <Stack className={classes.section}>
-      <Stack spacing={0} mb="sm">
+      <Stack gap={0} mb="sm">
         <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
           How do I join?
         </Title>
       </Stack>
       <Grid>
-        <Grid.Col xs={12} sm={4}>
-          <Paper withBorder className={cx(classes.card)} h="100%">
-            <Stack spacing="sm" h="100%">
+        <Grid.Col span={{ base: 12, sm: 4 }}>
+          <Paper withBorder className={classes.card} h="100%">
+            <Stack gap="sm" h="100%">
               <Text mb="lg" className={classes.highlightColor} size="lg">
                 Program requirements:
               </Text>
@@ -441,7 +422,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                       requirements?.score.min ?? 10000
                     )}`}
                     content={
-                      <p>
+                      <p className="my-0">
                         Your current{' '}
                         <Anchor
                           onClick={() => {
@@ -459,12 +440,12 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                     title="Be a Civitai Member"
                     content={
                       hasValidMembership ? (
-                        <p>
+                        <p className="my-0">
                           You are a {capitalize(getDisplayName(membership as string))} Member! Thank
                           you for supporting Civitai.
                         </p>
                       ) : membership ? (
-                        <p>
+                        <p className="my-0">
                           You are a {capitalize(getDisplayName(membership as string))} Member. Your
                           current membership does not apply to join the Creator Program. Consider
                           upgrading to one our supported memberships.
@@ -486,8 +467,8 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
               <Button
                 size="lg"
                 mt="auto"
-                rightIcon={availability.isAvailable ? <IconCaretRightFilled /> : undefined}
-                leftIcon={isJoined && availability.isAvailable ? <IconCircleCheck /> : undefined}
+                rightSection={availability.isAvailable ? <IconCaretRightFilled /> : undefined}
+                leftSection={isJoined && availability.isAvailable ? <IconCircleCheck /> : undefined}
                 component="a"
                 href={applyFormUrl}
                 target="_blank"
@@ -507,13 +488,13 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
             </Stack>
           </Paper>
         </Grid.Col>
-        <Grid.Col xs={12} sm={4}>
-          <Paper withBorder className={cx(classes.card)} h="100%">
-            <Stack spacing="sm">
+        <Grid.Col span={{ base: 12, sm: 4 }}>
+          <Paper withBorder className={classes.card} h="100%">
+            <Stack gap="sm">
               <Text mb="sm" className={classes.highlightColor} size="lg">
                 <strong>Want to know more? Check out the full Guide!</strong>
               </Text>
-              <Group noWrap w="100%">
+              <Group wrap="nowrap" w="100%">
                 <IconBook size={24} />
                 <Anchor
                   href="https://education.civitai.com/civitais-guide-to-earning-with-the-creator-program/"
@@ -523,14 +504,14 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                   Earning with the Creator Program
                 </Anchor>
               </Group>
-              <Group noWrap w="100%">
+              <Group wrap="nowrap" w="100%">
                 <IconBook size={24} />
                 <Anchor href="/content/creator-program-v2-tos">Terms of Service</Anchor>
               </Group>
             </Stack>
           </Paper>
         </Grid.Col>
-        <Grid.Col xs={12} sm={4}>
+        <Grid.Col span={{ base: 12, sm: 4 }}>
           <CompensationPoolCard />
         </Grid.Col>
       </Grid>
@@ -541,7 +522,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
 const faq: { q: string; a: string | React.ReactNode }[] = [
   {
     q: 'Is this voluntary?',
-    a: 'Yes! If you’re eligible for the program, but don’t want to participate, nobody’s forcing you! Even if you do join the program, but don’t want to contribute Buzz, that’s fine – there’s no requirement to Bank anything.',
+    a: `Yes! If you're eligible for the program, but don't want to participate, nobody's forcing you! Even if you do join the program, but don't want to contribute Buzz, that's fine – there's no requirement to Bank anything.`,
   },
   {
     q: 'Would buying a higher Membership Tier (Silver or Gold) increase my earnings?',
@@ -557,15 +538,15 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
   },
   {
     q: 'What happens if cancel my Civitai Membership?',
-    a: 'If you deactivate your Subscription you’ll remain in the Program until the end of the month, allowing you to Bank your Buzz and withdraw through the end of the period.',
+    a: `If you deactivate your Subscription you'll remain in the Program until the end of the month, allowing you to Bank your Buzz and withdraw through the end of the period.`,
   },
   {
     q: 'When, and how, do I sign up with your Payment Partner to withdraw my cash?',
-    a: 'When you have at least $50 in Ready to Withdraw status, you’ll be invited to set up your account with our Payment Partner, via the email tied to your Civitai account, and a link on the Creator Program interface.',
+    a: `When you have at least $50 in Ready to Withdraw status, you'll be invited to set up your account with our Payment Partner, via the email tied to your Civitai account, and a link on the Creator Program interface.`,
   },
   {
     q: 'Must I withdraw my “Ready to Withdraw” funds each month?',
-    a: 'No, funds can accumulate in your account until you’re ready to pay out! There’s no requirement to pay out each month.',
+    a: `No, funds can accumulate in your account until you're ready to pay out! There's no requirement to pay out each month.`,
   },
   {
     q: 'What happens if I decide I want my Banked Buzz back?',
@@ -574,20 +555,18 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
 ];
 
 const FAQ = () => {
-  const { cx, classes, theme } = useStyles();
-
   return (
     <Stack className={classes.section}>
       <Stack>
         <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
           Frequently asked questions
         </Title>
-        <Accordion variant="default">
+        <Accordion variant="default" classNames={{ control: 'py-4' }}>
           {faq.map(({ q, a }, index) => (
             <Accordion.Item key={index} value={`q${index}`}>
               <Accordion.Control>
-                <Group spacing={8}>
-                  <Text size="lg" weight={700}>
+                <Group gap={8}>
+                  <Text size="lg" fw={700}>
                     {q}
                   </Text>
                 </Group>
@@ -602,16 +581,14 @@ const FAQ = () => {
 };
 
 const CreatorCapsSection = () => {
-  const { cx, classes, theme } = useStyles();
-
   return (
     <Stack className={classes.section}>
-      <Stack spacing={0} mb="sm">
+      <Stack gap={0} mb="sm">
         <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
           Creator Banking Caps
         </Title>
       </Stack>
-      <Paper withBorder className={cx(classes.card)} h="100%">
+      <Paper withBorder className={classes.card} h="100%">
         <CreatorProgramCapsInfo />
       </Paper>
     </Stack>
@@ -621,46 +598,3 @@ const CreatorCapsSection = () => {
 export default function CreatorsClubIntro() {
   return CreatorsClubV1();
 }
-
-const useStyles = createStyles((theme) => ({
-  highlightColor: {
-    color: theme.colorScheme === 'dark' ? 'white' : 'black',
-  },
-  card: {
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.lg,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-  },
-  highlightCard: {
-    position: 'relative',
-    overflow: 'hidden',
-
-    '.mantine-Title-root': {
-      fontSize: 28,
-      fontWeight: 700,
-    },
-  },
-  earnBuzzCard: {
-    background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
-  },
-  getPaidCard: {
-    background: theme.fn.linearGradient(45, theme.colors.green[5], theme.colors.green[2]),
-  },
-  newPerksCard: {
-    background: theme.fn.linearGradient(45, theme.colors.blue[5], theme.colors.blue[2]),
-  },
-  highlightCardBackgroundIcon: {
-    position: 'absolute',
-    width: 'auto',
-    height: '75%',
-    top: '25%',
-    right: 0,
-    transform: 'translateX(35%)',
-    color: theme.colors.green[9],
-    opacity: 0.3,
-    zIndex: 0,
-  },
-  section: {
-    paddingTop: theme.spacing.xl * 2,
-  },
-}));

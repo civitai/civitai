@@ -1,4 +1,4 @@
-import { ActionIcon, Menu, useMantineTheme } from '@mantine/core';
+import { Menu, useComputedColorScheme } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification, updateNotification } from '@mantine/notifications';
@@ -36,6 +36,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
@@ -132,7 +133,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     },
   });
 
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const handleToggleMute = () => {
     if (user) toggleMuteMutation.mutate({ id: user.id });
@@ -219,16 +220,16 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   return (
     <Menu position="left-start" withinPortal>
       <Menu.Target>
-        <ActionIcon
+        <LegacyActionIcon
           loading={removeContentMutation.isLoading}
           size={30}
           radius="xl"
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           ml="auto"
         >
           <IconDotsVertical size={16} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         <>
@@ -238,7 +239,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                 <Menu.Item
                   component="a"
                   target="_blank"
-                  icon={<IconInfoCircle size={14} stroke={1.5} />}
+                  leftSection={<IconInfoCircle size={14} stroke={1.5} />}
                   href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`}
                 >
                   Lookup User
@@ -247,7 +248,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               {features.impersonation && user.id !== currentUser.id && (
                 <Menu.Item
                   color="yellow"
-                  icon={<IconCrystalBall size={14} stroke={1.5} />}
+                  leftSection={<IconCrystalBall size={14} stroke={1.5} />}
                   onClick={handleImpersonate}
                 >
                   Impersonate User
@@ -255,7 +256,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               )}
               <Menu.Item
                 color={user.bannedAt ? 'green' : 'red'}
-                icon={
+                leftSection={
                   !user.bannedAt ? (
                     <IconBan size={14} stroke={1.5} />
                   ) : (
@@ -268,7 +269,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               </Menu.Item>
               <Menu.Item
                 color={user.excludeFromLeaderboards ? 'green' : 'red'}
-                icon={
+                leftSection={
                   !user.excludeFromLeaderboards ? (
                     <IconGraphOff size={14} stroke={1.5} />
                   ) : (
@@ -283,20 +284,20 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               </Menu.Item>
               {/* <Menu.Item
                 color="red"
-                icon={<IconTrash size={14} stroke={1.5} />}
+                leftSection={<IconTrash size={14} stroke={1.5} />}
                 onClick={handleRemoveContent}
               >
                 Remove all content
               </Menu.Item> */}
               {/* <Menu.Item
                 color="red"
-                icon={<IconUserMinus size={14} stroke={1.5} />}
+                leftSection={<IconUserMinus size={14} stroke={1.5} />}
                 onClick={handleDeleteAccount}
               >
                 Delete Account
               </Menu.Item> */}
               <Menu.Item
-                icon={
+                leftSection={
                   user.muted ? (
                     <IconMicrophone size={14} stroke={1.5} />
                   ) : (
@@ -318,7 +319,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           <HideUserButton as="menu-item" userId={user.id} />
           <LoginRedirect reason="report-user">
             <Menu.Item
-              icon={<IconFlag size={14} stroke={1.5} />}
+              leftSection={<IconFlag size={14} stroke={1.5} />}
               onClick={() =>
                 openReportModal({
                   entityType: ReportEntity.User,

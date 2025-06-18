@@ -7,6 +7,7 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
+import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeTags } from '~/utils/string-helpers';
@@ -87,9 +88,9 @@ export default function ContentPage({
         <Title order={1} mb="sm">
           {title}
         </Title>
-        <TypographyStylesProvider>
+        <TypographyStylesWrapper>
           <CustomMarkdown rehypePlugins={[rehypeRaw, remarkGfm]}>{content}</CustomMarkdown>
-        </TypographyStylesProvider>
+        </TypographyStylesWrapper>
       </Container>
     </>
   );

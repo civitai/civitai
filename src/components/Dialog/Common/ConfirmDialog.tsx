@@ -48,7 +48,7 @@ export default function ConfirmDialog({
     >
       <Stack>
         {message}
-        <Group position="right">
+        <Group justify="flex-end">
           <Button variant="default" onClick={handleCancel} {...cancelProps}>
             {labels?.cancel ?? 'No'}
           </Button>

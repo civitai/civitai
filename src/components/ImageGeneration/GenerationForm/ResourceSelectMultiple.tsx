@@ -111,20 +111,20 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     return (
       <Input.Wrapper {...inputWrapperProps} descriptionProps={{ mb: 8 }} ref={ref}>
-        <Stack spacing="md" mb={inputWrapperProps.error ? 5 : undefined}>
+        <Stack gap="md" mb={inputWrapperProps.error ? 5 : undefined}>
           {sortedGroups.map((group, index) => {
             return (
               <React.Fragment key={group.type}>
                 {index !== 0 && <Divider />}
                 <Input.Wrapper
                   label={
-                    <Text color="dark.2" weight={590}>
+                    <Text c="dark.2" fw={590} inherit>
                       {group.label}
                     </Text>
                   }
                   labelProps={{ mb: 8 }}
                 >
-                  <Stack spacing={8}>
+                  <Stack gap={8}>
                     {group.resources.map((resource) => (
                       <ResourceSelectCard
                         key={resource.id}
@@ -142,7 +142,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
           {canAdd && !hideButton && (
             <Button
               variant="light"
-              leftIcon={<IconPlus size={18} />}
+              leftSection={<IconPlus size={18} />}
               onClick={handleOpenModal}
               {...buttonProps}
             >
@@ -150,7 +150,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
             </Button>
           )}
           {hideButton && !_values.length && (
-            <Text color="dimmed" size="sm">
+            <Text c="dimmed" size="sm">
               No resources selected
             </Text>
           )}

@@ -78,8 +78,8 @@ export default function Revenue({ id }: InferGetServerSidePropsType<typeof getSe
   if (!club) return <NotFound />;
 
   return (
-    <Stack spacing="md">
-      <Group position="apart">
+    <Stack gap="md">
+      <Group justify="space-between">
         <Title order={2}>Club Admins</Title>
       </Group>
       <Text>
@@ -92,8 +92,8 @@ export default function Revenue({ id }: InferGetServerSidePropsType<typeof getSe
           <Tabs.Tab value="pending">Pending invites</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="pending" pt="md">
-          <Stack spacing="md">
-            <Group position="apart">
+          <Stack gap="md">
+            <Group justify="space-between">
               <Title order={4}>Pending invites</Title>
               <Button
                 onClick={() => {
@@ -112,7 +112,7 @@ export default function Revenue({ id }: InferGetServerSidePropsType<typeof getSe
           </Stack>
         </Tabs.Panel>
         <Tabs.Panel value="admins" pt="md">
-          <Stack spacing="md">
+          <Stack gap="md">
             <Title order={4}>Active admins</Title>
             <ClubAdminsPaged clubId={club.id} />
           </Stack>

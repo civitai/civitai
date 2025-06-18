@@ -11,6 +11,7 @@ import {
 } from '~/components/Announcements/announcements.utils';
 import clsx from 'clsx';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function Announcement({
   announcement,
@@ -43,7 +44,7 @@ export function Announcement({
       {...props}
     >
       {canDismiss && (
-        <ActionIcon
+        <LegacyActionIcon
           variant="subtle"
           radius="xl"
           color="red"
@@ -51,7 +52,7 @@ export function Announcement({
           className="absolute right-2 top-2"
         >
           <IconX size={20} />
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
 
       {image && (

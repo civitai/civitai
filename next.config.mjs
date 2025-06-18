@@ -8,6 +8,7 @@ const isProd = process.env.NODE_ENV === 'production';
 const isDev = process.env.NODE_ENV === 'development';
 const analyze = process.env.ANALYZE === 'true';
 const includeCircularDependencyPlugin = process.env.CIRCULAR_DEPENDENCY_PLUGIN === 'true';
+const shouldOptimizeImports = (isDev && analyze) || isProd;
 
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,
@@ -276,6 +277,11 @@ export default defineNextConfig(
         {
           source: '/creators-program',
           destination: '/creator-program',
+          permanent: true,
+        },
+        {
+          source: '/research/rater',
+          destination: '/games/knights-of-new-order',
           permanent: true,
         },
       ];

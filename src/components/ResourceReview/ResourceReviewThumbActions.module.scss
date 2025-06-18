@@ -1,0 +1,20 @@
+.button {
+  overflow: hidden;
+
+  .mantine-Button-leftIcon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  &:last-of-type .mantine-Button-leftIcon {
+    right: 12px;
+    left: auto;
+    margin-right: 0;
+  }
+
+  &[data-loading]::before {
+    border-radius: 0;
+  }
+}

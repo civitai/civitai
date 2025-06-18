@@ -57,49 +57,46 @@ export function ClubAdminInviteUpsertForm({ clubId, clubAdminInvite, onSuccess, 
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={32}>
+      <Stack gap={32}>
         <Grid gutter="xl">
-          <Grid.Col xs={12}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
+          <Grid.Col span={12}>
+            <Stack gap={32}>
+              <Stack gap="xl">
                 <InputDatePicker
                   name="expiresAt"
                   label="Expires At"
-                  icon={<IconCalendarDue size={16} />}
+                  leftSection={<IconCalendarDue size={16} />}
                   minDate={dayjs().add(1, 'day').toDate()}
                   clearable
                 />
-                <InputCheckboxGroup
-                  name="permissions"
-                  orientation="vertical"
-                  label="Invite Permissions"
-                  spacing={8}
-                >
-                  {Object.keys(ClubAdminPermission).map((permission) => {
-                    return (
-                      <Checkbox
-                        key={permission}
-                        value={permission.toString()}
-                        label={
-                          <Group spacing="xs" position="apart" w="100%" noWrap>
-                            <Text lineClamp={1} inherit>
-                              {getDisplayName(permission)}
-                            </Text>
-                          </Group>
-                        }
-                      />
-                    );
-                  })}
+                <InputCheckboxGroup name="permissions" label="Invite Permissions">
+                  <Stack gap={8}>
+                    {Object.keys(ClubAdminPermission).map((permission) => {
+                      return (
+                        <Checkbox
+                          key={permission}
+                          value={permission.toString()}
+                          label={
+                            <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
+                              <Text lineClamp={1} inherit>
+                                {getDisplayName(permission)}
+                              </Text>
+                            </Group>
+                          }
+                        />
+                      );
+                    })}
+                  </Stack>
                 </InputCheckboxGroup>
               </Stack>
             </Stack>
           </Grid.Col>
         </Grid>
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button
               loading={upsertingInvite}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onCancel?.();

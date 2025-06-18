@@ -1,4 +1,4 @@
-import { useMantineTheme } from '@mantine/core';
+import { useMantineTheme, getPrimaryShade, useComputedColorScheme } from '@mantine/core';
 import {
   type Icon,
   type IconProps,
@@ -62,6 +62,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const {
     groupedCollections: {
@@ -77,33 +78,33 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           href: `/user/${currentUser?.username}`,
           icon: IconUser,
-          color: theme.colors.blue[theme.fn.primaryShade()],
+          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Your Profile',
         },
         {
           href: `/user/${currentUser?.username}/models?section=training`,
           visible: !!currentUser && features.imageTrainingResults,
           icon: IconBarbell,
-          color: theme.colors.green[theme.fn.primaryShade()],
+          color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Training',
         },
         {
           href: `/collections`,
           icon: IconBookmark,
-          color: theme.colors.green[theme.fn.primaryShade()],
+          color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Collections',
         },
         {
           href: `/collections/${bookmarkedModelsCollection?.id}`,
           icon: IconThumbUp,
-          color: theme.colors.green[theme.fn.primaryShade()],
+          color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Liked Models',
         },
         {
           href: `/collections/${bookmarkedArticlesCollection?.id}`,
           visible: !!bookmarkedArticlesCollection,
           icon: IconBookmarkEdit,
-          color: theme.colors.pink[theme.fn.primaryShade()],
+          color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Bookmarked Articles',
         },
         {
@@ -111,7 +112,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           as: '/bounties',
           visible: features.bounties,
           icon: IconMoneybag,
-          color: theme.colors.pink[theme.fn.primaryShade()],
+          color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Bounties',
         },
         {
@@ -119,21 +120,21 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           as: '/clubs',
           visible: features.clubs,
           icon: IconClubs,
-          color: theme.colors.pink[theme.fn.primaryShade()],
+          color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Clubs',
         },
         {
           href: '/user/buzz-dashboard',
           visible: features.buzz,
           icon: IconProgressBolt,
-          color: theme.colors.yellow[theme.fn.primaryShade()],
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Buzz Dashboard',
         },
         {
           href: '/user/vault',
           visible: features.vault,
           icon: IconCloudLock,
-          color: theme.colors.yellow[theme.fn.primaryShade()],
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Vault',
         },
       ],
@@ -144,14 +145,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           href: '/leaderboard/overall',
           icon: IconCrown,
-          color: theme.colors.yellow[theme.fn.primaryShade()],
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Leaderboard',
         },
         {
           href: '/auctions',
           visible: features.auctions,
           icon: IconGavel,
-          color: theme.colors.yellow[theme.fn.primaryShade()],
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Auctions',
           newUntil: new Date('2025-04-07'),
         },
@@ -159,7 +160,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           href: '/games/knights-of-new-order',
           visible: features.newOrderGame,
           icon: IconSword,
-          color: theme.colors.yellow[theme.fn.primaryShade()],
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Knights of New',
           newUntil: new Date('2025-06-15'),
         },
@@ -199,14 +200,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           href: '/leaderboard/overall',
           icon: IconCrown,
-          color: theme.colors.yellow[theme.fn.primaryShade()],
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Leaderboard',
         },
         {
           href: '/auctions',
           visible: features.auctions,
           icon: IconGavel,
-          color: theme.colors.yellow[theme.fn.primaryShade()],
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Auctions',
           newUntil: new Date('2025-04-07'),
         },
@@ -230,6 +231,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const isMuted = currentUser?.muted ?? false;
   const canCreate = features.canWrite;
 
@@ -239,7 +241,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       visible: !isMuted,
       rel: 'nofollow',
       icon: IconBrush,
-      color: theme.colors.blue[theme.fn.primaryShade()],
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: 'Generate',
     },
     {
@@ -248,7 +250,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       redirectReason: 'post-images',
       rel: 'nofollow',
       icon: IconPhotoUp,
-      color: theme.colors.blue[theme.fn.primaryShade()],
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: 'Post Images',
     },
     {
@@ -257,7 +259,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       redirectReason: 'post-images',
       rel: 'nofollow',
       icon: IconVideoPlus,
-      color: theme.colors.blue[theme.fn.primaryShade()],
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: 'Post Videos',
     },
     {
@@ -266,7 +268,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       redirectReason: 'upload-model',
       rel: 'nofollow',
       icon: IconUpload,
-      color: theme.colors.blue[theme.fn.primaryShade()],
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: ' Upload a Model',
     },
     {
@@ -275,7 +277,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       redirectReason: 'train-model',
       rel: 'nofollow',
       icon: IconBarbell,
-      color: theme.colors.blue[theme.fn.primaryShade()],
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: 'Train a LoRA',
       currency: true,
     },
@@ -285,7 +287,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       redirectReason: 'create-article',
       rel: 'nofollow',
       icon: IconWriting,
-      color: theme.colors.blue[theme.fn.primaryShade()],
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: 'Write an Article',
     },
     {
@@ -294,7 +296,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       redirectReason: 'create-bounty',
       rel: 'nofollow',
       icon: IconMoneybag,
-      color: theme.colors.blue[theme.fn.primaryShade()],
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: 'Create a Bounty',
       currency: true,
     },
@@ -304,7 +306,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       redirectReason: 'create-club',
       rel: 'nofollow',
       icon: IconClubs,
-      color: theme.colors.blue[theme.fn.primaryShade()],
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: 'Create a Club',
     },
   ];

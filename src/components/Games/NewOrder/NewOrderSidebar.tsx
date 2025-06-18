@@ -1,4 +1,4 @@
-import { Alert, Group, Navbar, Popover, ThemeIcon } from '@mantine/core';
+import { Group, Alert, Popover, ThemeIcon, Card } from '@mantine/core';
 import {
   IconBubbleText,
   IconChevronDown,
@@ -58,7 +58,7 @@ export function NewOrderSidebar() {
           showStats={playerData.rank.type !== NewOrderRankType.Acolyte}
           className={clsx(
             'w-full rounded-b-none p-4 @md:rounded-sm',
-            state.opened ? 'bg-gray-1 dark:bg-dark-5' : 'dark:bg-dark-6'
+            state.opened ? 'bg-gray-1 dark:bg-dark-4' : 'dark:bg-dark-5'
           )}
           withBorder
         />
@@ -69,7 +69,7 @@ export function NewOrderSidebar() {
     <>
       <div className="flex flex-col">
         <button
-          className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+          className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
           onClick={() => openJudgmentHistoryModal()}
         >
           <Group>
@@ -81,7 +81,7 @@ export function NewOrderSidebar() {
         </button>
         {currentUser?.isModerator && (
           <button
-            className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+            className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
             onClick={() => openPlayersDirectoryModal()}
           >
             <Group>
@@ -93,7 +93,7 @@ export function NewOrderSidebar() {
           </button>
         )}
         <Link
-          className="w-full cursor-pointer rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+          className="w-full cursor-pointer rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
           href="/leaderboard/knights-new-order"
         >
           <Group>
@@ -104,7 +104,7 @@ export function NewOrderSidebar() {
           </Group>
         </Link>
         <button
-          className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+          className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
           onClick={() => {
             dialogStore.trigger({
               component: ConfirmDialog,
@@ -137,7 +137,7 @@ export function NewOrderSidebar() {
           </div>
         </button>
         <Link
-          className="w-full cursor-pointer rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+          className="w-full cursor-pointer rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
           href="https://forms.clickup.com/8459928/f/825mr-13011/SEFW63SLT4PH1H7DQ0"
           rel="noopener noreferrer"
           target="_blank"
@@ -150,7 +150,7 @@ export function NewOrderSidebar() {
           </Group>
         </Link>
         <button
-          className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+          className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
           onClick={() => setState((prev) => ({ ...prev, rulesOpened: true }))}
         >
           <div className="flex flex-nowrap items-center gap-4">
@@ -177,7 +177,9 @@ export function NewOrderSidebar() {
           {header}
           <Popover
             position="bottom"
-            transition="scale-y"
+            transitionProps={{
+              transition: 'scale-y',
+            }}
             width="calc(100% - 32px)"
             onChange={(open) => setState((prev) => ({ ...prev, opened: open }))}
             zIndex={40}
@@ -186,7 +188,7 @@ export function NewOrderSidebar() {
               <button
                 className={clsx(
                   'z-10 w-full justify-items-center border border-t-0 p-1 dark:border-dark-4',
-                  state.opened ? 'bg-gray-1 dark:bg-dark-5' : 'bg-white dark:bg-dark-6'
+                  state.opened ? 'bg-gray-1 dark:bg-dark-4' : 'bg-white dark:bg-dark-5'
                 )}
               >
                 <IconChevronDown
@@ -199,14 +201,20 @@ export function NewOrderSidebar() {
           </Popover>
         </div>
       ) : (
-        <Navbar p="md" h="100%" width={{ xs: 300, sm: 360 }} zIndex={1} withBorder>
-          <Navbar.Section className="border-b border-gray-200 pb-4 dark:border-b-dark-4">
+        <Card
+          component="nav"
+          p={0}
+          h="100%"
+          className="w-full max-w-[300px] @sm:max-w-[360px]"
+          withBorder
+        >
+          <Card.Section className="m-0 border-b border-gray-4 p-4 dark:border-b-dark-4">
             {header}
-          </Navbar.Section>
-          <Navbar.Section mt="md" grow>
+          </Card.Section>
+          <Card.Section h="100%" className="m-0 p-4">
             {content}
-          </Navbar.Section>
-        </Navbar>
+          </Card.Section>
+        </Card>
       )}
       <NewOrderRulesModal
         opened={state.rulesOpened}

@@ -1,0 +1,10 @@
+.active {
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7));
+  cursor: pointer;
+}
+
+.categoryIcon {
+  stroke-width: 0;
+  fill: var(--mantine-color-blue-6);
+  margin-top: 1px;
+}

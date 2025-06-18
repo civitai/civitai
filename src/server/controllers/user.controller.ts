@@ -623,6 +623,8 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
     const user = await getUserByUsername({ username, select: { id: true, createdAt: true } });
     if (!user) throw throwNotFoundError(`No user with username ${username}`);
 
+    const filteredUsers = [-1, user.id]; // Exclude civitai user and the user themselves
+
     const [userFollowing, userFollowers, userHidden, userBlocked] = await Promise.all([
       getUserByUsername({
         username,
@@ -630,7 +632,7 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
           _count: { select: { engagingUsers: { where: { type: 'Follow' } } } },
           engagingUsers: {
             select: { targetUser: { select: simpleUserSelect } },
-            where: { type: 'Follow' },
+            where: { type: 'Follow', targetUserId: { notIn: filteredUsers } },
           },
         },
       }),
@@ -640,7 +642,7 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
           _count: { select: { engagedUsers: { where: { type: 'Follow' } } } },
           engagedUsers: {
             select: { user: { select: simpleUserSelect } },
-            where: { type: 'Follow' },
+            where: { type: 'Follow', userId: { notIn: filteredUsers } },
           },
         },
       }),
@@ -650,7 +652,7 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
           _count: { select: { engagingUsers: { where: { type: 'Hide' } } } },
           engagingUsers: {
             select: { targetUser: { select: simpleUserSelect } },
-            where: { type: 'Hide' },
+            where: { type: 'Hide', targetUserId: { notIn: filteredUsers } },
           },
         },
       }),

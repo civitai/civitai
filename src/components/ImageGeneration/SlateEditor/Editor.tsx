@@ -8,7 +8,7 @@ import { Slate, Editable, ReactEditor, withReact, useSelected, useFocused } from
 
 import type { CustomEditor, MentionElement } from './index';
 import ReactDOM from 'react-dom';
-import { useMantineTheme } from '@mantine/core';
+import { useMantineTheme, getThemeColor, useComputedColorScheme, rgba } from '@mantine/core';
 import { parsePromptResources, splitPromptResources } from '~/utils/prompt-helpers';
 
 const Portal = ({ children }: { children: React.ReactNode }) => {
@@ -237,10 +237,11 @@ const Mention = (props: RenderElementProps) => {
   const { attributes, children } = props;
   const element = props.element as MentionElement;
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const selected = useSelected();
   const focused = useFocused();
-  const borderColor = theme.fn.themeColor('yellow', theme.colorScheme === 'dark' ? 8 : 0);
-  const background = selected && focused ? theme.fn.rgba(borderColor, 0.2) : undefined;
+  const borderColor = getThemeColor(colorScheme === 'dark' ? 'yellow-8' : 'yellow-0', theme);
+  const background = selected && focused ? rgba(borderColor, 0.2) : undefined;
   const style: React.CSSProperties = {
     borderBottom: `1px solid ${borderColor}`,
     margin: '0 1px',

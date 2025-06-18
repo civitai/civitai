@@ -15,14 +15,13 @@ import {
   Text,
   ThemeIcon,
   Title,
-  createStyles,
 } from '@mantine/core';
 import { IconLock, IconMessage, IconMessageCircleOff, IconPhoto } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BackButton } from '~/components/BackButton/BackButton';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -45,6 +44,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { ResourceReviewPagedModel } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import classes from './review.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -118,7 +118,7 @@ export default function ModelReviews() {
   const Model = loadingModel ? (
     <Skeleton height={44} />
   ) : model ? (
-    <Group spacing="xs" noWrap>
+    <Group gap="xs" wrap="nowrap">
       <BackButton url={`/models/${model.id}?modelVersionId=${modelVersionId}`} />
       <Title lineClamp={1}>{model.name} Reviews</Title>
     </Group>
@@ -146,12 +146,12 @@ export default function ModelReviews() {
     <UserResourceReviewComposite modelId={model.id} modelVersionId={modelVersionId}>
       {({ modelId, modelVersionId, modelName, userReview }) => (
         <Card p="sm" style={{ position: 'sticky', top: 24 }} withBorder>
-          <Stack spacing={8}>
-            <Text size="md" weight={510}>
+          <Stack gap={8}>
+            <Text size="md" fw={510}>
               Did you like this resource?
             </Text>
             {userReview && (
-              <Text color="dimmed" size="xs">
+              <Text c="dimmed" size="xs">
                 Reviewed <DaysFromNow date={userReview.createdAt} />
               </Text>
             )}
@@ -193,14 +193,14 @@ export default function ModelReviews() {
         ]}
       />
       <Container size="xl">
-        <ContainerGrid gutter={48}>
-          <ContainerGrid.Col sm={12} md={7} offsetMd={2} orderMd={1}>
-            <Group spacing={8} position="apart">
+        <ContainerGrid2 gutter={48}>
+          <ContainerGrid2.Col span={{ base: 12, md: 7 }} offset={{ md: 2 }} order={{ md: 1 }}>
+            <Group gap={8} justify="space-between">
               {Model}
               {Versions}
             </Group>
-          </ContainerGrid.Col>
-          <ContainerGrid.Col sm={12} md={3} orderMd={3}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, md: 3 }} order={{ md: 3 }}>
             {isMuted ? (
               <Alert color="yellow" icon={<IconLock />}>
                 You cannot add reviews because you have been muted
@@ -208,11 +208,11 @@ export default function ModelReviews() {
             ) : model?.locked ? (
               <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
                 <Center>
-                  <Group spacing="xs">
+                  <Group gap="xs">
                     <ThemeIcon color="gray" size="xl" radius="xl">
                       <IconMessageCircleOff />
                     </ThemeIcon>
-                    <Text size="lg" color="dimmed">
+                    <Text size="lg" c="dimmed">
                       Reviews are turned off for this model.
                     </Text>
                   </Group>
@@ -221,8 +221,8 @@ export default function ModelReviews() {
             ) : (
               UserReview
             )}
-          </ContainerGrid.Col>
-          <ContainerGrid.Col sm={12} md={7} offsetMd={2} orderMd={2}>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, md: 7 }} offset={{ md: 2 }} order={{ md: 2 }}>
             {loadingResourceReviews ? (
               <Center p="xl">
                 <Loader />
@@ -236,7 +236,7 @@ export default function ModelReviews() {
                 {resourceReviews && resourceReviews.totalPages > 1 && (
                   <Center mt="md">
                     <Pagination
-                      page={page}
+                      value={page}
                       onChange={handlePaginationChange}
                       total={resourceReviews.totalPages}
                     />
@@ -244,49 +244,31 @@ export default function ModelReviews() {
                 )}
               </Stack>
             )}
-          </ContainerGrid.Col>
-        </ContainerGrid>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
       </Container>
     </>
   );
 }
 
-const useCardStyles = createStyles((theme) => ({
-  card: {
-    padding: theme.spacing.xl,
-
-    [theme.fn.smallerThan('sm')]: {
-      padding: theme.spacing.sm,
-    },
-  },
-  actionsWrapper: {
-    gap: theme.spacing.md,
-
-    [theme.fn.smallerThan('sm')]: {
-      gap: 8,
-    },
-  },
-}));
-
 function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creatorId?: number }) {
-  const { classes } = useCardStyles();
   const isCreator = creatorId === review.user.id;
   const isThumbsUp = review.recommended;
 
   return (
     <Card className={classes.card} shadow="sm" radius="md" w="100%" p="xl" withBorder>
-      <Stack spacing="sm">
+      <Stack gap="sm">
         {(review.exclude || isCreator) && (
-          <Group position="left">
+          <Group justify="start">
             <Badge color="red">Excluded from count</Badge>
           </Group>
         )}
 
-        <Group position="apart" noWrap>
+        <Group justify="space-between" wrap="nowrap">
           <UserAvatar
             user={review.user}
             subText={
-              <Group mt={4} spacing={8} noWrap>
+              <Group mt={4} gap={8} wrap="nowrap">
                 <Text size="sm" lineClamp={1}>
                   <DaysFromNow date={review.createdAt} />
                 </Text>
@@ -333,7 +315,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
             withUsername
             linkToProfile
           />
-          <Group className={classes.actionsWrapper} noWrap>
+          <Group className={classes.actionsWrapper} wrap="nowrap">
             <RoutedDialogLink
               name="resourceReview"
               state={{ reviewId: review.id }}

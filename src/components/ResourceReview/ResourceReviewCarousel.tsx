@@ -1,4 +1,4 @@
-import { ActionIcon, Box, Button, Container, createStyles, Text, Loader } from '@mantine/core';
+import { Button, Container, Text, Loader } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
@@ -14,8 +14,9 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ImageSort } from '~/server/common/enums';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import classes from './ResourceReviewCarousel.module.css';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ResourceReviewCarousel({
   userId,
@@ -26,7 +27,6 @@ export function ResourceReviewCarousel({
   modelVersionId: number;
   reviewId: number;
 }) {
-  const { classes } = useStyles();
   const mobile = useContainerSmallerThan('md');
 
   // today, typescript was not cool.
@@ -112,7 +112,7 @@ export function ResourceReviewCarousel({
                           {image.hasMeta && (
                             <div className="absolute bottom-0.5 right-0.5 z-10">
                               <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                                <ActionIcon variant="transparent" size="lg">
+                                <LegacyActionIcon component="div" variant="transparent" size="lg">
                                   <IconInfoCircle
                                     color="white"
                                     filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -120,7 +120,7 @@ export function ResourceReviewCarousel({
                                     strokeWidth={2.5}
                                     size={26}
                                   />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </ImageMetaPopover2>
                             </div>
                           )}
@@ -151,63 +151,10 @@ export function ResourceReviewCarousel({
           </Embla>
         )}
 
-        <Text size="xs" color="dimmed" mt="xs" mb="-xs">
+        <Text size="xs" c="dimmed" mt="xs" mb="-xs">
           Images this user generated with this resource
         </Text>
       </Container>
     </div>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  control: {
-    svg: {
-      width: 24,
-      height: 24,
-
-      [containerQuery.smallerThan('sm')]: {
-        minWidth: 16,
-        minHeight: 16,
-      },
-    },
-  },
-
-  footer: {
-    display: 'flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    background: theme.fn.gradient({
-      from: 'rgba(37,38,43,0.8)',
-      to: 'rgba(37,38,43,0)',
-      deg: 0,
-    }),
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    zIndex: 10,
-    gap: 6,
-    padding: theme.spacing.xs,
-  },
-  reactions: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    borderRadius: theme.radius.sm,
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
-        : theme.colors.gray[0],
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    padding: 4,
-  },
-  info: {
-    position: 'absolute',
-    bottom: 5,
-    right: 5,
-  },
-}));

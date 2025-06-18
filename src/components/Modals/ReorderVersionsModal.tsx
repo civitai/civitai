@@ -12,7 +12,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   const [versions, setVersions] = useState<ModelGetVersions>([]);
@@ -82,9 +82,9 @@ export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
       opened={opened}
       onClose={onClose}
       title={
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Title order={3}>Rearrange versions</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Drag and drop the versions to set their order
           </Text>
         </Stack>
@@ -116,7 +116,7 @@ export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
           </SortableContext>
         </DndContext>
       )}
-      <Group position="right" mt="xl">
+      <Group justify="flex-end" mt="xl">
         <Button variant="default" onClick={onClose}>
           Cancel
         </Button>

@@ -1,6 +1,6 @@
 import type { MantineSize, SegmentedControlProps } from '@mantine/core';
 import {
-  ActionIcon,
+  Alert,
   Badge,
   Box,
   Center,
@@ -11,33 +11,33 @@ import {
   Loader,
   NavLink,
   Popover,
+  SegmentedControl,
   Stack,
   Text,
   Title,
-  createStyles,
-  SegmentedControl,
-  Alert,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
+import clsx from 'clsx';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CreatorList } from '~/components/Leaderboard/CreatorList';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { numericString, stringDate } from '~/utils/zod-helpers';
-import { env } from '~/env/client';
-import { removeEmpty } from '~/utils/object-helpers';
-import { constants } from '~/server/common/constants';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import classes from './[id].module.css';
 
 const excludeLegendsRegex = /Donors|Knights/i;
 
@@ -50,8 +50,7 @@ const leaderboardQuerySchema = z.object({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, ctx }) => {
-    const { id, date } = leaderboardQuerySchema.parse(ctx.query);
+  resolver: async ({ ssg }) => {
     await ssg?.leaderboard.getLeaderboards.prefetch();
   },
 });
@@ -60,7 +59,6 @@ export default function Leaderboard() {
   const { query, replace } = useRouter();
   const { id, date, position, board } = leaderboardQuerySchema.parse(query);
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
   const isDisabled = id === 'images-rater';
   // const isDisabled = false;
 
@@ -140,8 +138,8 @@ export default function Leaderboard() {
         key={item.id}
         p={itemSize}
         label={
-          <Group position="apart">
-            <Text weight={500}>{item.title}</Text>
+          <Group justify="space-between">
+            <Text fw={500}>{item.title}</Text>
             <UserPosition
               position={leaderboardPositions[item.id]}
               loading={loadingLeaderboardPositions}
@@ -179,53 +177,55 @@ export default function Leaderboard() {
         ]}
       />
       <Container size="lg">
-        <ContainerGrid gutter="xl">
-          <ContainerGrid.Col xs={12} sm={4} className={classes.sidebar}>
+        <ContainerGrid2 gutter="xl">
+          <ContainerGrid2.Col span={{ base: 12, sm: 4 }} className={classes.sidebar}>
             <Box maw={300} w="100%">
               {navLinks()}
             </Box>
-          </ContainerGrid.Col>
+          </ContainerGrid2.Col>
 
-          <ContainerGrid.Col xs={12} sm={8} display="flex" sx={{ justifyContent: 'center' }}>
-            <Stack spacing={0} maw={600} w="100%">
-              <Group spacing={8} noWrap>
+          <ContainerGrid2.Col
+            span={{ base: 12, sm: 8 }}
+            display="flex"
+            style={{ justifyContent: 'center' }}
+          >
+            <Stack gap={0} maw={600} w="100%">
+              <Group gap={8} wrap="nowrap">
                 <Title className={classes.title}>{selectedLeaderboard?.title}</Title>
                 {hasLegends && <LegendsToggle className={classes.legendsToggleSm} />}
-                <ActionIcon
+                <LegacyActionIcon
                   className={classes.drawerButton}
                   size="md"
                   variant="transparent"
                   onClick={toggle}
                 >
                   <IconLayoutSidebarLeftExpand />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Group>
               {hasLegends && <LegendsToggle className={classes.legendsToggle} />}
-              <Group spacing={5}>
-                <Text className={classes.slogan} color="dimmed" size="lg">
+              <Group gap={5}>
+                <Text className={classes.slogan} c="dimmed" size="lg">
                   {selectedLeaderboard?.description}
                 </Text>
                 <Popover withArrow>
                   <Popover.Target>
-                    <ActionIcon variant="transparent" size="sm">
+                    <LegacyActionIcon variant="transparent" size="sm">
                       <IconInfoCircle />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </Popover.Target>
                   <Popover.Dropdown>
                     {board === 'season' ? (
-                      <Stack spacing={4}>
-                        <Text weight={500}>Rank is calculated based on:</Text>
-                        <Code block color="blue">
-                          {selectedLeaderboard?.scoringDescription}
-                        </Code>
-                        <Text color="dimmed" size="xs">
+                      <Stack gap={4}>
+                        <Text fw={500}>Rank is calculated based on:</Text>
+                        <Code block>{selectedLeaderboard?.scoringDescription}</Code>
+                        <Text c="dimmed" size="xs">
                           Only the last 30 days are considered
                         </Text>
                       </Stack>
                     ) : board === 'legend' ? (
-                      <Stack spacing={4}>
-                        <Text weight={500}>Score is calculated based on:</Text>
-                        <Code block color="blue">
+                      <Stack gap={4}>
+                        <Text fw={500}>Score is calculated based on:</Text>
+                        <Code block>
                           {`Diamond - 1st place: ${
                             constants.leaderboard.legendScoring.diamond * 100
                           } points per day
@@ -233,7 +233,7 @@ Gold - Top 3: ${constants.leaderboard.legendScoring.gold * 100} points per day
 Silver - Top 10: ${constants.leaderboard.legendScoring.silver * 100} points per day
 Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per day`}
                         </Code>
-                        <Text color="dimmed" size="xs">
+                        <Text c="dimmed" size="xs">
                           The entire history of the leaderboard is considered
                         </Text>
                       </Stack>
@@ -249,7 +249,7 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
                   </Text>
                 </Alert>
               ) : (
-                <Text color="dimmed" size="xs" mb="lg">
+                <Text c="dimmed" size="xs" mb="lg">
                   As of{' '}
                   {leaderboardResults[0]
                     ? dayjs(leaderboardResults[0].date).format('MMMM D, YYYY h:mma')
@@ -268,15 +268,15 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
                 <CreatorList data={leaderboardResults} />
               ) : null}
             </Stack>
-          </ContainerGrid.Col>
-        </ContainerGrid>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
       </Container>
       <Drawer
         opened={drawerOpen}
         onClose={close}
-        size="full"
+        size="100%"
         title={
-          <Text size="lg" weight={500}>
+          <Text size="lg" fw={500}>
             Leaderboards
           </Text>
         }
@@ -313,18 +313,11 @@ const LegendsToggle = (props: Omit<SegmentedControlProps, 'data' | 'onChange' | 
       ]}
       size="xs"
       value={board}
-      onChange={setBoard}
+      onChange={(board) => setBoard(board as 'season' | 'legend')}
       color="blue"
       ml="auto"
       orientation="horizontal"
-      styles={(theme) => ({
-        root: {
-          border: `1px solid ${
-            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-          }`,
-          background: 'none',
-        },
-      })}
+      className="border border-gray-4 bg-none dark:border-dark-4"
       {...props}
     />
   );
@@ -345,7 +338,7 @@ const UserPosition = ({
   if (loading)
     return (
       <Badge color="gray">
-        <Loader variant="dots" size="xs" color="gray" />
+        <Loader type="dots" size="xs" color="gray" />
       </Badge>
     );
   if (!position) return null;
@@ -356,18 +349,9 @@ const UserPosition = ({
   return (
     <Badge
       color={top10 ? 'yellow' : top100 ? 'blue' : 'gray'}
+      className={clsx(classes.userPosition, top10 && classes.top10, top100 && classes.top100)}
       variant="outline"
-      sx={(theme) => ({
-        ':hover': {
-          transition: 'background-color 300ms ease',
-          backgroundColor: top10
-            ? theme.fn.rgba(theme.colors.yellow[5], 0.2)
-            : top100
-            ? theme.fn.rgba(theme.colors.blue[5], 0.2)
-            : undefined,
-        },
-      })}
-      onClick={(event) => {
+      onClick={(event: React.MouseEvent<HTMLDivElement>) => {
         event.stopPropagation();
         event.preventDefault();
 
@@ -378,57 +362,3 @@ const UserPosition = ({
     </Badge>
   );
 };
-
-const useStyles = createStyles((theme) => ({
-  title: {
-    [containerQuery.smallerThan('xs')]: {
-      fontSize: 28,
-    },
-  },
-  slogan: {
-    [containerQuery.smallerThan('xs')]: {
-      fontSize: theme.fontSizes.sm,
-    },
-  },
-  navItem: {
-    borderRight: `1px solid ${theme.colors.gray[theme.colorScheme === 'dark' ? 9 : 2]}`,
-    '&[data-active="true"]': {
-      borderRightColor: theme.colors.blue[theme.colorScheme === 'dark' ? 9 : 2],
-    },
-  },
-  sidebar: {
-    display: 'block',
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-
-  drawerButton: {
-    display: 'none',
-    [containerQuery.smallerThan('sm')]: {
-      marginLeft: 'auto',
-      display: 'block',
-    },
-  },
-
-  drawerHeader: {
-    padding: theme.spacing.xs,
-    marginBottom: 0,
-    boxShadow: theme.shadows.sm,
-  },
-
-  legendsToggleSm: {
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-
-  legendsToggle: {
-    width: '100%',
-    marginTop: theme.spacing.xs,
-    marginBottom: theme.spacing.xs,
-    [containerQuery.largerThan('sm')]: {
-      display: 'none',
-    },
-  },
-}));

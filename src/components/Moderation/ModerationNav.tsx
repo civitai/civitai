@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function ModerationNav() {
   const features = useFeatureFlags();
@@ -19,7 +20,6 @@ export function ModerationNav() {
         { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
         { label: 'Rewards', href: '/moderator/rewards' },
         { label: 'Auditor', href: '/moderator/auditor' },
-        { label: 'Rater', href: '/research/rater' },
         { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
@@ -56,9 +56,9 @@ export function ModerationNav() {
   return (
     <Menu zIndex={constants.imageGeneration.drawerZIndex + 1} withinPortal>
       <Menu.Target>
-        <ActionIcon color="yellow" variant="transparent">
+        <LegacyActionIcon color="yellow" variant="transparent">
           <IconBadge />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>{menuItems}</Menu.Dropdown>
     </Menu>

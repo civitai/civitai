@@ -1,0 +1,64 @@
+.section {
+  position: relative;
+
+  & + .section {
+    margin-top: calc(var(--mantine-spacing-xl) * 3);
+  }
+}
+
+.sectionHeaderContainer {
+  overflow: hidden;
+  position: relative;
+  height: 250px;
+}
+
+.sectionHeaderContainerWithBackground {
+  background: transparent;
+  border-radius: var(--mantine-radius-md);
+}
+
+.sectionDescription {
+  padding: 0 var(--mantine-spacing-sm) var(--mantine-spacing-sm);
+  
+  p {
+    font-size: 18px;
+    line-height: 1.3;
+  }
+}
+
+.backgroundImage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.4;
+  z-index: -1;
+}
+
+.sectionHeaderContentWrap {
+  position: absolute;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+}
+
+.sectionTitle {
+  text-align: center;
+  color: var(--mantine-color-white);
+  width: 100%;
+  padding: var(--mantine-spacing-lg) 8px;
+  text-shadow: 3px 0px 7px rgba(0, 0, 0, 0.8), -3px 0px 7px rgba(0, 0, 0, 0.8), 0px 4px 7px rgba(0, 0, 0, 0.8);
+  max-width: 400px;
+  font-size: 48px;
+  line-height: 1.1;
+}
+
+@container (min-width: 500px) {
+  .sectionTitle {
+    font-size: 64px;
+    max-width: 500px;
+  }
+}

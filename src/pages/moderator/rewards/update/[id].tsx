@@ -55,7 +55,7 @@ export default function PurchasableRewardUpdate({ id }: { id: number }) {
       <Meta title="Update Rewards" deIndex />
       <Container size="md">
         <Stack>
-          <Group spacing="md" noWrap>
+          <Group gap="md" wrap="nowrap">
             <BackButton url="/moderator/rewards" />
             <Title>Update Purchasable Reward</Title>
           </Group>

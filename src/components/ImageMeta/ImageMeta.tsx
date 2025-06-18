@@ -15,6 +15,7 @@ import {
 import { useClipboard } from '@mantine/hooks';
 import { IconBrush, IconCheck, IconCopy } from '@tabler/icons-react';
 import { cloneElement, useMemo, useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageGenerationProcess } from '~/shared/utils/prisma/enums';
@@ -113,13 +114,13 @@ export function ImageMeta({
   const canCreate = flags.imageGeneration && !!resourceCoverage && !!meta.prompt;
 
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       {metas.hasRegular ? (
         <>
           {metas.long.map(({ label, value }) => (
-            <Stack key={label} spacing={0}>
-              <Group spacing={4} align="center">
-                <Text size="sm" weight={500}>
+            <Stack key={label} gap={0}>
+              <Group gap={4} align="center">
+                <Text size="sm" fw={500}>
                   {label}
                 </Text>
 
@@ -144,7 +145,7 @@ export function ImageMeta({
                   <CopyButton value={value as string}>
                     {({ copied, copy }) => (
                       <Tooltip label={`Copy ${label.toLowerCase()}`} color="dark" withArrow>
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="transparent"
                           size="xs"
                           color={copied ? 'green' : 'blue'}
@@ -153,7 +154,7 @@ export function ImageMeta({
                           data-activity="copy:prompt"
                         >
                           {!copied ? <IconCopy size={16} /> : <IconCheck size={16} />}
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     )}
                   </CopyButton>
@@ -161,7 +162,7 @@ export function ImageMeta({
               </Group>
               <Code
                 block
-                sx={{
+                style={{
                   wordBreak: 'break-word',
                   whiteSpace: 'pre-wrap',
                   maxHeight: 150,
@@ -175,12 +176,17 @@ export function ImageMeta({
           {metas.medium
             .filter(({ value }) => typeof value !== 'object')
             .map(({ label, value }) => (
-              <Group key={label} position="apart">
-                <Text size="sm" mr="xs" weight={500}>
+              <Group key={label} justify="space-between">
+                <Text size="sm" mr="xs" fw={500}>
                   {label}
                 </Text>
                 <Code
-                  sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'pre-wrap' }}
+                  style={{
+                    flex: '1',
+                    textAlign: 'right',
+                    overflow: 'hidden',
+                    whiteSpace: 'pre-wrap',
+                  }}
                 >
                   {value}
                 </Code>
@@ -190,12 +196,12 @@ export function ImageMeta({
             {metas.short
               .filter(({ value }) => typeof value !== 'object')
               .map(({ label, value }) => (
-                <Group key={label} spacing="xs">
-                  <Text size="sm" mr="xs" weight={500}>
+                <Group key={label} gap="xs">
+                  <Text size="sm" mr="xs" fw={500}>
                     {label}
                   </Text>
                   <Code
-                    sx={{
+                    style={{
                       flex: '1',
                       textAlign: 'right',
                       overflow: 'hidden',
@@ -213,13 +219,13 @@ export function ImageMeta({
               <Button
                 size="xs"
                 variant="light"
-                leftIcon={<IconBrush size={16} />}
+                leftSection={<IconBrush size={16} />}
                 data-activity="remix:image-meta"
                 onClick={() => {
                   generationPanel.open({ type: 'image', id: imageId ?? 0 });
                   onCreateClick?.();
                 }}
-                sx={{ flex: 1 }}
+                style={{ flex: 1 }}
               >
                 Remix
               </Button>
@@ -236,13 +242,13 @@ export function ImageMeta({
         <>
           <Divider mx="-md" label="External Data" labelPosition="center" />
           {!!metas.external.source && (
-            <Group spacing="xs">
+            <Group gap="xs">
               {Object.entries(metas.external.source).map(([label, value]) => (
-                <Group key={label} spacing="xs" sx={{ flexGrow: 1 }}>
-                  <Text size="sm" mr="xs" weight={500}>
+                <Group key={label} gap="xs" style={{ flexGrow: 1 }}>
+                  <Text size="sm" mr="xs" fw={500}>
                     {titleCase(label === 'name' ? 'Source' : label)}
                   </Text>
-                  <Code sx={{ flex: '1', overflowWrap: 'anywhere', textAlign: 'right' }}>
+                  <Code style={{ flex: '1', overflowWrap: 'anywhere', textAlign: 'right' }}>
                     {value}
                   </Code>
                 </Group>
@@ -250,21 +256,21 @@ export function ImageMeta({
             </Group>
           )}
           {!!metas.external.referenceUrl && (
-            <Group spacing="xs">
-              <Text size="sm" mr="xs" weight={500}>
+            <Group gap="xs">
+              <Text size="sm" mr="xs" fw={500}>
                 Source URL
               </Text>
-              <Code sx={{ flex: '1', textAlign: 'right', overflowWrap: 'anywhere' }}>
+              <Code style={{ flex: '1', textAlign: 'right', overflowWrap: 'anywhere' }}>
                 {metas.external.referenceUrl}
               </Code>
             </Group>
           )}
           {!!metas.external.createUrl && (
-            <Group spacing="xs">
-              <Text size="sm" mr="xs" weight={500}>
+            <Group gap="xs">
+              <Text size="sm" mr="xs" fw={500}>
                 Create URL
               </Text>
-              <Code sx={{ flex: '1', textAlign: 'right', overflowWrap: 'anywhere' }}>
+              <Code style={{ flex: '1', textAlign: 'right', overflowWrap: 'anywhere' }}>
                 {metas.external.createUrl}
               </Code>
             </Group>
@@ -276,12 +282,12 @@ export function ImageMeta({
               </Text>
               <SimpleGrid cols={2} verticalSpacing="xs">
                 {Object.entries(metas.external.details).map(([k, v]) => (
-                  <Group key={k} spacing="xs">
-                    <Text size="sm" mr="xs" weight={500}>
+                  <Group key={k} gap="xs">
+                    <Text size="sm" mr="xs" fw={500}>
                       {titleCase(k)}
                     </Text>
                     <Code
-                      sx={{
+                      style={{
                         flex: '1',
                         textAlign: 'right',
                         overflow: 'hidden',
@@ -310,8 +316,8 @@ function ComfyNodes({ meta }: { meta: ImageMetaProps }) {
   return (
     <Group
       onClick={() => copy(JSON.stringify(workflow))}
-      spacing={4}
-      sx={{ justifyContent: 'flex-end', cursor: 'pointer' }}
+      gap={4}
+      style={{ justifyContent: 'flex-end', cursor: 'pointer' }}
       data-activity="copy:workflow"
     >
       {workflow?.nodes?.length ?? 0} Nodes
@@ -340,7 +346,7 @@ function GenerationDataButton({
       w={!iconOnly ? '100%' : undefined}
       data-activity="copy:image-meta"
     >
-      <Group spacing={4}>
+      <Group gap={4}>
         {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
         {!iconOnly && label}
       </Group>
@@ -368,6 +374,7 @@ export function ImageMetaPopover({
 
   return (
     <div
+      className="flex"
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();

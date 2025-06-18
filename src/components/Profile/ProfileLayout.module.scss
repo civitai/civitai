@@ -1,0 +1,18 @@
+.sidebar {
+  width: 320px;
+  height: 100%;
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-6)
+  );
+
+  @container (max-width: theme('screens.sm')) {
+    display: none;
+  }
+}
+
+.root {
+  display: flex;
+  flex: 1;
+  height: 100%;
+}

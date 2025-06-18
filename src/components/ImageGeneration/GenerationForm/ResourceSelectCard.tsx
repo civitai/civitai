@@ -1,4 +1,4 @@
-import type { GroupPosition } from '@mantine/core';
+import type { GroupProps } from '@mantine/core';
 import {
   ActionIcon,
   Anchor,
@@ -12,7 +12,6 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -24,6 +23,7 @@ import {
 } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
@@ -39,23 +39,17 @@ type Props = {
   onSwap?: VoidFunction;
   disabled?: boolean;
   hideVersion?: boolean;
-  groupPosition?: GroupPosition;
+  groupPosition?: GroupProps['justify'];
   showAsCheckpoint?: boolean;
 };
 
 export const ResourceSelectCard = (props: Props) => {
   const isCheckpoint = props.resource.model.type === ModelType.Checkpoint;
-  const theme = useMantineTheme();
 
   return (
     <div className="relative">
       {props.disabled && (
-        <Overlay
-          blur={3}
-          zIndex={10}
-          color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
-          opacity={0.8}
-        />
+        <Overlay blur={3} zIndex={10} className="bg-white dark:bg-dark-7" opacity={0.8} />
       )}
       {isCheckpoint || props.showAsCheckpoint ? (
         <CheckpointInfo {...props} />
@@ -77,13 +71,13 @@ function CheckpointInfo({
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
 
   return (
-    <Group spacing="xs" position={groupPosition ?? 'apart'} noWrap>
-      <Group spacing={4} noWrap>
+    <Group gap="xs" justify={groupPosition ?? 'space-between'} wrap="nowrap">
+      <Group gap={4} wrap="nowrap">
         {unavailable ? (
           <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
-            <Group spacing={4}>
+            <Group gap={4}>
               <IconAlertTriangle size={16} strokeWidth={3} />
-              <Text size="xs" weight={500}>
+              <Text size="xs" fw={500}>
                 Unavailable
               </Text>
             </Group>
@@ -104,25 +98,22 @@ function CheckpointInfo({
             />
           </Paper>
         ) : null}
-        <Stack spacing={2}>
+        <Stack gap={2}>
           <Text
             component={Link}
-            sx={(theme) => ({
-              cursor: 'pointer',
-              color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-              overflowWrap: 'anywhere',
-            })}
+            className="cursor-pointer text-black dark:text-white"
+            style={{ overflowWrap: 'anywhere' }}
             href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
             rel="nofollow noindex"
-            color="initial"
+            c="initial"
             lineClamp={1}
-            weight={590}
+            fw={590}
             data-testid="selected-gen-resource-name"
           >
             {resource.model.name}
           </Text>
           {!hideVersion && (
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               {resource.name}
             </Text>
           )}
@@ -136,14 +127,14 @@ function CheckpointInfo({
         </Stack>
       </Group>
       {onRemove ? (
-        <ActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
+        <LegacyActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
           <IconX size={20} />
-        </ActionIcon>
+        </LegacyActionIcon>
       ) : (
-        <Button variant="light" radius="xl" size="sm" onClick={onSwap} compact>
-          <Group spacing={4} noWrap>
+        <Button variant="light" radius="xl" onClick={onSwap} size="compact-sm">
+          <Group gap={4} wrap="nowrap">
             <IconReplace size={16} />
-            <Text size="sm" weight={500}>
+            <Text size="sm" fw={500}>
               Swap
             </Text>
           </Group>
@@ -157,18 +148,17 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
   const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
-  const theme = useMantineTheme();
 
   return (
-    <Group spacing="xs" position="apart" noWrap>
-      <Stack spacing={4} w="100%">
-        <Group spacing={4} position="apart" noWrap>
-          <Group spacing={4} noWrap>
+    <Group gap="xs" justify="space-between" wrap="nowrap">
+      <Stack gap={4} w="100%">
+        <Group gap={4} justify="space-between" wrap="nowrap">
+          <Group gap={4} wrap="nowrap">
             {unavailable && (
               <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
-                <Group spacing={4}>
+                <Group gap={4}>
                   <IconAlertTriangle size={16} strokeWidth={3} />
-                  <Text size="xs" weight={500}>
+                  <Text size="xs" fw={500}>
                     Unavailable
                   </Text>
                 </Group>
@@ -176,13 +166,13 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
             )}
             <Text
               component={Link}
-              sx={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer' }}
               href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
               onClick={() => generationPanel.close()}
               rel="nofollow noindex"
               size="sm"
               lineClamp={1}
-              weight={590}
+              fw={590}
             >
               {resource.model.name}
             </Text>
@@ -201,18 +191,18 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
 
             {(resource.availability === Availability.Private || !!resource.epochDetails) && (
               <Tooltip label="This resource is private" position="top" withArrow>
-                <ActionIcon size={18} color="dark.5" variant="filled">
+                <LegacyActionIcon size={18} color="dark.5" variant="filled">
                   <IconLock size={14} />
-                </ActionIcon>
+                </LegacyActionIcon>
               </Tooltip>
             )}
 
             {resource.additionalResourceCost && selectSource === 'generation' && (
               <Popover position="bottom" withArrow width={200}>
                 <Popover.Target>
-                  <ActionIcon size={18} color="blue" variant="filled">
+                  <LegacyActionIcon size={18} color="blue" variant="filled">
                     <IconWeight size={14} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Popover.Target>
                 <Popover.Dropdown>
                   <Text size="sm">
@@ -227,9 +217,9 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
             {resource.earlyAccessEndsAt && (
               <Popover position="bottom" withArrow width={200}>
                 <Popover.Target>
-                  <ActionIcon size={18} color="yellow.7" variant="filled">
-                    <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />
-                  </ActionIcon>
+                  <LegacyActionIcon size={18} color="yellow.7" variant="filled">
+                    <IconBolt className="text-dark-9" fill="currentColor" size={16} />
+                  </LegacyActionIcon>
                 </Popover.Target>
                 <Popover.Dropdown>
                   <Text size="sm">This resource is in early access</Text>
@@ -242,21 +232,21 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
         {hasStrength && onUpdate && !unavailable && (
           <div className="flex w-full items-center gap-2">
             <NumberSlider
+              className="flex-1"
               value={resource.strength}
               onChange={(strength) => onUpdate({ ...resource, strength: strength ?? 1 })}
               min={!isSameMinMaxStrength ? resource.minStrength : -1}
               max={!isSameMinMaxStrength ? resource.maxStrength : 2}
               step={0.05}
-              sx={{ flex: 1 }}
               reverse
             />
           </div>
         )}
       </Stack>
       {onRemove && (
-        <ActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
+        <LegacyActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
           <IconX size={20} />
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
     </Group>
   );

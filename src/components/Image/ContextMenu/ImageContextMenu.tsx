@@ -77,7 +77,7 @@ export function ImageContextMenu({
         {children ?? (
           <ActionIconDotsVertical
             className={!image.needsReview ? className : undefined}
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.preventDefault();
               e.stopPropagation();
             }}
@@ -103,7 +103,7 @@ export function ImageContextMenu({
 
   if (image.needsReview || image.ingestion === 'Blocked')
     return (
-      <Group spacing={4} className={className}>
+      <Group gap={4} className={className}>
         <NeedsReviewBadge {...props} isModerator={isModerator} isOwner={isOwner} />
         {ContextMenu}
       </Group>
@@ -170,7 +170,10 @@ function ImageMenuItems(
       )}
       {(context === 'post' || postId) && (
         <LoginRedirect reason="add-to-collection">
-          <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleSaveClick}>
+          <Menu.Item
+            leftSection={<IconBookmark size={14} stroke={1.5} />}
+            onClick={handleSaveClick}
+          >
             Save {context} to collection
           </Menu.Item>
         </LoginRedirect>
@@ -179,7 +182,7 @@ function ImageMenuItems(
         <Menu.Item
           component={NextLink}
           href={`/posts/${postId}`}
-          icon={<IconEye size={14} stroke={1.5} />}
+          leftSection={<IconEye size={14} stroke={1.5} />}
         >
           View Post
         </Menu.Item>
@@ -187,7 +190,10 @@ function ImageMenuItems(
       {!isOwner && (
         <>
           <LoginRedirect reason="report-content">
-            <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleReportClick}>
+            <Menu.Item
+              leftSection={<IconFlag size={14} stroke={1.5} />}
+              onClick={handleReportClick}
+            >
               Report image
             </Menu.Item>
           </LoginRedirect>
@@ -198,7 +204,7 @@ function ImageMenuItems(
       {isModerator && (
         <>
           <Menu.Item
-            icon={<IconFlag size={14} stroke={1.5} />}
+            leftSection={<IconFlag size={14} stroke={1.5} />}
             onClick={() =>
               toggleImageFlag({
                 id: image.id,
@@ -209,7 +215,7 @@ function ImageMenuItems(
             {image.minor ? 'Remove minor flag' : 'Flag as minor'}
           </Menu.Item>
           <Menu.Item
-            icon={<IconFlag size={14} stroke={1.5} />}
+            leftSection={<IconFlag size={14} stroke={1.5} />}
             onClick={() =>
               toggleImageFlag({
                 id: image.id,
@@ -226,7 +232,7 @@ function ImageMenuItems(
         <>
           {postId && (
             <Menu.Item
-              icon={<IconPencil size={14} stroke={1.5} />}
+              leftSection={<IconPencil size={14} stroke={1.5} />}
               onClick={() => Router.push(`/posts/${postId}/edit`)}
             >
               Edit Post
@@ -236,7 +242,7 @@ function ImageMenuItems(
           {!disableDelete && (
             <Menu.Item
               color="red"
-              icon={<IconTrash size={14} stroke={1.5} />}
+              leftSection={<IconTrash size={14} stroke={1.5} />}
               onClick={() => deleteImage({ imageId })}
             >
               Delete
@@ -251,25 +257,28 @@ function ImageMenuItems(
         <>
           <Menu.Label>Moderator</Menu.Label>
           <Menu.Item
-            icon={<IconBan size={14} stroke={1.5} />}
+            leftSection={<IconBan size={14} stroke={1.5} />}
             onClick={() => reportTos({ imageId })}
           >
             Remove as TOS Violation
           </Menu.Item>
           <Menu.Item
-            icon={<IconRadar2 size={14} stroke={1.5} />}
+            leftSection={<IconRadar2 size={14} stroke={1.5} />}
             onClick={() => rescanImage({ imageId })}
           >
             Rescan Image
           </Menu.Item>
-          <Menu.Item icon={<IconAlertTriangle size={14} stroke={1.5} />} onClick={handleReportCsam}>
+          <Menu.Item
+            leftSection={<IconAlertTriangle size={14} stroke={1.5} />}
+            onClick={handleReportCsam}
+          >
             Report CSAM
           </Menu.Item>
           {postId && <ToggleSearchableMenuItem entityType="Post" entityId={postId} />}
           {!postId && (
             <Menu.Item
               key="view-image-detail"
-              icon={<IconEye size={14} stroke={1.5} />}
+              leftSection={<IconEye size={14} stroke={1.5} />}
               onClick={() =>
                 triggerRoutedDialog({
                   name: 'imageDetail',
@@ -327,7 +336,7 @@ function NeedsReviewBadge({
         <Menu.Target>
           <Box
             style={{ cursor: 'pointer' }}
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.preventDefault();
               e.stopPropagation();
             }}
@@ -343,14 +352,14 @@ function NeedsReviewBadge({
         >
           <Menu.Item
             onClick={() => handleModerate('accept')}
-            icon={<IconCheck size={14} stroke={1.5} />}
+            leftSection={<IconCheck size={14} stroke={1.5} />}
           >
             Approve
           </Menu.Item>
           {needsReview === 'poi' && (
             <Menu.Item
               onClick={() => handleModerate('mistake')}
-              icon={<IconUserOff size={14} stroke={1.5} />}
+              leftSection={<IconUserOff size={14} stroke={1.5} />}
             >
               Not POI
             </Menu.Item>
@@ -358,14 +367,14 @@ function NeedsReviewBadge({
           {needsReview === 'poi' && (
             <Menu.Item
               onClick={() => handleModerate('removeName')}
-              icon={<IconUserMinus size={14} stroke={1.5} />}
+              leftSection={<IconUserMinus size={14} stroke={1.5} />}
             >
               Remove Name
             </Menu.Item>
           )}
           <Menu.Item
             onClick={() => handleModerate('delete')}
-            icon={<IconTrash size={14} stroke={1.5} />}
+            leftSection={<IconTrash size={14} stroke={1.5} />}
           >
             Reject
           </Menu.Item>
@@ -378,7 +387,7 @@ function NeedsReviewBadge({
         <Menu.Target>
           <Box
             style={{ cursor: 'pointer' }}
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.preventDefault();
               e.stopPropagation();
             }}
@@ -391,7 +400,7 @@ function NeedsReviewBadge({
         <Menu.Dropdown>
           <Menu.Item
             onClick={() => handleModerate('accept')}
-            icon={<IconRestore size={14} stroke={1.5} />}
+            leftSection={<IconRestore size={14} stroke={1.5} />}
           >
             Restore
           </Menu.Item>
@@ -403,8 +412,8 @@ function NeedsReviewBadge({
       <HoverCard width={200} withArrow>
         <HoverCard.Target>{Badge}</HoverCard.Target>
         <HoverCard.Dropdown p={8}>
-          <Stack spacing={0}>
-            <Text weight="bold" size="xs">
+          <Stack gap={0}>
+            <Text fw="bold" size="xs">
               Flagged for review
             </Text>
             <Text size="xs">
