@@ -62,7 +62,7 @@ export const flux1KontextConfig = ImageGenConfig({
     };
   },
   inputFn: ({ params, resources, whatIf }) => {
-    let model = 'pro-kontext';
+    let model = 'pro';
     for (const resource of resources) {
       const match = fluxKontextModelVersionToModelMap.get(resource.id);
       if (match) model = match;
