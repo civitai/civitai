@@ -132,6 +132,7 @@ export function ChangelogFiltersDropdown() {
               dateBefore: x ?? undefined,
             });
           }}
+          clearable
         />
       </Stack>
       <Stack gap="md">
@@ -145,6 +146,7 @@ export function ChangelogFiltersDropdown() {
               dateAfter: x ?? undefined,
             });
           }}
+          clearable
         />
       </Stack>
       {filterLength > 0 && (

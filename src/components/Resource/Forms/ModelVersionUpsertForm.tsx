@@ -762,7 +762,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   data={trainedWords}
                   maxValues={isTextualInversion ? 1 : undefined}
                   clearable
-                  parsePaste
                   required
                 />
               )}

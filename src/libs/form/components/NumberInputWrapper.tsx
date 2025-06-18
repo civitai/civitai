@@ -69,7 +69,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
     return (
       <NumberInput
         ref={mergedRef}
-        thousandSeparator=","
+        thousandSeparator={format !== 'default'}
         rightSection={
           isCurrency ? <Text size="xs">{currency}</Text> : showCloseButton ? closeButton : null
         }

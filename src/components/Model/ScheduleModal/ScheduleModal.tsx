@@ -47,6 +47,7 @@ export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
                   withAsterisk
                   minDate={minDate}
                   maxDate={maxDate}
+                  popoverProps={{ withinPortal: true }}
                 />
                 <InputTime name="time" label="Publish Time" withAsterisk />
               </Group>
