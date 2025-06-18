@@ -1,34 +1,24 @@
-import {
-  Accordion,
-  Box,
-  Container,
-  createStyles,
-  Grid,
-  Group,
-  Stack,
-  Text,
-  Title,
-  TypographyStylesProvider,
-} from '@mantine/core';
+import { Accordion, Box, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { IconList } from '@tabler/icons-react';
 import fs from 'fs';
 import matter from 'gray-matter';
 import type { InferGetServerSidePropsType } from 'next';
-import { GetStaticProps } from 'next';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import classes from './index.module.scss';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
+import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 
 const contentRoot = 'src/static-content/rules';
 const files = ['minors', 'real-people'];
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ctx }) => {
+  resolver: async () => {
     const content = files.reduce((acc, file) => {
       const fileName = fs.readFileSync(`${contentRoot}/${file}.md`, 'utf-8');
       const { content } = matter(fileName);
@@ -71,8 +61,6 @@ const headings = [
 export default function Safety({
   content,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { classes } = useStyles();
-
   return (
     <>
       <Meta
@@ -81,7 +69,7 @@ export default function Safety({
       />
       <div className={classes.hero}>
         <Container size="md">
-          <Stack align="center" spacing={0}>
+          <Stack align="center" gap={0}>
             <Title className={classes.heroTitle}>Civitai Safety Center</Title>
             <Text ta="center" className={classes.heroText}>
               A summary of our policies, guidelines, and approach to keeping Civitai safe.
@@ -90,18 +78,18 @@ export default function Safety({
         </Container>
       </div>
       <Container size="lg">
-        <Grid gutter="lg">
-          <Grid.Col xs={12} sm={4} className="hide-mobile">
+        <ContainerGrid2 gutter="lg">
+          <ContainerGrid2.Col span={{ base: 12, sm: 4 }} className="hidden @sm:block">
             <Box pos="sticky" top={0}>
               <Group>
                 <IconList size={20} />
-                <Text weight={500}>Table of Contents</Text>
+                <Text fw={500}>Table of Contents</Text>
               </Group>
               <TableOfContent headings={headings} />
             </Box>
-          </Grid.Col>
-          <Grid.Col xs={12} sm={8}>
-            <TypographyStylesProvider>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
+            <TypographyStylesWrapper>
               <article className={classes.content}>
                 <a id="welcome" />
 
@@ -377,9 +365,9 @@ export default function Safety({
                   the openness and inclusivity of this platform and community.
                 </p>
               </article>
-            </TypographyStylesProvider>
-          </Grid.Col>
-        </Grid>
+            </TypographyStylesWrapper>
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
       </Container>
     </>
   );
@@ -400,7 +388,7 @@ function AdditionalContent({ content }: { content: string }) {
     >
       <Accordion.Item value="additional-content">
         <Accordion.Control>
-          <Text weight={500}>View the full policy</Text>
+          <Text fw={500}>View the full policy</Text>
         </Accordion.Control>
         <Accordion.Panel>
           <CustomMarkdown rehypePlugins={[rehypeRaw, remarkGfm]}>{content}</CustomMarkdown>
@@ -409,70 +397,3 @@ function AdditionalContent({ content }: { content: string }) {
     </Accordion>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  hero: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    marginTop: -theme.spacing.md,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    overflow: 'hidden',
-    marginBottom: theme.spacing.xl * 2,
-    padding: `${theme.spacing.xl}px 0 ${theme.spacing.xl * 2}px`,
-    containerType: 'inline-size',
-    [containerQuery.largerThan('md')]: {
-      padding: `${theme.spacing.xl}px 0 ${theme.spacing.xl * 3}px`,
-    },
-  },
-  heroTitle: {
-    fontSize: '2rem',
-    fontWeight: 500,
-    [containerQuery.largerThan('md')]: {
-      fontSize: '4rem',
-    },
-  },
-  heroText: {
-    fontSize: theme.fontSizes.md,
-    [containerQuery.largerThan('md')]: {
-      fontSize: theme.fontSizes.lg,
-    },
-  },
-  inlineSection: {
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-    }`,
-  },
-  learnMoreButton: {
-    color: theme.colorScheme === 'dark' ? theme.colors.blue[4] : theme.colors.blue[7],
-    textDecoration: 'underline',
-    cursor: 'pointer',
-  },
-  content: {
-    h2: {
-      paddingBottom: theme.spacing.xs,
-      marginTop: theme.spacing.xl * 2,
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-      }`,
-    },
-    h3: {
-      marginTop: theme.spacing.sm,
-      marginBottom: 0,
-    },
-    h4: {
-      marginTop: theme.spacing.sm,
-      marginBottom: 0,
-    },
-    'h2+h3, h3+h4, h3+ul, h4+ul': {
-      marginTop: 0,
-    },
-    'ul+h3': {
-      marginTop: theme.spacing.xl,
-    },
-    '.mantine-Accordion-content h3': {
-      fontSize: theme.fontSizes.md,
-    },
-  },
-}));

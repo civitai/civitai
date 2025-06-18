@@ -16,7 +16,7 @@ export function ScrollArea({
   scrollRestore,
   intersectionObserverOptions,
   ...props
-}: ScrollAreaProps) {
+}: ScrollAreaProps & { children: React.ReactNode }) {
   const { ref: scrollRef, key } = useScrollRestore<HTMLDivElement>(scrollRestore);
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {

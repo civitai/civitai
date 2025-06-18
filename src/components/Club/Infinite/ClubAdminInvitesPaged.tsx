@@ -25,6 +25,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconCheck, IconClipboard } from '@tabler/icons-react';
 import { env } from '../../../env/client';
 import { showSuccessNotification } from '../../../utils/notifications';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ClubAdminInvitesPaged({ clubId }: Props) {
   // TODO.clubs: Add some custom filters for invites (?)
@@ -74,37 +75,37 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <Table>
-            <thead>
-              <tr>
-                <th>Created At</th>
-                <th>Expires At</th>
-                <th>Permissions</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Created At</Table.Th>
+                <Table.Th>Expires At</Table.Th>
+                <Table.Th>Permissions</Table.Th>
+                <Table.Th>&nbsp;</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {invites.map((invite) => {
                 return (
-                  <tr key={invite.id}>
-                    <td>{formatDate(invite.createdAt)}</td>
-                    <td>{invite.expiresAt ? formatDate(invite.expiresAt) : '-'}</td>
-                    <td style={{ maxWidth: 300 }}>
+                  <Table.Tr key={invite.id}>
+                    <Table.Td>{formatDate(invite.createdAt)}</Table.Td>
+                    <Table.Td>{invite.expiresAt ? formatDate(invite.expiresAt) : '-'}</Table.Td>
+                    <Table.Td style={{ maxWidth: 300 }}>
                       <Text>{invite.permissions.map((p) => getDisplayName(p)).join(', ')}</Text>
-                    </td>
-                    <td>
-                      <Group position="right">
+                    </Table.Td>
+                    <Table.Td>
+                      <Group justify="flex-end">
                         <CopyButton
                           value={`${env.NEXT_PUBLIC_BASE_URL}/clubs/invites/${invite.id}`}
                         >
                           {({ copied, copy }) => (
                             <Tooltip label="Copy invite link">
-                              <ActionIcon onClick={copy}>
+                              <LegacyActionIcon onClick={copy}>
                                 {copied ? <IconCheck /> : <IconClipboard />}
-                              </ActionIcon>
+                              </LegacyActionIcon>
                             </Tooltip>
                           )}
                         </CopyButton>
-                        <ActionIcon
+                        <LegacyActionIcon
                           variant="transparent"
                           aria-label="Update invite"
                           onClick={() => {
@@ -118,8 +119,8 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
                           }}
                         >
                           <IconPencil />
-                        </ActionIcon>
-                        <ActionIcon
+                        </LegacyActionIcon>
+                        <LegacyActionIcon
                           variant="transparent"
                           aria-label="Delete invite"
                           loading={deletingInvite}
@@ -128,18 +129,18 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
                           }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 );
               })}
-            </tbody>
+            </Table.Tbody>
             {pagination && pagination.totalPages > 1 && (
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                 <Pagination
-                  page={filters.page}
+                  value={filters.page}
                   onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                   total={pagination.totalPages}
                 />

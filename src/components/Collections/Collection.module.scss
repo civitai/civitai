@@ -1,0 +1,11 @@
+.title {
+  font-size: 28px;
+  
+  @container (min-width: theme('screens.sm')) {
+    font-size: 32px;
+  }
+
+  @container (min-width: theme('screens.md')) {
+    font-size: 34px;
+  }
+}

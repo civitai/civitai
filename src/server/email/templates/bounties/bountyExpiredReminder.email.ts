@@ -38,7 +38,7 @@ export const bountyExpiredReminderEmail = createEmail({
           It looks like you still have not awarded a winner. Be sure to check out the entries and award the one that you like the most!
        </p>
        <p>
-          If you don't like any of the entries, you can submit a bounty refund request using this <a href="${refundUrl}" target="blank">request form</a>.
+          If you don't like any of the entries, you can submit a bounty refund request using this <a href="${refundUrl}" target="_blank">request form</a>.
        </p>
        <p style="color: red;">You have 24 hours to request a refund or award an entry. Otherwise, your bounty will be awarded to the entry with the most reactions.</p>
       `,

@@ -1,5 +1,3 @@
-import { keyframes } from '@mantine/styles';
-
 const colors = {
   blue: {
     main: '#0080FF',
@@ -76,20 +74,6 @@ function DefaultVariant({ color, size, brightness = 1, animated, className, ...p
     </svg>
   );
 }
-
-export const heartbeat = keyframes({
-  '0%': {
-    opacity: 0,
-  },
-  '50%': {
-    opacity: 1,
-    fill: 'red',
-  },
-  '100%': {
-    opacity: 0,
-    fill: 'blue',
-  },
-});
 
 function StarVariant({
   color,

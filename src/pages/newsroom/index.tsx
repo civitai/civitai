@@ -1,4 +1,4 @@
-import { Anchor, Center, Container, createStyles, Stack, Tabs, Text, Title } from '@mantine/core';
+import { Anchor, Center, Container, Stack, Tabs, Text, Title } from '@mantine/core';
 import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeaturedArticle } from '~/components/Newsroom/FeaturedArticle';
@@ -9,7 +9,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import classes from './index.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -21,7 +21,6 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function CivitaiNewsroom() {
-  const { classes } = useStyles();
   const { data } = trpc.article.getCivitaiNews.useQuery(undefined, {
     trpc: { context: { skipBatch: true } },
   });
@@ -43,7 +42,7 @@ export default function CivitaiNewsroom() {
       <Meta title="Civitai Newsroom" description="The latest news and updates from Civitai" />
       <div className={classes.hero}>
         <Container size="md">
-          <Stack align="center" spacing={0}>
+          <Stack align="center" gap={0}>
             <Title className={classes.heroTitle}>Civitai Newsroom</Title>
             <Text ta="center" className={classes.heroText}>
               The latest news and updates from Civitai.
@@ -65,42 +64,11 @@ export default function CivitaiNewsroom() {
       <Container>
         <Tabs
           variant="pills"
-          defaultValue={'news'}
-          styles={(theme) => ({
-            tabsList: {
-              gap: theme.spacing.sm,
-              width: '100%',
-              [containerQuery.largerThan('md')]: {
-                gap: theme.spacing.md,
-                width: 'auto',
-              },
-            },
-            tab: {
-              backgroundColor:
-                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-              color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.colors.gray[9],
-              padding: `${theme.spacing.xs}px ${theme.spacing.sm}px`,
-              textAlign: 'center',
-              flex: 1,
-              fontSize: theme.fontSizes.md,
-
-              '&:disabled': {
-                opacity: 0.5,
-                cursor: 'not-allowed',
-              },
-
-              '&[data-active]': {
-                backgroundColor: theme.colors.blue[7],
-                borderColor: theme.colors.blue[7],
-                color: theme.white,
-                fontWeight: 500,
-              },
-              [containerQuery.largerThan('md')]: {
-                width: 200,
-                padding: `${theme.spacing.md}px 0`,
-              },
-            },
-          })}
+          defaultValue="news"
+          classNames={{
+            list: classes.tabsList,
+            tab: classes.tab,
+          }}
         >
           <Stack>
             <Center>
@@ -129,40 +97,3 @@ export default function CivitaiNewsroom() {
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  hero: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    marginTop: -theme.spacing.md,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    overflow: 'hidden',
-    marginBottom: theme.spacing.xl * 2,
-    padding: `${theme.spacing.xl}px 0 ${theme.spacing.xl * 2}px`,
-    containerType: 'inline-size',
-    [containerQuery.largerThan('md')]: {
-      padding: `${theme.spacing.xl}px 0 ${theme.spacing.xl * 3}px`,
-    },
-  },
-  heroTitle: {
-    fontSize: '2rem',
-    fontWeight: 500,
-    [containerQuery.largerThan('md')]: {
-      fontSize: '4rem',
-    },
-  },
-  heroText: {
-    fontSize: theme.fontSizes.md,
-    [containerQuery.largerThan('md')]: {
-      fontSize: theme.fontSizes.lg,
-    },
-  },
-  heroArticle: {
-    marginTop: theme.spacing.lg,
-    [containerQuery.largerThan('md')]: {
-      marginTop: theme.spacing.xl * 2,
-    },
-  },
-}));

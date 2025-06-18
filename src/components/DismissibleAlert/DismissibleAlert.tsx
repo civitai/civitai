@@ -1,8 +1,17 @@
-import type { AlertProps, MantineColor } from '@mantine/core';
-import { Alert, createStyles, Group, Stack, Text } from '@mantine/core';
+import type { AlertProps, MantineColor, MantineTheme } from '@mantine/core';
+import {
+  Alert,
+  Group,
+  Stack,
+  Text,
+  useComputedColorScheme,
+  useMantineTheme,
+  darken,
+} from '@mantine/core';
 import type { StorageType } from '~/hooks/useStorage';
 import { useStorage } from '~/hooks/useStorage';
 import { useIsClient } from '~/providers/IsClientProvider';
+import clsx from 'clsx';
 
 export const DismissibleAlert = (props: DismissibleAlertProps) => {
   const isClient = useIsClient();
@@ -47,33 +56,43 @@ function AlertContentInner({
   onDismiss,
   ...props
 }: DismissibleAlertProps & { onDismiss?: () => void }) {
-  const { classes, cx } = useStyles({ color });
   const contentSize = size === 'md' ? 'sm' : 'xs';
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
+  const styles = getStyle({ color, theme, colorScheme });
+
+  children ??= content;
+
   return (
     <Alert
       py={8}
       {...props}
-      className={cx(className, classes.announcement)}
+      className={clsx(className)}
+      style={styles.announcement}
       onClose={onDismiss}
       closeButtonLabel="Close alert"
       withCloseButton={!!onDismiss}
     >
-      <Group spacing="xs" noWrap pr="xs">
+      <Group gap="xs" wrap="nowrap" pr="xs">
         {emoji && (
-          <Text size={36} p={0} sx={{ lineHeight: 1.2 }}>
+          <Text fz={36} p={0} style={{ lineHeight: 1.2 }}>
             {emoji}
           </Text>
         )}
         {icon}
-        <Stack spacing={0}>
+        <Stack gap={0}>
           {title && (
-            <Text size={size} weight={500} className={classes.title} mb={4}>
+            <Text component="div" size={size} fw={500} style={styles.title} mb={4}>
               {title}
             </Text>
           )}
-          <Text size={contentSize} className={classes.text}>
-            {children ?? content}
-          </Text>
+          {typeof children === 'string' ? (
+            <Text size={contentSize} style={styles.text}>
+              {children ?? content}
+            </Text>
+          ) : (
+            children
+          )}
         </Stack>
       </Group>
     </Alert>
@@ -93,25 +112,29 @@ type DismissibleAlertProps = {
   storage?: StorageType;
 } & Omit<AlertProps, 'color' | 'children'>;
 
-const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
+const getStyle = ({
+  color,
+  theme,
+  colorScheme,
+}: {
+  color: MantineColor;
+  theme: MantineTheme;
+  colorScheme: 'light' | 'dark';
+}) => ({
   announcement: {
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors[color][9] : theme.colors[color][2]
-    }`,
+    border: `1px solid ${colorScheme === 'dark' ? theme.colors[color][9] : theme.colors[color][2]}`,
     backgroundColor:
-      theme.colorScheme === 'dark'
-        ? theme.fn.darken(theme.colors[color][8], 0.5)
-        : theme.colors[color][1],
+      colorScheme === 'dark' ? darken(theme.colors[color][8], 0.5) : theme.colors[color][1],
   },
   title: {
-    color: theme.colorScheme === 'dark' ? theme.colors[color][0] : theme.colors[color][7],
+    color: colorScheme === 'dark' ? theme.colors[color][0] : theme.colors[color][7],
     lineHeight: 1.1,
   },
   text: {
-    color: theme.colorScheme === 'dark' ? theme.colors[color][2] : theme.colors[color][9],
+    color: colorScheme === 'dark' ? theme.colors[color][2] : theme.colors[color][9],
     lineHeight: 1.2,
     '& > div > a': {
-      color: theme.colorScheme === 'dark' ? theme.colors[color][1] : theme.colors[color][8],
+      color: colorScheme === 'dark' ? theme.colors[color][1] : theme.colors[color][8],
     },
   },
-}));
+});

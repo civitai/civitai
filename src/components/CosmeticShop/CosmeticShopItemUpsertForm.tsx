@@ -1,4 +1,4 @@
-import type { SelectItemProps } from '@mantine/core';
+import type { ComboboxItem } from '@mantine/core';
 import {
   ActionIcon,
   Box,
@@ -19,6 +19,7 @@ import { useQueryCosmetic, useQueryCosmeticsPaged } from '~/components/Cosmetics
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
@@ -45,14 +46,14 @@ type Props = {
   onCancel?: () => void;
 };
 
-type CosmeticSearchSelectItemProps = { name: string; description: string } & SelectItemProps;
+type CosmeticSearchComboboxItem = { name: string; description: string | null } & ComboboxItem;
 
-const CosmeticSearchSelectItem = forwardRef<HTMLDivElement, CosmeticSearchSelectItemProps>(
-  ({ name, description, ...others }: CosmeticSearchSelectItemProps, ref) => (
+const CosmeticSearchSelectItem = forwardRef<HTMLDivElement, CosmeticSearchComboboxItem>(
+  ({ name, description, ...others }: CosmeticSearchComboboxItem, ref) => (
     <div ref={ref} {...others}>
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Text size="sm">{name}</Text>
-        <Text size="xs" color="dimmed">
+        <Text size="xs" c="dimmed">
           {description}
         </Text>
       </Stack>
@@ -89,11 +90,18 @@ const CosmeticSearch = ({
     <Select
       label="Cosmetic"
       description="Select a cosmetic to make into a product. Search by name"
-      onChange={(cosmeticId: string) => onCosmeticSelected(Number(cosmeticId))}
+      onChange={(cosmeticId) => {
+        onCosmeticSelected(Number(cosmeticId));
+      }}
       onSearchChange={(query) => setFilters({ ...filters, name: query })}
       searchValue={filters.name}
-      nothingFound="No options"
-      itemComponent={CosmeticSearchSelectItem}
+      nothingFoundMessage="No options"
+      renderOption={(item) => {
+        const itemData = data.find((d) => d.value === item.option.value);
+        if (!itemData) return null;
+
+        return <CosmeticSearchSelectItem {...item} {...itemData} />;
+      }}
       data={data}
       searchable
       withAsterisk
@@ -160,8 +168,8 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing="md">
-        <Stack spacing="md">
+      <Stack gap="md">
+        <Stack gap="md">
           {!shopItem && (
             <CosmeticSearch
               cosmetic={cosmetic ?? undefined}
@@ -172,11 +180,11 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             <InputSwitch
               name="archived"
               label={
-                <Stack spacing={4}>
-                  <Group spacing={4}>
+                <Stack gap={4}>
+                  <Group gap={4}>
                     <Text inline>Archived</Text>
                   </Group>
-                  <Text size="xs" color="dimmed">
+                  <Text size="xs" c="dimmed">
                     Archive this item. Archived items are not shown in the shop even if they belong
                     in a section.
                   </Text>
@@ -187,15 +195,15 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
           {cosmetic && (
             <Paper radius="md" withBorder p="md">
               <Stack>
-                <Text color="dimmed" weight="bold">
+                <Text c="dimmed" fw="bold">
                   The following cosmetic will be made into a shop product
                 </Text>
                 <Divider mx="-md" />
                 <Group>
                   <CosmeticSample cosmetic={cosmetic} />
-                  <Stack spacing={0}>
+                  <Stack gap={0}>
                     <Text>{cosmetic.name}</Text>
-                    <Text color="dimmed" size="sm">
+                    <Text c="dimmed" size="sm">
                       {cosmetic.description}
                     </Text>
                   </Stack>
@@ -224,14 +232,14 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             description="The link to the YouTube video that walks through how this cosmetic was made :D"
             placeholder="e.g., https://www.youtube.com/watch?v=dQw4w9WgXcQ"
           />
-          <Group spacing="md" grow>
+          <Group gap="md" grow>
             <InputNumber
               name="unitAmount"
               label="Price"
               description="The amount of Buzz required to purchase 1 instance of this item"
               min={500}
               step={100}
-              icon={<CurrencyIcon currency="BUZZ" size={16} />}
+              leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
               format={undefined}
               withAsterisk
             />
@@ -243,25 +251,25 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             />
           </Group>
           {shopItemMeta?.purchases > 0 && availableQuantity && (
-            <Text color="red" size="sm">
+            <Text c="red" size="sm">
               This item has been purchased {shopItemMeta.purchases} times. Changing the price or
               quantity will not affect existing purchases. And you cannot make the number of
               available items less than the number of purchases.
             </Text>
           )}
-          <Group spacing="md" grow>
+          <Group gap="md" grow>
             <InputDatePicker
               name="availableFrom"
               label="Available From"
               placeholder="Select a start date"
-              icon={<IconCalendar size={16} />}
+              leftSection={<IconCalendar size={16} />}
               clearable
             />
             <InputDatePicker
               name="availableTo"
               label="Available To"
               placeholder="Select an end date"
-              icon={<IconCalendarDue size={16} />}
+              leftSection={<IconCalendarDue size={16} />}
               clearable
             />
           </Group>
@@ -282,10 +290,10 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
                 dropdownItemLimit={25}
               />
 
-              <Group mx="auto" position="apart">
+              <Group mx="auto" justify="space-between">
                 {paidToUserIds?.map((userId) => (
                   <Box style={{ position: 'relative' }} key={userId} w={455}>
-                    <ActionIcon
+                    <LegacyActionIcon
                       pos="absolute"
                       top={-5}
                       right={-5}
@@ -303,7 +311,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
                       }}
                     >
                       <IconX size={16} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                     <SmartCreatorCard user={{ id: userId }} />
                   </Box>
                 ))}
@@ -312,11 +320,11 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
           </Input.Wrapper>
         </Stack>
         <Stack>
-          <Group position="right">
+          <Group justify="flex-end">
             {onCancel && (
               <Button
                 loading={upsertingShopItem}
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   onCancel?.();

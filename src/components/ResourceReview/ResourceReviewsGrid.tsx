@@ -51,7 +51,7 @@ export function ResourceReviewGrid({
           <ThemeIcon size={128} radius={100}>
             <IconCloudOff size={80} />
           </ThemeIcon>
-          <Text size={32} align="center">
+          <Text fz={32} align="center">
             No results found
           </Text>
         </Stack>

@@ -3,15 +3,15 @@ import { ActionIcon, Button, Group, Popover } from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons-react';
 
 import { SortFilter } from '~/components/Filters';
-import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
+import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import type { PeriodMode } from '~/server/schema/base.schema';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
-  const { classes } = useFeedFiltersStyles();
   const currentUser = useCurrentUser();
   const { set, ...queryFilters } = useModelQueryParams();
   const { favorites, query } = queryFilters;
@@ -19,13 +19,13 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
   if (periodMode) queryFilters.periodMode = periodMode;
 
   return (
-    <Group className={classes.filtersWrapper} spacing={4} noWrap {...groupProps}>
+    <Group className={classes.filtersWrapper} gap={4} wrap="nowrap" {...groupProps}>
       {periodMode && (
         <Popover>
           <Popover.Target>
-            <ActionIcon variant="filled" color="blue" radius="xl" size={36} mr={4}>
+            <LegacyActionIcon variant="filled" color="blue" radius="xl" size={36} mr={4}>
               <IconExclamationMark size={20} strokeWidth={3} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Popover.Target>
           <Popover.Dropdown maw={300}>
             {`To ensure that you see all possible results, we've disabled the period filter.`}
@@ -35,15 +35,9 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
           </Popover.Dropdown>
         </Popover>
       )}
-      {currentUser && (
-        <FollowedFilter
-          type="models"
-          variant="button"
-          buttonProps={{ className: classes.subnavDropdown }}
-        />
-      )}
-      <SortFilter type="models" className={classes.subnavDropdown} />
-      <ModelFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} isFeed />
+      {currentUser && <FollowedFilter type="models" variant="button" />}
+      <SortFilter type="models" />
+      <ModelFiltersDropdown w="100%" size="compact-sm" isFeed />
     </Group>
   );
 }

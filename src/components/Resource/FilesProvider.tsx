@@ -73,7 +73,7 @@ export const useFilesContext = () => {
 };
 
 export function FilesProvider({ model, version, children }: FilesProviderProps) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
 
@@ -159,8 +159,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       color: 'green',
       styles: { root: { alignItems: 'flex-start' } },
       message: (
-        <Stack spacing={4}>
-          <Text size="sm" color="dimmed">
+        <Stack gap={4}>
+          <Text size="sm" c="dimmed">
             Your version has been published and is now available to the public.
           </Text>
           <Link
@@ -225,10 +225,10 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         title: `Finished uploading ${result.name}`,
         styles: { root: { alignItems: 'flex-start' } },
         message: !stillUploading ? (
-          <Stack spacing={4}>
+          <Stack gap={4}>
             {isVersionPublished ? (
               <>
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   All files finished uploading.
                 </Text>
                 <Link
@@ -243,13 +243,13 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
               </>
             ) : hasPublishedPosts ? (
               <>
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   {`Your files have finished uploading, let's publish this version.`}
                 </Text>
                 <Text
-                  variant="link"
+                  c="blue.4"
                   size="sm"
-                  sx={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer' }}
                   onClick={() => {
                     hideNotification(notificationId);
 
@@ -272,7 +272,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
               </>
             ) : (
               <>
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Your files have finished uploading, but you still need to add a post.
                 </Text>
                 <Link

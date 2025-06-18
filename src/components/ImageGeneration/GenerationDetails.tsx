@@ -8,7 +8,6 @@ import { getDisplayName, titleCase } from '~/utils/string-helpers';
 export function GenerationDetails({
   params,
   label,
-  upsideDown,
   controlProps,
   ...descriptionTableProps
 }: Props) {
@@ -36,21 +35,14 @@ export function GenerationDetails({
         },
         control: {
           padding: 6,
-          paddingLeft: theme.spacing.xs + 6,
-          paddingRight: theme.spacing.xs + 6,
+          paddingLeft: theme.spacing.md,
+          paddingRight: theme.spacing.md,
         },
-
-        chevron: upsideDown
-          ? {
-              transform: 'rotate(180deg)',
-              '&[data-rotate]': { transform: 'rotate(0deg)' },
-            }
-          : undefined,
       })}
     >
       <Accordion.Item value="details">
         <Accordion.Control {...controlProps}>
-          <Text size="sm" weight={500}>
+          <Text size="sm" fw={500}>
             {label}
           </Text>
         </Accordion.Control>
@@ -65,6 +57,5 @@ export function GenerationDetails({
 type Props = Omit<DescriptionTableProps, 'items'> & {
   label: string;
   params: Record<string, unknown>;
-  upsideDown?: boolean;
   controlProps?: AccordionControlProps;
 };

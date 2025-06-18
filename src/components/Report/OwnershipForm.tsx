@@ -39,30 +39,25 @@ export const OwnershipForm = createReportForm({
           onChange={(values) => setUploading(values.some((x) => x.file))}
           withAsterisk
         />
-        <Stack spacing={4}>
-          <InputRadioGroup
-            name="establishInterest"
-            withAsterisk
-            label="Are you interested in having an official model of your art style created and
+        <InputRadioGroup
+          name="establishInterest"
+          withAsterisk
+          label="Are you interested in having an official model of your art style created and
                 attributed to you?"
-            description={
-              <Text>
-                You would receive 70% of any proceeds made from the use of your model on Civitai.{' '}
-                <Text
-                  variant="link"
-                  component="a"
-                  href="/content/art-and-ai#monetizing-your-art"
-                  target="_blank"
-                >
-                  Learn more
-                </Text>
+          description={
+            <Text>
+              You would receive 70% of any proceeds made from the use of your model on Civitai.{' '}
+              <Text component="a" href="/content/art-and-ai#monetizing-your-art" target="_blank">
+                Learn more
               </Text>
-            }
-          >
+            </Text>
+          }
+        >
+          <Stack gap={4}>
             <Radio value="yes" label="I'm interested" />
             <Radio value="no" label="Not at this time" />
-          </InputRadioGroup>
-        </Stack>
+          </Stack>
+        </InputRadioGroup>
       </>
     );
   },

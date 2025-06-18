@@ -88,11 +88,11 @@ export function CancelMembershipAction({
   );
 
   return variant === 'menu-item' ? (
-    <Menu.Item icon={icon} onClick={handleClick}>
+    <Menu.Item leftSection={icon} onClick={handleClick}>
       {label}
     </Menu.Item>
   ) : (
-    <Button className="capitalize" {...buttonProps} leftIcon={icon} onClick={handleClick}>
+    <Button className="capitalize" {...buttonProps} leftSection={icon} onClick={handleClick}>
       {label}
     </Button>
   );
@@ -129,24 +129,24 @@ export const VaultStorageDowngrade = () => {
                 src={item.coverImageUrl}
                 alt="Model Image"
                 radius="lg"
-                width={100}
-                height={100}
+                w={100}
+                h={100}
               />
             ))}
           </div>
           <div className="flex flex-col gap-0">
             <Text align="center">
               You have{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {formatKBytes(vault?.usedStorageKb ?? 0)}
               </Text>{' '}
               of storage used and{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {pagination?.totalItems?.toLocaleString() ?? 0} models
               </Text>{' '}
               stored on your Vault. After downgrading, your Vault will be frozen.
             </Text>
-            <Text color="dimmed" align="center">
+            <Text c="dimmed" align="center">
               You will have a 7 day grace period to download models from your Vault.
             </Text>
           </div>

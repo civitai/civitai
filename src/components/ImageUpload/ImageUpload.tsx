@@ -14,7 +14,6 @@ import {
   Alert,
   Box,
   Center,
-  createStyles,
   Group,
   HoverCard,
   Input,
@@ -24,6 +23,8 @@ import {
   Paper,
   Stack,
   Text,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import type { FileWithPath } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
@@ -48,6 +49,9 @@ import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { formatBytes } from '~/utils/number-helpers';
+import styles from './ImageUpload.module.css';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -76,8 +80,9 @@ export function ImageUpload({
   reset = 0,
   ...inputWrapperProps
 }: Props) {
-  const { classes, theme, cx } = useStyles();
   const isClient = useIsClient();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
@@ -140,32 +145,32 @@ export function ImageUpload({
           accept={IMAGE_MIME_TYPE}
           onDrop={handleDrop}
           maxFiles={max - files.length}
-          className={cx({ [classes.disabled]: dropzoneDisabled })}
+          className={clsx({ [styles.disabled]: dropzoneDisabled })}
           styles={(theme) => ({
             root:
               !!inputWrapperProps.error || !!error
                 ? {
                     borderColor: theme.colors.red[6],
-                    marginBottom: theme.spacing.xs / 2,
+                    marginBottom: `var(--mantine-spacing-xs) / 2)`,
                   }
                 : undefined,
           })}
           disabled={dropzoneDisabled}
           // loading={loading}
         >
-          <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
+          <Group justify="center" gap="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
             <Dropzone.Accept>
               <IconUpload
                 size={50}
                 stroke={1.5}
-                color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+                color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
               />
             </Dropzone.Accept>
             <Dropzone.Reject>
               <IconX
                 size={50}
                 stroke={1.5}
-                color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+                color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
               />
             </Dropzone.Reject>
             <Dropzone.Idle>
@@ -176,7 +181,7 @@ export function ImageUpload({
               <Text size="xl" inline>
                 Drag images here or click to select files
               </Text>
-              <Text size="sm" color="dimmed" inline mt={7}>
+              <Text size="sm" c="dimmed" inline mt={7}>
                 {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
                 {`, each file should not exceed ${formatBytes(maxSize)}`}
               </Text>
@@ -303,11 +308,11 @@ function UploadedImage({
   return (
     <ImageUploadPreview image={image} isPrimary={isPrimary} id={image.url} disabled={!sortable}>
       {showLoading && (
-        <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+        <Center style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <Overlay blur={2} zIndex={10} color="#000" />
-          <Stack spacing="xs" sx={{ zIndex: 11 }} align="center">
+          <Stack gap="xs" style={{ zIndex: 11 }} align="center">
             <Loader size="lg" />
-            {image.message && <Text weight={600}>{image.message}...</Text>}
+            {image.message && <Text fw={600}>{image.message}...</Text>}
           </Stack>
         </Center>
       )}
@@ -319,7 +324,7 @@ function UploadedImage({
               variant="filled"
               radius={0}
               p={4}
-              sx={{
+              style={{
                 position: 'absolute',
                 bottom: 0,
                 right: 0,
@@ -327,59 +332,46 @@ function UploadedImage({
                 zIndex: 11,
               }}
             >
-              <Group spacing={4} noWrap position="center">
+              <Group gap={4} wrap="nowrap" justify="center">
                 <IconAlertTriangle size={20} strokeWidth={2.5} />
-                <Text sx={{ lineHeight: 1.1 }} weight={500}>
+                <Text style={{ lineHeight: 1.1 }} fw={500}>
                   Will be reviewed
                 </Text>
               </Group>
             </Alert>
           </HoverCard.Target>
           <HoverCard.Dropdown>
-            <Text size="sm" weight={500}>
+            <Text size="sm" fw={500}>
               Flagged for review
             </Text>
-            <Text size="sm" sx={{ lineHeight: 1.2 }}>
+            <Text size="sm" style={{ lineHeight: 1.2 }}>
               After submission this image will be reviewed by a moderator.
             </Text>
           </HoverCard.Dropdown>
         </HoverCard>
       )}
-      <Group
-        sx={(theme) => ({
-          position: 'absolute',
-          background: theme.fn.rgba(theme.colors.dark[9], 0.6),
-          borderBottomLeftRadius: theme.radius.sm,
-          top: 0,
-          right: 0,
-          zIndex: 11,
-        })}
-        align="center"
-        position="right"
-        p={4}
-        spacing={4}
-      >
+      <Group className={styles.overlayGroup} align="center" justify="flex-end" p={4} gap={4}>
         {!showLoading && (!image.status || image.status === 'complete') && (
           <>
             {/* Disable as part of move to advanced self-mod */}
             {/* <Tooltip label="Toggle NSFW">
-              <ActionIcon
+              <LegacyActionIcon
                 color={image.nsfw ? 'red' : undefined}
                 variant={image.nsfw ? 'filled' : 'outline'}
                 disabled={image.nsfw === undefined}
                 onClick={() => filesHandler.setItem(index, { ...image, nsfw: !image.nsfw })}
               >
                 <IconRating18Plus />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip> */}
             {withMeta && (
               <ImageMetaPopover meta={image.meta as ImageMetaProps}>
-                <ActionIcon
+                <LegacyActionIcon
                   variant="outline"
                   color={image.meta && Object.keys(image.meta).length ? 'primary' : undefined}
                 >
                   <IconPencil />
-                </ActionIcon>
+                </LegacyActionIcon>
               </ImageMetaPopover>
               // <ImageMetaPopover
               //   meta={image.meta}
@@ -390,17 +382,17 @@ function UploadedImage({
               //     filesHandler.apply((item) => ({ ...item, tags }));
               //   }}
               // >
-              //   <ActionIcon
+              //   <LegacyActionIcon
               //     variant="outline"
               //     color={image.meta && Object.keys(image.meta).length ? 'primary' : undefined}
               //   >
               //     <IconPencil />
-              //   </ActionIcon>
+              //   </LegacyActionIcon>
               // </ImageMetaPopover>
             )}
           </>
         )}
-        <ActionIcon
+        <LegacyActionIcon
           color="red"
           variant="outline"
           onClick={() => {
@@ -409,7 +401,7 @@ function UploadedImage({
           }}
         >
           <IconTrash size={16} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Group>
     </ImageUploadPreview>
   );
@@ -573,7 +565,7 @@ function UploadedImage({
 //         </Tabs> */}
 //         <Title order={4}>Generation details</Title>
 //         {generationParams}
-//         <Group position="right" spacing={4} pt="sm">
+//         <Group justify="flex-end" gap={4} pt="sm">
 //           <Button fullWidth onClick={handleSubmit}>
 //             Save
 //           </Button>
@@ -644,7 +636,7 @@ function UploadedImage({
 //   const loading = loadingCategories || loadingTags;
 
 //   return (
-//     <Stack sx={{ position: 'relative' }}>
+//     <Stack style={{ position: 'relative' }}>
 //       <LoadingOverlay visible={loading} />
 //       <DismissibleAlert
 //         id="image-tagging"
@@ -686,43 +678,43 @@ function UploadedImage({
 //   );
 // }
 
-const useStyles = createStyles((theme, _params) => ({
-  sortItem: {
-    position: 'relative',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+// const useStyles = createStyles((theme, _params) => ({
+//   sortItem: {
+//     position: 'relative',
+//     display: 'flex',
+//     alignItems: 'center',
+//     justifyContent: 'center',
+//   },
 
-  draggableIcon: {
-    position: 'absolute',
-    top: '4px',
-    right: 0,
-  },
+//   draggableIcon: {
+//     position: 'absolute',
+//     top: '4px',
+//     right: 0,
+//   },
 
-  checkbox: {
-    position: 'absolute',
-    top: '4px',
-    left: '4px',
-  },
+//   checkbox: {
+//     position: 'absolute',
+//     top: '4px',
+//     left: '4px',
+//   },
 
-  meta: {
-    position: 'absolute',
-    bottom: '4px',
-    right: '4px',
-  },
+//   meta: {
+//     position: 'absolute',
+//     bottom: '4px',
+//     right: '4px',
+//   },
 
-  fullWidth: {
-    width: '100%',
-  },
+//   fullWidth: {
+//     width: '100%',
+//   },
 
-  disabled: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-    cursor: 'not-allowed',
+//   disabled: {
+//     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+//     borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+//     cursor: 'not-allowed',
 
-    '& *': {
-      color: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[5],
-    },
-  },
-}));
+//     '& *': {
+//       color: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[5],
+//     },
+//   },
+// }));

@@ -1,0 +1,5 @@
+.feedContentToggle {
+  @container (max-width: theme('screens.sm')) {
+    width: '100%',
+  }
+}

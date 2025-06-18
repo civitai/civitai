@@ -1,10 +1,11 @@
-import { ActionIcon, Popover, Stack, Text, Group, Badge, Divider } from '@mantine/core';
+import { Popover, Stack, Text, Group, Badge, Divider } from '@mantine/core';
 import { IconInfoSquareRounded } from '@tabler/icons-react';
 import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { BuzzWithdrawalRequestHistoryRecord } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const BuzzWithdrawalRequestHistory = ({
   history,
@@ -14,18 +15,18 @@ const BuzzWithdrawalRequestHistory = ({
   return (
     <Popover width={300} withArrow withinPortal shadow="sm">
       <Popover.Target>
-        <ActionIcon color="gray">
+        <LegacyActionIcon color="gray">
           <IconInfoSquareRounded size={20} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Popover.Target>
       <Popover.Dropdown>
-        <Stack spacing="xs">
-          <Text size="sm" weight={500}>
+        <Stack gap="xs">
+          <Text size="sm" fw={500}>
             History
           </Text>
           {history.map((record) => (
             <Stack key={record.id}>
-              <Group noWrap position="apart">
+              <Group wrap="nowrap" justify="space-between">
                 {'updatedBy' in record ? (
                   <UserAvatar
                     user={record.updatedBy}
@@ -34,7 +35,7 @@ const BuzzWithdrawalRequestHistory = ({
                     withUsername
                   />
                 ) : (
-                  <Text size="xs" weight={500}>
+                  <Text size="xs" fw={500}>
                     On {formatDate(record.createdAt)}
                   </Text>
                 )}
@@ -45,7 +46,7 @@ const BuzzWithdrawalRequestHistory = ({
               </Group>
               {record.note && (
                 <Text size="xs">
-                  <Text weight={500}>Note:</Text> {record.note}
+                  <Text fw={500}>Note:</Text> {record.note}
                 </Text>
               )}
               <Divider />

@@ -37,7 +37,7 @@ export default function SectionsCreate() {
   return (
     <Container size="md">
       <Stack>
-        <Group spacing="md" noWrap>
+        <Group gap="md" wrap="nowrap">
           <BackButton url="/moderator/cosmetic-store/sections" />
           <Title>Create new cosmetic shop section</Title>
         </Group>

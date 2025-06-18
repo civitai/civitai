@@ -1,0 +1,46 @@
+.container {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.sidebar {
+  display: block;
+  overflow: visible;
+  transition: margin-left 500ms;
+
+  @container (max-width: theme('screens.sm')) {
+    display: none;
+  }
+}
+
+.sidebarToggle {
+  position: absolute;
+  top: 0;
+  right: -32px;
+}
+
+.content {
+  flex: 1;
+}
+
+.drawerButton {
+  display: none;
+
+  @container (max-width: theme('screens.sm')) {
+    display: block;
+  }
+}
+
+.drawerHeader {
+  padding: var(--mantine-spacing-xs);
+  margin-bottom: 0;
+  box-shadow: var(--mantine-shadow-sm);
+}
+
+.filterContainer {
+  border-top: light-dark(
+    1px solid var(--mantine-color-gray-2),
+    1px solid var(--mantine-color-dark-4)
+  ) !important;
+}

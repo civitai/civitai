@@ -158,10 +158,10 @@ const AutoTagSection = ({
   });
 
   return (
-    <Stack spacing="md">
+    <Stack gap="md">
       <Input.Wrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Existing Tags</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               How to handle tags that have already been provided
@@ -192,7 +192,7 @@ const AutoTagSection = ({
 
       <NumberInputWrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Max Tags</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Maximum number of tags to add for each file
@@ -203,12 +203,12 @@ const AutoTagSection = ({
         min={autoLabelLimits.tag.tags.min}
         max={autoLabelLimits.tag.tags.max}
         onChange={(value) => {
-          setAutoTagging(modelId, mediaType, { maxTags: value });
+          setAutoTagging(modelId, mediaType, { maxTags: Number(value) });
         }}
       />
       <NumberInputWrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Min Threshold</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Minimum confidence threshold acceptable for each tag
@@ -218,10 +218,10 @@ const AutoTagSection = ({
         value={autoTagging.threshold}
         min={autoLabelLimits.tag.threshold.min}
         max={autoLabelLimits.tag.threshold.max}
-        precision={1}
+        decimalScale={1}
         step={0.1}
         onChange={(value) => {
-          setAutoTagging(modelId, mediaType, { threshold: value });
+          setAutoTagging(modelId, mediaType, { threshold: Number(value) });
         }}
       />
 
@@ -231,7 +231,7 @@ const AutoTagSection = ({
           setAutoTagging(modelId, mediaType, { blacklist: event.currentTarget.value });
         }}
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Blacklist</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Comma-separated list of tags to exclude from results
@@ -246,7 +246,7 @@ const AutoTagSection = ({
           setAutoTagging(modelId, mediaType, { prependTags: event.currentTarget.value });
         }}
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Prepend Tags</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Comma-separated list of tags to prepend to all results
@@ -261,7 +261,7 @@ const AutoTagSection = ({
           setAutoTagging(modelId, mediaType, { appendTags: event.currentTarget.value });
         }}
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Append Tags</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Comma-separated list of tags to append to all results
@@ -271,7 +271,7 @@ const AutoTagSection = ({
         placeholder="minor, details"
       />
 
-      <Group position="right" mt="xl">
+      <Group justify="flex-end" mt="xl">
         <Button variant="light" color="gray" onClick={handleClose}>
           Cancel
         </Button>
@@ -307,7 +307,7 @@ const AutoCaptionSection = ({
   });
 
   return (
-    <Stack spacing="md">
+    <Stack gap="md">
       {!disabled ? (
         <AlertWithIcon
           title="Long run times"
@@ -340,7 +340,7 @@ const AutoCaptionSection = ({
       )}
       <Input.Wrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Existing Captions</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               How to handle captions that have already been provided
@@ -374,7 +374,7 @@ const AutoCaptionSection = ({
 
       <NumberInputWrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Temperature</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Higher temperatures encourage diverse and creative responses. Lower temperatures
@@ -385,16 +385,16 @@ const AutoCaptionSection = ({
         value={autoCaptioning.temperature}
         min={autoLabelLimits.caption.temperature.min}
         max={autoLabelLimits.caption.temperature.max}
-        precision={2}
+        decimalScale={2}
         step={0.01}
         onChange={(value) => {
-          setAutoCaptioning(modelId, mediaType, { temperature: value });
+          setAutoCaptioning(modelId, mediaType, { temperature: Number(value) });
         }}
         disabled={disabled}
       />
       <NumberInputWrapper
         label={
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <Input.Label>Max New Tokens</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Gives guidance for how long descriptions will be. Tokens are approximately 3/4 a word
@@ -406,12 +406,12 @@ const AutoCaptionSection = ({
         min={autoLabelLimits.caption.maxNewTokens.min}
         max={autoLabelLimits.caption.maxNewTokens.max}
         onChange={(value) => {
-          setAutoCaptioning(modelId, mediaType, { maxNewTokens: value });
+          setAutoCaptioning(modelId, mediaType, { maxNewTokens: Number(value) });
         }}
         disabled={disabled}
       />
 
-      <Group position="right" mt="xl">
+      <Group justify="flex-end" mt="xl">
         <Button variant="light" color="gray" onClick={handleClose}>
           Cancel
         </Button>

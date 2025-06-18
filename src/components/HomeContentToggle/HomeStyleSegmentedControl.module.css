@@ -1,0 +1,44 @@
+.label {
+  padding: 6px 10px;
+}
+
+.container {
+  position: relative;
+
+  &:hover {
+    .scrollArea {
+      &::-webkit-scrollbar {
+        opacity: 1;
+      }
+
+      &::-webkit-scrollbar-thumb {
+        background-color: light-dark(
+          alpha(var(--mantine-color-black), 0.5),
+          alpha(var(--mantine-color-white), 0.5)
+        );
+      }
+    }
+  }
+}
+
+.root {
+  overflow: auto;
+  scroll-snap-type: x mandatory;
+  background-color: transparent;
+  gap: 8px;
+  max-width: 100%;
+
+  &::-webkit-scrollbar {
+    background: transparent;
+    opacity: 0;
+    height: 8px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 4px;
+  }
+}
+
+.control {
+  border: none !important;
+}

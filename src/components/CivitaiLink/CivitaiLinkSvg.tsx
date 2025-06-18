@@ -1,8 +1,7 @@
-import { createStyles, useMantineTheme } from '@mantine/core';
-import { bounceRight, heartbeat, vibrate } from '~/libs/animations';
+import { useComputedColorScheme } from '@mantine/core';
 
 export function CivitaiLinkSvg() {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   return (
     <svg
       version="1.1"
@@ -56,7 +55,7 @@ export function CivitaiLinkSvg() {
       <path
         id="pc"
         d="M538 161.5h-76.2c-5.2 0-9.5-4.3-9.5-9.5s4.3-9.5 9.5-9.5h5.8V131H439c-9.4 0-17.1-7.7-17.1-17.1V37.6c0-9.4 7.7-17.1 17.1-17.1h122c9.4 0 17.1 7.7 17.1 17.1v76.2c0 9.4-7.7 17.1-17.1 17.1h-28.6v11.5h5.8c5.2 0 9.5 4.3 9.5 9.5s-4.5 9.6-9.7 9.6zm-51.5-19h26.8V131h-26.8v11.5zm36.3-30.5H559V39.5H440.8V112h82zm38.1-72.5z"
-        style={{ fill: theme.colorScheme === 'dark' ? '#fff' : '#333' }}
+        style={{ fill: colorScheme === 'dark' ? '#fff' : '#333' }}
       />
       <g>
         <path

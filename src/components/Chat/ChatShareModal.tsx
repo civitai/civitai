@@ -26,7 +26,6 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import React, { useEffect, useState } from 'react';
-import { chatListStyles } from '~/components/Chat/ChatList';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -34,6 +33,8 @@ import type { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import classes from './ChatList.module.css';
+import { clsx } from 'clsx';
 
 export default function ChatShareModal(props: { message: string }) {
   const dialog = useDialogContext();
@@ -41,7 +42,6 @@ export default function ChatShareModal(props: { message: string }) {
   const currentUser = useCurrentUser();
   const { setState } = useChatContext();
   const queryUtils = trpc.useUtils();
-  const { classes, cx } = chatListStyles();
   const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
   const [searchInput, setSearchInput] = useState<string>('');
   const [selectedChat, setSelectedChat] = useState<number | undefined>(undefined);
@@ -133,10 +133,10 @@ export default function ChatShareModal(props: { message: string }) {
 
   return (
     <Modal {...dialog} title="Send Chat" size="sm">
-      <Stack spacing={0} h="100%">
+      <Stack gap={0} h="100%">
         <Box p="sm" pt={0}>
           <TextInput
-            icon={<IconSearch size={16} />}
+            leftSection={<IconSearch size={16} />}
             placeholder="Filter by user"
             value={searchInput}
             onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
@@ -153,7 +153,7 @@ export default function ChatShareModal(props: { message: string }) {
           />
         </Box>
         <Divider />
-        <Box h="100%" mah={500} sx={{ overflowY: 'auto' }}>
+        <Box h="100%" mah={500} style={{ overflowY: 'auto' }}>
           {isLoading ? (
             <Center h="100%">
               <Loader />
@@ -164,7 +164,7 @@ export default function ChatShareModal(props: { message: string }) {
               <IconCloudOff size={36} />
             </Stack>
           ) : (
-            <Stack p="xs" spacing={4}>
+            <Stack p="xs" gap={4}>
               {filteredData.map((d) => {
                 const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
                 const otherMembers = d.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
@@ -176,8 +176,8 @@ export default function ChatShareModal(props: { message: string }) {
                 return (
                   <Group
                     key={d.id}
-                    noWrap
-                    className={cx(classes.selectChat, {
+                    wrap="nowrap"
+                    className={clsx(classes.selectChat, {
                       [classes.selectedChat]: d.id === selectedChat,
                     })}
                     onClick={() => {
@@ -193,11 +193,11 @@ export default function ChatShareModal(props: { message: string }) {
                         <UserAvatar user={otherMembers[0].user} />
                       )}
                     </Box>
-                    <Stack sx={{ overflow: 'hidden' }} spacing={0}>
+                    <Stack style={{ overflow: 'hidden' }} gap={0}>
                       <Highlight
                         size="sm"
                         fw={500}
-                        sx={{
+                        style={{
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -212,7 +212,7 @@ export default function ChatShareModal(props: { message: string }) {
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <Text
                           size="xs"
-                          sx={{
+                          style={{
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -223,14 +223,14 @@ export default function ChatShareModal(props: { message: string }) {
                         </Text>
                       )}
                     </Stack>
-                    <Group sx={{ marginLeft: 'auto' }} noWrap spacing={6}>
+                    <Group style={{ marginLeft: 'auto' }} wrap="nowrap" gap={6}>
                       {isModSender && (
                         <Tooltip
                           withArrow={false}
                           label="Moderator chat"
-                          sx={{ border: '1px solid gray' }}
+                          style={{ border: '1px solid gray' }}
                         >
-                          <Image src="/images/civ-c.png" alt="Moderator" width={16} height={16} />
+                          <Image src="/images/civ-c.png" alt="Moderator" className="size-4" />
                         </Tooltip>
                       )}
                     </Group>
@@ -251,7 +251,7 @@ export default function ChatShareModal(props: { message: string }) {
         <Button
           loading={isSending}
           disabled={!selectedChat}
-          leftIcon={<IconSend />}
+          leftSection={<IconSend />}
           onClick={handleClick}
         >
           Send

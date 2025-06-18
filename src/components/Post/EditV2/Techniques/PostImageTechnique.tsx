@@ -3,6 +3,7 @@ import { IconMessagePlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import type { PostEditImageDetail } from '~/server/services/post.service';
 import { useDebouncer } from '~/utils/debouncer';
@@ -90,13 +91,13 @@ export function PostImageTechnique({
           )}
         </div>
 
-        <ActionIcon
+        <LegacyActionIcon
           color="red"
           onClick={handleRemoveTechnique}
           loading={removeTechniqueMutation.isLoading}
         >
           <IconTrash size={16} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </div>
       <Collapse in={opened}>
         <Textarea

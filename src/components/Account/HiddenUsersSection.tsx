@@ -1,7 +1,8 @@
-import { ActionIcon, Autocomplete, Badge, Card, Loader, Stack, Text } from '@mantine/core';
+import { Autocomplete, Badge, Card, Loader, Portal, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
@@ -38,9 +39,9 @@ export function HiddenUsersSection() {
   return (
     <Card withBorder>
       <Card.Section withBorder inheritPadding py="xs">
-        <Text weight={500}>Hidden Users</Text>
+        <Text fw={500}>Hidden Users</Text>
       </Card.Section>
-      <Card.Section withBorder sx={{ marginTop: -1 }}>
+      <Card.Section withBorder style={{ marginTop: -1 }}>
         <Autocomplete
           name="tag"
           ref={searchInputRef}
@@ -48,17 +49,18 @@ export function HiddenUsersSection() {
           data={options}
           value={search}
           onChange={setSearch}
-          icon={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
-          onItemSubmit={({ id, value: username }: { value: string; id: number }) => {
-            handleToggleBlocked({ id, username });
+          leftSection={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
+          onOptionSubmit={(value: string) => {
+            const { id } = options.find((x) => x.value === value) ?? {};
+            if (!id) return;
+            handleToggleBlocked({ id, username: value });
             searchInputRef.current?.focus();
           }}
-          withinPortal
           variant="unstyled"
         />
       </Card.Section>
       <Card.Section inheritPadding py="md">
-        <Stack spacing={5}>
+        <Stack gap={5}>
           <BasicMasonryGrid
             items={hiddenUsers}
             render={UserBadge}
@@ -66,7 +68,7 @@ export function HiddenUsersSection() {
             columnGutter={4}
             columnWidth={140}
           />
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             {`We'll hide content from these users throughout the site.`}
           </Text>
         </Stack>
@@ -97,10 +99,10 @@ function UserBadge({
   return (
     <Badge
       key={data.id}
-      sx={{ paddingRight: 3 }}
+      style={{ paddingRight: 3 }}
       w={width}
       rightSection={
-        <ActionIcon
+        <LegacyActionIcon
           size="xs"
           color="blue"
           radius="xl"
@@ -108,7 +110,7 @@ function UserBadge({
           onClick={() => handleToggleBlocked(data)}
         >
           <IconX size={10} />
-        </ActionIcon>
+        </LegacyActionIcon>
       }
     >
       {data.username ?? '[deleted]'}

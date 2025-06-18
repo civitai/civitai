@@ -36,6 +36,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ClubAdminPermission, Currency } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
   // TODO.clubs: Add some custom filters for members.
@@ -90,11 +91,11 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
             cannot be reverted.
           </Text>
           <Text size="sm">
-            <Text weight="bold" component="span">
+            <Text fw="bold" component="span">
               {membership.user.username}
             </Text>{' '}
             will be removed from this club and refunded the last payment of{' '}
-            <Text weight="bold" component="span">
+            <Text fw="bold" component="span">
               <CurrencyBadge
                 unitAmount={membership.unitAmount}
                 currency={membership.currency ?? Currency.BUZZ}
@@ -178,14 +179,14 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                   </td>
                   <td>
                     {canManageMemberships ? (
-                      <Group noWrap>
+                      <Group wrap="nowrap">
                         {membership.unitAmount > 0 && (
                           <Tooltip
                             label={`${
                               membership.billingPausedAt ? 'Resume' : 'Pause'
                             } billing for this user`}
                           >
-                            <ActionIcon
+                            <LegacyActionIcon
                               size="sm"
                               color="red"
                               variant="transparent"
@@ -197,11 +198,11 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                               ) : (
                                 <IconPlayerPause />
                               )}
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </Tooltip>
                         )}
                         <Tooltip label="Remove and refund last payment">
-                          <ActionIcon
+                          <LegacyActionIcon
                             size="sm"
                             color="red"
                             variant="transparent"
@@ -209,7 +210,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                             loading={removingAndRefundingMember}
                           >
                             <IconTrash />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </Tooltip>
                       </Group>
                     ) : null}
@@ -223,7 +224,7 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
                 loadCondition={!isRefetching}
                 style={{ gridColumn: '1/-1' }}
               >
-                <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Center p="xl" style={{ height: 36 }} mt="md">
                   <Loader />
                 </Center>
               </InViewLoader>
@@ -233,24 +234,24 @@ export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {
             <Stack mt="xl">
               <Divider
                 size="sm"
+                className="text-sm"
                 label={
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconClock size={16} stroke={1.5} />
                     No more members to show.
                   </Group>
                 }
                 labelPosition="center"
-                labelProps={{ size: 'sm' }}
               />
               <Center>
-                <Stack spacing={0} align="center">
+                <Stack gap={0} align="center">
                   <Text
-                    variant="link"
+                    c="blue.4"
                     size="sm"
                     onClick={() => {
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
-                    sx={{ cursor: 'pointer' }}
+                    style={{ cursor: 'pointer' }}
                   >
                     Back to the top
                   </Text>

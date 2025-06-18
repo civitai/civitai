@@ -168,7 +168,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                   className={styles.linkOrClick}
                 >
                   <div className="flex h-full items-center justify-center">
-                    <Text color="dimmed">No Image</Text>
+                    <Text c="dimmed">No Image</Text>
                   </div>
                 </LinkOrClick>
                 {header && <div className={styles.header}>{header}</div>}

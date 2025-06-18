@@ -27,7 +27,7 @@ import { ClubResourcePagedUpdateForm } from '~/components/Club/ClubResourcePaged
 import { showSuccessNotification } from '~/utils/notifications';
 
 export function ClubResourcesPaged({ clubId }: Props) {
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
 
   // TODO.clubs: Add some custom filters for resources. Model type and perhaps a query of sorts.
   const [filters, setFilters] = useState<Omit<GetPaginatedClubResourcesSchema, 'limit' | 'clubId'>>(
@@ -116,10 +116,10 @@ export function ClubResourcesPaged({ clubId }: Props) {
               })}
             </tbody>
             {pagination && pagination.totalPages > 1 && (
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                 <Pagination
-                  page={filters.page}
+                  value={filters.page}
                   onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                   total={pagination.totalPages}
                 />

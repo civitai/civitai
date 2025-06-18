@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import type { MantineSize } from '@mantine/core';
 import type { FileWithPath } from '@mantine/dropzone';
 import type { ImageAnalysisInput } from '~/server/schema/image.schema';
 import type { TrainingResults } from '~/server/schema/model-file.schema';
@@ -169,4 +170,6 @@ declare global {
     isAuthed?: boolean;
     authChecked?: boolean;
   }
+
+  type MantineSpacing = MantineSize | number;
 }

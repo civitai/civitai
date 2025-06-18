@@ -31,7 +31,7 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
     <>
       {onlyPickle && (
         <AlertWithIcon icon={<IconAlertCircle />} iconColor="yellow" color="yellow">
-          <Text>
+          <Text size="xs">
             {modelType === 'TextualInversion' || modelType === 'Hypernetwork'
               ? "This asset is only available as a PickleTensor which is an insecure format. We've taken precautions to ensure the safety of these files but please be aware that some may harbor malicious code."
               : 'This asset is only available as a PickleTensor which is a deprecated and insecure format. We caution against using this asset until it can be converted to the modern SafeTensor format.'}
@@ -40,74 +40,100 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
       )}
       {isWildcards && (
         <AlertWithIcon icon={<IconAlertCircle />}>
-          This is a Wildcard collection, it requires an{' '}
-          <Anchor
-            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui-wildcards"
-            rel="nofollow"
-            target="_blank"
-          >
-            additional extension in Automatic 1111
-          </Anchor>{' '}
-          to work.
+          <Text size="xs">
+            This is a Wildcard collection, it requires an{' '}
+            <Anchor
+              className="inline-flex"
+              href="https://github.com/AUTOMATIC1111/stable-diffusion-webui-wildcards"
+              rel="nofollow"
+              target="_blank"
+              inherit
+            >
+              additional extension in Automatic 1111
+            </Anchor>{' '}
+            to work.
+          </Text>
         </AlertWithIcon>
       )}
       {isMotion && (
         <AlertWithIcon icon={<IconAlertCircle />}>
-          This is a Motion Module for{' '}
-          <Anchor href="https://github.com/guoyww/AnimateDiff/" rel="nofollow" target="_blank">
-            AnimateDiff
-          </Anchor>
-          , it requires an{' '}
-          <Anchor
-            href="https://github.com/continue-revolution/sd-webui-animatediff"
-            rel="nofollow"
-            target="_blank"
-          >
-            additional extension in Automatic 1111
-          </Anchor>{' '}
-          to work.
+          <Text size="xs">
+            This is a Motion Module for{' '}
+            <Anchor
+              className="inline-flex"
+              href="https://github.com/guoyww/AnimateDiff/"
+              rel="nofollow"
+              target="_blank"
+              inherit
+            >
+              AnimateDiff
+            </Anchor>
+            , it requires an{' '}
+            <Anchor
+              className="inline-flex"
+              href="https://github.com/continue-revolution/sd-webui-animatediff"
+              rel="nofollow"
+              target="_blank"
+              inherit
+            >
+              additional extension in Automatic 1111
+            </Anchor>{' '}
+            to work.
+          </Text>
         </AlertWithIcon>
       )}
       {hasNegativeEmbed && (
         <AlertWithIcon icon={<IconAlertCircle />}>
-          This Textual Inversion includes a{' '}
-          <Anchor
-            href={createModelFileDownloadUrl({
-              versionId,
-              type: 'Negative',
-            })}
-          >
-            Negative embed
-          </Anchor>
-          , install the negative and use it in the negative prompt for full effect.
+          <Text size="xs">
+            This Textual Inversion includes a{' '}
+            <Anchor
+              className="inline-flex"
+              href={createModelFileDownloadUrl({
+                versionId,
+                type: 'Negative',
+              })}
+              inherit
+            >
+              Negative embed
+            </Anchor>
+            , install the negative and use it in the negative prompt for full effect.
+          </Text>
         </AlertWithIcon>
       )}
       {hasConfig && (
         <AlertWithIcon icon={<IconAlertCircle />}>
-          This checkpoint includes a{' '}
-          <Anchor
-            href={createModelFileDownloadUrl({
-              versionId,
-              type: 'Config',
-            })}
-          >
-            config file
-          </Anchor>
-          , download and place it along side the checkpoint.
+          <Text size="xs">
+            This checkpoint includes a{' '}
+            <Anchor
+              className="inline-flex"
+              href={createModelFileDownloadUrl({
+                versionId,
+                type: 'Config',
+              })}
+              inherit
+            >
+              config file
+            </Anchor>
+            , download and place it along side the checkpoint.
+          </Text>
         </AlertWithIcon>
       )}
       {hasVAE && (
         <AlertWithIcon icon={<IconAlertCircle />}>
-          This checkpoint recommends a{' '}
-          <Anchor
-            href={createModelFileDownloadUrl({
-              versionId,
-              type: 'VAE',
-            })}
-          >
-            VAE
-          </Anchor>
-          , download and place it in the VAE folder.
+          <Text size="xs">
+            This checkpoint recommends a{' '}
+            <Anchor
+              className="inline-flex"
+              href={createModelFileDownloadUrl({
+                versionId,
+                type: 'VAE',
+              })}
+              inherit
+            >
+              VAE
+            </Anchor>
+            , download and place it in the VAE folder.
+          </Text>
         </AlertWithIcon>
       )}
     </>

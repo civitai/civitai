@@ -1,8 +1,7 @@
 import type { ThemeIconProps } from '@mantine/core';
 import {
-  ActionIcon,
   Badge,
-  createStyles,
+  getPrimaryShade,
   Group,
   HoverCard,
   Menu,
@@ -11,6 +10,8 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import type { IconProps } from '@tabler/icons-react';
 import {
@@ -24,7 +25,7 @@ import {
   IconPinnedOff,
   IconUserPlus,
 } from '@tabler/icons-react';
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -53,17 +54,20 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 // import { TwCarousel } from '~/components/TwCarousel/TwCarousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import classes from './ImagesAsPostsCard.module.css';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ImagesAsPostsCard({
   data,
-  width: cardWidth,
   height,
 }: {
   data: ImagesAsPostModel;
   width: number;
   height: number;
 }) {
-  const { classes, cx, theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
 
@@ -158,9 +162,6 @@ export function ImagesAsPostsCard({
   //   };
   // }, [embla]);
 
-  const imageIdsString = data.images.map((x) => x.id).join('_');
-  const carouselKey = useMemo(() => `${imageIdsString}_${cardWidth}`, [imageIdsString, cardWidth]);
-
   const moderationOptions = (image: (typeof data.images)[number]) => {
     if (!showModerationOptions) return null;
     const imageAlreadyHidden = gallerySettings
@@ -184,21 +185,21 @@ export function ImagesAsPostsCard({
         {image.postId ? (
           <Menu.Item
             key="pin-post"
-            icon={
+            leftSection={
               alreadyPinned ? (
                 <IconPinnedOff size={16} stroke={1.5} />
               ) : (
                 <IconPinned size={16} stroke={1.5} />
               )
             }
-            sx={{ alignItems: maxedOut ? 'flex-start' : 'center' }}
+            style={{ alignItems: maxedOut ? 'flex-start' : 'center' }}
             disabled={!alreadyPinned && maxedOut}
             onClick={() => handlePinPost({ postId: image.postId as number, alreadyPinned })}
           >
             {alreadyPinned ? (
               'Unpin this post'
             ) : (
-              <Stack spacing={2}>
+              <Stack gap={2}>
                 <Text inline>Pin this post</Text>
                 {maxedOut && (
                   <Text size="xs" color="yellow">
@@ -230,7 +231,6 @@ export function ImagesAsPostsCard({
     ? gallerySettings.pinnedPosts?.[currentModelVersionId]?.includes(data.postId)
     : false;
   const isOP = data.user.id === model?.user.id;
-  const carouselHeight = height - 58 - 8;
 
   const cosmetic = data.images.find((i) => isDefined(i.cosmetic))?.cosmetic;
   const cosmeticData =
@@ -239,7 +239,7 @@ export function ImagesAsPostsCard({
           ...cosmetic?.data,
           ...(pinned
             ? {
-                border: theme.colors.orange[theme.fn.primaryShade()],
+                border: theme.colors.orange[getPrimaryShade(theme, colorScheme)],
                 borderWidth: 2,
               }
             : undefined),
@@ -265,25 +265,29 @@ export function ImagesAsPostsCard({
         )}
         <TwCard
           style={!cosmeticData ? { height } : undefined}
-          className={cx({ ['border']: !pinned })}
+          className={clsx({ ['border']: !pinned })}
           ref={ref}
         >
-          <MediaHash {...image} className={cx('opacity-70', cosmetic && 'rounded-b-lg')} />
+          <MediaHash {...image} className={clsx('opacity-70', cosmetic && 'rounded-b-lg')} />
           {data.user.id !== -1 && (
-            <Paper p="xs" radius={0} className={cx('h-[58px] z-[2]', cosmetic && 'rounded-t-lg ')}>
+            <Paper
+              p="xs"
+              radius={0}
+              className={clsx('z-[2] h-[58px]', cosmetic && 'rounded-t-lg ')}
+            >
               {inView && (
-                <Group spacing={8} align="flex-start" position="apart" noWrap>
+                <Group gap={8} align="flex-start" justify="space-between" wrap="nowrap">
                   <UserAvatar
                     user={data.user}
                     subText={
-                      <Group spacing="xs" noWrap>
+                      <Group gap="xs" wrap="nowrap">
                         {data.publishedAt ? (
                           <DaysFromNow date={data.publishedAt} />
                         ) : (
                           <Text>Not published</Text>
                         )}
                         {(fromAutoResource || fromManualResource) && (
-                          <Group ml={6} spacing={4}>
+                          <Group ml={6} gap={4}>
                             {fromAutoResource && (
                               <Tooltip label="Auto-detected resource" withArrow>
                                 <ThemeIcon color="teal" variant="light" radius="xl" size={18}>
@@ -315,13 +319,13 @@ export function ImagesAsPostsCard({
                     withUsername
                     linkToProfile
                   />
-                  <Group spacing={8} position="right" noWrap>
+                  <Group gap={8} justify="flex-end" wrap="nowrap">
                     {!data.publishedAt && (
                       <Tooltip label="Post not Published" withArrow>
                         <Link href={`/posts/${data.postId}/edit`}>
-                          <ActionIcon color="red" variant="outline">
+                          <LegacyActionIcon color="red" variant="outline">
                             <IconExclamationMark />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         </Link>
                       </Tooltip>
                     )}
@@ -331,10 +335,15 @@ export function ImagesAsPostsCard({
                           variant="light"
                           radius="md"
                           size="lg"
-                          style={{ userSelect: 'none', padding: 4, height: 'auto' }}
+                          style={{
+                            userSelect: 'none',
+                            padding: 4,
+                            height: 'auto',
+                            cursor: 'pointer',
+                          }}
                           color={isThumbsUp ? 'success.5' : 'red'}
                         >
-                          <Group spacing={4} noWrap>
+                          <Group gap={4} wrap="nowrap">
                             {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
                             {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
                           </Group>
@@ -359,7 +368,7 @@ export function ImagesAsPostsCard({
                       {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
                       <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                       {safe && (
-                        <Stack spacing="xs" className="absolute right-2 top-2 z-10">
+                        <Stack gap="xs" className="absolute right-2 top-2 z-10">
                           <ImageContextMenu
                             image={image}
                             additionalMenuItems={moderationOptions(image)}
@@ -424,7 +433,7 @@ export function ImagesAsPostsCard({
                       {image.hasMeta && (
                         <div className="absolute bottom-0.5 right-0.5 z-10">
                           <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                            <ActionIcon variant="transparent" size="lg">
+                            <LegacyActionIcon component="div" variant="transparent" size="lg">
                               <IconInfoCircle
                                 color="white"
                                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -432,7 +441,7 @@ export function ImagesAsPostsCard({
                                 strokeWidth={2.5}
                                 size={26}
                               />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </ImageMetaPopover2>
                         </div>
                       )}
@@ -455,7 +464,7 @@ export function ImagesAsPostsCard({
                                 {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
                                 <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                                 {safe && (
-                                  <Stack spacing="xs" className="absolute right-2 top-2 z-10">
+                                  <Stack gap="xs" className="absolute right-2 top-2 z-10">
                                     <ImageContextMenu
                                       image={image}
                                       additionalMenuItems={moderationOptions(image)}
@@ -521,7 +530,11 @@ export function ImagesAsPostsCard({
                                 {image.hasMeta && (
                                   <div className="absolute bottom-0.5 right-0.5 z-10">
                                     <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                                      <ActionIcon variant="transparent" size="lg">
+                                      <LegacyActionIcon
+                                        component="div"
+                                        variant="transparent"
+                                        size="lg"
+                                      >
                                         <IconInfoCircle
                                           color="white"
                                           filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -529,7 +542,7 @@ export function ImagesAsPostsCard({
                                           strokeWidth={2.5}
                                           size={26}
                                         />
-                                      </ActionIcon>
+                                      </LegacyActionIcon>
                                     </ImageMetaPopover2>
                                   </div>
                                 )}
@@ -567,7 +580,7 @@ function PinnedIndicator({
         </ThemeIcon>
       </HoverCard.Target>
       <HoverCard.Dropdown px="md" py={8}>
-        <Text size="sm" weight={600} color="white">
+        <Text size="sm" fw={600} color="white">
           Pinned Post
         </Text>
         <Text size="xs">
@@ -578,33 +591,3 @@ function PinnedIndicator({
     </HoverCard>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  title: {
-    lineHeight: 1.1,
-    fontSize: 14,
-    color: 'white',
-    fontWeight: 500,
-  },
-  link: {
-    width: '100%',
-    height: '100%',
-    display: 'flex',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  reactions: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    borderRadius: theme.radius.sm,
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
-        : theme.colors.gray[0],
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    padding: 4,
-    zIndex: 1,
-  },
-}));

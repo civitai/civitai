@@ -1,0 +1,29 @@
+.reactions {
+  position: absolute;
+  padding: 4px;
+  bottom: var(--mantine-spacing-sm);
+  left: var(--mantine-spacing-sm);
+  border-radius: var(--mantine-radius-md);
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    alpha(var(--mantine-color-dark-6), 0.6)
+  );
+  /* backdrop-filter: blur(13px) saturate(160%); */
+  box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
+}
+
+.reactionsWithControls {
+  bottom: initial;
+  top: 32px;
+  left: 8px;
+}
+
+.vimeoReactions {
+  bottom: 48px;
+  left: 8px;
+}
+
+.vimeoContextMenu {
+  right: 40px;
+  top: 10px;
+}

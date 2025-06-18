@@ -11,6 +11,8 @@ import {
   Select,
   Stack,
   Text,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
@@ -41,6 +43,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { useCollection } from './collection.utils';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function AddUserContentModal({ collectionId }: Props) {
   const dialog = useDialogContext();
@@ -51,6 +54,8 @@ export function AddUserContentModal({ collectionId }: Props) {
   const deselectAll = useStore((state) => state.deselectAll);
   const [error, setError] = useState('');
   const [tagId, setTagId] = useState<number | null>(null);
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const { files, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
 
@@ -143,7 +148,7 @@ export function AddUserContentModal({ collectionId }: Props) {
 
   return (
     <Modal {...dialog} title="Add images to collection" size="80%" onClose={handleClose} centered>
-      <Stack spacing="xl">
+      <Stack gap="xl">
         {error && (
           <AlertWithIcon color="red" iconColor="red" size="sm" icon={<IconInfoCircle size={16} />}>
             {error}
@@ -160,7 +165,7 @@ export function AddUserContentModal({ collectionId }: Props) {
 
         <Divider label="or select from your library" labelPosition="center" />
         <ScrollAreaProvider>
-          <ScrollArea.Autosize maxHeight="500px">
+          <ScrollArea.Autosize mah="500px">
             <MasonryProvider
               columnWidth={constants.cardSizes.image}
               maxColumnCount={4}
@@ -203,16 +208,16 @@ export function AddUserContentModal({ collectionId }: Props) {
           />
         )}
         <Group
-          spacing="xs"
-          position="right"
+          gap="xs"
+          justify="flex-end"
           mx="-lg"
           px="lg"
           pt="lg"
-          sx={(theme) => ({
+          style={{
             borderTop: `1px solid ${
-              theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+              colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
             }`,
-          })}
+          }}
         >
           <Button variant="default" onClick={handleClose}>
             Cancel
@@ -269,15 +274,15 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
         <Checkbox
           size="lg"
           checked={selected}
-          sx={{ position: 'absolute', top: 5, right: 5 }}
+          style={{ position: 'absolute', top: 5, right: 5 }}
           readOnly
         />
         {image.hasMeta && (
           <div className="absolute bottom-0.5 right-0.5 z-10">
             <ImageMetaPopover2 imageId={image.id} type={image.type}>
-              <ActionIcon variant="light" color="dark" size="lg">
+              <LegacyActionIcon component="div" variant="light" color="dark" size="lg">
                 <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ImageMetaPopover2>
           </div>
         )}

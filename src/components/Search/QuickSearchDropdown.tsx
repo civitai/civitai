@@ -1,9 +1,9 @@
 import type { AutocompleteProps } from '@mantine/core';
-import { createStyles, Group, Select, Stack, Text } from '@mantine/core';
+import { Group, Select, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconChevronDown } from '@tabler/icons-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Configure, InstantSearch, useSearchBox } from 'react-instantsearch';
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
@@ -25,11 +25,12 @@ import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { ApplyCustomFilter, BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
+import classes from './QuickSearchDropdown.module.scss';
+import { truncate } from 'lodash-es';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -38,75 +39,75 @@ const meilisearch = instantMeiliSearch(
 );
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.
-const useStyles = createStyles((theme) => ({
-  root: {
-    flexGrow: 1,
+// const useStyles = createStyles((theme) => ({
+//   root: {
+//     flexGrow: 1,
 
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-      flexGrow: 1,
-    },
-  },
-  wrapper: {
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  input: {
-    borderRadius: 0,
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//       flexGrow: 1,
+//     },
+//   },
+//   wrapper: {
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//     },
+//   },
+//   input: {
+//     borderRadius: 0,
 
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  dropdown: {
-    [containerQuery.smallerThan('sm')]: {
-      marginTop: '-7px',
-    },
-  },
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//     },
+//   },
+//   dropdown: {
+//     [containerQuery.smallerThan('sm')]: {
+//       marginTop: '-7px',
+//     },
+//   },
 
-  targetSelectorRoot: {
-    width: '110px',
+//   targetSelectorRoot: {
+//     width: '110px',
 
-    [containerQuery.smallerThan('sm')]: {
-      width: '25%',
-    },
-  },
+//     [containerQuery.smallerThan('sm')]: {
+//       width: '25%',
+//     },
+//   },
 
-  targetSelectorInput: {
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    paddingRight: '18px',
+//   targetSelectorInput: {
+//     borderTopRightRadius: 0,
+//     borderBottomRightRadius: 0,
+//     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
+//     paddingRight: '18px',
 
-    '&:not(:focus)': {
-      borderRightStyle: 'none',
-    },
+//     '&:not(:focus)': {
+//       borderRightStyle: 'none',
+//     },
 
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//     },
+//   },
 
-  targetSelectorRightSection: {
-    pointerEvents: 'none',
-  },
+//   targetSelectorRightSection: {
+//     pointerEvents: 'none',
+//   },
 
-  searchButton: {
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+//   searchButton: {
+//     borderTopLeftRadius: 0,
+//     borderBottomLeftRadius: 0,
+//     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
+//     color: theme.colorScheme === 'dark' ? theme.white : theme.black,
 
-    '&:hover': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.gray[4],
-    },
+//     '&:hover': {
+//       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.gray[4],
+//     },
 
-    [containerQuery.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-}));
+//     [containerQuery.smallerThan('md')]: {
+//       display: 'none',
+//     },
+//   },
+// }));
 
 export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   supportedIndexes?: SearchIndexKey[];
@@ -137,8 +138,8 @@ export const QuickSearchDropdown = ({
   ...props
 }: QuickSearchDropdownProps) => {
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>(startingIndex ?? 'models');
-  const handleTargetChange = (value: SearchIndexKey) => {
-    setTargetIndex(value);
+  const handleTargetChange = (value: SearchIndexKey | null) => {
+    setTargetIndex(value ?? 'models');
   };
 
   const indexName = searchIndexMap[targetIndex];
@@ -197,7 +198,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   // const currentUser = useCurrentUser();
   const { query, refine: setQuery } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
-  const { classes } = useStyles();
   const features = useFeatureFlags();
   const [search, setSearch] = useState(query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -216,9 +216,44 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   });
 
   const items = useMemo(() => {
-    const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: '' }));
+    const items = filtered.map((hit) => ({
+      key: String(hit.id),
+      hit,
+      value: String(hit.id),
+      label:
+        'prompt' in hit
+          ? truncate(hit.prompt, { length: 50 })
+          : 'name' in hit
+          ? hit.name
+          : 'title' in hit
+          ? hit.title
+          : 'username' in hit
+          ? hit.username
+          : '',
+    }));
     return items;
   }, [filtered]);
+
+  const getItemFromValue = useCallback(
+    (value: string) => {
+      const item = items.find((item) => item.value === value);
+      if (!item) return null;
+
+      return item;
+    },
+    [items]
+  );
+
+  const renderOption = useCallback<NonNullable<AutocompleteProps['renderOption']>>(
+    ({ option }) => {
+      const item = getItemFromValue(option.value);
+      if (!item) return null;
+
+      const RenderItem = IndexRenderItem[indexName] ?? ModelSearchItem;
+      return <RenderItem {...item} />;
+    },
+    [getItemFromValue, indexName]
+  );
 
   useEffect(() => {
     // Only set the query when the debounced search changes
@@ -230,13 +265,14 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   }, [debouncedSearch, query]);
 
   return (
-    <Group className={classes.wrapper} spacing={0} noWrap>
+    <Group className={classes.wrapper} gap={0} wrap="nowrap">
       {!!showIndexSelect && (
         <Select
+          className="shrink"
           classNames={{
             root: classes.targetSelectorRoot,
             input: classes.targetSelectorInput,
-            rightSection: classes.targetSelectorRightSection,
+            section: classes.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
           defaultValue={availableIndexes[0]}
@@ -250,8 +286,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
             )
             .map((index) => ({ label: IndexToLabel[searchIndexMap[index]], value: index }))}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
-          sx={{ flexShrink: 1 }}
-          onChange={onIndexNameChange}
+          onChange={(value) => onIndexNameChange(value as TIndex)}
         />
       )}
       <ClearableAutoComplete
@@ -260,13 +295,14 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         placeholder={placeholder ?? 'Search Civitai'}
         type="search"
         maxDropdownHeight={300}
-        nothingFound={
-          !hits.length ? (
-            <Stack spacing={0} align="center">
-              <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-            </Stack>
-          ) : undefined
-        }
+        // TODO: Mantine7
+        // nothingFound={
+        //   !hits.length ? (
+        //     <Stack gap={0} align="center">
+        //       <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+        //     </Stack>
+        //   ) : undefined
+        // }
         limit={
           results && results.nbHits > dropdownItemLimit
             ? dropdownItemLimit + 1 // Allow one more to show more results option
@@ -278,22 +314,23 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         onChange={setSearch}
         onClear={() => setSearch('')}
         // onBlur={() => (!isMobile ? onClear?.() : undefined)}
-        onItemSubmit={(item) => {
-          if (item.hit) {
+        onOptionSubmit={(value) => {
+          const item = getItemFromValue(value);
+          if (item) {
             onItemSelected(
               {
                 entityId: item.hit.id,
                 entityType: SearchIndexEntityTypes[searchIndexMap[indexName]],
               },
-              item.hit
+              item.hit as any
             );
 
             setSearch('');
           }
         }}
-        itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
+        renderOption={renderOption}
         // prevent default filtering behavior
-        filter={() => true}
+        filter={({ options }) => options}
         clearable={query.length > 0}
         {...autocompleteProps}
       />
@@ -301,7 +338,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   );
 }
 
-const IndexRenderItem: Record<SearchIndexKey, React.FC> = {
+const IndexRenderItem: Record<SearchIndexKey, React.ComponentType<any>> = {
   models: ModelSearchItem,
   articles: ArticlesSearchItem,
   users: UserSearchItem,

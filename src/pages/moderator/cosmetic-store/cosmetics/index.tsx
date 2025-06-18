@@ -10,7 +10,6 @@ import {
   ThemeIcon,
   Stack,
   Title,
-  ActionIcon,
   Box,
   TextInput,
   Badge,
@@ -35,6 +34,7 @@ import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.sele
 import type { CosmeticGetById } from '~/types/router';
 
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const CosmeticPreview = ({
   cosmetic,
@@ -88,8 +88,8 @@ export const CosmeticPreview = ({
       }
 
       return (
-        <Stack spacing="xl">
-          <Text weight="bold" align="center">
+        <Stack gap="xl">
+          <Text fw="bold" align="center">
             Preview
           </Text>
           <CreatorCardV2 user={userWithEquippedCosmetics} cosmeticOverwrites={[cosmetic]} />
@@ -102,11 +102,11 @@ export const CosmeticPreview = ({
 
       return (
         <Stack>
-          <Stack spacing="xl">
-            <Text weight="bold" align="center">
+          <Stack gap="xl">
+            <Text fw="bold" align="center">
               Preview
             </Text>
-            <Text size="sm" color="dimmed" align="center">
+            <Text size="sm" c="dimmed" align="center">
               You can apply this cosmetic to any image, model, article or post you own.
             </Text>
           </Stack>
@@ -116,7 +116,7 @@ export const CosmeticPreview = ({
               image={images[activeImageIndex]}
             />
           </Box>
-          <Group spacing="xs" position="center">
+          <Group gap="xs" justify="center">
             {images.map((image, index) => {
               const isSelected = index === activeImageIndex;
               return (
@@ -165,18 +165,18 @@ export default function CosmeticStoreProducts() {
     <>
       <Meta title="Cosmetics" deIndex />
       <Container size="lg">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Available Cosmetics</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             You can view manage all available cosmetics here, and create new shop items from this
             page.
           </Text>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             The ability to create cosmetics from this &amo; grant it to users will be coming soon
             (TM).
           </Text>
         </Stack>
-        <Group position="apart" mb="md">
+        <Group justify="space-between" mb="md">
           <TextInput
             label="Filter by name"
             value={filters.name ?? ''}
@@ -200,56 +200,56 @@ export default function CosmeticStoreProducts() {
             <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
             <Table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Sample</th>
-                  <th>Shop Items</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Type</Table.Th>
+                  <Table.Th>Sample</Table.Th>
+                  <Table.Th>Shop Items</Table.Th>
+                  <Table.Th>&nbsp;</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {cosmetics.map((cosmetic) => {
                   return (
-                    <tr key={cosmetic.id}>
-                      <td>
-                        <Stack spacing={0} maw={350}>
+                    <Table.Tr key={cosmetic.id}>
+                      <Table.Td>
+                        <Stack gap={0} maw={350}>
                           <Text>{cosmetic.name}</Text>
-                          <Text color="dimmed" size="sm">
+                          <Text c="dimmed" size="sm">
                             {cosmetic.description}
                           </Text>
                         </Stack>
-                      </td>
-                      <td>{cosmetic.type}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{cosmetic.type}</Table.Td>
+                      <Table.Td>
                         <CosmeticSample cosmetic={cosmetic} />
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         <Badge color={cosmetic._count?.cosmeticShopItems > 0 ? 'blue' : 'gray'}>
                           {cosmetic._count?.cosmeticShopItems} Shop items
                         </Badge>
-                      </td>
-                      <td>
-                        <ActionIcon component={Link} href={`/moderator/rewards/update/test`}>
+                      </Table.Td>
+                      <Table.Td>
+                        <LegacyActionIcon component={Link} href="/moderator/rewards/update/test">
                           <IconEdit />
-                        </ActionIcon>
-                      </td>
-                    </tr>
+                        </LegacyActionIcon>
+                      </Table.Td>
+                    </Table.Tr>
                   );
                 })}
-              </tbody>
-              {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
-                  <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
-                  <Pagination
-                    page={filters.page}
-                    onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
-                    total={pagination.totalPages}
-                  />
-                </Group>
-              )}
+              </Table.Tbody>
             </Table>
+            {pagination && pagination.totalPages > 1 && (
+              <Group className="mt-4" justify="space-between">
+                <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
+                <Pagination
+                  value={filters.page}
+                  onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
+                  total={pagination.totalPages}
+                />
+              </Group>
+            )}
           </div>
         ) : (
           <Stack align="center">

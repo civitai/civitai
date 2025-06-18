@@ -3,7 +3,6 @@ import {
   Box,
   Center,
   Chip,
-  createStyles,
   Group,
   Loader,
   SegmentedControl,
@@ -25,62 +24,14 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { postgresSlugify, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import classes from './UserMediaInfinite.module.css';
 
 const availableReactions = Object.keys(constants.availableReactions) as ReviewReactions[];
 
-const useChipStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 500,
-    padding: `0 ${theme.spacing.xs * 0.75}px`,
-
-    '&[data-variant="filled"]': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
-
-      '&[data-checked]': {
-        backgroundColor:
-          theme.colorScheme === 'dark'
-            ? theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5)
-            : theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.2),
-      },
-    },
-
-    [containerQuery.smallerThan('xs')]: {
-      padding: `4px ${theme.spacing.sm}px !important`,
-      fontSize: 18,
-      height: 'auto',
-
-      '&[data-checked]': {
-        padding: `4px ${theme.spacing.sm}px`,
-      },
-    },
-  },
-
-  iconWrapper: {
-    display: 'none',
-  },
-
-  chipGroup: {
-    [containerQuery.smallerThan('xs')]: {
-      width: '100%',
-    },
-  },
-
-  filtersWrapper: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-
-      '> *': { flexGrow: 1 },
-    },
-  },
-}));
-
 export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType }) {
   const currentUser = useCurrentUser();
-  const { classes } = useChipStyles();
 
   const {
     replace,
@@ -124,9 +75,9 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
         maxSingleColumnWidth={450}
       >
         <MasonryContainer p={0}>
-          <Stack spacing="xs">
-            <Group spacing={8} position="apart">
-              <Group spacing={8}>
+          <Stack gap="xs">
+            <Group gap={8} justify="space-between">
+              <Group gap={8}>
                 {isSameUser && (
                   <ContentToggle
                     size="xs"
@@ -137,30 +88,29 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                 )}
                 {viewingReactions && (
                   <Chip.Group
-                    spacing={4}
                     value={reactions ?? []}
-                    onChange={(reactions: ReviewReactions[]) => replace({ reactions })}
-                    className={classes.chipGroup}
+                    onChange={(reactions) => replace({ reactions: reactions as ReviewReactions[] })}
                     multiple
-                    noWrap
                   >
-                    {availableReactions.map((reaction, index) => (
-                      <Chip
-                        key={index}
-                        value={reaction}
-                        classNames={classes}
-                        variant="filled"
-                        radius="sm"
-                        size="xs"
-                      >
-                        <span>{constants.availableReactions[reaction as ReviewReactions]}</span>
-                      </Chip>
-                    ))}
+                    <Group gap={4} wrap="nowrap" className={classes.chipGroup}>
+                      {availableReactions.map((reaction, index) => (
+                        <Chip
+                          key={index}
+                          value={reaction}
+                          classNames={classes}
+                          variant="filled"
+                          radius="sm"
+                          size="xs"
+                        >
+                          <span>{constants.availableReactions[reaction as ReviewReactions]}</span>
+                        </Chip>
+                      ))}
+                    </Group>
                     {/* TODO add "hide owned" */}
                   </Chip.Group>
                 )}
               </Group>
-              <Group className={classes.filtersWrapper} spacing={8} noWrap>
+              <Group className={classes.filtersWrapper} gap={8} wrap="nowrap">
                 <SortFilter
                   type={isVideo ? 'videos' : 'images'}
                   value={sort}
@@ -181,8 +131,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   }}
                   filterType={isVideo ? 'videos' : 'images'}
                   onChange={(filters) => replace(filters)}
-                  size="sm"
-                  compact
+                  size="compact-sm"
                   hideMediaTypes
                 />
               </Group>
@@ -240,16 +189,12 @@ function ContentToggle({
     <SegmentedControl
       {...props}
       value={value}
-      onChange={onChange}
+      onChange={(v) => onChange(v as ImageSections)}
       data={[
         { label: `My ${titleCase(type)}s`, value: 'images' }, // will need to fix for "Audios"
         { label: 'My Reactions', value: 'reactions' },
       ]}
-      sx={() => ({
-        [containerQuery.smallerThan('sm')]: {
-          width: '100%',
-        },
-      })}
+      className="w-full sm:w-auto"
     />
   );
 }

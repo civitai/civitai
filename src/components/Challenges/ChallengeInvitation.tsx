@@ -27,7 +27,7 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
       onClose={handleClose}
       radius="md"
       size="lg"
-      classNames={{ modal: 'p-0 overflow-hidden' }}
+      classNames={{ content: 'p-0 overflow-hidden' }}
       withCloseButton={false}
     >
       <CloseButton
@@ -90,7 +90,7 @@ function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClos
         }}
       >
         <div className="flex flex-col gap-0 self-end">
-          <Text size="xl" color="white" lineClamp={2} weight={600}>
+          <Text size="xl" color="white" lineClamp={2} fw={600}>
             {props.title}
           </Text>
           <Text size="sm" color="white">

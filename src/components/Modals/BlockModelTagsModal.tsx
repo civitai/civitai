@@ -50,29 +50,25 @@ export default function BlockedModelTagsModal({ modelId }: { modelId: number }) 
               <Text size="sm" color="dimmed">
                 Select the tags you want to add to your blocking list
               </Text>
-              <Chip.Group
-                spacing={4}
-                position="center"
-                value={selectedTags}
-                onChange={setSelectedTags}
-                multiple
-              >
-                {modelTags.map((tag) => {
-                  const selected = selectedTags.includes(String(tag.id));
+              <Chip.Group value={selectedTags} onChange={setSelectedTags} multiple>
+                <Group gap={4} justify="center">
+                  {modelTags.map((tag) => {
+                    const selected = selectedTags.includes(String(tag.id));
 
-                  return (
-                    <Chip
-                      key={tag.id}
-                      color={selected ? 'red' : undefined}
-                      radius="xs"
-                      value={String(tag.id)}
-                    >
-                      <span>{tag.name}</span>
-                    </Chip>
-                  );
-                })}
+                    return (
+                      <Chip
+                        key={tag.id}
+                        color={selected ? 'red' : undefined}
+                        radius="xs"
+                        value={String(tag.id)}
+                      >
+                        <span>{tag.name}</span>
+                      </Chip>
+                    );
+                  })}
+                </Group>
               </Chip.Group>
-              <Group position="apart">
+              <Group justify="space-between">
                 <Button variant="default" onClick={dialog.onClose}>
                   Cancel
                 </Button>
@@ -84,7 +80,7 @@ export default function BlockedModelTagsModal({ modelId }: { modelId: number }) 
           ) : (
             <>
               <Text>{`This model doesn't have any tags`}</Text>
-              <Group position="right">
+              <Group justify="end">
                 <Button variant="default" onClick={dialog.onClose}>
                   Close
                 </Button>

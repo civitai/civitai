@@ -147,12 +147,16 @@ export function usePersistForm<
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
       if (name === 'prompt') localStorage.setItem('generation:prompt', watchedValues[name]);
-      if (name === 'negativePrompt' && watchedValues[name])
-        localStorage.setItem('generation:negativePrompt', watchedValues[name]);
+      if (
+        name === 'negativePrompt' &&
+        (watchedValues.negativePrompt || watchedValues.negativePrompt === '')
+      )
+        localStorage.setItem('generation:negativePrompt', watchedValues.negativePrompt);
 
       if (!name) {
-        if (watchedValues.prompt) localStorage.setItem('generation:prompt', watchedValues.prompt);
-        if (watchedValues.negativePrompt)
+        if (watchedValues.prompt || watchedValues.prompt === '')
+          localStorage.setItem('generation:prompt', watchedValues.prompt);
+        if (watchedValues.negativePrompt || watchedValues.negativePrompt === '')
           localStorage.setItem('generation:negativePrompt', watchedValues.negativePrompt);
       }
       updateStorage(watchedValues);

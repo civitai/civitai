@@ -12,7 +12,7 @@ import {
 import { IconMoodDollar, IconX } from '@tabler/icons-react';
 import type { z } from 'zod';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 import {
   useBuzzWithdrawalRequestStatus,
   useMutateBuzzWithdrawalRequest,
@@ -31,19 +31,18 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const schema = createBuzzWithdrawalRequestSchema;
 
 export const CreateWithdrawalRequest = () => {
   const dialog = useDialogContext();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const handleClose = dialog.onClose;
   const { createBuzzWithdrawalRequest, creatingBuzzWithdrawalRequest } =
     useMutateBuzzWithdrawalRequest();
   const { data: status, isLoading: isLoadingStatus } = useBuzzWithdrawalRequestStatus();
-
-  const { classes } = useBuzzDashboardStyles();
 
   const form = useForm({
     schema,
@@ -71,26 +70,26 @@ export const CreateWithdrawalRequest = () => {
 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="md">
-      <Group position="apart" mb="md">
-        <Text size="lg" weight="bold">
+      <Group justify="space-between" mb="md">
+        <Text size="lg" fw="bold">
           Get Paid
         </Text>
-        <Group spacing="sm" noWrap>
+        <Group gap="sm" wrap="nowrap">
           <AvailableBuzzBadge />
 
-          <ActionIcon onClick={handleClose}>
+          <LegacyActionIcon onClick={handleClose}>
             <IconX />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Group>
       </Group>
       <Divider mx="-lg" mb="md" />
       <Stack>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text>
             As a member of the Civitai creator&rsquo;s program, you are elegible to get paid for
             your hard earned Buzz.
           </Text>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             (You&rsquo;ll get $1.00 for {constants.buzz.buzzDollarRatio} Buzz)
           </Text>
         </Stack>
@@ -103,16 +102,16 @@ export const CreateWithdrawalRequest = () => {
             )}
             <Paper withBorder radius="md" px="md" py="xs" className={classes.tileCard}>
               <Stack>
-                <Group spacing="xs">
+                <Group gap="xs">
                   <IconMoodDollar />
-                  <Text weight="bold">Enter Buzz amount</Text>
+                  <Text fw="bold">Enter Buzz amount</Text>
                 </Group>
                 <Stack>
                   <InputNumber
                     name="amount"
                     label="Buzz"
                     labelProps={{ size: 'xs' }}
-                    icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+                    leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                     format={undefined}
                     currency={Currency.BUZZ}
                     min={constants.buzz.minBuzzWithdrawal}
@@ -125,26 +124,26 @@ export const CreateWithdrawalRequest = () => {
                   />
 
                   {amount && (
-                    <Stack spacing={4}>
-                      <Text weight="bold">Payment</Text>
+                    <Stack gap={4}>
+                      <Text fw="bold">Payment</Text>
                       <Divider variant="dashed" />
-                      <Group position="apart">
-                        <Text color="dimmed">USD</Text>
+                      <Group justify="space-between">
+                        <Text c="dimmed">USD</Text>
                         <Text>${formatCurrencyForDisplay(dollarAmount, Currency.USD)}</Text>
                       </Group>
                       <Divider variant="dashed" />
-                      <Group position="apart">
-                        <Text color="dimmed">
+                      <Group justify="space-between">
+                        <Text c="dimmed">
                           Platform fee ({constants.buzz.platformFeeRate / 100}%)
                         </Text>
                         <Text>${formatCurrencyForDisplay(platformFee, Currency.USD)}</Text>
                       </Group>
                       <Divider variant="dashed" />
-                      <Group position="apart">
-                        <Text color="green.4" weight="bold">
+                      <Group justify="space-between">
+                        <Text c="green.4" fw="bold">
                           You&rsquo;ll receive
                         </Text>
-                        <Text color="green.4" weight="bold">
+                        <Text c="green.4" fw="bold">
                           ${formatCurrencyForDisplay(payoutAmount, Currency.USD)}
                         </Text>
                       </Group>
@@ -157,7 +156,7 @@ export const CreateWithdrawalRequest = () => {
             {status?.maxAmount && (
               <Text size="xs" color="yellow.6">
                 You can request up to{' '}
-                <Text size="xs" component="span" weight="bold">
+                <Text size="xs" component="span" fw="bold">
                   {numberWithCommas(status.maxAmount * constants.buzz.buzzDollarRatio)}{' '}
                 </Text>{' '}
                 Buzz

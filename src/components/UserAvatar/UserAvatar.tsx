@@ -2,7 +2,6 @@ import type {
   AvatarProps,
   BadgeProps,
   IndicatorProps,
-  MantineNumberSize,
   MantineSize,
   MantineTheme,
 } from '@mantine/core';
@@ -14,6 +13,7 @@ import {
   Paper,
   Stack,
   Text,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconUser } from '@tabler/icons-react';
@@ -42,7 +42,7 @@ const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSiz
 /**
  * Gets explicit avatar size in pixels
  */
-const getRawAvatarSize = (size: MantineNumberSize) => {
+const getRawAvatarSize = (size: MantineSpacing) => {
   if (typeof size === 'number') return size;
 
   // Based off Mantine avatar sizes
@@ -65,7 +65,7 @@ const getRawAvatarSize = (size: MantineNumberSize) => {
 /**
  * Gets explicit avatar size in pixels
  */
-const getRawAvatarRadius = (radius: MantineNumberSize, theme: MantineTheme) => {
+const getRawAvatarRadius = (radius: MantineSpacing, theme: MantineTheme) => {
   if (typeof radius === 'number') return radius;
   if (radius === 'xl') return '50%';
 
@@ -95,6 +95,7 @@ export function UserAvatar({
   className,
 }: Props) {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const { canViewNsfw } = useFeatureFlags();
   const browsingLevel = useBrowsingLevelDebounced();
 
@@ -123,14 +124,13 @@ export function UserAvatar({
   textSize ??= mapAvatarTextSize[size].textSize;
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
 
-  const imageSize = getRawAvatarSize(avatarProps?.size ?? avatarSize ?? size);
-  const imageRadius = getRawAvatarRadius(avatarProps?.radius ?? radius, theme);
+  const imageSize = getRawAvatarSize((avatarProps?.size ?? avatarSize ?? size) as MantineSpacing);
+  const imageRadius = getRawAvatarRadius((avatarProps?.radius ?? radius) as MantineSpacing, theme);
   const nsfwLevel = avatarUser.profilePicture?.nsfwLevel ?? 0;
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
     (!canViewNsfw ? !hasPublicBrowsingLevel(nsfwLevel) : nsfwLevel > browsingLevel);
-  const avatarBgColor =
-    theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
+  const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   const image = avatarUser.profilePicture;
   const decoration =
@@ -143,7 +143,7 @@ export function UserAvatar({
     <Group
       className={className}
       align="center"
-      sx={
+      style={
         withOverlay
           ? {
               padding: '0 10px 0 0',
@@ -152,8 +152,8 @@ export function UserAvatar({
             }
           : undefined
       }
-      spacing={spacing}
-      noWrap
+      gap={spacing}
+      wrap="nowrap"
     >
       {includeAvatar && (
         <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
@@ -224,7 +224,7 @@ export function UserAvatar({
                 radius={radius || 'xl'}
                 size={avatarSize ?? size}
                 imageProps={{ loading: 'lazy' }}
-                sx={{ backgroundColor: avatarBgColor }}
+                style={{ backgroundColor: avatarBgColor }}
                 {...avatarProps}
               >
                 {avatarUser.username && !userDeleted ? getInitials(avatarUser.username) : null}
@@ -234,10 +234,10 @@ export function UserAvatar({
         </UserProfileLink>
       )}
       {withUsername || subText ? (
-        <Stack spacing={0} align="flex-start">
+        <Stack gap={0} align="flex-start">
           {withUsername && (
             <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
-              <Group spacing={4} align="center">
+              <Group gap={4} align="center">
                 <Username
                   username={avatarUser.username}
                   deletedAt={avatarUser.deletedAt}
@@ -250,7 +250,7 @@ export function UserAvatar({
             </UserProfileLink>
           )}
           {subText && (typeof subText === 'string' || subTextForce) ? (
-            <Text size={subTextSize} color="dimmed" my={-2} lineClamp={1}>
+            <Text component="div" size={subTextSize} c="dimmed" my={-2} lineClamp={1}>
               {subText}
             </Text>
           ) : (
@@ -270,14 +270,14 @@ type Props = {
   subText?: React.ReactNode;
   subTextForce?: boolean;
   size?: MantineSize;
-  spacing?: MantineNumberSize;
+  spacing?: MantineSpacing;
   badge?: React.ReactElement<BadgeProps> | null;
   linkToProfile?: boolean;
   textSize?: MantineSize;
   subTextSize?: MantineSize;
   includeAvatar?: boolean;
-  radius?: MantineNumberSize;
-  avatarSize?: MantineSize | number;
+  radius?: MantineSpacing;
+  avatarSize?: MantineSpacing;
   userId?: number;
   indicatorProps?: Omit<IndicatorProps, 'children'>;
   badgeSize?: number;

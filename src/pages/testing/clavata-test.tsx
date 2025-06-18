@@ -9,6 +9,7 @@ import {
   TextInput,
   Title,
   useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
@@ -20,6 +21,7 @@ import type { ClavataTag } from '~/server/integrations/clavata';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
   const [policyId, setPolicyId] = useState<string | undefined>(undefined);
   const [tags, setTags] = useState<ClavataTag[]>([]);
@@ -90,14 +92,14 @@ export default function MetadataTester() {
             <IconUpload
               size={50}
               stroke={1.5}
-              color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors[theme.primaryColor][colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Accept>
           <Dropzone.Reject>
             <IconX
               size={50}
               stroke={1.5}
-              color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+              color={theme.colors.red[colorScheme === 'dark' ? 4 : 6]}
             />
           </Dropzone.Reject>
           <Dropzone.Idle>
@@ -108,7 +110,7 @@ export default function MetadataTester() {
             <Text size="xl" inline>
               Drag image here or click to select file
             </Text>
-            <Text size="sm" color="dimmed" inline mt={7}>
+            <Text size="sm" c="dimmed" inline mt={7}>
               Image should not exceed 16mb
             </Text>
           </div>
@@ -121,8 +123,8 @@ export default function MetadataTester() {
         )}
 
         {tags.length > 0 ? (
-          <Stack spacing={4}>
-            <Text size="lg" weight={700}>
+          <Stack gap={4}>
+            <Text size="lg" fw={700}>
               Detected Tags
             </Text>
             {tags.map((tag) => (
@@ -135,11 +137,11 @@ export default function MetadataTester() {
             ))}
           </Stack>
         ) : processed ? (
-          <Stack spacing={4}>
-            <Text size="lg" weight={700}>
+          <Stack gap={4}>
+            <Text size="lg" fw={700}>
               Detected Tags
             </Text>
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               No tags detected within policy.
             </Text>
           </Stack>

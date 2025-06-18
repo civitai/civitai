@@ -6,7 +6,6 @@ import {
   Button,
   Center,
   createPolymorphicComponent,
-  createStyles,
   Divider,
   Group,
   Highlight,
@@ -48,24 +47,27 @@ import type { ChatListMessage } from '~/types/router';
 import { isApril1 } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import styles from './ChatList.module.css';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 
-export const chatListStyles = createStyles((theme) => ({
-  selectChat: {
-    cursor: 'pointer',
-    borderRadius: theme.spacing.xs,
-    padding: theme.spacing.xs,
-    paddingTop: '6px',
-    paddingBottom: '6px',
-    '&:hover': {
-      backgroundColor: theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.2),
-    },
-  },
-  selectedChat: {
-    backgroundColor: `${theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5)} !important`,
-  },
-}));
+// export const chatListStyles = createStyles((theme) => ({
+//   selectChat: {
+//     cursor: 'pointer',
+//     borderRadius: theme.spacing.xs,
+//     padding: theme.spacing.xs,
+//     paddingTop: '6px',
+//     paddingBottom: '6px',
+//     '&:hover': {
+//       backgroundColor: theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.2),
+//     },
+//   },
+//   selectedChat: {
+//     backgroundColor: `${theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5)} !important`,
+//   },
+// }));
 
 const statusMap = {
   [ChatMemberStatus.Invited]: 'Pending',
@@ -80,7 +82,6 @@ type StatusValues = (typeof statusMap)[StatusKeys];
 export function ChatList() {
   const { state, setState } = useChatContext();
   const currentUser = useCurrentUser();
-  const { classes, cx } = chatListStyles();
   const queryUtils = trpc.useUtils();
   const [searchInput, setSearchInput] = useState<string>('');
   const [activeTab, setActiveTab] = useState<StatusValues>('Active');
@@ -224,19 +225,19 @@ export function ChatList() {
   };
 
   return (
-    <Stack spacing={0} h="100%">
-      <Group p="sm" position="apart" align="center">
+    <Stack gap={0} h="100%">
+      <Group p="sm" justify="space-between" align="center">
         <Group>
           <Text>Chats</Text>
           <Menu withArrow position="bottom">
             <Menu.Target>
-              <ActionIcon variant="light">
+              <LegacyActionIcon variant="light">
                 <IconTool size={18} strokeWidth={1.5} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
               <Menu.Item
-                icon={muteSounds ? <IconEar size={18} /> : <IconEarOff size={18} />}
+                leftSection={muteSounds ? <IconEar size={18} /> : <IconEarOff size={18} />}
                 onClick={handleMute}
                 disabled={isApril1() && !muteSounds}
               >
@@ -246,7 +247,7 @@ export function ChatList() {
               </Menu.Item>
               <Menu.Item
                 disabled={activeCount === 0}
-                icon={<IconEye size={18} />}
+                leftSection={<IconEye size={18} />}
                 onClick={() => markAsRead()}
               >
                 {`Mark all as read${activeCount > 0 ? ` (${activeCount})` : ''}`}
@@ -263,8 +264,8 @@ export function ChatList() {
           <Button
             size="xs"
             variant="light"
-            styles={{ leftIcon: { marginRight: 6 } }}
-            leftIcon={<IconCirclePlus size={18} />}
+            styles={{ section: { marginRight: 6 } }}
+            leftSection={<IconCirclePlus size={18} />}
             onClick={() => {
               setState((prev) => ({ ...prev, isCreating: true, existingChatId: undefined }));
             }}
@@ -273,27 +274,27 @@ export function ChatList() {
           </Button>
 
           {isMobile && (
-            <ActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
+            <LegacyActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
               <IconX />
-            </ActionIcon>
+            </LegacyActionIcon>
           )}
         </Group>
       </Group>
       <Box p="sm" pt={0}>
         <TextInput
-          icon={<IconSearch size={16} />}
+          leftSection={<IconSearch size={16} />}
           placeholder="Filter by user"
           value={searchInput}
           onChange={(event) => setSearchInput(event.currentTarget.value.toLowerCase())}
           rightSection={
-            <ActionIcon
+            <LegacyActionIcon
               onClick={() => {
                 setSearchInput('');
               }}
               disabled={!searchInput.length}
             >
               <IconX size={16} />
-            </ActionIcon>
+            </LegacyActionIcon>
           }
         />
       </Box>
@@ -322,7 +323,7 @@ export function ChatList() {
           ]}
         />
       </Box>
-      <Box h="100%" sx={{ overflowY: 'auto' }}>
+      <Box h="100%" style={{ overflowY: 'auto' }}>
         {isLoading ? (
           <Center h="100%">
             <Loader />
@@ -333,7 +334,7 @@ export function ChatList() {
             <IconCloudOff size={36} />
           </Stack>
         ) : (
-          <Stack p="xs" spacing={4}>
+          <Stack p="xs" gap={4}>
             <LazyMotion features={loadMotion}>
               {filteredData.map((d) => {
                 const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
@@ -351,9 +352,9 @@ export function ChatList() {
                   <PGroup
                     key={d.id}
                     component={div}
-                    noWrap
-                    className={cx(classes.selectChat, {
-                      [classes.selectedChat]: d.id === state.existingChatId,
+                    wrap="nowrap"
+                    className={clsx(styles.selectChat, {
+                      [styles.selectedChat]: d.id === state.existingChatId,
                     })}
                     initial={{ y: -20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
@@ -367,8 +368,8 @@ export function ChatList() {
                       position="top-start"
                       disabled={!unreadCount || unreadCount === 0}
                       label={unreadCount}
-                      inline
                       size={16}
+                      inline
                     >
                       <Box>
                         {otherMembers.length > 1 ? (
@@ -380,17 +381,17 @@ export function ChatList() {
                         )}
                       </Box>
                     </Indicator>
-                    <Stack sx={{ overflow: 'hidden' }} spacing={0}>
+                    <Stack style={{ overflow: 'hidden' }} gap={0}>
                       <Highlight
                         size="sm"
                         fw={500}
-                        sx={{
+                        style={{
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           minWidth: 0,
                         }}
-                        color={hasMod ? 'red' : undefined}
+                        c={hasMod ? 'red' : undefined}
                         highlight={searchInput}
                       >
                         {otherMembers.map((cm) => cm.user.username).join(', ')}
@@ -399,7 +400,7 @@ export function ChatList() {
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <Text
                           size="xs"
-                          sx={{
+                          style={{
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -410,17 +411,15 @@ export function ChatList() {
                         </Text>
                       )}
                     </Stack>
-                    <Group sx={{ marginLeft: 'auto' }} noWrap spacing={6}>
-                      {isModSender && (
-                        <Tooltip
-                          withArrow={false}
-                          label="Moderator chat"
-                          sx={{ border: '1px solid gray' }}
-                        >
-                          <Image src="/images/civ-c.png" alt="Moderator" width={16} height={16} />
-                        </Tooltip>
-                      )}
-                    </Group>
+                    {isModSender && (
+                      <Tooltip
+                        withArrow={false}
+                        label="Moderator chat"
+                        style={{ border: '1px solid gray' }}
+                      >
+                        <Image src="/images/civ-c.png" alt="Moderator" className="size-4" />
+                      </Tooltip>
+                    )}
                   </PGroup>
                 );
               })}

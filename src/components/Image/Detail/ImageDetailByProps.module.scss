@@ -1,0 +1,144 @@
+.root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+}
+
+.carousel {
+  flex: 1;
+  align-items: stretch;
+}
+
+.active {
+  &.active {
+    transform: translateY(-100%);
+  }
+}
+
+.sidebar {
+  width: 457px;
+  border-radius: 0;
+  border-left: 1px solid var(--mantine-color-dark-4);
+  display: flex;
+  flex-direction: column;
+
+  @media (max-width: theme('screens.md')) {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    transition: 0.3s ease transform;
+    z-index: 20;
+
+    &.active {
+      transform: translateY(-100%);
+    }
+  }
+}
+
+.mobileOnly {
+  @media (min-width: theme('screens.md')) {
+    display: none;
+  }
+}
+
+.desktopOnly {
+  @media (max-width: theme('screens.md')) {
+    display: none;
+  }
+}
+
+.info {
+  position: absolute;
+  bottom: var(--mantine-spacing-md);
+  right: var(--mantine-spacing-md);
+}
+
+.scrollViewport {
+  &>div {
+    min-height: 100%;
+    display: flex !important;
+  }
+}
+
+.root {
+  position: relative;
+}
+
+.loader {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+}
+
+.imageLoading {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.center {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.control {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+
+  svg {
+    height: 50px;
+    width: 50px;
+  }
+
+  &.prev {
+    left: 0;
+  }
+
+  &.next {
+    right: 0;
+  }
+
+  &:hover {
+    color: var(--mantine-color-blue-3);
+  }
+}
+
+.indicators {
+  position: absolute;
+  bottom: var(--mantine-spacing-md);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.indicator {
+  pointer-events: all;
+  width: 25px;
+  height: 5px;
+  border-radius: 10000px;
+  background-color: var(--mantine-color-white);
+  box-shadow: var(--mantine-shadow-sm);
+  opacity: 0.6;
+  transition: opacity 150ms var(--mantine-transition-timing-function);
+
+  &[data-active] {
+    opacity: 1;
+  }
+}

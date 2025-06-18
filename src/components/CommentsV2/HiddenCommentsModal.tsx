@@ -12,11 +12,13 @@ export default function HiddenCommentsModal({ modelId }: { modelId: number }) {
     <Modal
       {...dialog}
       title="Hidden Comments"
-      closeButtonLabel="Close hidden comments modal"
+      closeButtonProps={{
+        'aria-label': 'Close hidden comments modal',
+      }}
       size="xl"
       withCloseButton
     >
-      <Stack spacing="xl">
+      <Stack gap="xl">
         <AlertWithIcon icon={<IconAlertCircle />}>
           Some comments may be hidden by the author or moderators to ensure a positive and inclusive
           environment. Moderated for respectful and relevant discussions.

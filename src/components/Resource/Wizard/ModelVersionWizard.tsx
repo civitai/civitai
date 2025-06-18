@@ -73,7 +73,7 @@ const CreateSteps = ({
             }}
           >
             {({ loading, canSave }) => (
-              <Group mt="xl" position="right">
+              <Group mt="xl" justify="flex-end">
                 <Button type="submit" loading={loading} disabled={!canSave}>
                   Next
                 </Button>
@@ -193,14 +193,14 @@ const TrainSteps = ({
             onSubmit={isPrivateModel ? onPublish : goNext}
           >
             {({ loading, canSave }) => (
-              <Stack spacing="xs" mt="xl">
+              <Stack gap="xs" mt="xl">
                 {isPrivateModel && (
                   <Alert color="yellow" title="Private model version">
                     This model version will be marked as private because of the model&rsquo;s
                     privacy. A post will be automatically created based off of the selected epoch.
                   </Alert>
                 )}
-                <Group position="right">
+                <Group justify="flex-end">
                   <Button variant="default" onClick={goBack}>
                     Back
                   </Button>
@@ -310,7 +310,7 @@ export function ModelVersionWizard({ data }: Props) {
       <div className="container max-w-sm pb-4">
         <Link legacyBehavior href={`/models/${modelData?.id}`} passHref>
           <Anchor size="xs">
-            <Group spacing={4} noWrap>
+            <Group gap={4} wrap="nowrap">
               <IconArrowLeft size={12} />
               <Text inherit>Back to {modelData?.name} page</Text>
             </Group>

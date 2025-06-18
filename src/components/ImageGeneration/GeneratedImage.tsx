@@ -2,13 +2,14 @@ import type { MenuItemProps } from '@mantine/core';
 import {
   ActionIcon,
   Checkbox,
-  createStyles,
   Menu,
   Modal,
   Text,
   Stack,
   ThemeIcon,
   Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
@@ -74,10 +75,12 @@ import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
+import classes from './GeneratedImage.module.css';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
 import { capitalize } from '~/utils/string-helpers';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -96,7 +99,6 @@ export function GeneratedImage({
   step: NormalizedGeneratedImageStep;
   isLightbox?: boolean;
 }) {
-  const { classes } = useStyles();
   const [ref, inView] = useInViewDynamic({ id: image.id });
   const [loaded, setLoaded] = useState(false);
   const selected = orchestratorImageSelect.useIsSelected({
@@ -306,13 +308,13 @@ export function GeneratedImage({
           <Menu zIndex={400} withinPortal>
             <Menu.Target>
               <div className="absolute right-3 top-3">
-                <ActionIcon variant="transparent">
+                <LegacyActionIcon variant="transparent">
                   <IconDotsVertical
                     size={26}
                     color="#fff"
                     filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
                   />
-                </ActionIcon>
+                </LegacyActionIcon>
               </div>
             </Menu.Target>
             <Menu.Dropdown>
@@ -333,30 +335,32 @@ export function GeneratedImage({
                 'absolute flex flex-wrap items-center gap-1 p-1'
               )}
             >
-              <ActionIcon
+              <LegacyActionIcon
                 size="md"
                 className={state.favorite ? classes.favoriteButton : undefined}
-                variant={state.favorite ? 'light' : undefined}
-                color={state.favorite ? 'red' : undefined}
+                variant={state.favorite ? 'light' : 'subtle'}
+                color={state.favorite ? 'red' : 'gray'}
                 onClick={() => handleToggleFavorite(!state.favorite)}
               >
                 <IconHeart size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
 
               <Menu
                 zIndex={400}
                 trigger="hover"
                 openDelay={100}
                 closeDelay={100}
-                transition="fade"
-                transitionDuration={150}
+                transitionProps={{
+                  transition: 'fade',
+                  duration: 150,
+                }}
                 withinPortal
                 position="top"
               >
                 <Menu.Target>
-                  <ActionIcon size="md">
+                  <LegacyActionIcon size="md">
                     <IconWand size={16} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown className={classes.improveMenu}>
                   <GeneratedImageWorkflowMenuItems
@@ -368,23 +372,23 @@ export function GeneratedImage({
                 </Menu.Dropdown>
               </Menu>
 
-              <ActionIcon
+              <LegacyActionIcon
                 size="md"
-                variant={state.feedback === 'liked' ? 'light' : undefined}
-                color={state.feedback === 'liked' ? 'green' : undefined}
+                variant={state.feedback === 'liked' ? 'light' : 'subtle'}
+                color={state.feedback === 'liked' ? 'green' : 'gray'}
                 onClick={() => handleToggleFeedback('liked')}
               >
                 <IconThumbUp size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
 
-              <ActionIcon
+              <LegacyActionIcon
                 size="md"
-                variant={state.feedback === 'disliked' ? 'light' : undefined}
-                color={state.feedback === 'disliked' ? 'red' : undefined}
+                variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
+                color={state.feedback === 'disliked' ? 'red' : 'gray'}
                 onClick={() => handleToggleFeedback('disliked')}
               >
                 <IconThumbDown size={16} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </div>
           )}
           {!isLightbox && (
@@ -394,7 +398,7 @@ export function GeneratedImage({
                 zIndex={constants.imageGeneration.drawerZIndex + 1}
                 hideSoftware
               >
-                <ActionIcon variant="transparent" size="md">
+                <LegacyActionIcon variant="transparent" size="md">
                   <IconInfoCircle
                     color="white"
                     filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -402,7 +406,7 @@ export function GeneratedImage({
                     strokeWidth={2.5}
                     size={26}
                   />
-                </ActionIcon>
+                </LegacyActionIcon>
               </ImageMetaPopover>
             </div>
           )}
@@ -412,60 +416,6 @@ export function GeneratedImage({
   );
 }
 
-const useStyles = createStyles((theme, _params, getRef) => {
-  const thumbActionRef = getRef('thumbAction');
-  const favoriteButtonRef = getRef('favoriteButton');
-
-  const buttonBackground = {
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    background: theme.fn.rgba(
-      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-      0.6
-    ),
-  };
-
-  return {
-    checkbox: {
-      '& input:checked': {
-        borderColor: theme.white,
-      },
-    },
-    imageWrapper: {
-      [`&:hover .${thumbActionRef}`]: buttonBackground,
-      [`&:hover .${thumbActionRef}`]: {
-        opacity: 1,
-      },
-    },
-    actionsWrapper: {
-      ref: thumbActionRef,
-      borderRadius: theme.radius.sm,
-      transition: 'opacity .3s',
-      ...buttonBackground,
-      opacity: 0,
-
-      [`@container (max-width: 420px)`]: {
-        width: 68,
-        opacity: 1,
-      },
-    },
-    favoriteButton: {
-      ref: favoriteButtonRef,
-      background: 'rgba(240, 62, 62, 0.5)',
-    },
-
-    improveMenu: {
-      borderRadius: theme.radius.sm,
-      background: theme.fn.rgba(
-        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        0.8
-      ),
-      border: 'none',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-      padding: 4,
-    },
-  };
-});
-
 function BlockedBlock({
   title,
   message,
@@ -474,8 +424,8 @@ function BlockedBlock({
   message: string | (() => JSX.Element);
 }) {
   return (
-    <Stack spacing="xs" className="p-2">
-      <Text color="red" weight="bold" align="center" size="sm">
+    <Stack gap="xs" className="p-2">
+      <Text c="red" fw="bold" align="center" size="sm">
         {title}
       </Text>
       {typeof message === 'string' ? (
@@ -498,6 +448,8 @@ export function GeneratedImageLightbox({
 }) {
   const dialog = useDialogContext();
   const { steps } = useGetTextToImageRequestsImages();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
   // useAnimationOffsetEffect(embla, TRANSITION_DURATION);
@@ -519,7 +471,13 @@ export function GeneratedImageLightbox({
   });
 
   return (
-    <Modal {...dialog} closeButtonLabel="Close lightbox" fullScreen>
+    <Modal
+      {...dialog}
+      closeButtonProps={{
+        'aria-label': 'Close lightbox',
+      }}
+      fullScreen
+    >
       <IntersectionObserverProvider id="generated-image-lightbox">
         <Embla
           align="center"
@@ -569,12 +527,10 @@ export function GeneratedImageLightbox({
           labelWidth={150}
           paperProps={{ radius: 0 }}
           controlProps={{
-            sx: (theme) => ({
-              backgroundColor:
-                theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-            }),
+            style: {
+              backgroundColor: colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+            },
           }}
-          upsideDown
         />
       </div>
     </Modal>
@@ -767,14 +723,14 @@ function GeneratedImageWorkflowMenuItems({
         <>
           <Menu.Item
             onClick={() => handleRemix()}
-            icon={<IconArrowsShuffle size={14} stroke={1.5} />}
+            leftSection={<IconArrowsShuffle size={14} stroke={1.5} />}
           >
             Remix
           </Menu.Item>
           {!isBlocked && image.seed && (
             <Menu.Item
               onClick={() => handleRemix(image.seed)}
-              icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
+              leftSection={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
             >
               Remix (with seed)
             </Menu.Item>
@@ -785,7 +741,7 @@ function GeneratedImageWorkflowMenuItems({
         <Menu.Item
           color="red"
           onClick={handleDeleteImage}
-          icon={<IconTrash size={14} stroke={1.5} />}
+          leftSection={<IconTrash size={14} stroke={1.5} />}
         >
           Delete
         </Menu.Item>
@@ -828,7 +784,7 @@ function GeneratedImageWorkflowMenuItems({
           <Menu.Divider />
           <Menu.Label>System</Menu.Label>
           <Menu.Item
-            icon={
+            leftSection={
               copied ? (
                 <IconCheck size={14} stroke={1.5} />
               ) : (
@@ -841,7 +797,7 @@ function GeneratedImageWorkflowMenuItems({
           </Menu.Item>
           {!isBlocked && (
             <Menu.Item
-              icon={<IconExternalLink size={14} stroke={1.5} />}
+              leftSection={<IconExternalLink size={14} stroke={1.5} />}
               onClick={() => handleAuxClick(image.url)}
             >
               Open in New Tab
@@ -904,7 +860,6 @@ const imageBlockedReasonMap: Record<string, string | (() => JSX.Element)> = {
         align="center"
         size="sm"
         component={NextLink}
-        variant="link"
         href="https://civitai.com/changelog?id=11"
       >
         More info.

@@ -18,14 +18,15 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { constants } from '~/server/common/constants';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   return (
     <Popover zIndex={constants.imageGeneration.drawerZIndex + 1} withArrow withinPortal>
       <Popover.Target>
-        <ActionIcon>
+        <LegacyActionIcon variant="subtle" color="gray">
           <IconEyeExclamation {...iconProps} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Popover.Target>
       <Popover.Dropdown p="md">
         <BrowsingModeMenu />
@@ -51,26 +52,25 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
 
   return (
     <div id="browsing-mode">
-      <Stack spacing="md" className="sm:min-w-96">
+      <Stack gap="md" className="sm:min-w-96">
         {showNsfw && (
-          <Stack spacing="lg">
-            <Stack spacing={4}>
-              <Stack spacing={0}>
+          <Stack gap="lg">
+            <Stack gap={4}>
+              <Stack gap={0}>
                 <Group align="flex-start">
-                  <Text sx={{ lineHeight: 1 }}>Browsing Level</Text>
+                  <Text style={{ lineHeight: 1 }}>Browsing Level</Text>
                   {showNsfw && features.newOrderGame && (
                     <Tooltip label="Help us improve by playing!" withArrow color="dark">
                       <Button
                         onClick={closeMenu}
                         component={Link}
                         href="/games/knights-of-new-order"
-                        size="xs"
+                        size="compact-xs"
                         ml="auto"
                         variant="outline"
                         color="orange.5"
-                        compact
                       >
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           Join the Knights Order
                           <IconSword size={14} />
                         </Group>
@@ -78,13 +78,13 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                     </Tooltip>
                   )}
                 </Group>
-                <Text color="dimmed">Select the levels of content you want to see</Text>
+                <Text c="dimmed">Select the levels of content you want to see</Text>
               </Stack>
               <BrowsingLevelsGrouped />
               {browsingSettingsAddons.settings.disablePoi && (
-                <Group spacing="sm" mt={4}>
+                <Group gap="sm" mt={4}>
                   <IconAlertTriangle size={16} />
-                  <Text color="dimmed" size="xs">
+                  <Text c="dimmed" size="xs">
                     With X or XXX enabled, some content may be hidden.{' '}
                     <Anchor href="/articles/13632">Learn more</Anchor>
                   </Text>
@@ -100,25 +100,23 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
           </Stack>
         )}
 
-        <Group position="apart">
+        <Group justify="space-between">
           <Checkbox
             checked={!disableHidden}
             onChange={toggleDisableHidden}
             label={
               <Text>
                 Apply{' '}
-                <Text
-                  component="span"
-                  variant="link"
-                  underline
-                  onClick={(e) => {
+                <Anchor
+                  onClick={(e: React.MouseEvent) => {
                     e.preventDefault();
                     e.stopPropagation();
                     openHiddenTagsModal();
                   }}
+                  span
                 >
                   my filters
-                </Text>
+                </Anchor>
               </Text>
             }
             size="md"

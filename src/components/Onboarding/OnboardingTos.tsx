@@ -1,13 +1,4 @@
-import {
-  Button,
-  Center,
-  Group,
-  Loader,
-  ScrollArea,
-  Stack,
-  Title,
-  TypographyStylesProvider,
-} from '@mantine/core';
+import { Button, Center, Group, Loader, ScrollArea, Stack, Title } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
@@ -18,6 +9,7 @@ import rehypeRaw from 'rehype-raw';
 
 import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
+import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 
 export function OnboardingTos() {
   const { next } = useOnboardingContext();
@@ -35,16 +27,7 @@ export function OnboardingTos() {
         title="Terms of Service"
         description="Please take a moment to review and accept our terms of service."
       />
-      <ScrollArea
-        style={{ height: 400 }}
-        type="auto"
-        p="md"
-        sx={(theme) => ({
-          border: `1px solid ${
-            theme.colorScheme === 'light' ? theme.colors.gray[9] : theme.colors.gray[7]
-          }`,
-        })}
-      >
+      <ScrollArea type="auto" p="md" className="h-[400px] border border-gray-9 dark:border-gray-7">
         {termsLoading ? (
           <Center h={366}>
             <Loader size="lg" />
@@ -53,18 +36,18 @@ export function OnboardingTos() {
           terms && (
             <>
               <Title order={1}>{terms.title}</Title>
-              <TypographyStylesProvider>
+              <TypographyStylesWrapper>
                 <CustomMarkdown rehypePlugins={[rehypeRaw]}>{terms.content}</CustomMarkdown>
-              </TypographyStylesProvider>
+              </TypographyStylesWrapper>
             </>
           )
         )}
       </ScrollArea>
       {!termsLoading && (
-        <Group position="apart" align="flex-start">
+        <Group justify="space-between" align="flex-start">
           <OnboardingAbortButton showWarning>Decline</OnboardingAbortButton>
           <Button
-            rightIcon={<IconCheck />}
+            rightSection={<IconCheck />}
             size="lg"
             onClick={handleStepComplete}
             loading={isLoading}

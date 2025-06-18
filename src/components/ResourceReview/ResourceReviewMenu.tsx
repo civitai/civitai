@@ -1,4 +1,4 @@
-import type { MantineNumberSize, MenuProps } from '@mantine/core';
+import type { MenuProps } from '@mantine/core';
 import { ActionIcon, Loader, Menu, Text } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
@@ -20,6 +20,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { ResourceReviewPagedModel } from '~/types/router';
 import { openReportModal, openResourceReviewEditModal } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ResourceReviewMenu({
   reviewId,
@@ -30,7 +31,7 @@ export function ResourceReviewMenu({
 }: {
   reviewId: number;
   userId: number;
-  size?: MantineNumberSize;
+  size?: MantineSpacing;
   review: Pick<
     ResourceReviewPagedModel,
     | 'id'
@@ -112,15 +113,15 @@ export function ResourceReviewMenu({
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
-        <ActionIcon size={size} variant="subtle">
+        <LegacyActionIcon size={size} variant="subtle">
           <IconDotsVertical size={16} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         {(isOwner || isMod) && (
           <>
             <Menu.Item
-              icon={<IconTrash size={14} stroke={1.5} />}
+              leftSection={<IconTrash size={14} stroke={1.5} />}
               color="red"
               onClick={handleDelete}
             >
@@ -128,7 +129,7 @@ export function ResourceReviewMenu({
             </Menu.Item>
             {!isMuted && (
               <Menu.Item
-                icon={<IconEdit size={14} stroke={1.5} />}
+                leftSection={<IconEdit size={14} stroke={1.5} />}
                 onClick={() => openResourceReviewEditModal(review)}
               >
                 Edit review
@@ -140,14 +141,14 @@ export function ResourceReviewMenu({
           <>
             {!review.exclude ? (
               <Menu.Item
-                icon={<IconCalculatorOff size={14} stroke={1.5} />}
+                leftSection={<IconCalculatorOff size={14} stroke={1.5} />}
                 onClick={handleExcludeReview}
               >
                 Exclude from count
               </Menu.Item>
             ) : review.metadata?.excludeReason !== 'reviewManipulation' ? (
               <Menu.Item
-                icon={<IconCalculator size={14} stroke={1.5} />}
+                leftSection={<IconCalculator size={14} stroke={1.5} />}
                 onClick={handleUnexcludeReview}
               >
                 Include into count
@@ -157,7 +158,9 @@ export function ResourceReviewMenu({
               {({ toggle, locked, isLoading }) => {
                 return (
                   <Menu.Item
-                    icon={isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />}
+                    leftSection={
+                      isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />
+                    }
                     onClick={toggle}
                     disabled={isLoading}
                   >
@@ -171,7 +174,7 @@ export function ResourceReviewMenu({
         {!isOwner && (
           <LoginRedirect reason="report-review">
             <Menu.Item
-              icon={<IconFlag size={14} stroke={1.5} />}
+              leftSection={<IconFlag size={14} stroke={1.5} />}
               onClick={() =>
                 openReportModal({
                   entityType: ReportEntity.ResourceReview,

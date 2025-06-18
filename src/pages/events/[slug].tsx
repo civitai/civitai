@@ -4,8 +4,8 @@ import {
   Card,
   Center,
   Container,
-  createStyles,
   Divider,
+  getPrimaryShade,
   Grid,
   Group,
   Loader,
@@ -16,6 +16,8 @@ import {
   Text,
   ThemeIcon,
   Title,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import type { ChartOptions } from 'chart.js';
@@ -61,6 +63,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
+import classes from './[slug].module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -107,8 +110,8 @@ const learnMore: string | undefined = 'https://civitai.com/articles/9731';
 export default function EventPageDetails({
   event,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { theme, classes } = useStyles();
-
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -133,7 +136,7 @@ export default function EventPageDetails({
 
     const datasets = teamScoresHistory.map(({ team, scores }) => {
       let lastMatchedIndex = 0;
-      const color = theme.colors[team.toLowerCase()][theme.fn.primaryShade()];
+      const color = theme.colors[team.toLowerCase()][getPrimaryShade(theme, colorScheme)];
 
       return {
         label: 'Buzz donated',
@@ -151,7 +154,7 @@ export default function EventPageDetails({
     });
 
     return datasets;
-  }, [teamScoresHistory, theme.colors, theme.fn]);
+  }, [teamScoresHistory, theme.colors, colorScheme]);
 
   if (loading) return <PageLoader />;
   if (!eventData) return <NotFound />;
@@ -168,47 +171,39 @@ export default function EventPageDetails({
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/events/${event}`, rel: 'canonical' }]}
       />
       <Container size="md">
-        <Stack spacing={48}>
+        <Stack gap={48}>
           <Paper
             radius="md"
-            sx={(theme) => ({
+            className="flex aspect-square flex-col justify-end overflow-hidden @sm:aspect-[3]"
+            style={{
               backgroundImage: eventData.coverImage
                 ? `url(${getEdgeUrl(eventData.coverImage, { width: 1600 })})`
                 : undefined,
               backgroundRepeat: 'no-repeat',
               backgroundPosition: 'bottom left',
               backgroundSize: 'cover',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'flex-end',
-              aspectRatio: '3',
-              overflow: 'hidden',
-
-              [theme.fn.smallerThan('sm')]: {
-                aspectRatio: '1',
-              },
-            })}
+            }}
           >
             <Stack
-              spacing={0}
+              gap={0}
               pt={60}
               pb="sm"
               px="md"
-              sx={{
+              style={{
                 width: '100%',
                 background: 'linear-gradient(transparent, rgba(0, 0, 0, 0.6))',
               }}
             >
-              <Title color="white" className="hide-mobile">
+              <Title c="white" className="hide-mobile">
                 {eventData.title}
               </Title>
-              <Group spacing="xs" position="apart">
-                <Text color="white" size="sm" className="hide-mobile">
+              <Group gap="xs" justify="space-between">
+                <Text c="white" size="sm" className="hide-mobile">
                   {formatDate(eventData.startDate, 'MMMM D, YYYY')} -{' '}
                   {formatDate(eventData.endDate, 'MMMM D, YYYY')}
                 </Text>
                 {eventData.coverImageUser && (
-                  <Text color="white" size="xs">
+                  <Text c="white" size="xs">
                     Banner created by{' '}
                     <Text
                       component={Link}
@@ -222,8 +217,8 @@ export default function EventPageDetails({
               </Group>
             </Stack>
           </Paper>
-          <Stack className="show-mobile" spacing={0} mt={-40}>
-            <Title sx={{ fontSize: '28px' }}>{eventData.title}</Title>
+          <Stack className="show-mobile" gap={0} mt={-40}>
+            <Title fz="28px">{eventData.title}</Title>
             <Text size="sm">
               {formatDate(eventData.startDate, 'MMMM D, YYYY')} -{' '}
               {formatDate(eventData.endDate, 'MMMM D, YYYY')}
@@ -236,43 +231,44 @@ export default function EventPageDetails({
           <Grid gutter={48}>
             {eventCosmetic?.cosmetic && equipped && (
               <>
-                <Grid.Col xs={12} sm="auto" order={ended ? 3 : undefined}>
-                  <Card className={classes.card} py="xl" px="lg" radius="lg" h="100%">
+                <Grid.Col span={{ base: 12, sm: 'auto' }} order={ended ? 3 : undefined}>
+                  <Card
+                    className="flex flex-col items-center justify-center bg-gray-0 dark:bg-dark-6"
+                    py="xl"
+                    px="lg"
+                    radius="lg"
+                    h="100%"
+                  >
                     <HolidayFrame
                       cosmetic={eventCosmetic.cosmetic}
                       data={cosmeticData}
                       force
                       animated
                     />
-                    <Stack spacing={0} align="center" mt="lg" mb={theme.spacing.lg}>
-                      <Text size="xl" weight={590}>
+                    <Stack gap={0} align="center" mt="lg" mb={theme.spacing.lg}>
+                      <Text size="xl" fw={590}>
                         Your Garland
                       </Text>
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'flex-end',
-                        }}
-                      >
+                      <div className="flex items-end">
                         <Lightbulb color={userTeam} size={48} transform="rotate(180)" animated />
-                        <Text size={80} weight={590} color={userTeam} lh="70px">
+                        <Text fz={80} fw={590} color={userTeam} lh="70px">
                           {cosmeticData?.lights ?? 0}
                         </Text>
-                        <Text size={32} weight={590} color="dimmed">
+                        <Text fz={32} fw={590} c="dimmed">
                           / 12
                         </Text>
                       </div>
-                      <Text size="sm" weight={500} color={userTeam} tt="capitalize" mt={5}>
+                      <Text size="sm" fw={500} color={userTeam} tt="capitalize" mt={5}>
                         {userTeam} Team
                       </Text>
                       <Popover withinPortal shadow="md">
                         <Popover.Target>
-                          <Text size="xs" color="dimmed" td="underline" className="cursor-pointer">
+                          <Text size="xs" c="dimmed" td="underline" className="cursor-pointer">
                             Missing a Bulb?
                           </Text>
                         </Popover.Target>
                         <Popover.Dropdown maw={300} p="sm">
-                          <Text size="xs" color="dimmed">
+                          <Text size="xs" c="dimmed">
                             {`CivBot reviews challenge entries every 10 minutes and will give you your
                             bulb for the day after approving your entry. If you haven't received it,
                             wait, then make sure your entry was approved and refresh this page.`}
@@ -281,7 +277,7 @@ export default function EventPageDetails({
                       </Popover>
                     </Stack>
                     {eventCosmetic.available && !ended && (
-                      <Stack spacing="sm" w="100%">
+                      <Stack gap="sm" w="100%">
                         <Button
                           component={Link}
                           href="/challenges"
@@ -291,7 +287,7 @@ export default function EventPageDetails({
                           fullWidth
                           disabled={cosmeticData?.lights >= 12}
                         >
-                          <Group spacing={4} noWrap>
+                          <Group gap={4} wrap="nowrap">
                             <IconBulb size={18} />
                             Earn more lights
                           </Group>
@@ -303,7 +299,7 @@ export default function EventPageDetails({
                           onClick={handleFocusDonateInput}
                           fullWidth
                         >
-                          <Group spacing={4} noWrap>
+                          <Group gap={4} wrap="nowrap">
                             <IconBolt size={18} />
                             Make them brighter
                           </Group>
@@ -312,7 +308,7 @@ export default function EventPageDetails({
                     )}
                   </Card>
                 </Grid.Col>
-                <Grid.Col xs={12} sm="auto" order={ended ? 3 : undefined}>
+                <Grid.Col span={{ base: 12, sm: 'auto' }} order={ended ? 3 : undefined}>
                   <Card
                     py="xl"
                     px="lg"
@@ -321,23 +317,23 @@ export default function EventPageDetails({
                     style={{ display: 'flex', alignItems: 'center' }}
                   >
                     <Stack w="100%">
-                      <Stack spacing={0} align="center">
-                        <Text size="sm" weight={590}>
+                      <Stack gap={0} align="center">
+                        <Text size="sm" fw={590}>
                           Total Team Donations
                         </Text>
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           <CurrencyIcon currency={Currency.BUZZ} />
-                          <Text size={32} weight={590} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                          <Text fz={32} fw={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
                             {numberWithCommas(totalTeamScores)}
                           </Text>
                         </Group>
                       </Stack>
-                      <Stack spacing={8} sx={{ ['&>*']: { flexGrow: 1 } }}>
-                        <Group spacing={8} position="apart">
-                          <Text size="sm" weight={590}>
+                      <Stack gap={8}>
+                        <Group gap={8} className="grow" justify="space-between">
+                          <Text size="sm" fw={590}>
                             Team Rank
                           </Text>
-                          <Text size="sm" weight={590}>
+                          <Text size="sm" fw={590}>
                             Spirit Bank
                           </Text>
                         </Group>
@@ -348,9 +344,9 @@ export default function EventPageDetails({
 
                           return (
                             <Fragment key={teamScore.team}>
-                              <Group spacing={8} position="apart">
-                                <Group spacing={4} noWrap>
-                                  <Text size="xl" weight={590}>
+                              <Group gap={8} className="grow" justify="space-between">
+                                <Group gap={4} wrap="nowrap">
+                                  <Text size="xl" fw={590}>
                                     {teamScore.rank}
                                   </Text>
                                   <Lightbulb
@@ -359,16 +355,16 @@ export default function EventPageDetails({
                                     size={32}
                                     animated
                                   />
-                                  <Text size="xl" weight={590} tt="capitalize" color={color}>
+                                  <Text size="xl" fw={590} tt="capitalize" color={color}>
                                     {color} Team
                                   </Text>
                                 </Group>
-                                <Group spacing={4} noWrap>
+                                <Group gap={4} wrap="nowrap">
                                   <CurrencyIcon currency={Currency.BUZZ} />
                                   <Text
                                     size="xl"
-                                    weight={590}
-                                    sx={{ fontVariantNumeric: 'tabular-nums' }}
+                                    fw={590}
+                                    style={{ fontVariantNumeric: 'tabular-nums' }}
                                   >
                                     {numberWithCommas(teamScore.score)}
                                   </Text>
@@ -383,16 +379,16 @@ export default function EventPageDetails({
                 </Grid.Col>
                 {!ended && (
                   <Grid.Col span={12} mt={-40}>
-                    <Text size="md" color="dimmed" ta="center">
+                    <Text size="md" c="dimmed" ta="center">
                       You have{' '}
-                      <Text component="span" weight={500} td="underline">
+                      <Text component="span" fw={500} td="underline">
                         <Countdown endTime={resetTime} />
                       </Text>{' '}
                       to earn your light and to claim the top position for your team for the day.
                     </Text>
                   </Grid.Col>
                 )}
-                {/* <Grid.Col xs={12} sm="auto">
+                {/* <Grid.Col span={{ base: 12, sm: 'auto' }}>
                   <Card
                     className={classes.card}
                     py="xl"
@@ -401,16 +397,16 @@ export default function EventPageDetails({
                     h="100%"
                     style={{ display: 'flex', alignItems: 'center' }}
                   >
-                    <Stack align="center" w="100%" spacing="lg">
+                    <Stack align="center" w="100%" gap="lg">
                       <Lightbulb variant="star" color={userTeam} size={80} />
-                      <Stack spacing={4} align="center">
-                        <Text size={24} weight={600} align="center" inline>
+                      <Stack gap={4} align="center">
+                        <Text size={24} fw={600} align="center" inline>
                           Your rank in {userTeam} team
                         </Text>
                         {loadingUserRank ? (
-                          <Loader variant="bars" />
+                          <Loader type="bars" />
                         ) : (
-                          <Text size={96} weight="bold" align="center" color={userTeam} inline>
+                          <Text size={96} fw="bold" align="center" color={userTeam} inline>
                             {userRank?.toLocaleString()}
                           </Text>
                         )}
@@ -422,7 +418,7 @@ export default function EventPageDetails({
                         radius="xl"
                         fullWidth
                       >
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           <IconClipboard size={18} />
                           Team leaderboard
                         </Group>
@@ -434,7 +430,7 @@ export default function EventPageDetails({
                         onClick={handleFocusDonateInput}
                         fullWidth
                       >
-                        <Group spacing={4} noWrap>
+                        <Group gap={4} wrap="nowrap">
                           <IconBolt size={18} />
                           Boost your rank
                         </Group>
@@ -448,7 +444,7 @@ export default function EventPageDetails({
               <SectionCard
                 title={
                   ended ? (
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <CurrencyIcon currency={Currency.BUZZ} size={32} />
                       <Text>
                         {abbreviateNumber(totalTeamScores).toUpperCase()} Buzz donated to charity!
@@ -467,34 +463,28 @@ export default function EventPageDetails({
                 {equipped && !ended && <DonateInput event={event} ref={inputRef} />}
                 {loadingHistory ? (
                   <Center py="xl">
-                    <Loader variant="bars" />
+                    <Loader type="bars" />
                   </Center>
                 ) : (
-                  <Stack spacing={40} w="100%" align="center">
+                  <Stack gap={40} w="100%" align="center">
                     <Line options={options} data={{ datasets }} />
-                    <Group spacing="md">
+                    <Group gap="md">
                       {teamScores.length > 0 &&
                         teamScores.map((teamScore) => (
-                          <Group key={teamScore.team} spacing={4} noWrap>
+                          <Group key={teamScore.team} gap={4} wrap="nowrap">
                             <ThemeIcon color={teamScore.team.toLowerCase()} radius="xl" size={12}>
                               {null}
                             </ThemeIcon>
                             <Text
                               size="xs"
                               color={teamScore.team.toLowerCase()}
-                              transform="uppercase"
-                              weight={500}
+                              tt="uppercase"
+                              fw={500}
                               lineClamp={1}
                             >
                               {teamScore.team}
                             </Text>
-                            <Text
-                              size="xs"
-                              color="dimmed"
-                              transform="uppercase"
-                              weight={500}
-                              lineClamp={1}
-                            >
+                            <Text size="xs" c="dimmed" tt="uppercase" fw={500} lineClamp={1}>
                               {abbreviateNumber(teamScore.score, { decimals: 2 })}
                             </Text>
                           </Group>
@@ -512,41 +502,15 @@ export default function EventPageDetails({
           {(equipped || ended) && (
             <>
               <Divider w="80px" mx="auto" />
-              <Stack spacing={20}>
-                <Title
-                  order={2}
-                  align="center"
-                  sx={(theme) => ({
-                    fontSize: '64px',
-                    [theme.fn.smallerThan('sm')]: {
-                      fontSize: '28px',
-                    },
-                  })}
-                >
+              <Stack gap={20}>
+                <Title order={2} ta="center" className="text-3xl @sm:text-6xl">
                   About The Challenge
                 </Title>
-                <Text
-                  color="dimmed"
-                  sx={(theme) => ({
-                    fontSize: '24px',
-                    [theme.fn.smallerThan('sm')]: {
-                      fontSize: '18px',
-                    },
-                  })}
-                >
+                <Text c="dimmed" className="text-lg @sm:text-2xl">
                   {aboutText}
                 </Text>
                 {learnMore && (
-                  <Anchor
-                    component={NextLink}
-                    href={learnMore}
-                    sx={(theme) => ({
-                      fontSize: '24px',
-                      [theme.fn.smallerThan('sm')]: {
-                        fontSize: '18px',
-                      },
-                    })}
-                  >
+                  <Anchor component={NextLink} href={learnMore} className="text-lg @sm:text-2xl">
                     Learn more
                   </Anchor>
                 )}
@@ -559,16 +523,6 @@ export default function EventPageDetails({
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-    alignItems: 'center',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-  },
-}));
 
 const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, ref) => {
   const [amount, setAmount] = useState<number>();
@@ -609,15 +563,13 @@ const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, 
   };
 
   return (
-    <Group spacing={8} noWrap>
+    <Group gap={8} wrap="nowrap">
       <NumberInput
         ref={ref}
         placeholder="Your donation"
-        icon={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
-        formatter={numberWithCommas}
-        parser={(value?: string) => value && value.replace(/\$\s?|(,*)/g, '')}
+        leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
         value={amount}
-        onChange={setAmount}
+        onChange={(value) => setAmount(typeof value === 'number' ? value : undefined)}
         min={1}
         max={constants.buzz.maxTipAmount}
         rightSectionWidth="25%"
@@ -632,7 +584,6 @@ const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, 
 DonateInput.displayName = 'DonateInput';
 
 const CharitySection = ({ visible, partners }: { visible: boolean; partners: EventPartners }) => {
-  const { classes } = useCharityStyles();
   if (!visible) return null;
 
   return (
@@ -666,25 +617,25 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
               <div className={classes.partnerLogo}>
                 <EdgeMedia src={partner.image} alt={`${partner.title} logo`} width={120} />
               </div>
-              <Stack spacing={0} align="center">
-                <Text size={20} weight={600}>
+              <Stack gap={0} align="center">
+                <Text fz={20} fw={600}>
                   {partner.title}
                 </Text>
-                <Text size="xs" color="dimmed">
+                <Text size="xs" c="dimmed">
                   Matching ⚡{abbreviateNumber(partner.amount)}
                 </Text>
               </Stack>
             </a>
           ))}
         </div>
-        <Group position="center">
+        <Group justify="center">
           <Button
             component="a"
             size="md"
             variant="light"
             radius="xl"
-            sx={{ alignSelf: 'flex-start' }}
-            rightIcon={<IconChevronRight />}
+            style={{ alignSelf: 'flex-start' }}
+            rightSection={<IconChevronRight />}
             href="/forms/matching-partner"
             target="_blank"
           >
@@ -695,35 +646,3 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
     </>
   );
 };
-
-const useCharityStyles = createStyles((theme) => ({
-  partnerGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
-    width: '100%',
-    gap: theme.spacing.lg,
-    [theme.fn.largerThan('xs')]: {
-      gridTemplateColumns: 'repeat(3, 1fr)',
-    },
-    [theme.fn.largerThan('sm')]: {
-      gridTemplateColumns: 'repeat(4, 1fr)',
-    },
-  },
-  partnerLogo: {
-    backgroundColor: theme.colors.dark[7],
-    borderRadius: 30,
-    width: 120,
-    height: 120,
-    img: { objectFit: 'cover', objectPosition: 'left', width: '100%' },
-    overflow: 'hidden',
-  },
-  partner: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    textDecoration: 'none !important',
-    color: 'inherit !important',
-    gap: theme.spacing.xs,
-  },
-}));

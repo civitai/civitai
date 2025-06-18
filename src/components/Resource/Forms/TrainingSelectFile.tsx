@@ -1,7 +1,6 @@
 import {
   Button,
   Center,
-  createStyles,
   Flex,
   Group,
   Image,
@@ -34,29 +33,11 @@ import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.sto
 import type { ModelVersionById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB, formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles((theme) => ({
-  epochRow: {
-    [containerQuery.smallerThan('sm')]: {
-      flexDirection: 'column',
-      gap: theme.spacing.md,
-    },
-    flexWrap: 'nowrap',
-  },
-  selectedRow: {
-    border: `2px solid ${theme.fn.rgba(theme.colors.green[5], 0.7)}`,
-  },
-  paperRow: {
-    cursor: 'pointer',
-    '&:hover': {
-      backgroundColor: theme.fn.rgba(theme.colors.blue[2], 0.1),
-    },
-  },
-}));
+import classes from './TrainingSelectFile.module.css';
+import clsx from 'clsx';
 
 const TRANSMITTER_KEY = 'trainer';
 
@@ -84,7 +65,6 @@ const EpochRow = ({
   isVideo: boolean;
 }) => {
   const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
   // const features = useFeatureFlags();
 
   return (
@@ -93,20 +73,20 @@ const EpochRow = ({
       radius="sm"
       p="xs"
       withBorder
-      className={cx(
+      className={clsx(
         classes.paperRow,
         selectedFile === epoch.modelUrl ? classes.selectedRow : undefined
       )}
       onClick={() => setSelectedFile(epoch.modelUrl)}
     >
       <Stack>
-        <Group position="apart" className={classes.epochRow}>
+        <Group justify="space-between" className={classes.epochRow}>
           <Text fz="md" fw={700}>
             Epoch #{epoch.epochNumber}
           </Text>
-          <Group spacing={8} noWrap>
+          <Group gap={8} wrap="nowrap">
             <DownloadButton
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
               component="a"
               canDownload
               href={epoch.modelUrl}
@@ -134,7 +114,7 @@ const EpochRow = ({
               loading={loading}
               onClick={() => onPublishClick(epoch.modelUrl)}
             >
-              <Group spacing={4} noWrap>
+              <Group gap={4} wrap="nowrap">
                 Continue
                 <IconArrowRight size={20} />
               </Group>
@@ -166,15 +146,12 @@ const EpochRow = ({
                   <Image
                     alt={`Sample image #${index}`}
                     src={url}
-                    withPlaceholder
-                    imageProps={{
-                      style: {
-                        height: '200px',
-                        // if we want to show full image, change objectFit to contain
-                        objectFit: 'cover',
-                        // object-position: top;
-                        width: '100%',
-                      },
+                    style={{
+                      height: '200px',
+                      // if we want to show full image, change objectFit to contain
+                      objectFit: 'cover',
+                      // object-position: top;
+                      width: '100%',
                     }}
                   />
                 )}
@@ -410,7 +387,7 @@ export default function TrainingSelectFile({
       ) : noEpochs ? (
         <Stack p="xl" align="center">
           <Loader />
-          <Stack spacing="sm" align="center">
+          <Stack gap="sm" align="center">
             <Text>
               Models are currently training{' '}
               {modelVersion.trainingDetails?.params?.maxTrainEpochs
@@ -425,7 +402,7 @@ export default function TrainingSelectFile({
           {modelVersion.trainingStatus === TrainingStatus.Processing && (
             <Stack p="xl" align="center">
               <Loader />
-              <Stack spacing="sm" align="center">
+              <Stack gap="sm" align="center">
                 <Text>
                   Models are currently training{' '}
                   {modelVersion.trainingDetails?.params?.maxTrainEpochs
@@ -468,7 +445,7 @@ export default function TrainingSelectFile({
             <Button
               color="cyan"
               loading={downloading}
-              leftIcon={<IconFileDownload size={18} />}
+              leftSection={<IconFileDownload size={18} />}
               onClick={downloadAll}
             >
               Download All ({epochs.length})
@@ -518,7 +495,7 @@ export default function TrainingSelectFile({
         </>
       )}
 
-      <Group mt="xl" position="right">
+      <Group mt="xl" justify="flex-end">
         <Button onClick={() => handleSubmit()} disabled={resultsLoading} loading={awaitInvalidate}>
           Next
         </Button>

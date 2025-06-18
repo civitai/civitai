@@ -17,7 +17,7 @@ const fontFamilies = [
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./src/**/*.{ts,tsx}'],
-  darkMode: 'selector',
+  darkMode: ['selector', '[data-mantine-color-scheme="dark"]'],
   important: 'body',
   experimental: {
     optimizeUniversalDefaults: true,
@@ -34,7 +34,7 @@ module.exports = {
       },
       // for container queries
       containers: breakpoints,
-      width: breakpoints,
+    width: breakpoints,
       maxWidth: breakpoints,
       minWidth: breakpoints,
       container: {

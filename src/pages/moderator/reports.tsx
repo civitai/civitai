@@ -1,6 +1,5 @@
-import type { MantineSize, SelectItem } from '@mantine/core';
+import type { ComboboxItem, MantineSize } from '@mantine/core';
 import {
-  ActionIcon,
   Anchor,
   Badge,
   Button,
@@ -35,6 +34,7 @@ import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -122,12 +122,12 @@ export default function Reports() {
         accesorKey: 'id',
         header: '',
         Cell: ({ row: { original: report } }) => (
-          <Group spacing="xs" noWrap>
-            <Button compact size="xs" onClick={() => setSelected(report.id)}>
+          <Group gap="xs" wrap="nowrap">
+            <Button size="compact-xs" onClick={() => setSelected(report.id)}>
               Details
             </Button>
             <Tooltip label="Open reported item" withArrow>
-              <ActionIcon
+              <LegacyActionIcon
                 component="a"
                 href={getReportLink(report)}
                 target="_blank"
@@ -135,7 +135,7 @@ export default function Reports() {
                 size="sm"
               >
                 <IconExternalLink />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           </Group>
         ),
@@ -158,7 +158,7 @@ export default function Reports() {
               ({
                 label: getDisplayName(x),
                 value: x,
-              } as SelectItem)
+              } as ComboboxItem)
           ) as any,
         },
       },
@@ -177,7 +177,7 @@ export default function Reports() {
               ({
                 label: getDisplayName(x),
                 value: x,
-              } as SelectItem)
+              } as ComboboxItem)
           ) as any,
         },
       },
@@ -194,7 +194,7 @@ export default function Reports() {
         enableSorting: false,
         Cell: ({ row: { original: report } }) => (
           <Link legacyBehavior href={`/user/${report.user.username}`} passHref>
-            <Text variant="link" component="a" target="_blank">
+            <Text c="blue.4" component="a" target="_blank">
               {report.user.username}
             </Text>
           </Link>
@@ -222,7 +222,7 @@ export default function Reports() {
             <SegmentedControl
               size="sm"
               data={Object.values(ReportEntity).map((x) => ({ label: upperFirst(x), value: x }))}
-              onChange={handleTypeChange}
+              onChange={(type) => handleTypeChange(type as ReportEntity)}
               value={type}
             />
           </Group>
@@ -241,11 +241,9 @@ export default function Reports() {
             enableHiding={false}
             enableGlobalFilter={false}
             mantineTableContainerProps={{
-              sx: { maxHeight: 'calc(100vh - 360px)' },
+              className: 'max-h-[calc(100vh-360px)]',
             }}
-            initialState={{
-              density: 'sm',
-            }}
+            initialState={{ density: 'md' }}
             state={{
               isLoading,
               pagination,
@@ -281,7 +279,7 @@ function ReportDrawer({
   const theme = useMantineTheme();
   const mobile = useIsMobile();
   const href = useMemo(() => (report ? getReportLink(report) : null), [report]);
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const form = useForm({
     schema,
@@ -328,12 +326,8 @@ function ReportDrawer({
       padding="md"
       shadow="sm"
       zIndex={500}
-      styles={{
-        drawer: {
-          borderLeft: `1px solid ${
-            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-          }`,
-        },
+      classNames={{
+        content: 'border-l border-l-gray-3 dark:border-l-dark-4',
       }}
     >
       {report && (
@@ -341,7 +335,7 @@ function ReportDrawer({
           {href && (
             <Link legacyBehavior href={href} passHref>
               <Anchor size="sm" target="_blank">
-                <Group spacing={4}>
+                <Group gap={4}>
                   <Text inherit>View {type}</Text>
                   <IconExternalLink size={14} stroke={1.5} />
                 </Group>
@@ -366,7 +360,7 @@ function ReportDrawer({
                 minRows={2}
                 autosize
               />
-              <Group position="right">
+              <Group justify="flex-end">
                 <Button type="submit" disabled={!isDirty} loading={updateReportMutation.isLoading}>
                   Save
                 </Button>
@@ -397,14 +391,14 @@ function ReportDetails({ report }: { report: ReportDetail }) {
         return {
           label,
           value: (
-            <Stack spacing="xs">
+            <Stack gap="xs">
               {value.map((cuid, i) => {
                 if (typeof cuid !== 'string') return null;
                 return (
                   <Text
                     key={cuid}
                     component="a"
-                    variant="link"
+                    c="blue.4"
                     href={getEdgeUrl(cuid, { width: 450, name: cuid })}
                     target="_blank"
                     rel="nofollow noreferrer"
@@ -433,7 +427,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
     detailItems.unshift({
       label: 'Claiming User',
       value: (
-        <Text component="a" href={`mailto:${report.user.email}}`} variant="link" target="_blank">
+        <Text component="a" href={`mailto:${report.user.email}}`} target="_blank">
           {report.user.username} ({report.user.email})
         </Text>
       ),
@@ -470,7 +464,7 @@ function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?
   const queryClient = useQueryClient();
   // TODO.manuel - not sure why we use useQueryClient here to optimistically update the query
   // but doing this hotfix for now
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { mutate, isLoading } = trpc.report.setStatus.useMutation({
     onSuccess(_, request) {
@@ -498,8 +492,8 @@ function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?
   return (
     <Menu>
       <Menu.Target>
-        <Badge color={statusColor} size={size} sx={{ cursor: 'pointer' }}>
-          {isLoading ? <Loader variant="dots" size="sm" mx="md" color={statusColor} /> : status}
+        <Badge color={statusColor} size={size} style={{ cursor: 'pointer' }}>
+          {isLoading ? <Loader type="dots" size="sm" mx="md" color={statusColor} /> : status}
         </Badge>
       </Menu.Target>
       <Menu.Dropdown>

@@ -14,14 +14,14 @@ const UserStat = ({
   subtext: string;
 }) => {
   return (
-    <Stack spacing={0} align="center">
-      <Group spacing={2}>
+    <Stack gap={0} align="center">
+      <Group gap={2}>
         {icon}
         <Text size="md" title={numberWithCommas(value ?? 0)}>
           {abbreviateNumber(value ?? 0)}
         </Text>
       </Group>
-      <Text tt="uppercase" color="dimmed" size={10} weight={510}>
+      <Text tt="uppercase" c="dimmed" fz={10} fw={510}>
         {subtext}
       </Text>
     </Stack>
@@ -29,7 +29,7 @@ const UserStat = ({
 };
 export function UserStats({ followers, downloads, favorites, generations }: Props) {
   return (
-    <Group spacing={0} align="center" position="apart" noWrap>
+    <Group gap={0} align="center" justify="space-between" wrap="nowrap">
       {followers != null && followers !== 0 && (
         <UserStat value={followers} icon={<IconUser size={16} />} subtext="Followers" />
       )}

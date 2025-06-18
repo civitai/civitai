@@ -11,6 +11,7 @@ import {
   ScrollArea,
   Text,
   useMantineTheme,
+  rgba,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import type { IconProps } from '@tabler/icons-react';
@@ -78,12 +79,13 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
   color: 'gray',
   className: 'h-9 min-w-9 rounded-full normal-case',
-  classNames: { inner: 'flex gap-1 items-center' },
+  classNames: { label: 'flex gap-1 items-center' },
 };
 
 const sharedButtonProps: Partial<Omit<ButtonProps, 'children'>> = {
@@ -173,7 +175,7 @@ export function ImageDetail2() {
           onClick={() => generationPanel.open({ type: image.type, id: image.id })}
           data-activity="remix:image"
         >
-          <Group spacing={4} noWrap>
+          <Group gap={4} wrap="nowrap">
             <IconBrush size={16} />
             <Text size="xs">Remix</Text>
           </Group>
@@ -181,7 +183,7 @@ export function ImageDetail2() {
       )}
       <Button {...sharedButtonProps} onClick={handleSaveClick}>
         <IconBookmark {...sharedIconProps} />
-        <Text color="white" size="xs" align="center" weight={500}>
+        <Text c="white" size="xs" align="center" fw={500}>
           Save
         </Text>
       </Button>
@@ -195,7 +197,7 @@ export function ImageDetail2() {
         >
           <Button {...sharedButtonProps}>
             <IconPhoto {...sharedIconProps} />
-            <Text color="white" size="xs" align="center" weight={500}>
+            <Text c="white" size="xs" align="center" fw={500}>
               View Post
             </Text>
           </Button>
@@ -206,7 +208,12 @@ export function ImageDetail2() {
           <Badge
             {...sharedBadgeProps}
             pr={12}
-            sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              lineHeight: 1.5,
+              color: theme.colors.accent[5],
+            }}
           >
             <IconBolt size={14} fill="currentColor" />
             Tip
@@ -257,13 +264,13 @@ export function ImageDetail2() {
                               {/* Disable view count  */}
                               {/* <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
-                        <Text color="white" size="xs" align="center" weight={500}>
+                        <Text c="white" size="xs" align="center" fw={500}>
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge> */}
                               <DownloadImage src={image.url} type={image.type} name={image.name}>
                                 {({ onClick, isLoading, progress }) => (
-                                  <ActionIcon
+                                  <LegacyActionIcon
                                     {...sharedActionIconProps}
                                     onClick={onClick}
                                     loading={isLoading && progress === 0}
@@ -276,7 +283,7 @@ export function ImageDetail2() {
                                       />
                                     )}
                                     {!isLoading && <IconDownload {...sharedIconProps} />}
-                                  </ActionIcon>
+                                  </LegacyActionIcon>
                                 )}
                               </DownloadImage>
                               <ShareButton
@@ -284,26 +291,32 @@ export function ImageDetail2() {
                                 title={`Image by ${image.user.username}`}
                                 collect={{ type: CollectionType.Image, imageId: image.id }}
                               >
-                                <ActionIcon {...sharedActionIconProps}>
+                                <LegacyActionIcon {...sharedActionIconProps}>
                                   <IconShare3 {...sharedIconProps} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </ShareButton>
                               <LoginRedirect reason={'report-content'}>
-                                <ActionIcon {...sharedActionIconProps} onClick={handleReportClick}>
+                                <LegacyActionIcon
+                                  {...sharedActionIconProps}
+                                  onClick={handleReportClick}
+                                >
                                   <IconFlag {...sharedIconProps} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </LoginRedirect>
                               <ImageContextMenu image={image}>
-                                <ActionIcon {...sharedActionIconProps}>
+                                <LegacyActionIcon {...sharedActionIconProps}>
                                   <IconDotsVertical {...sharedIconProps} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </ImageContextMenu>
                             </div>
                           </div>
                           <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>
-                            <ActionIcon {...sharedActionIconProps} onClick={handleSidebarToggle}>
+                            <LegacyActionIcon
+                              {...sharedActionIconProps}
+                              onClick={handleSidebarToggle}
+                            >
                               <IconLayoutSidebarRight {...sharedIconProps} />
-                            </ActionIcon>
+                            </LegacyActionIcon>
                           </div>
                         </div>
 
@@ -333,8 +346,8 @@ export function ImageDetail2() {
                                   style: {
                                     color: 'white',
                                     background: hasReacted
-                                      ? theme.fn.rgba(theme.colors.blue[4], 0.4)
-                                      : theme.fn.rgba(theme.colors.gray[8], 0.4),
+                                      ? rgba(theme.colors.blue[4], 0.4)
+                                      : rgba(theme.colors.gray[8], 0.4),
                                     // backdropFilter: 'blur(7px)',
                                   },
                                 }),
@@ -378,16 +391,16 @@ export function ImageDetail2() {
                 >
                   <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
                     <div className="flex gap-1">{LeftImageControls}</div>
-                    <ActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
+                    <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
                       <IconChevron {...sharedIconProps} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </div>
                   <ScrollArea className="flex-1 p-3 py-0">
                     <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>
                       <SmartCreatorCard
                         user={image.user}
                         subText={
-                          <Text size="xs" color="dimmed">
+                          <Text size="xs" c="dimmed">
                             {image.publishedAt || image.sortAt ? (
                               <>
                                 Uploaded <DaysFromNow date={image.publishedAt || image.sortAt} />

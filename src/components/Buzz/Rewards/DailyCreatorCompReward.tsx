@@ -11,6 +11,9 @@ import {
   Text,
   Title,
   UnstyledButton,
+  useComputedColorScheme,
+  useMantineTheme,
+  rgba,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import type { ChartOptions } from 'chart.js';
@@ -29,7 +32,7 @@ import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { Bar } from 'react-chartjs-2';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -74,9 +77,9 @@ export function DailyCreatorCompReward() {
     { date: selectedDate },
     { enabled: features.buzz }
   );
-
-  const { classes, theme } = useBuzzDashboardStyles();
-  const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
+  const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
   const minSelectedDate = dayjs(selectedDate).startOf('month').toDate();
   const maxSelectedDate = dayjs(selectedDate).endOf('month').toDate();
 
@@ -194,11 +197,11 @@ export function DailyCreatorCompReward() {
   return (
     <>
       <Grid gutter="xs">
-        <Grid.Col xs={12} md={8}>
-          <Paper withBorder className={classes.tileCard} h="100%">
+        <Grid.Col span={{ base: 12, md: 8 }}>
+          <Paper className={classes.tileCard} h="100%">
             <Stack p="md" h="100%">
-              <Stack spacing={0}>
-                <Group spacing={8} position="apart">
+              <Stack gap={0}>
+                <Group gap={8} justify="space-between">
                   <Title order={3}>Generation Buzz Earned</Title>
                   <Select
                     data={dateOptions}
@@ -212,12 +215,12 @@ export function DailyCreatorCompReward() {
                     }}
                   />
                 </Group>
-                <Group position="left" spacing={4}>
+                <Group justify="flex-start" gap={4}>
                   <CurrencyIcon currency={Currency.BUZZ} size={24} />
                   <Text
                     size="xl"
                     color="yellow.7"
-                    weight="bold"
+                    fw="bold"
                     style={{ fontVariant: 'tabular-nums' }}
                   >
                     {formatCurrencyForDisplay(totalBuzz, Currency.BUZZ)}
@@ -245,9 +248,9 @@ export function DailyCreatorCompReward() {
             </Stack>
           </Paper>
         </Grid.Col>
-        <Grid.Col xs={12} md={4}>
-          <Paper className={classes.tileCard} h="100%" withBorder>
-            <Stack spacing={8} py="md">
+        <Grid.Col span={{ base: 12, md: 4 }}>
+          <Paper className={classes.tileCard} h="100%">
+            <Stack gap={8} py="md">
               <Title order={3} px="md">
                 Top Earning Resources
               </Title>
@@ -260,10 +263,9 @@ export function DailyCreatorCompReward() {
               {filteredVersionIds.length > 0 && (
                 <Button
                   variant="subtle"
-                  size="xs"
                   radius={0}
                   onClick={() => setFilteredVersionIds([])}
-                  compact
+                  size="compact-xs"
                 >
                   Clear selection
                 </Button>
@@ -275,12 +277,12 @@ export function DailyCreatorCompReward() {
               ) : filteredResources.length > 0 ? (
                 <div>
                   <ScrollArea.Autosize
-                    maxHeight={400}
+                    mah={400}
                     style={{ width: '100%', overflow: 'hidden' }}
                     type="auto"
                     className="[&>*]:w-full"
                   >
-                    <Stack spacing={8} px="md">
+                    <Stack gap={8} px="md">
                       {filteredResources.map((version) => {
                         const isSelected = filteredVersionIds.includes(version.id);
 
@@ -289,12 +291,12 @@ export function DailyCreatorCompReward() {
                             key={version.id}
                             py={4}
                             px={8}
-                            sx={(theme) => ({
+                            style={{
                               borderRadius: theme.radius.sm,
                               backgroundColor: isSelected
-                                ? theme.fn.rgba(theme.colors.yellow[7], 0.1)
+                                ? rgba(theme.colors.yellow[7], 0.1)
                                 : undefined,
-                            })}
+                            }}
                             onClick={() => {
                               setFilteredVersionIds((ids) =>
                                 isSelected
@@ -305,21 +307,21 @@ export function DailyCreatorCompReward() {
                             }}
                             w="100%"
                           >
-                            <Group position="apart" spacing={8} noWrap>
-                              <Stack spacing={0}>
-                                <Text size="sm" weight="bold" lineClamp={1}>
+                            <Group justify="space-between" gap={8} wrap="nowrap">
+                              <Stack gap={0}>
+                                <Text size="sm" fw="bold" lineClamp={1}>
                                   {version.modelName}
                                 </Text>
-                                <Text size="xs" color="dimmed" lineClamp={1}>
+                                <Text size="xs" c="dimmed" lineClamp={1}>
                                   {version.name}
                                 </Text>
                               </Stack>
-                              <Group spacing={4} noWrap>
+                              <Group gap={4} wrap="nowrap">
                                 <CurrencyIcon currency={Currency.BUZZ} size={16} />
                                 <Text
                                   size="sm"
                                   color="yellow.7"
-                                  weight="bold"
+                                  fw="bold"
                                   style={{ fontVariant: 'tabular-nums' }}
                                 >
                                   {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}
@@ -354,7 +356,7 @@ export function DailyCreatorCompReward() {
 function NoData({ message }: { message?: string }) {
   return (
     <Center>
-      <Text color="dimmed">
+      <Text c="dimmed">
         {message ?? 'Looks like we are still collecting data. Check back later.'}
       </Text>
     </Center>

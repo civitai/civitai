@@ -6,6 +6,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const NotificationsDrawer = dynamic(
   () => import('~/components/Notifications/NotificationsDrawer'),
@@ -34,29 +35,19 @@ export function NotificationBell() {
       <div onClick={toggleDrawer} ref={setToggle} style={{ height: '28px' }}>
         <Indicator
           color="red"
-          overflowCount={99}
-          label={count.all}
+          label={count.all > 99 ? '99+' : count.all}
           size={16}
           offset={4}
-          showZero={false}
-          dot={false}
-          withBorder
-          inline
-          styles={{
-            indicator: {
-              height: '20px !important',
-              cursor: 'pointer',
-              '> span': { marginBottom: '2px' },
-            },
-            common: {
-              fontWeight: 500,
-              fontSize: 12,
-            },
+          className="flex items-center text-sm font-bold"
+          classNames={{
+            indicator: 'cursor-pointer h-5',
           }}
+          disabled={count.all <= 0}
+          withBorder
         >
-          <ActionIcon>
+          <LegacyActionIcon variant="subtle" color="gray">
             <IconBell />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Indicator>
       </div>
     </>

@@ -1,12 +1,10 @@
 import type { StackProps } from '@mantine/core';
 import {
-  ActionIcon,
   Anchor,
   Box,
   Button,
   Center,
   createPolymorphicComponent,
-  createStyles,
   Divider,
   Group,
   Image,
@@ -18,7 +16,7 @@ import {
   Textarea,
   Title,
   Tooltip,
-  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
@@ -34,6 +32,7 @@ import {
   IconSend,
   IconX,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import produce from 'immer';
 import Linkify from 'linkify-react';
 import { throttle } from 'lodash-es';
@@ -46,6 +45,7 @@ import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util'
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -60,6 +60,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import classes from './ExistingChat.module.scss';
 
 type TypingStatus = {
   [key: string]: boolean;
@@ -67,63 +68,13 @@ type TypingStatus = {
 
 const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
 
-const useStyles = createStyles((theme) => ({
-  chatMessage: {
-    borderRadius: theme.spacing.xs,
-    padding: `${theme.spacing.xs / 2}px ${theme.spacing.xs}px`,
-    width: 'max-content',
-    maxWidth: '70%',
-    whiteSpace: 'pre-line',
-  },
-  replyMessage: {
-    textOverflow: 'ellipsis',
-    overflow: 'hidden',
-    overflowWrap: 'normal',
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[5],
-    fontSize: theme.spacing.sm,
-  },
-  myDetails: {
-    flexDirection: 'row-reverse',
-  },
-  myMessage: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.blue[8] : theme.colors.blue[4],
-  },
-  otherMessage: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
-  },
-  highlightRow: {
-    '&:hover': {
-      '> button': {
-        display: 'initial',
-      },
-    },
-  },
-  chatInput: {
-    borderRadius: 0,
-    borderLeft: 0,
-    borderTop: 0,
-    borderBottom: 0,
-  },
-  isTypingBox: {
-    position: 'sticky',
-    bottom: 0,
-    // backdropFilter: 'blur(16px)',
-    display: 'inline-flex',
-    // backgroundColor:
-    //   theme.colorScheme === 'dark'
-    //     ? theme.fn.rgba(theme.colors.green[7], 0.1)
-    //     : theme.fn.rgba(theme.colors.green[2], 0.1),
-  },
-}));
-
 export function ExistingChat() {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
   const { worker } = useSignalContext();
   const { state, setState } = useChatContext();
   const queryUtils = trpc.useUtils();
   const isMobile = useContainerSmallerThan(700);
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const lastReadRef = useRef<HTMLDivElement>(null);
   const [typingStatus, setTypingStatus] = useState<TypingStatus>({});
@@ -356,17 +307,17 @@ export function ExistingChat() {
   };
 
   return (
-    <Stack spacing={0} h="100%">
+    <Stack gap={0} h="100%">
       {/* TODO this component stinks, it is hardcoded as a button */}
       <Spoiler
         showLabel={
-          <Group mt={4} spacing={8}>
+          <Group mt={4} gap={8}>
             <IconChevronDown size={16} />
             <Text size="xs">Expand</Text>
           </Group>
         }
         hideLabel={
-          <Group mt={8} spacing={8}>
+          <Group mt={8} gap={8}>
             <IconChevronUp size={16} />
             <Text size="xs">Hide</Text>
           </Group>
@@ -376,37 +327,36 @@ export function ExistingChat() {
           root: { textAlign: 'center' },
         }}
       >
-        <Group m="sm" mb={0} position="apart" noWrap align="flex-start" spacing="sm">
+        <Group m="sm" mb={0} justify="space-between" wrap="nowrap" align="flex-start" gap="sm">
           {isMobile && (
-            <ActionIcon onClick={goBack}>
+            <LegacyActionIcon onClick={goBack}>
               <IconChevronLeft />
-            </ActionIcon>
+            </LegacyActionIcon>
           )}
           {allChatLoading ? (
             <Center h="100%">
               <Loader />
             </Center>
           ) : (
-            <Group spacing="xs">
+            <Group gap="xs">
               {/* TODO improve useravatar to show loading (if necessary) */}
               {/* TODO online status (later), blocked users, etc */}
 
               {otherMembers?.map((cm) => (
-                <Button key={cm.userId} variant="light" color="gray" compact>
+                <Button key={cm.userId} variant="light" color="gray" size="compact-sm">
                   <UserAvatar
                     user={cm.user}
                     size="xs"
                     withUsername
                     linkToProfile
                     badge={
-                      <Group spacing={6} ml={4} align="center">
+                      <Group gap={6} ml={4} align="center">
                         {cm.user.isModerator ? (
                           <Image
                             src="/images/civ-c.png"
                             title="Moderator"
                             alt="Moderator"
-                            width={16}
-                            height={16}
+                            className="size-4"
                           />
                         ) : undefined}
                         {cm.isOwner === true ? (
@@ -451,16 +401,16 @@ export function ExistingChat() {
         myMember.status === ChatMemberStatus.Left ||
         myMember.status === ChatMemberStatus.Kicked ? (
         <>
-          <Box p="sm" sx={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
+          <Box p="sm" style={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
             {isRefetching || isLoading ? (
               <Center h="100%">
                 <Loader />
               </Center>
             ) : allChats.length > 0 ? (
-              <Stack sx={{ overflowWrap: 'break-word' }} spacing={12}>
+              <Stack style={{ overflowWrap: 'break-word' }} gap={12}>
                 {hasNextPage && (
                   <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
-                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                    <Center p="xl" style={{ height: 36 }} mt="md">
                       <Loader />
                     </Center>
                   </InViewLoader>
@@ -475,7 +425,7 @@ export function ExistingChat() {
             {!!typingText && (
               <Group className={classes.isTypingBox}>
                 <Text size="xs">{typingText}</Text>
-                <Loader variant="dots" />
+                <Loader type="dots" />
               </Group>
             )}
           </Box>
@@ -484,14 +434,14 @@ export function ExistingChat() {
             <>
               {!!replyId && (
                 <>
-                  <Group p="xs" noWrap>
+                  <Group p="xs" wrap="nowrap">
                     <Text size="xs">Replying:</Text>
-                    <Box sx={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                    <Box style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
                       {allChats.find((ac) => ac.id === replyId)?.content ?? ''}
                     </Box>
-                    <ActionIcon onClick={() => setReplyId(undefined)} ml="auto">
+                    <LegacyActionIcon onClick={() => setReplyId(undefined)} ml="auto">
                       <IconX size={14} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </Group>
                   <Divider />
                 </>
@@ -514,8 +464,8 @@ export function ExistingChat() {
                 </Text>
                 {myMember.status === ChatMemberStatus.Left && (
                   <Button
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    compact
+                    variant={colorScheme === 'dark' ? 'filled' : 'light'}
+                    size="compact-sm"
                     disabled={isJoining}
                     onClick={handleJoinChat}
                   >
@@ -537,7 +487,7 @@ export function ExistingChat() {
               )}${allChats[0].content.length > 70 ? '...' : ''}"`}</Text>
             )}
             <Text align="center">Join the chat?</Text>
-            <Group p="sm" position="center">
+            <Group p="sm" justify="center">
               <Button
                 disabled={isJoining || myMember.status === ChatMemberStatus.Ignored}
                 variant="light"
@@ -584,7 +534,6 @@ function ChatInputBox({
   setTypingText: React.Dispatch<React.SetStateAction<string | null>>;
 }) {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
   const { state } = useChatContext();
   const queryUtils = trpc.useUtils();
 
@@ -725,9 +674,9 @@ function ChatInputBox({
   }, [state.existingChatId]);
 
   return (
-    <Group spacing={0}>
+    <Group gap={0}>
       <Textarea
-        sx={{ flexGrow: 1 }}
+        style={{ flexGrow: 1 }}
         disabled={isMuted}
         placeholder={isMuted ? 'Your account has been restricted' : 'Send message'}
         autosize
@@ -745,15 +694,15 @@ function ChatInputBox({
         }}
         classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
       />
-      <ActionIcon
+      <LegacyActionIcon
         h="100%"
         w={60}
         onClick={sendMessage}
         disabled={isSending || !chatMsg.length || isMuted}
-        sx={{ borderRadius: 0 }}
+        style={{ borderRadius: 0 }}
       >
         {isSending ? <Loader /> : <IconSend />}
-      </ActionIcon>
+      </LegacyActionIcon>
     </Group>
   );
 }
@@ -777,8 +726,6 @@ const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
 };
 
 const EmbedMessage = ({ content }: { content: string }) => {
-  const { classes, cx } = useStyles();
-
   let contentObj: {
     title: string | null;
     description: string | null;
@@ -799,12 +746,12 @@ const EmbedMessage = ({ content }: { content: string }) => {
 
   return (
     <Group
-      sx={{
+      style={{
         alignSelf: 'center',
         border: '1px solid gray',
       }}
-      className={cx(classes.chatMessage)}
-      noWrap
+      className={clsx(classes.chatMessage)}
+      wrap="nowrap"
     >
       {(!!title || !!description) && (
         <Stack>
@@ -833,7 +780,6 @@ function DisplayMessages({
   setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
 }) {
   const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
   const { state } = useChatContext();
 
   const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
@@ -877,7 +823,7 @@ function DisplayMessages({
             component={div}
             // ref={c.id === lastReadId ? lastReadRef : undefined}
             key={c.id}
-            spacing={12}
+            gap={12}
             style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
             initial={{ y: -20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -886,15 +832,15 @@ function DisplayMessages({
             {isSystemChat && c.contentType === ChatMessageType.Embed ? (
               <EmbedMessage content={c.content} />
             ) : isSystemChat ? (
-              // <Group align="center" position="center">
+              // <Group align="center" justify="center">
               //   <Text size="xs">{formatDate(c.createdAt)}</Text>
               //   ...Text (below)
               // </Group>
               <Text
-                className={cx(classes.chatMessage)}
+                className={clsx(classes.chatMessage)}
                 size="xs"
                 py={0}
-                sx={{
+                style={{
                   alignSelf: 'center',
                   border: '1px solid gray',
                 }}
@@ -906,7 +852,7 @@ function DisplayMessages({
             ) : (
               <>
                 {shouldShowInfo && (
-                  <Group className={cx({ [classes.myDetails]: isMe })}>
+                  <Group className={clsx({ [classes.myDetails]: isMe })}>
                     {!!cachedUser ? (
                       <UserAvatar user={cachedUser} withUsername />
                     ) : (
@@ -918,9 +864,9 @@ function DisplayMessages({
                 {/* TODO this needs better styling and click -> message */}
                 {!!c.referenceMessageId && (
                   <Group
-                    spacing={6}
-                    position="right"
-                    sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
+                    gap={6}
+                    justify="flex-end"
+                    style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
                   >
                     <IconArrowBack size={14} />
                     {!!tReplyData?.data?.user && (
@@ -930,7 +876,7 @@ function DisplayMessages({
                         </Box>
                       </Tooltip>
                     )}
-                    <Text className={cx([classes.chatMessage, classes.replyMessage])}>
+                    <Text className={clsx([classes.chatMessage, classes.replyMessage])}>
                       {!tReplyData || tReplyData.isError ? (
                         <em>Could not load message.</em>
                       ) : tReplyData.isLoading ? (
@@ -942,19 +888,19 @@ function DisplayMessages({
                   </Group>
                 )}
                 <Group
-                  position="right"
+                  justify="flex-end"
                   className={classes.highlightRow}
-                  sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
+                  style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
                 >
                   <Menu withArrow position={isMe ? 'left-start' : 'right-start'}>
                     <Menu.Target>
-                      <ActionIcon sx={{ alignSelf: 'flex-start', display: 'none' }}>
+                      <LegacyActionIcon style={{ alignSelf: 'flex-start', display: 'none' }}>
                         <IconDotsVertical />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Menu.Target>
                     <Menu.Dropdown>
                       <Menu.Item
-                        icon={<IconArrowBack size={14} />}
+                        leftSection={<IconArrowBack size={14} />}
                         onClick={() => setReplyId(c.id)}
                       >
                         Reply
@@ -968,13 +914,13 @@ function DisplayMessages({
                         : undefined
                     }
                     disabled={shouldShowInfo}
-                    sx={{ opacity: 0.85 }}
+                    style={{ opacity: 0.85 }}
                     openDelay={350}
                     position={isMe ? 'top-end' : 'top-start'}
                     withArrow
                   >
                     <div
-                      className={cx(classes.chatMessage, {
+                      className={clsx(classes.chatMessage, {
                         [classes.otherMessage]: !isMe,
                         [classes.myMessage]: isMe,
                       })}

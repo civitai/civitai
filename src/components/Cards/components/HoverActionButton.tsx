@@ -1,98 +1,13 @@
 import React from 'react';
 import type { MantineColor, ThemeIconProps, UnstyledButtonProps } from '@mantine/core';
-import { Badge, createStyles, ThemeIcon } from '@mantine/core';
+import { Badge, ThemeIcon } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
+import classes from './HoverActionButton.module.scss';
+import clsx from 'clsx';
 
 const CUSTOM_VARIANTS = ['white'] as const;
 type CustomVariantType = (typeof CUSTOM_VARIANTS)[number];
 
-const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
-  const labelRef = getRef('label');
-  const hoverIconRef = getRef('hover');
-  const customVariantsRef: Partial<Record<CustomVariantType, string>> = CUSTOM_VARIANTS.reduce(
-    (acc, variant) => ({ ...acc, [variant]: getRef(variant) }),
-    {}
-  );
-
-  const customVariantsClasses: Partial<Record<CustomVariantType, { ref: string }>> =
-    CUSTOM_VARIANTS.reduce(
-      (acc, variant) => ({ ...acc, [variant]: { ref: customVariantsRef[variant] } }),
-      {}
-    );
-
-  return {
-    ...customVariantsClasses,
-    wrapper: {
-      position: 'relative',
-      height: size,
-      width: size,
-      zIndex: 0,
-
-      '&:hover': {
-        [`& .${labelRef}`]: {
-          transform: 'scaleX(1)',
-          opacity: 1,
-        },
-        [`& .${hoverIconRef}`]: {
-          opacity: 1,
-        },
-      },
-    },
-
-    icon: {
-      position: 'relative',
-      zIndex: 1,
-
-      [`.${customVariantsRef.white} &`]: {
-        backgroundColor: theme.colors.gray[3],
-        color: theme.colors.dark[6],
-      },
-    },
-
-    hover: {
-      ref: hoverIconRef,
-      opacity: 0,
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      transition: 'opacity 200ms ease',
-      zIndex: 2,
-
-      [`.${customVariantsRef.white} &`]: {
-        backgroundColor: theme.colors.gray[3],
-        color: theme.colors.dark[6],
-      },
-    },
-
-    label: {
-      ref: labelRef,
-      top: 0,
-      right: 0,
-      width: 'auto',
-      paddingRight: size,
-      minWidth: 3 * size,
-      transform: 'scaleX(0)',
-      height: '100%',
-      overflow: 'hidden',
-      position: 'absolute',
-      transformOrigin: '90%',
-      transition: 'transform 200ms ease, opacity 200ms ease',
-      borderRadius: theme.radius.xl,
-      display: 'flex',
-      alignItems: 'center',
-      flexWrap: 'nowrap',
-      whiteSpace: 'nowrap',
-      justifyContent: 'flex-start',
-      paddingLeft: theme.spacing.md,
-      opacity: 0,
-
-      [`.${customVariantsRef.white} &`]: {
-        backgroundColor: theme.colors.gray[3],
-        color: theme.colors.dark[6],
-      },
-    },
-  };
-});
 const HoverActionButton = ({
   label,
   children,
@@ -102,16 +17,21 @@ const HoverActionButton = ({
   variant = 'filled',
   onClick,
   keepIconOnHover = false,
+  style,
   ...props
 }: Props) => {
-  const { classes, cx } = useStyles({ size });
   const isCustomVariant = CUSTOM_VARIANTS.includes(color as CustomVariantType);
   const colorCustomVariant = color as CustomVariantType;
 
   return (
     <button
+      style={{
+        ...style,
+        // @ts-ignore
+        '--size': `${size}px`,
+      }}
       onClick={onClick}
-      className={cx(classes.wrapper, isCustomVariant ? classes[colorCustomVariant] : undefined)}
+      className={clsx(classes.wrapper, isCustomVariant ? classes[colorCustomVariant] : undefined)}
       {...props}
     >
       <Badge className={classes.label} size="xs" variant={variant} color={color}>

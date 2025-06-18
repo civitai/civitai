@@ -8,6 +8,7 @@ import { useDialogContext } from '../Dialog/DialogProvider';
 import { dialogStore } from '../Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = {
   feature: string;
@@ -54,9 +55,9 @@ export const FeatureIntroduction = ({
   contentSlug,
   modalProps,
   actionButton = (
-    <ActionIcon>
+    <LegacyActionIcon>
       <IconInfoCircle />
-    </ActionIcon>
+    </LegacyActionIcon>
   ),
 }: Props) => {
   const { data: content, isLoading } = trpc.content.get.useQuery({ slug: contentSlug ?? feature });

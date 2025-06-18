@@ -130,7 +130,7 @@ export const useQueryBountyEngagements = () => {
 };
 
 export const useBountyEngagement = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { engagements } = useQueryBountyEngagements();
 
   const toggleEngagementMutation = trpc.user.toggleBountyEngagement.useMutation({
@@ -205,7 +205,7 @@ export const useQueryBounty = ({ id }: { id: number }) => {
 const DELETE_BOUNTY_TOAST_ID = 'DELETE_BOUNTY_TOAST_ID';
 export const useMutateBounty = (opts?: { bountyId?: number }) => {
   const { bountyId } = opts ?? {};
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { toggle } = useBountyEngagement();
 

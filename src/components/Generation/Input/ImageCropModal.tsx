@@ -1,4 +1,13 @@
-import { ActionIcon, Button, Card, Modal, Radio, SegmentedControl, Slider } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Card,
+  Modal,
+  Radio,
+  SegmentedControl,
+  Slider,
+  Stack,
+} from '@mantine/core';
 import { IconZoomIn, IconZoomOut } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
@@ -36,7 +45,9 @@ export function ImageCropModal(props: ImageCropperProps) {
       {...dialog}
       title="Crop Images"
       size={768}
-      transitionDuration={0}
+      transitionProps={{
+        duration: 0,
+      }}
       onClose={handleCancel}
       fullScreen={isMobileDevice()}
     >
@@ -164,14 +175,14 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
             <Radio.Group
               size="xs"
               label="Aspect Ratio"
-              orientation="vertical"
               value={`${aspect}`}
               onChange={(value) => setAspect(Number(value))}
-              spacing="sm"
             >
-              {availableAspects.map(({ label, value }, index) => (
-                <Radio key={index} value={value} label={label} />
-              ))}
+              <Stack gap="sm">
+                {availableAspects.map(({ label, value }, index) => (
+                  <Radio key={index} value={value} label={label} />
+                ))}
+              </Stack>
             </Radio.Group>
           </Card>
         </div>

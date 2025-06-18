@@ -1,7 +1,6 @@
 import {
   // AspectRatio,
   Container,
-  createStyles,
   Flex,
   Grid,
   Stack,
@@ -11,12 +10,13 @@ import {
 } from '@mantine/core';
 import dynamic from 'next/dynamic';
 // import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
 import { CivitaiLinkDownloadButton } from '~/components/CivitaiLink/CivitaiLinkDownloadButton';
+
+import classes from '~/styles/utils.module.scss';
 
 const LinkAnimation = dynamic(
   () => import('~/components/Animations/LinkAnimation').then((mod) => mod.LinkAnimation),
@@ -43,7 +43,6 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function LinkApp(props: ServerSideProps) {
-  const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isMember;
   const buttonData = {
@@ -64,11 +63,13 @@ export default function LinkApp(props: ServerSideProps) {
           justify="space-between"
           className={classes.heroContainer}
         >
-          <Stack spacing={12} mb={{ base: 24, md: 0 }}>
+          <Stack gap={12} mb={{ base: 24, md: 0 }}>
             <Title className={classes.heroTitle} order={1}>
               Civitai Link App
             </Title>
-            <Text className={classes.copy}>For Windows, Linux, and MacOS.</Text>
+            <Text className="text-base font-medium text-gray-9 dark:text-white">
+              For Windows, Linux, and MacOS.
+            </Text>
             {!isMember ? (
               <Text className={classes.heroText}>
                 ❤️ Civitai Link is only available to Supporters
@@ -81,30 +82,31 @@ export default function LinkApp(props: ServerSideProps) {
         </Flex>
 
         <Flex direction="row" className={classes.gradientContainer}>
-          <LinkAnimation justify="center" className={classes.videoBorder} />
+          <LinkAnimation
+            justify="center"
+            className="w-full rounded-xl border border-b-0 border-[#2D2E32]"
+          />
           <div className={classes.gradientBox} />
         </Flex>
 
-        <Stack spacing={12} mb={40}>
+        <Stack gap={12} mb={40}>
           <Title className={classes.heading} order={2}>
             Add models to your local library with one click
           </Title>
-          <Text className={classes.copy}>
+          <Text className="text-base font-medium text-gray-9 dark:text-white">
             Directly add any resource from Civitai to your local model library with just one click.
           </Text>
         </Stack>
 
-        <Grid gutter={40} gutterMd={80}>
-          <Grid.Col md={6}>
+        <Grid gutter={{ base: 40, md: 80 }}>
+          <Grid.Col span={{ base: 12, md: 6 }}>
             <Flex justify="center" className={classes.gradientContainer}>
               <Image
                 src="/images/link/glance.png"
                 alt="download"
                 id="download"
-                width="auto"
-                imageProps={{
-                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
-                }}
+                w="auto"
+                style={{ objectFit: 'cover', objectPosition: 'top', height: '100%' }}
               />
               <div className={classes.gradientBox} />
             </Flex>
@@ -113,66 +115,65 @@ export default function LinkApp(props: ServerSideProps) {
               site
             </Title>
           </Grid.Col>
-          <Grid.Col md={6}>
+          <Grid.Col span={{ base: 12, md: 6 }}>
             <Flex justify="center" className={classes.gradientContainer}>
               <Image
                 src="/images/link/pair.png"
                 alt="activity"
                 id="activity"
-                width="auto"
-                imageProps={{
-                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
-                }}
+                w="auto"
+                style={{ objectFit: 'cover', objectPosition: 'top', height: '100%' }}
               />
               <div className={classes.gradientBox} />
             </Flex>
             <Title className={classes.heading} order={3}>
               Pair with your Civitai Vault to free-up local disk space
             </Title>
-            <Text className={classes.copy}>
+            <Text className="text-base font-medium text-gray-9 dark:text-white">
               Models saved to Civitai Vault remain accessible, even if removed from Civitai by the
               creator.
             </Text>
           </Grid.Col>
         </Grid>
-        <Grid gutter={40} gutterMd={80}>
-          <Grid.Col md={6}>
+        <Grid gutter={{ base: 40, md: 80 }}>
+          <Grid.Col span={{ base: 12, md: 6 }}>
             <Flex justify="center" className={classes.gradientContainer}>
               <Image
                 src="/images/link/download.png"
                 alt="download"
                 id="download"
-                width="auto"
-                imageProps={{
-                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
-                }}
+                w="auto"
+                style={{ objectFit: 'cover', objectPosition: 'top', height: '100%' }}
               />
               <div className={classes.gradientBox} />
             </Flex>
             <Title className={classes.heading} order={3}>
               Manage your files
             </Title>
-            <Text className={classes.copy}>
+            <Text className="text-base font-medium text-gray-9 dark:text-white">
               Sync your local model library to Civitai for image previews, trigger words, and more.
             </Text>
           </Grid.Col>
-          <Grid.Col md={6}>
+          <Grid.Col span={{ base: 12, md: 6 }}>
             <Flex justify="center" className={classes.gradientContainer}>
               <Image
                 src="/images/link/activity.png"
                 alt="activity"
                 id="activity"
-                width="auto"
-                imageProps={{
-                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
+                w="auto"
+                style={{ objectFit: 'cover', objectPosition: 'top', height: '100%' }}
+              />
+              <div
+                className="absolute inset-0"
+                style={{
+                  background: 'linear-gradient(180deg, rgba(26, 27, 30, 0.00) 50%, #1A1B1E 100%)',
                 }}
               />
-              <div className={classes.gradientBox} />
             </Flex>
             <Title className={classes.heading} order={3}>
               Keep track of your activities
             </Title>
-            <Text className={classes.copy}>
+            <Text className="text-base font-medium text-gray-9 dark:text-white">
               View the history of all models you&apos;ve added to your local model library.
             </Text>
           </Grid.Col>
@@ -190,50 +191,3 @@ export default function LinkApp(props: ServerSideProps) {
     </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  heroContainer: {
-    marginTop: 40,
-    marginBottom: 40,
-  },
-  heroTitle: {
-    fontSize: 32,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
-    [containerQuery.largerThan('md')]: {
-      fontSize: 40,
-    },
-  },
-  heroText: {
-    fontSize: 14,
-    fontWeight: 500,
-  },
-  heading: {
-    fontSize: 24,
-    fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
-  },
-  copy: {
-    fontSize: 16,
-    fontWeight: 500,
-    marginTop: 8,
-  },
-  videoBorder: {
-    borderRadius: 12,
-    width: '100%',
-    border: '1px solid #2D2E32',
-    borderBottom: 'none',
-  },
-  gradientContainer: {
-    position: 'relative',
-    marginBottom: 24,
-  },
-  gradientBox: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: 'linear-gradient(180deg, rgba(26, 27, 30, 0.00) 50%, #1A1B1E 100%)',
-  },
-}));

@@ -1,4 +1,4 @@
-import type { MantineNumberSize, MenuProps } from '@mantine/core';
+import type { MenuProps } from '@mantine/core';
 import { ActionIcon, Menu, Text } from '@mantine/core';
 import { closeAllModals, closeModal, openConfirmModal } from '@mantine/modals';
 import {
@@ -16,6 +16,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -29,7 +30,7 @@ export function CommentDiscussionMenu({
   hideLockOption = false,
   ...props
 }: Props) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const dialog = useDialogContext();
   const user = useCurrentUser();
 
@@ -158,15 +159,15 @@ export function CommentDiscussionMenu({
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
-        <ActionIcon size={size} variant="subtle">
+        <LegacyActionIcon size={size} variant="subtle">
           <IconDotsVertical size={14} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
         {(isOwner || isMod) && (
           <>
             <Menu.Item
-              icon={<IconTrash size={14} stroke={1.5} />}
+              leftSection={<IconTrash size={14} stroke={1.5} />}
               color="red"
               onClick={handleDeleteComment}
             >
@@ -174,7 +175,7 @@ export function CommentDiscussionMenu({
             </Menu.Item>
             {((!comment.locked && !isMuted) || isMod) && (
               <Menu.Item
-                icon={<IconEdit size={14} stroke={1.5} />}
+                leftSection={<IconEdit size={14} stroke={1.5} />}
                 onClick={() =>
                   triggerRoutedDialog({ name: 'commentEdit', state: { commentId: comment.id } })
                 }
@@ -186,7 +187,7 @@ export function CommentDiscussionMenu({
         )}
         {isMod && !hideLockOption && (
           <Menu.Item
-            icon={
+            leftSection={
               comment.locked ? (
                 <IconLockOpen size={14} stroke={1.5} />
               ) : (
@@ -200,7 +201,7 @@ export function CommentDiscussionMenu({
         )}
         {(isModelOwner || isMod) && (
           <Menu.Item
-            icon={
+            leftSection={
               comment.hidden ? (
                 <IconEye size={14} stroke={1.5} />
               ) : (
@@ -213,14 +214,14 @@ export function CommentDiscussionMenu({
           </Menu.Item>
         )}
         {isMod && (
-          <Menu.Item icon={<IconBan size={14} stroke={1.5} />} onClick={handleTosViolation}>
+          <Menu.Item leftSection={<IconBan size={14} stroke={1.5} />} onClick={handleTosViolation}>
             Remove as TOS Violation
           </Menu.Item>
         )}
         {(!user || !isOwner) && (
           <LoginRedirect reason="report-model">
             <Menu.Item
-              icon={<IconFlag size={14} stroke={1.5} />}
+              leftSection={<IconFlag size={14} stroke={1.5} />}
               onClick={() =>
                 openReportModal({ entityType: ReportEntity.Comment, entityId: comment.id })
               }
@@ -236,6 +237,6 @@ export function CommentDiscussionMenu({
 
 type Props = MenuProps & {
   comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked' | 'hidden' | 'modelId'>;
-  size?: MantineNumberSize;
+  size?: MantineSpacing;
   hideLockOption?: boolean;
 };

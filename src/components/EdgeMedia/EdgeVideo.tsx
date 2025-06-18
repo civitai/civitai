@@ -1,4 +1,4 @@
-import { ActionIcon, createStyles, ThemeIcon } from '@mantine/core';
+import { ActionIcon, ThemeIcon } from '@mantine/core';
 import {
   IconMaximize,
   IconMinimize,
@@ -18,12 +18,13 @@ import React, {
 } from 'react';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { VimeoEmbed } from '../VimeoEmbed/VimeoEmbed';
-import { fadeInOut } from '~/libs/animations';
 import { useLocalStorage, useTimeout } from '@mantine/hooks';
 import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import clsx from 'clsx';
+import styles from './EdgeVideo.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type VideoProps = Omit<
   React.DetailedHTMLProps<React.VideoHTMLAttributes<HTMLVideoElement>, HTMLVideoElement>,
@@ -90,8 +91,6 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       key: 'global-volume',
       defaultValue: state.muted ? 0 : 0.5,
     });
-
-    const { classes, cx } = useStyles();
 
     useImperativeHandle(forwardedRef, () => ({
       stop: () => {
@@ -220,10 +219,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       <div
         ref={containerRef}
         {...wrapperProps}
-        className={cx(
-          classes.iosScroll,
+        className={clsx(
+          styles.iosScroll,
           wrapperProps?.className ? wrapperProps?.className : 'h-full',
-          'overflow-hidden relative flex flex-col items-center justify-center'
+          'relative flex flex-col items-center justify-center overflow-hidden'
         )}
       >
         <video
@@ -257,12 +256,12 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         </video>
         {!options?.anim && !showCustomControls && !html5Controls && !isPlaying && (
           <IconPlayerPlayFilled
-            className={cx(classes.playButton, 'absolute-center pointer-events-none z-10')}
+            className={clsx(styles.playButton, 'pointer-events-none z-10 absolute-center')}
           />
         )}
         {showCustomControls && (
-          <div className={classes.controls}>
-            <ActionIcon
+          <div className={styles.controls}>
+            <LegacyActionIcon
               onClick={handleTogglePlayPause}
               className="z-10"
               variant="light"
@@ -270,11 +269,11 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
               radius="xl"
             >
               {isPlaying ? <IconPlayerPauseFilled size={16} /> : <IconPlayerPlayFilled size={16} />}
-            </ActionIcon>
+            </LegacyActionIcon>
             <div className="flex flex-nowrap gap-4">
               {enableAudioControl && (
-                <div className={classes.volumeControl}>
-                  <div className={classes.volumeSlider}>
+                <div className={styles.volumeControl}>
+                  <div className={styles.volumeSlider}>
                     <input
                       type="range"
                       className="w-20"
@@ -285,7 +284,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                       onChange={(e) => handleVolumeChange(e.currentTarget.valueAsNumber)}
                     />
                   </div>
-                  <ActionIcon
+                  <LegacyActionIcon
                     onClick={handleToggleMuted}
                     className="z-10"
                     variant="light"
@@ -298,10 +297,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                     ) : (
                       <IconVolume size={16} />
                     )}
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </div>
               )}
-              <ActionIcon
+              <LegacyActionIcon
                 onClick={handleToggleFullscreen}
                 className="z-10"
                 variant="light"
@@ -313,12 +312,12 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                 ) : (
                   <IconMaximize size={16} />
                 )}
-              </ActionIcon>
+              </LegacyActionIcon>
             </div>
           </div>
         )}
         {showPlayIndicator && (
-          <ThemeIcon className={classes.playIndicator} size={64} radius="xl" color="dark">
+          <ThemeIcon className={styles.playIndicator} size={64} radius="xl" color="dark">
             {ref.current?.paused ? <IconPlayerPauseFilled /> : <IconPlayerPlayFilled />}
           </ThemeIcon>
         )}
@@ -359,80 +358,3 @@ const hasAudio = (video: any): boolean => {
     Boolean(video.audioTracks && video.audioTracks.length)
   );
 };
-
-const useStyles = createStyles((theme, _, getRef) => ({
-  controls: {
-    position: 'absolute',
-    display: 'flex',
-    gap: 8,
-    flexWrap: 'nowrap',
-    padding: theme.spacing.xs,
-    width: '100%',
-    justifyContent: 'space-between',
-    bottom: 0,
-  },
-  iosScroll: {
-    [theme.fn.smallerThan('md')]: {
-      '&::after': {
-        position: 'absolute',
-        top: '0px',
-        right: '0px',
-        bottom: '0px',
-        left: '0px',
-        content: '""',
-        pointerEvents: 'none',
-      },
-    },
-  },
-  playIndicator: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    color: theme.white,
-    opacity: 0,
-    animation: `${fadeInOut} .5s`,
-    pointerEvents: 'none',
-  },
-
-  volumeControl: {
-    zIndex: 10,
-    display: 'flex',
-    position: 'relative',
-    flexDirection: 'column',
-    gap: 8,
-
-    '&:hover': {
-      [`& .${getRef('volumeSlider')}`]: {
-        display: 'block',
-      },
-    },
-  },
-
-  volumeSlider: {
-    ref: getRef('volumeSlider'),
-
-    display: 'none',
-    position: 'absolute',
-    lineHeight: 1,
-    padding: theme.spacing.xs,
-    top: 0,
-    left: 0,
-    transform: 'translate(-33%, -170%) rotate(270deg)',
-    zIndex: 10,
-  },
-  playButton: {
-    width: 80,
-    height: 80,
-    color: theme.white,
-    backgroundColor: 'rgba(0,0,0,.6)',
-    padding: 20,
-    borderRadius: '50%',
-    boxShadow: `0 2px 2px 1px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.2)`,
-    transition: 'background-color 200ms ease',
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-  },
-}));

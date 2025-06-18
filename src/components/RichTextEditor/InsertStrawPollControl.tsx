@@ -27,7 +27,7 @@ export function InsertStrawPollControl(props: Props) {
   const handleSubmit = (values: z.infer<typeof schema>) => {
     const { url } = values;
 
-    editor.commands.setStrawPollEmbed({ src: url });
+    editor?.commands.setStrawPollEmbed({ src: url });
     closeAllModals();
     form.reset();
   };
@@ -37,7 +37,7 @@ export function InsertStrawPollControl(props: Props) {
       title: controlTitle,
       children: (
         <Form form={form} onSubmit={handleSubmit}>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <InputText
               label="StrawPoll URL"
               name="url"

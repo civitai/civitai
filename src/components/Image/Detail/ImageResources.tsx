@@ -9,7 +9,7 @@ import {
   Skeleton,
   Stack,
   Text,
-  createStyles,
+  useMantineTheme,
 } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -24,18 +24,13 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles(() => ({
-  statBadge: {
-    background: 'rgba(212,212,212,0.2)',
-    color: 'white',
-  },
-}));
+import classes from './ImageResources.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const LIMIT = 3;
 export function ImageResources({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
-  const { classes, theme } = useStyles();
+  const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
 
   const [selectedResource, setSelectedResource] = useState<number | null>(null);
@@ -123,9 +118,9 @@ export function ImageResources({ imageId }: { imageId: number }) {
   };
 
   return (
-    <Stack spacing={4}>
+    <Stack gap={4}>
       {isLoading ? (
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Skeleton height={16} radius="md" />
           <Skeleton height={16} radius="md" />
         </Stack>
@@ -140,15 +135,15 @@ export function ImageResources({ imageId }: { imageId: number }) {
               <Wrapper resource={resource} key={key}>
                 <Card
                   p={8}
-                  sx={{
+                  style={{
                     backgroundColor: theme.colors.dark[7],
                     opacity: removing ? 0.3 : isAvailable ? 1 : 0.3,
                   }}
                   withBorder
                 >
-                  <Stack spacing="xs">
-                    <Group spacing={4} position="apart" noWrap>
-                      <Text size="sm" weight={500} lineClamp={1}>
+                  <Stack gap="xs">
+                    <Group gap={4} justify="space-between" wrap="nowrap">
+                      <Text size="sm" fw={500} lineClamp={1}>
                         {resource.modelName ?? resource.name}
                       </Text>
                       {!isAvailable && (
@@ -156,7 +151,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                           Unavailable
                         </Badge>
                       )}
-                      <Group spacing={4} noWrap>
+                      <Group gap={4} wrap="nowrap">
                         {resource.modelType && (
                           <Badge radius="sm" size="sm">
                             {getDisplayName(resource.modelType)}
@@ -169,7 +164,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                                 onClick={copy}
                                 radius="sm"
                                 size="sm"
-                                sx={{ cursor: 'pointer' }}
+                                style={{ cursor: 'pointer' }}
                               >
                                 {copied ? 'Copied...' : resource.hash}
                               </Badge>
@@ -177,10 +172,10 @@ export function ImageResources({ imageId }: { imageId: number }) {
                           </CopyButton>
                         )} */}
                         {currentUser?.isModerator && (
-                          <ActionIcon
+                          <LegacyActionIcon
                             size="xs"
                             color="red"
-                            onClick={(e) => {
+                            onClick={(e: React.MouseEvent) => {
                               e.stopPropagation();
                               e.preventDefault();
                               e.nativeEvent.stopImmediatePropagation();
@@ -190,22 +185,22 @@ export function ImageResources({ imageId }: { imageId: number }) {
                             disabled={removing}
                           >
                             <IconX size={14} stroke={1.5} />
-                          </ActionIcon>
+                          </LegacyActionIcon>
                         )}
                       </Group>
                     </Group>
                     {isAvailable && (
-                      <Group spacing={8} position="apart" noWrap>
+                      <Group gap={8} justify="space-between" wrap="nowrap">
                         {resource.modelVersionName && (
-                          <Text color="dimmed" size="sm" lineClamp={1}>
+                          <Text c="dimmed" size="sm" lineClamp={1}>
                             {resource.modelVersionName}
                           </Text>
                         )}
-                        <Group spacing={4} ml="auto" noWrap>
+                        <Group gap={4} ml="auto" wrap="nowrap">
                           <IconBadge
                             className={classes.statBadge}
                             icon={
-                              <Text color={hasReview ? 'success.5' : undefined} inline>
+                              <Text c={hasReview ? 'success.5' : undefined} inline>
                                 <ThumbsUpIcon size={14} filled={!!hasReview} />
                               </Text>
                             }
@@ -227,7 +222,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                             className={classes.statBadge}
                             icon={<IconDownload size={14} />}
                           >
-                            <Text size={12}>
+                            <Text fz={12}>
                               {abbreviateNumber(resource.modelDownloadCount ?? 0)}
                             </Text>
                           </IconBadge>
@@ -244,8 +239,8 @@ export function ImageResources({ imageId }: { imageId: number }) {
       {resources.length > LIMIT && (
         <Divider
           label={
-            <Group spacing="xs" align="center">
-              <Text variant="link" sx={{ cursor: 'pointer' }} onClick={() => setShowAll((x) => !x)}>
+            <Group gap="xs" align="center">
+              <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={() => setShowAll((x) => !x)}>
                 {!showAll ? 'Show more' : 'Show less'}
               </Text>
             </Group>

@@ -1,0 +1,35 @@
+.imgOverlay {
+  border-bottom: light-dark(
+    1px solid var(--mantine-color-gray-2),
+    1px solid var(--mantine-color-dark-5)
+  );
+  position: relative;
+
+  &:hover .trash,
+  &:hover .source {
+    display: flex;
+  }
+}
+
+.badLabel {
+  border: 1px solid red;
+  box-shadow: 0 0 10px red;
+}
+
+.trash {
+  display: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 10;
+  margin: 4px;
+}
+
+.source {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 10;
+  margin: 4px;
+}

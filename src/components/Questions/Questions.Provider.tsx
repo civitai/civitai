@@ -7,7 +7,6 @@ import {
   Chip,
   Badge,
   Center,
-  createStyles,
   Group,
   Loader,
   Pagination,
@@ -15,6 +14,7 @@ import {
   ThemeIcon,
   Title,
   Text,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconCloudOff, IconFilter, IconHeart, IconMessageCircle } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -27,6 +27,8 @@ import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import classes from './Questions.Provider.module.scss';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function Questions({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
@@ -82,15 +84,14 @@ function QuestionsFilter() {
         <Indicator
           offset={4}
           label={filterLength ? filterLength : undefined}
-          showZero={false}
-          dot={false}
           size={16}
-          inline
           zIndex={10}
+          disabled={!filterLength}
+          inline
         >
-          <ActionIcon color="dark" variant="transparent">
+          <LegacyActionIcon color="dark" variant="transparent">
             <IconFilter size={24} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Indicator>
       </Popover.Target>
       <Popover.Dropdown>
@@ -113,8 +114,8 @@ function QuestionsFilter() {
 }
 
 function QuestionsList() {
-  const { classes, theme } = useStyles();
   const filters = useQuestionFilters();
+  const colorScheme = useComputedColorScheme('dark');
 
   const { data: questions, isLoading } = trpc.question.getPaged.useQuery(filters);
 
@@ -123,7 +124,7 @@ function QuestionsList() {
       <Loader size="xl" />
     </Center>
   ) : !!questions?.items.length ? (
-    <Stack spacing="sm">
+    <Stack gap="sm">
       {questions.items.map((question) => (
         <Link
           key={question.id}
@@ -131,21 +132,21 @@ function QuestionsList() {
           passHref
         >
           <Paper withBorder p="sm">
-            <Stack spacing="xs">
+            <Stack gap="xs">
               <Title order={3} className={classes.title}>
                 {question.title}
               </Title>
-              <Group position="apart" spacing="sm">
-                <Group spacing={4}>
+              <Group justify="space-between" gap="sm">
+                <Group gap={4}>
                   {question.tags.map((tag, index) => (
                     <Badge key={index} size="xs">
                       {tag.name}
                     </Badge>
                   ))}
                 </Group>
-                <Group spacing={4}>
+                <Group gap={4}>
                   <Badge
-                    variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
+                    variant={colorScheme === 'dark' ? 'light' : 'filled'}
                     color={question.rank.heartCount ? 'pink' : 'gray'}
                     size="xs"
                     leftSection={
@@ -157,7 +158,7 @@ function QuestionsList() {
                     {question.rank.heartCount}
                   </Badge>
                   <Badge
-                    variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
+                    variant={colorScheme === 'dark' ? 'light' : 'filled'}
                     color={question.selectedAnswerId ? 'green' : 'gray'}
                     size="xs"
                     leftSection={
@@ -175,11 +176,11 @@ function QuestionsList() {
         </Link>
       ))}
       {questions.totalPages > 1 && (
-        <Group position="apart">
+        <Group justify="space-between">
           <Text>Total {questions.totalItems} items</Text>
 
           <Pagination
-            page={filters.page}
+            value={filters.page}
             onChange={(page) => {
               const [pathname, query] = router.asPath.split('?');
               router.push({ pathname, query: { ...QS.parse(query), page } }, undefined, {
@@ -196,7 +197,7 @@ function QuestionsList() {
       <ThemeIcon size={128} radius={100}>
         <IconCloudOff size={80} />
       </ThemeIcon>
-      <Text size={32} align="center">
+      <Text fz={32} align="center">
         No results found
       </Text>
       <Text align="center">
@@ -205,16 +206,6 @@ function QuestionsList() {
     </Stack>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  title: {
-    overflowWrap: 'break-word',
-
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: 16,
-    },
-  },
-}));
 
 Questions.Sort = QuestionsSort;
 Questions.Period = QuestionsPeriod;

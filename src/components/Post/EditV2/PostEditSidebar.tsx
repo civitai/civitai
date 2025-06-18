@@ -193,7 +193,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
                 label={`Click the ${publishLabel} button to make your post Public to share with the Civitai community for comments and reactions.`}
                 {...tooltipProps}
               >
-                <Text component="span" underline>
+                <Text component="span" td="underline">
                   hidden
                 </Text>
               </Tooltip>
@@ -224,7 +224,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               : 'At least one image is required in order to publish this post to the community'
           }
           multiline
-          width={260}
+          w="260px"
           withArrow
         >
           {collectionId ? (
@@ -247,7 +247,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               >
                 {publishLabel}
               </Button>
-              <Tooltip label="Schedule Publish" withArrow>
+              <Tooltip label="Schedule Publish" disabled={!hasImages} withArrow>
                 <Button
                   variant="outline"
                   loading={updatePostMutation.isLoading}
@@ -272,7 +272,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             </Button>
           </ShareButton>
           {canSchedule && (
-            <Tooltip label="Reschedule Publish" withArrow>
+            <Tooltip label="Reschedule Publish" disabled={!hasImages} withArrow>
               <Button
                 variant="filled"
                 color="gray"
@@ -318,7 +318,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             color="red"
             loading={isLoading}
             variant="outline"
-            leftIcon={<IconTrash size={20} />}
+            leftSection={<IconTrash size={20} />}
             disabled={!features.canWrite}
           >
             Delete Post

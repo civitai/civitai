@@ -15,10 +15,7 @@ import { IconArrowRight, IconCategory, IconInfoCircle } from '@tabler/icons-reac
 import { useMemo } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import {
-  useHomeBlockGridStyles,
-  useHomeBlockStyles,
-} from '~/components/HomeBlocks/HomeBlock.Styles';
+
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -29,6 +26,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
+import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
+import clsx from 'clsx';
 
 type Props = { homeBlockId: number; metadata: Pick<HomeBlockMetaSchema, 'title' | 'description'> };
 
@@ -46,7 +45,6 @@ const ITEMS_PER_ROW = 7;
 const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const { classes: homeBlockClasses } = useHomeBlockStyles();
 
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
@@ -70,19 +68,14 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
     return filtered.slice(0, itemsToShow);
   }, [filtered]);
 
-  const { classes, cx } = useHomeBlockGridStyles({
-    count: items.length ?? 0,
-    rows: ROWS,
-  });
-
   const title = metadata.title ?? 'Featured Models';
   const useGrid = metadata.description && !currentUser;
 
   const MetaDataTop = (
-    <Stack spacing="sm">
-      <Group spacing="xs" position="apart" className={homeBlockClasses.header}>
-        <Group noWrap>
-          <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
+    <Stack gap="sm">
+      <Group gap="xs" justify="space-between" className={classes.header}>
+        <Group wrap="nowrap">
+          <Title className={classes.title} order={1} lineClamp={1}>
             {title}{' '}
           </Title>
           {currentUser && metadata.description && (
@@ -90,14 +83,14 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
               <Popover.Target>
                 <Box
                   display="inline-block"
-                  sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                  style={{ lineHeight: 0.3, cursor: 'pointer' }}
                   color="white"
                 >
                   <IconInfoCircle size={20} />
                 </Box>
               </Popover.Target>
               <Popover.Dropdown maw="100%">
-                <Text weight={500} size="lg" mb="xs">
+                <Text fw={500} size="lg" mb="xs">
                   {title}
                 </Text>
                 {metadata.description && (
@@ -107,10 +100,10 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
                     </CustomMarkdown>
                   </Text>
                 )}
-                <Group spacing="sm">
+                <Group gap="sm">
                   <Link legacyBehavior href="/models" passHref>
                     <Anchor size="sm">
-                      <Group spacing={4}>
+                      <Group gap={4}>
                         <Text inherit>Explore all models</Text>
                         <IconArrowRight size={16} />
                       </Group>
@@ -119,7 +112,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
                   {features.auctions && (
                     <Link legacyBehavior href="/auctions" passHref>
                       <Anchor size="sm">
-                        <Group spacing={4}>
+                        <Group gap={4}>
                           <Text inherit>View auctions</Text>
                           <IconArrowRight size={16} />
                         </Group>
@@ -133,10 +126,10 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
         </Group>
         <Link legacyBehavior href="/models" passHref>
           <Button
-            className={homeBlockClasses.expandButton}
+            className={classes.expandButton}
             component="a"
             variant="subtle"
-            rightIcon={<IconArrowRight size={16} />}
+            rightSection={<IconArrowRight size={16} />}
           >
             Explore all models
           </Button>
@@ -158,7 +151,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
         <ThemeIcon size={50} variant="light" color="gray">
           <IconCategory />
         </ThemeIcon>
-        <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
+        <Title className={classes.title} order={1} lineClamp={1}>
           {title}
         </Title>
       </Group>
@@ -170,14 +163,14 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
         </Text>
       )}
       <div>
-        <Group spacing="sm">
+        <Group gap="sm">
           <Link legacyBehavior href="/models" passHref>
             <Button
               size="md"
               component="a"
               variant="light"
               color="gray"
-              rightIcon={<IconArrowRight size={16} />}
+              rightSection={<IconArrowRight size={16} />}
             >
               Explore all models
             </Button>
@@ -189,7 +182,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
                 component="a"
                 variant="light"
                 color="gray"
-                rightIcon={<IconArrowRight size={16} />}
+                rightSection={<IconArrowRight size={16} />}
               >
                 View auctions
               </Button>
@@ -201,8 +194,15 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
   );
 
   return (
-    <>
-      <Box mb="md" className={cx({ [classes.meta]: useGrid })}>
+    <div
+      style={
+        {
+          '--count': items.length ?? 0,
+          '--rows': ROWS,
+        } as React.CSSProperties
+      }
+    >
+      <Box mb="md" className={clsx({ [classes.meta]: useGrid })}>
         {MetaDataTop}
       </Box>
       {isLoading || loadingPreferences ? (
@@ -233,6 +233,6 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
           </ImagesProvider>
         </div>
       )}
-    </>
+    </div>
   );
 };

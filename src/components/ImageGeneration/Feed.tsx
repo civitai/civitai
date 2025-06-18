@@ -1,4 +1,4 @@
-import { Alert, Center, createStyles, Loader, Stack, Text } from '@mantine/core';
+import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -6,10 +6,9 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
+import classes from './Feed.module.scss';
 
 export function Feed() {
-  const { classes } = useStyles();
-
   const filters = useFiltersContext((state) => state.generation);
 
   const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
@@ -32,27 +31,27 @@ export function Feed() {
   if (!steps.flatMap((x) => x.images).length)
     return (
       <Center h="100%">
-        <Stack spacing="xs" align="center" py="16">
+        <Stack gap="xs" align="center" py="16">
           <IconInbox size={64} stroke={1} />
           {filters.marker && (
-            <Stack spacing={0}>
-              <Text size={32} align="center">
+            <Stack gap={0}>
+              <Text fz={32} align="center">
                 No results found
               </Text>
               <Text align="center">{'Try adjusting your filters'}</Text>
             </Stack>
           )}
           {!filters.marker && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text size="md" align="center">
                 The queue is empty
               </Text>
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 Try{' '}
                 <Text
-                  variant="link"
+                  c="blue.4"
                   onClick={() => generationPanel.setView('generate')}
-                  sx={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer' }}
                   span
                 >
                   generating
@@ -93,7 +92,7 @@ export function Feed() {
 
       {hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-          <Center sx={{ height: 60 }}>
+          <Center style={{ height: 60 }}>
             <Loader />
           </Center>
         </InViewLoader>
@@ -101,25 +100,3 @@ export function Feed() {
     </div>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateRows: 'masonry',
-    gap: theme.spacing.xs,
-    gridTemplateColumns: '1fr',
-
-    [`@container (min-width: 290px)`]: {
-      gridTemplateColumns: 'repeat(2, 1fr)',
-    },
-    [`@container (min-width: 650px)`]: {
-      gridTemplateColumns: 'repeat(3, 1fr)',
-    },
-    [`@container (min-width: 900px)`]: {
-      gridTemplateColumns: 'repeat(4, 1fr)',
-    },
-    [`@container (min-width: 1200px)`]: {
-      gridTemplateColumns: 'repeat(auto-fill, minmax(256px, 1fr))',
-    },
-  },
-}));

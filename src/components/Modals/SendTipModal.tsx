@@ -3,12 +3,13 @@ import {
   Button,
   Chip,
   CloseButton,
-  createStyles,
   Divider,
   Group,
   Stack,
   Text,
   Modal,
+  rgba,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
 import React, { useState } from 'react';
@@ -27,85 +28,7 @@ import { useTrackEvent } from '../TrackView/track.utils';
 import { UserBuzz } from '../User/UserBuzz';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
-
-const useStyles = createStyles((theme) => ({
-  presetCard: {
-    position: 'relative',
-    width: '100%',
-    borderRadius: theme.radius.sm,
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-    }`,
-
-    '&:hover:not([disabled])': {
-      borderColor: theme.colors.blue[6],
-    },
-
-    '&[disabled]': {
-      opacity: 0.5,
-      cursor: 'not-allowed',
-    },
-  },
-
-  sendIcon: {
-    backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-    color: theme.white,
-    borderTopRightRadius: theme.radius.sm,
-    borderBottomRightRadius: theme.radius.sm,
-  },
-
-  // Chip styling
-  label: {
-    padding: `0 ${theme.spacing.xs}px`,
-
-    '&[data-checked]': {
-      border: `2px solid ${theme.colors.accent[5]}`,
-      color: theme.colors.accent[5],
-
-      '&[data-variant="filled"], &[data-variant="filled"]:hover': {
-        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-      },
-    },
-  },
-
-  // Chip styling
-  iconWrapper: {
-    display: 'none',
-  },
-
-  chipGroup: {
-    gap: 8,
-
-    [theme.fn.smallerThan('sm')]: {
-      gap: theme.spacing.md,
-    },
-  },
-
-  actions: {
-    [theme.fn.smallerThan('sm')]: {
-      flexDirection: 'column',
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      width: '100%',
-      padding: theme.spacing.md,
-    },
-  },
-
-  cancelButton: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-      order: 2,
-    },
-  },
-
-  submitButton: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-      order: 1,
-    },
-  },
-}));
+import classes from './SendTipModal.module.scss';
 
 const schema = z
   .object({
@@ -142,8 +65,8 @@ export default function SendTipModal({
 }) {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
+  const colorScheme = useComputedColorScheme('dark');
 
-  const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
 
   const [loading, setLoading] = useState(false);
@@ -211,25 +134,24 @@ export default function SendTipModal({
 
   return (
     <Modal {...dialog} fullScreen={isMobile} withCloseButton={false} radius="lg" centered>
-      <Stack spacing="md">
-        <Group position="apart" noWrap>
-          <Text size="lg" weight={700}>
+      <Stack gap="md">
+        <Group justify="space-between" wrap="nowrap">
+          <Text size="lg" fw={700}>
             Tip
           </Text>
-          <Group spacing="sm" noWrap>
+          <Group gap="sm" wrap="nowrap">
             <Badge
               radius="xl"
               variant="filled"
               h="auto"
               py={4}
               px={12}
-              sx={(theme) => ({
-                backgroundColor:
-                  theme.colorScheme === 'dark' ? theme.fn.rgba('#000', 0.31) : theme.colors.gray[0],
-              })}
+              style={{
+                backgroundColor: colorScheme === 'dark' ? rgba('#000', 0.31) : '#fff',
+              }}
             >
-              <Group spacing={4} noWrap>
-                <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
+              <Group gap={4} wrap="nowrap">
+                <Text size="xs" c="dimmed" tt="capitalize" fw={600}>
                   Available Buzz
                 </Text>
                 <UserBuzz iconSize={16} textSize="sm" accountType="user" withTooltip />
@@ -241,23 +163,25 @@ export default function SendTipModal({
         <Divider mx="-lg" />
         <Text>How much Buzz do you want to tip?</Text>
         <Form form={form} onSubmit={handleSubmit} style={{ position: 'static' }}>
-          <Stack spacing="md">
-            <InputChipGroup className={classes.chipGroup} name="amount" spacing={8}>
-              {presets.map((preset) => (
-                <Chip
-                  classNames={classes}
-                  variant="filled"
-                  key={preset.label}
-                  value={preset.amount}
-                >
-                  <Group spacing={4}>
-                    {preset.amount === amount && <IconBolt size={16} fill="currentColor" />}
-                    {preset.amount}
-                  </Group>
-                </Chip>
-              ))}
+          <Stack gap="md">
+            <InputChipGroup name="amount">
+              <Group gap={8} className={classes.chipGroup}>
+                {presets.map((preset) => (
+                  <Chip
+                    classNames={classes}
+                    variant="filled"
+                    key={preset.label}
+                    value={preset.amount}
+                  >
+                    <Group gap={4}>
+                      {preset.amount === amount && <IconBolt size={16} fill="currentColor" />}
+                      {preset.amount}
+                    </Group>
+                  </Chip>
+                ))}
+              </Group>
               <Chip classNames={classes} variant="filled" value="-1">
-                <Group spacing={4}>
+                <Group gap={4}>
                   {amount === '-1' && <IconBolt size={16} fill="currentColor" />}
                   Other
                 </Group>
@@ -272,13 +196,9 @@ export default function SendTipModal({
                 min={1}
                 max={constants.buzz.maxTipAmount}
                 disabled={sending}
-                icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-                formatter={(value) =>
-                  value && !Number.isNaN(parseFloat(value))
-                    ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                    : ''
-                }
+                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                allowDecimal={false}
+                allowNegative={false}
                 hideControls
               />
             )}
@@ -291,7 +211,7 @@ export default function SendTipModal({
               maxLength={100}
               description={`${description?.length ?? 0}/100 characters`}
             />
-            <Group className={classes.actions} position="right" mt="xl">
+            <Group className={classes.actions} justify="flex-end" mt="xl">
               <Button
                 className={classes.cancelButton}
                 variant="light"

@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Autocomplete,
   Badge,
   Button,
@@ -10,7 +9,6 @@ import {
   Paper,
   Stack,
   Text,
-  createStyles,
 } from '@mantine/core';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { IconAlertTriangle, IconCheck, IconSearch, IconX } from '@tabler/icons-react';
@@ -28,6 +26,9 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createDebouncer } from '~/utils/debouncer';
 import { TagSort } from '~/server/common/enums';
 import { openConfirmModal } from '@mantine/modals';
+import classes from './GalleryModerationModal.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function GalleryModerationModal({ modelId }: { modelId: number }) {
   const dialog = useDialogContext();
@@ -102,9 +103,9 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
   return (
     <Card withBorder>
       <Card.Section withBorder inheritPadding py="xs">
-        <Text weight={500}>Hidden Tags</Text>
+        <Text fw={500}>Hidden Tags</Text>
       </Card.Section>
-      <Card.Section withBorder sx={{ marginTop: -1 }}>
+      <Card.Section withBorder style={{ marginTop: -1 }}>
         <Autocomplete
           name="tag"
           ref={searchInputRef}
@@ -112,25 +113,26 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
           data={options}
           value={search}
           onChange={setSearch}
-          icon={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
-          onItemSubmit={(item: { value: string; id: number }) => {
+          leftSection={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
+          onOptionSubmit={(value: string) => {
+            const item = options.find((o) => o.value === value);
+            if (!item) return;
             handleToggleBlockedTag({ id: item.id, name: item.value });
             searchInputRef.current?.focus();
           }}
-          withinPortal
           variant="unstyled"
         />
       </Card.Section>
       <Card.Section inheritPadding pt="md" pb="xs">
-        <Stack spacing={5}>
+        <Stack gap={5}>
           {hiddenTags.length > 0 && (
-            <Group spacing={4}>
+            <Group gap={4}>
               {hiddenTags.map((tag) => (
                 <Badge
                   key={tag.id}
-                  sx={{ paddingRight: 3 }}
+                  style={{ paddingRight: 3 }}
                   rightSection={
-                    <ActionIcon
+                    <LegacyActionIcon
                       size="xs"
                       color="blue"
                       radius="xl"
@@ -138,7 +140,7 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
                       onClick={() => handleToggleBlockedTag(tag)}
                     >
                       <IconX size={10} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   }
                 >
                   {tag.name}
@@ -146,7 +148,7 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
               ))}
             </Group>
           )}
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             Content with these tags will not show up in your resource gallery page.
           </Text>
         </Stack>
@@ -177,9 +179,9 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
   return (
     <Card withBorder>
       <Card.Section withBorder inheritPadding py="xs">
-        <Text weight={500}>Hidden Users</Text>
+        <Text fw={500}>Hidden Users</Text>
       </Card.Section>
-      <Card.Section withBorder sx={{ marginTop: -1 }}>
+      <Card.Section withBorder style={{ marginTop: -1 }}>
         <Autocomplete
           name="tag"
           ref={searchInputRef}
@@ -187,25 +189,25 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
           data={options}
           value={search}
           onChange={setSearch}
-          icon={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
-          onItemSubmit={({ id, value: username }: { value: string; id: number }) => {
-            handleToggleBlocked({ id, username });
+          leftSection={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
+          onOptionSubmit={(value: string) => {
+            const { id } = options.find((x) => x.value === value) ?? {};
+            if (!id) return;
+            handleToggleBlocked({ id, username: value });
             searchInputRef.current?.focus();
           }}
-          withinPortal
-          variant="unstyled"
         />
       </Card.Section>
       <Card.Section inheritPadding pt="md" pb="xs">
-        <Stack spacing={5}>
+        <Stack gap={5}>
           {gallerySettings && gallerySettings.hiddenUsers.length > 0 && (
-            <Group spacing={4}>
+            <Group gap={4}>
               {gallerySettings.hiddenUsers.map((user) => (
                 <Badge
                   key={user.id}
-                  sx={{ paddingRight: 3 }}
+                  style={{ paddingRight: 3 }}
                   rightSection={
-                    <ActionIcon
+                    <LegacyActionIcon
                       size="xs"
                       color="blue"
                       radius="xl"
@@ -213,7 +215,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
                       onClick={() => handleToggleBlocked(user)}
                     >
                       <IconX size={10} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   }
                 >
                   {user.username}
@@ -221,7 +223,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
               ))}
             </Group>
           )}
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             Content from these users will not show up in your resource gallery page.
           </Text>
         </Stack>
@@ -244,7 +246,6 @@ function BrowsingLevelsStacked({
   level?: number;
   modelId: number;
 }) {
-  const { classes, cx } = useStyles();
   const { toggle } = useGallerySettings({ modelId: modelId });
   const [browsingLevel, setBrowsingLevel] = useState(level);
   const toggleBrowsingLevel = (level: number) => {
@@ -267,22 +268,22 @@ function BrowsingLevelsStacked({
           const isSelected = Flags.hasFlag(browsingLevel, level);
           return (
             <Group
-              position="apart"
+              justify="space-between"
               key={level}
               p="md"
               onClick={() => toggleBrowsingLevel(level)}
-              className={cx({ [classes.active]: isSelected })}
-              noWrap
+              className={clsx({ [classes.active]: isSelected })}
+              wrap="nowrap"
             >
-              <Group noWrap>
-                <Text weight={700} w={50} ta="center">
+              <Group wrap="nowrap">
+                <Text fw={700} w={50} ta="center">
                   {browsingLevelLabels[level]}
                 </Text>
-                <Text lh={1.2} size="sm" ta="left" sx={{ flex: '1 1' }}>
+                <Text lh={1.2} size="sm" ta="left" style={{ flex: '1 1' }}>
                   {browsingLevelDescriptions[level]}
                 </Text>
               </Group>
-              <Text color="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>
+              <Text c="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>
                 <IconCheck />
               </Text>
             </Group>
@@ -292,22 +293,3 @@ function BrowsingLevelsStacked({
     </div>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  root: {
-    ['& > div']: {
-      ['&:hover']: {
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-        cursor: 'pointer',
-      },
-      ['&:not(:last-child)']: {
-        borderBottom: `1px ${
-          theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-        } solid`,
-      },
-    },
-  },
-  active: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-  },
-}));

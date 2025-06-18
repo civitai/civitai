@@ -166,7 +166,7 @@ const pathnamesTokens = [
   '/user/[username]/collections',
   '/user/[username]',
   '/user/account',
-  '/research/rater',
+  '/games/knights-of-new-order',
   '/user/earn-potential',
   '/user/[username]/manage-categories',
   '/user/stripe-connect/onboard',

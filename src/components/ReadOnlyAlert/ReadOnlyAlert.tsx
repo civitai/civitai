@@ -15,9 +15,8 @@ export const ReadOnlyAlert = ({ message }: { message?: string }) => {
         {message ?? "Civitai is currently in read-only mode and you won't be able to make changes."}{' '}
         <Text
           component="span"
-          variant="link"
           style={{ cursor: 'pointer' }}
-          color="yellow.8"
+          c="yellow.8"
           onClick={openReadOnlyModal}
         >
           Learn More

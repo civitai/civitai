@@ -92,7 +92,7 @@ export default function EarnPotential() {
           unitAmount={potential?.total ?? 0}
           {...currencyBadgeProps}
           size="lg"
-          sx={{ fontWeight: 900, fontSize: 16 }}
+          style={{ fontWeight: 900, fontSize: 16 }}
         />
       ),
     },
@@ -110,11 +110,11 @@ export default function EarnPotential() {
       value: (
         <NumberInput
           value={earlyAccessPrice}
-          onChange={(v) => setEarlyAccessPrice(v ?? 100)}
+          onChange={(v) => setEarlyAccessPrice(Number(v) ?? 100)}
           min={100}
           max={10000}
           step={100}
-          icon={<IconBolt />}
+          leftSection={<IconBolt />}
         />
       ),
     },
@@ -124,11 +124,11 @@ export default function EarnPotential() {
       value: (
         <NumberInput
           value={earlyAccessResources}
-          onChange={(v) => setEarlyAccessResources(v ?? 1)}
+          onChange={(v) => setEarlyAccessResources(Number(v) ?? 1)}
           min={1}
           max={20}
           step={1}
-          icon={<IconCategory />}
+          leftSection={<IconCategory />}
         />
       ),
     },
@@ -138,11 +138,11 @@ export default function EarnPotential() {
       value: (
         <NumberInput
           value={earlyAccessRatio}
-          onChange={(v) => setEarlyAccessRatio(v ?? 1)}
+          onChange={(v) => setEarlyAccessRatio(Number(v) ?? 1)}
           min={1}
           max={100}
           step={1}
-          icon={<IconPercentage />}
+          leftSection={<IconPercentage />}
         />
       ),
     },
@@ -154,7 +154,7 @@ export default function EarnPotential() {
           unitAmount={earlyAccessPotential}
           {...currencyBadgeProps}
           size="lg"
-          sx={{ fontWeight: 900, fontSize: 16 }}
+          style={{ fontWeight: 900, fontSize: 16 }}
         />
       ),
     },
@@ -165,16 +165,16 @@ export default function EarnPotential() {
       <Meta deIndex />
       <Container size="md">
         <Stack>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Title mb={0}>Your Monthly Generation Earning Potential</Title>
-            <Text color="dimmed">
+            <Text c="dimmed">
               This is an estimate of your potential earnings based on the use of your resources in
               the Civitai generator over the last 30 days.
             </Text>
           </Stack>
           <Card p={0} withBorder shadow="xs">
-            <Card.Section withBorder p="xs">
-              <Text weight={500} size="lg">
+            <Card.Section p="xs" m={0} withBorder inheritPadding>
+              <Text fw={500} size="lg">
                 Generation Earning Potential
               </Text>
             </Card.Section>
@@ -182,7 +182,7 @@ export default function EarnPotential() {
               items={generationDetails}
               labelWidth="30%"
               paperProps={{
-                sx: {
+                style: {
                   borderLeft: 0,
                   borderRight: 0,
                   borderBottom: 0,
@@ -192,8 +192,8 @@ export default function EarnPotential() {
             />
           </Card>
           <Card p={0} withBorder shadow="xs">
-            <Card.Section withBorder p="xs">
-              <Text weight={500} size="lg">
+            <Card.Section p="xs" m={0} withBorder inheritPadding>
+              <Text fw={500} size="lg">
                 Early Access Earning Potential
               </Text>
             </Card.Section>
@@ -201,7 +201,7 @@ export default function EarnPotential() {
               items={earlyAccessDetails}
               labelWidth="30%"
               paperProps={{
-                sx: {
+                style: {
                   borderLeft: 0,
                   borderRight: 0,
                   borderBottom: 0,
@@ -211,14 +211,14 @@ export default function EarnPotential() {
             />
           </Card>
           <Group>
-            <Text size="xl" weight={900}>
+            <Text size="xl" fw={900}>
               Total Potential Earnings:
             </Text>
             <CurrencyBadge
               unitAmount={earlyAccessPotential + (potential?.total ?? 0)}
               {...currencyBadgeProps}
               size="xl"
-              sx={{ fontWeight: 900, fontSize: 24 }}
+              style={{ fontWeight: 900, fontSize: 24 }}
             />
           </Group>
         </Stack>

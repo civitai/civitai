@@ -22,14 +22,14 @@ export function PostImageCards() {
           <Tabs.Tab
             value="edit"
             onClick={() => toggleShowPreview(true)}
-            icon={<IconPencil size={14} />}
+            leftSection={<IconPencil size={14} />}
           >
             Edit
           </Tabs.Tab>
           <Tabs.Tab
             value="preview"
             onClick={() => toggleShowPreview(false)}
-            icon={<IconPhoto size={14} />}
+            leftSection={<IconPhoto size={14} />}
           >
             Preview
           </Tabs.Tab>

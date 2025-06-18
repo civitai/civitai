@@ -1,0 +1,60 @@
+.steps {
+  margin-top: 20px;
+  margin-bottom: 20px;
+
+  @container (max-width: 576px) {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+}
+
+.step {
+  @container (max-width: 992px) {
+    &[data-progress] {
+      display: flex;
+
+      .stepBody {
+        display: block;
+      }
+    }
+  }
+}
+
+.stepBody {
+  @container (max-width: 992px) {
+    display: none;
+  }
+}
+
+.stepDescription {
+  white-space: nowrap;
+}
+
+.stepIcon {
+  @container (max-width: 768px) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+  }
+}
+
+.stepCompletedIcon {
+  @container (max-width: 768px) {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    position: relative;
+  }
+}
+
+.separator {
+  @container (max-width: 576px) {
+    margin-left: 4px;
+    margin-right: 4px;
+    min-width: 10px;
+    // display: none;
+  }
+}

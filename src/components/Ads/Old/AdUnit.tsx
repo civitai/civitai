@@ -78,7 +78,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
                     component={Link}
                     td="underline"
                     href="/pricing"
-                    color="dimmed"
+                    c="dimmed"
                     size="xs"
                     align="center"
                   >
@@ -93,7 +93,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
                     component={Link}
                     td="underline"
                     href={`/ad-feedback?Username=${currentUser.username}`}
-                    color="dimmed"
+                    c="dimmed"
                     size="xs"
                     align="center"
                   >

@@ -15,7 +15,6 @@ import {
   Divider,
   Input,
   Radio,
-  createStyles,
   Grid,
   Anchor,
   List,
@@ -58,6 +57,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getInitials } from '~/utils/string-helpers';
 import type { ClubGetById } from '~/types/router';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -102,11 +102,16 @@ export function ClubUpsertForm({
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={32}>
+      <Stack gap={32}>
         <Grid gutter="xl">
-          <Grid.Col xs={12} md={8}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
+          <Grid.Col
+            span={{
+              base: 12,
+              md: 8,
+            }}
+          >
+            <Stack gap={32}>
+              <Stack gap="xl">
                 <InputText
                   name="name"
                   label="Title"
@@ -121,7 +126,7 @@ export function ClubUpsertForm({
                   withAsterisk
                   stickyToolbar
                 />
-                <Group grow noWrap>
+                <Group grow wrap="nowrap">
                   {avatar && (
                     <div style={{ position: 'relative', width: 124, flexGrow: 0 }}>
                       <Avatar
@@ -130,22 +135,22 @@ export function ClubUpsertForm({
                         radius="sm"
                       />
                       <Tooltip label="Remove image">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="sm"
                           variant="filled"
                           color="red"
                           onClick={() =>
                             form.setValue('avatar', club?.avatar?.id ? null : undefined)
                           }
-                          sx={(theme) => ({
+                          style={{
                             position: 'absolute',
-                            top: theme.spacing.xs * 0.4,
-                            right: theme.spacing.xs * 0.4,
+                            top: 'calc(--mantine-spacing-xs * 0.4)',
+                            right: 'calc(--mantine-spacing-xs * 0.4)',
                             zIndex: 1,
-                          })}
+                          }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </div>
                   )}
@@ -160,7 +165,7 @@ export function ClubUpsertForm({
                     style={{ maxWidth: '100%' }}
                   />
                 </Group>
-                <Group grow noWrap>
+                <Group grow wrap="nowrap">
                   {coverImage && (
                     <div style={{ position: 'relative', width: 124, flexGrow: 0 }}>
                       <Avatar
@@ -169,22 +174,22 @@ export function ClubUpsertForm({
                         radius="sm"
                       />
                       <Tooltip label="Remove image">
-                        <ActionIcon
+                        <LegacyActionIcon
                           size="sm"
                           variant="filled"
                           color="red"
                           onClick={() =>
                             form.setValue('coverImage', club?.coverImage?.id ? null : undefined)
                           }
-                          sx={(theme) => ({
+                          style={{
                             position: 'absolute',
-                            top: theme.spacing.xs * 0.4,
-                            right: theme.spacing.xs * 0.4,
+                            top: 'calc(--mantine-spacing-xs * 0.4)',
+                            right: 'calc(--mantine-spacing-xs * 0.4)',
                             zIndex: 1,
-                          })}
+                          }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     </div>
                   )}
@@ -209,26 +214,31 @@ export function ClubUpsertForm({
               </Stack>
             </Stack>
           </Grid.Col>
-          <Grid.Col xs={12} md={4}>
+          <Grid.Col
+            span={{
+              base: 12,
+              md: 4,
+            }}
+          >
             <Stack>
               <Divider label="Properties" />
               <InputSwitch
                 name="nsfw"
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Mature theme</Text>
 
-                      <ActionIcon
+                      <LegacyActionIcon
                         radius="xl"
                         size="xs"
                         color="gray"
                         onClick={openBrowsingLevelGuide}
                       >
                         <IconQuestionMark />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       This club is intended to produce mature content. A badge will be added to the
                       club&rsquo;s card on the main feed.
                     </Text>
@@ -238,11 +248,11 @@ export function ClubUpsertForm({
               <InputSwitch
                 name="unlisted"
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
+                  <Stack gap={4}>
+                    <Group gap={4}>
                       <Text inline>Unlisted</Text>
                     </Group>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       This club should not appear in the main feed
                     </Text>
                   </Stack>
@@ -252,8 +262,8 @@ export function ClubUpsertForm({
                 <InputSwitch
                   name="billing"
                   label={
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
+                    <Stack gap={4}>
+                      <Group gap={4}>
                         <Text inline>Renew Memberships Monthly</Text>
                         <Tooltip
                           label="By disabling billing, people will keep their memberships but won't be charged monthly. This is useful if you're not planning to add content for a while."
@@ -264,7 +274,7 @@ export function ClubUpsertForm({
                           </ThemeIcon>
                         </Tooltip>
                       </Group>
-                      <Text size="xs" color="dimmed">
+                      <Text size="xs" c="dimmed">
                         Members of your club will be charged a monthly fee to keep access to your
                         club. Turning this off does not affect the initial membership fee.
                       </Text>
@@ -282,7 +292,7 @@ export function ClubUpsertForm({
             </Stack>
           </Grid.Col>
         </Grid>
-        <Group position="right">
+        <Group justify="flex-end">
           <Button loading={upserting} type="submit">
             Save
           </Button>

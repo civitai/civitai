@@ -14,7 +14,8 @@ export function GenerateButton({
   onClick,
   disabled,
   ...buttonProps
-}: { cost?: number; loading?: boolean; error?: string; onClick?: () => void } & ButtonProps) {
+}: { cost?: number; loading?: boolean; error?: string; onClick?: () => void } & ButtonProps &
+  Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const canGenerate = useGenerationContext((state) => state.canGenerate);

@@ -1,4 +1,4 @@
-import { Modal, Paper, Text, createStyles, UnstyledButton } from '@mantine/core';
+import { Modal, Paper, Text, UnstyledButton } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -9,6 +9,8 @@ import {
 import { imageStore } from '~/store/image.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from './SetBrowsingLevelModal.module.scss';
+import clsx from 'clsx';
 
 export default function SetBrowsingLevelModal({
   imageId,
@@ -19,7 +21,6 @@ export default function SetBrowsingLevelModal({
 }) {
   const currentUser = useCurrentUser();
   const dialog = useDialogContext();
-  const { classes, cx } = useStyles();
   const isModerator = currentUser?.isModerator;
 
   const updateImageNsfwLevel = trpc.image.updateImageNsfwLevel.useMutation({
@@ -50,10 +51,10 @@ export default function SetBrowsingLevelModal({
             key={level}
             p="md"
             w="100%"
-            className={cx({ [classes.active]: nsfwLevel === level })}
+            className={clsx({ [classes.active]: nsfwLevel === level })}
             onClick={() => handleClick(level)}
           >
-            <Text weight={700}>{browsingLevelLabels[level]}</Text>
+            <Text fw={700}>{browsingLevelLabels[level]}</Text>
             <Text>{browsingLevelDescriptions[level]}</Text>
           </UnstyledButton>
         ))}
@@ -61,22 +62,3 @@ export default function SetBrowsingLevelModal({
     </Modal>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  root: {
-    ['& > button']: {
-      ['&:hover']: {
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-        cursor: 'pointer',
-      },
-      ['&:not(:last-child)']: {
-        borderBottom: `1px ${
-          theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-        } solid`,
-      },
-    },
-  },
-  active: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-  },
-}));

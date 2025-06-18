@@ -35,7 +35,7 @@ export const BuzzCoinbaseButton = ({
   };
 
   return (
-    <Stack spacing={0} align="center">
+    <Stack gap={0} align="center">
       <Button
         disabled={disabled || checkingHealth}
         loading={creatingBuzzOrder || creatingBuzzOrderOnramp}
@@ -43,7 +43,7 @@ export const BuzzCoinbaseButton = ({
         radius="xl"
         fullWidth
       >
-        <Group spacing="xs" noWrap>
+        <Group gap="xs" wrap="nowrap">
           <IconCoinBitcoin size={20} />
           <span>Crypto</span>
         </Group>

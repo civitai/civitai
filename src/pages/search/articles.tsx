@@ -1,4 +1,4 @@
-import { Stack, Text, Box, Center, Loader, Title, ThemeIcon, Anchor } from '@mantine/core';
+import { Stack, Text, Center, Loader, Title, ThemeIcon, Anchor } from '@mantine/core';
 import { useInstantSearch } from 'react-instantsearch';
 
 import {
@@ -76,18 +76,16 @@ export function ArticlesHitList() {
 
   if (hits.length === 0) {
     const NotFound = (
-      <Box>
+      <div>
         <Center>
-          <Stack spacing="md" align="center" maw={800}>
+          <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (
-              <Text color="dimmed">
-                {hiddenCount} articles have been hidden due to your settings.
-              </Text>
+              <Text c="dimmed">{hiddenCount} articles have been hidden due to your settings.</Text>
             )}
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <ThemeIcon size={128} radius={100} className="opacity-50">
               <IconCloudOff size={80} />
             </ThemeIcon>
-            <Title order={1} inline>
+            <Title order={1} lh={1}>
               No articles found
             </Title>
             <Text align="center">
@@ -102,45 +100,45 @@ export function ArticlesHitList() {
             </Text>
           </Stack>
         </Center>
-      </Box>
+      </div>
     );
 
     const loading = status === 'loading' || status === 'stalled';
 
     if (loading) {
       return (
-        <Box>
+        <div>
           <Center mt="md">
             <Loader />
           </Center>
-        </Box>
+        </div>
       );
     }
 
     return (
-      <Box>
+      <div>
         <Center mt="md">
           {/* Just enough time to avoid blank random page */}
           <TimeoutLoader renderTimeout={() => <>{NotFound}</>} delay={150} />
         </Center>
-      </Box>
+      </div>
     );
   }
 
   if (loadingPreferences) {
     return (
-      <Box>
+      <div>
         <Center mt="md">
           <Loader />
         </Center>
-      </Box>
+      </div>
     );
   }
 
   return (
     <Stack>
       {hiddenCount > 0 && (
-        <Text color="dimmed">{hiddenCount} articles have been hidden due to your settings.</Text>
+        <Text c="dimmed">{hiddenCount} articles have been hidden due to your settings.</Text>
       )}{' '}
       <MasonryGrid data={items} render={ArticleCard} itemId={(x) => x.id} empty={<NoContent />} />
       {hits.length > 0 && !isLastPage && (
@@ -149,7 +147,7 @@ export function ArticlesHitList() {
           loadCondition={status === 'idle'}
           style={{ gridColumn: '1/-1' }}
         >
-          <Center p="xl" sx={{ height: 36 }} mt="md">
+          <Center p="xl" style={{ height: 36 }} mt="md">
             <Loader />
           </Center>
         </InViewLoader>

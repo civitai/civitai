@@ -1,22 +1,18 @@
 .responsive {
   width: 100%;
+  height: auto;
+  max-width: var(--max-width, auto); // Use a CSS variable for dynamic maxWidth
 }
 
 .fadeIn {
   opacity: 0;
-  transition: opacity 200ms ease-in;
+  transition: var(--mantine-other-fadeIn); // Replace with Mantine's fadeIn transition variable
 }
 
 .videoThumbRoot {
   height: 100%;
   width: 100%;
   position: relative;
-
-  &:hover {
-    .playButton {
-      background-color: rgba(0,0,0,0.8)
-    }
-  }
 
   img {
     object-fit: cover;

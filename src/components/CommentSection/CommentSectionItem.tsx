@@ -1,4 +1,4 @@
-import { ActionIcon, Anchor, Badge, Button, Group, Menu, Stack, Text } from '@mantine/core';
+import { Badge, Button, Group, Menu, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowBackUp,
@@ -10,6 +10,7 @@ import {
 import { useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
@@ -26,7 +27,7 @@ import { trpc } from '~/utils/trpc';
 
 export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   // TODO Briant: This is a hack to support direct linking to a comment...
   // I wanted to just use a hash, but that broke things on refresh...
   const directLink = new URL(window.location.href);
@@ -149,18 +150,16 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   const isEditing = editComment?.id === comment.id;
 
   return (
-    <Group align="flex-start" position="apart" noWrap>
-      <Group align="flex-start" sx={{ flex: '1 1 0' }} noWrap>
+    <Group align="flex-start" justify="space-between" wrap="nowrap">
+      <Group align="flex-start" style={{ flex: '1 1 0' }} wrap="nowrap">
         <UserAvatar user={comment.user} size="md" linkToProfile />
-        <Stack spacing="xs" sx={{ flex: '1 1 0' }}>
-          <Stack spacing={0}>
-            <Group spacing={8} align="center">
+        <Stack gap="xs" style={{ flex: '1 1 0' }}>
+          <Stack gap={0}>
+            <Group gap={8} align="center">
               {!comment.user.deletedAt ? (
-                <Link legacyBehavior href={`/user/${comment.user.username}`} passHref>
-                  <Anchor variant="text" size="sm" weight="bold">
-                    <Username {...comment.user} />
-                  </Anchor>
-                </Link>
+                <Text component={Link} href={`/user/${comment.user.username}`} size="sm" fw="bold">
+                  <Username {...comment.user} />
+                </Text>
               ) : (
                 <Username {...comment.user} />
               )}
@@ -169,16 +168,12 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                   OP
                 </Badge>
               ) : null}
-              <Text color="dimmed" size="xs" component="a" href={directLink.toString()}>
+              <Text c="dimmed" className="text-xs" component="a" href={directLink.toString()}>
                 <DaysFromNow date={comment.createdAt} />
               </Text>
             </Group>
             {!isEditing ? (
-              <RenderHtml
-                html={comment.content}
-                sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-                withMentions
-              />
+              <RenderHtml html={comment.content} className="text-sm" withMentions />
             ) : (
               <RichTextEditor
                 value={editComment.content}
@@ -193,7 +188,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             )}
           </Stack>
           {!isEditing ? (
-            <Group spacing={4}>
+            <Group gap={4}>
               <ReactionPicker
                 reactions={reactions}
                 onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}
@@ -201,12 +196,11 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               {currentUser && !isOwner && !comment.locked && !isMuted && (
                 <Button
                   variant="subtle"
-                  size="xs"
                   radius="xl"
                   onClick={() => onReplyClick(comment)}
-                  compact
+                  size="compact-xs"
                 >
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     <IconArrowBackUp size={14} />
                     Reply
                   </Group>
@@ -214,7 +208,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               )}
             </Group>
           ) : (
-            <Group position="right">
+            <Group justify="flex-end">
               <Button variant="default" size="xs" onClick={() => setEditComment(null)}>
                 Cancel
               </Button>
@@ -232,15 +226,15 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
       {!isEditing && (
         <Menu position="bottom-end">
           <Menu.Target>
-            <ActionIcon size="xs" variant="subtle">
+            <LegacyActionIcon size="xs" variant="subtle">
               <IconDotsVertical size={14} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
             {isOwner || isMod ? (
               <>
                 <Menu.Item
-                  icon={<IconTrash size={14} stroke={1.5} />}
+                  leftSection={<IconTrash size={14} stroke={1.5} />}
                   onClick={() => handleDeleteComment(comment.id)}
                   color="red"
                 >
@@ -248,7 +242,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                 </Menu.Item>
                 {((!comment.locked && !isMuted) || isMod) && (
                   <Menu.Item
-                    icon={<IconEdit size={14} stroke={1.5} />}
+                    leftSection={<IconEdit size={14} stroke={1.5} />}
                     onClick={() => setEditComment(comment)}
                   >
                     Edit comment
@@ -259,7 +253,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             {(!currentUser || !isOwner) && (
               <LoginRedirect reason="report-model">
                 <Menu.Item
-                  icon={<IconFlag size={14} stroke={1.5} />}
+                  leftSection={<IconFlag size={14} stroke={1.5} />}
                   onClick={() =>
                     openReportModal({
                       entityType: ReportEntity.Comment,

@@ -1,6 +1,5 @@
 import {
   Paper,
-  createStyles,
   Text,
   Stack,
   Group,
@@ -21,49 +20,18 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
+import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrevention';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-    width: '100%',
-    height: '100%',
-    margin: 0,
-    padding: theme.spacing.md,
-    borderRadius: theme.radius.md,
-    display: 'flex',
-  },
-  title: {
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-    fontSize: 24,
-    fontWeight: 600,
-  },
-  subtitle: {
-    fontSize: 18,
-    fontWeight: 500,
-  },
-  listItem: {
-    color: `${theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.black} !important`,
-    fontSize: 16,
-
-    '.mantine-Text-root': {
-      color: `${theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.black} !important`,
-    },
-  },
-}));
+import classes from './MembershipUpsell.module.scss';
 
 export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
-  const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
     {},
-    {
-      enabled: !!currentUser,
-    }
+    { enabled: !!currentUser }
   );
 
   const { subscription, subscriptionLoading } = useActiveSubscription();
@@ -72,7 +40,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
     return (
       <Paper className={classes.card}>
         <Center w="100%">
-          <Loader variant="bars" />
+          <Loader type="bars" />
         </Center>
       </Paper>
     );
@@ -114,7 +82,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
     <Paper className={classes.card}>
       <Stack h="100%" w="100%">
         <Badge variant="light" size="lg" color="green" ml="auto" mb={-36} px={8}>
-          <Group spacing={4}>
+          <Group gap={4}>
             <IconDiscountCheck size={18} />
             <Text tt="uppercase">Get More</Text>
           </Group>
@@ -124,15 +92,15 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
             <EdgeMedia src={image} />
           </Box>
         )}
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text className={classes.title}>{capitalize(targetTier)} membership</Text>
-          <Text color="yellow.7" className={classes.subtitle}>
+          <Text c="yellow.7" className={classes.subtitle}>
             {subscription ? 'Upgrade to get even more perks:' : 'Get more with a membership:'}
           </Text>
         </Stack>
-        <Stack spacing={4}>
+        <Stack gap={4}>
           {benefits.map((benefit, index) => (
-            <Group spacing="xs" key={index} noWrap>
+            <Group gap="xs" key={index} wrap="nowrap">
               <IconCheck size={18} />
               <Text key={index} className={classes.listItem} color="faded">
                 {benefit.content}

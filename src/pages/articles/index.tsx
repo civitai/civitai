@@ -34,7 +34,7 @@ function ArticlesPage() {
       />
 
       <MasonryContainer>
-        <Stack spacing="xs">
+        <Stack gap="xs">
           {query.favorites && <Title>Your Bookmarked Articles</Title>}
           <ArticleCategories />
           <ArticlesInfinite filters={query} />

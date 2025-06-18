@@ -102,7 +102,7 @@ export const CollectionSelectDropdown = () => {
   );
 
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <Divider label="Collection details for this post" />
       {!post?.publishedAt && collectionId && selectedCollection?.metadata.termsOfServicesUrl && (
         <Alert color="blue">
@@ -135,7 +135,7 @@ export const CollectionSelectDropdown = () => {
             label={isContestCollectionsOnly ? 'Contest Selection' : 'Select collection'}
             data={selectOpts}
             value={collectionId ? collectionId.toString() : null}
-            onChange={(value: string) =>
+            onChange={(value) =>
               value ? updateCollection(parseInt(value, 10), null) : updateCollection(null, null)
             }
             disabled={!!post?.publishedAt}
@@ -158,7 +158,7 @@ export const CollectionSelectDropdown = () => {
                 label: tag.name.toUpperCase(),
               }))}
               value={collectionTagId ? collectionTagId.toString() : null}
-              onChange={(value: string) =>
+              onChange={(value) =>
                 value
                   ? updateCollection(collectionId as number, parseInt(value, 10))
                   : updateCollection(collectionId as number, null)
@@ -178,10 +178,10 @@ export const CollectionSelectDropdown = () => {
       ) : selectedCollection ? (
         <Stack>
           <Alert color="gray">
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text size="sm">
                 This post has been created for the{' '}
-                <Text component="span" weight="bold">
+                <Text component="span" fw="bold">
                   {selectedCollection.name}
                 </Text>{' '}
                 collection.
@@ -205,8 +205,8 @@ export const CollectionSelectDropdown = () => {
                 label: tag.name.toUpperCase(),
               }))}
               value={collectionTagId ? collectionTagId.toString() : null}
-              onChange={(value: string) => {
-                handlePublishedPostCollectionTagUpdate(parseInt(value, 10));
+              onChange={(value) => {
+                handlePublishedPostCollectionTagUpdate(value ? parseInt(value, 10) : 0);
               }}
               disabled={updatingCollectionTagId}
               placeholder="Select category"
@@ -222,11 +222,11 @@ export const CollectionSelectDropdown = () => {
 
           {selectedCollection && !collectionItemExists && (
             <Alert color="red">
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Text size="sm">
                   We could not find a link to the entry record for this post. This post might have
                   been removed from the{' '}
-                  <Text weight="bold" component="span">
+                  <Text fw="bold" component="span">
                     {selectedCollection.name}
                   </Text>{' '}
                   collection.

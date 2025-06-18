@@ -1,8 +1,9 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import { Comment, useCommentStyles } from '~/components/CommentsV2/Comment/Comment';
+import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
+import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 
 type PostCommentsProps = {
   postId: number;
@@ -10,8 +11,6 @@ type PostCommentsProps = {
 };
 
 export function PostComments({ postId, userId }: PostCommentsProps) {
-  const { classes } = useCommentStyles();
-
   return (
     <RootThreadProvider
       entityType="post"
@@ -22,15 +21,15 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
       {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
         isLoading ? (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         ) : (
           <Stack>
             <ReturnToRootThread />
             {activeComment && (
-              <Stack spacing="xl">
+              <Stack gap="xl">
                 <Divider />
-                <Text size="sm" color="dimmed">
+                <Text size="sm" c="dimmed">
                   Viewing thread for
                 </Text>
                 <Comment comment={activeComment} viewOnly />
@@ -44,8 +43,8 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
               {!!remaining && !showMore && (
                 <Divider
                   label={
-                    <Group spacing="xs" align="center">
-                      <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                    <Group gap="xs" align="center">
+                      <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={toggleShowMore}>
                         Show {remaining} More
                       </Text>
                     </Group>

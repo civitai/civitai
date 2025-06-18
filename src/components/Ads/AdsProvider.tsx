@@ -144,7 +144,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                 });
               `,
           }}
-        ></Script>
+        />
       )}
       {adsEnabled && (
         <Script

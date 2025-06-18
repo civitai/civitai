@@ -1,0 +1,20 @@
+.grid {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  /* min-height, column-gap, and row-gap should be set inline via style prop for dynamic values */
+
+  >div {
+    /* width and max-width should be set inline via style prop for dynamic values */
+    /* height and max-height can also be set inline if needed */
+  }
+}
+
+.gridItem {
+  position: relative;
+  padding-top: 100%;
+}
+
+.empty {
+  /* height should be set inline via style prop for dynamic value */
+}

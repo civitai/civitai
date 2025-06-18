@@ -2,7 +2,6 @@ import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import {
   ProfileSection,
   ProfileSectionPreview,
-  useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { IconArrowRight, IconPencilMinus } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
@@ -13,6 +12,7 @@ import { Button, Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import classes from '~/components/Profile/ProfileSection.module.css';
 
 const MAX_ARTICLES_DISPLAY = 32;
 export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
@@ -28,11 +28,6 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
 
   const articles = useMemo(() => _articles.slice(0, MAX_ARTICLES_DISPLAY), [_articles]);
 
-  const { classes } = useProfileSectionStyles({
-    count: articles.length,
-    rowCount: 1,
-  });
-
   const isNullState = !isLoading && !articles.length;
 
   if (isNullState && inView) {
@@ -40,7 +35,16 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
   }
 
   return (
-    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
+    <div
+      ref={ref}
+      className={isNullState ? undefined : classes.profileSection}
+      style={
+        {
+          '--count': articles.length,
+          '--row-count': 1,
+        } as React.CSSProperties
+      }
+    >
       {inView &&
         (isLoading ? (
           <ProfileSectionPreview />
@@ -58,7 +62,7 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
                   h={34}
                   component="a"
                   variant="subtle"
-                  rightIcon={<IconArrowRight size={16} />}
+                  rightSection={<IconArrowRight size={16} />}
                 >
                   <Text inherit> View all Articles</Text>
                 </Button>

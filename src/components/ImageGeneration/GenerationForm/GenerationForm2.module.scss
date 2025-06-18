@@ -1,0 +1,100 @@
+.promptPaper {
+  padding: 0 var(--mantine-spacing-sm);
+  background-color: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-6)
+  );
+
+  // These will be toggled via a conditional class in your component
+  &.noFillForm {
+    border-bottom-left-radius: var(--mantine-radius-default);
+    border-bottom-right-radius: var(--mantine-radius-default);
+  }
+
+  &.fillForm {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  // Error state (add this class conditionally)
+  &.hasError {
+    border-color: var(--mantine-color-red-6);
+    margin-bottom: 5px;
+  }
+
+  &:has(textarea:focus) {
+    border: 1px solid var(--mantine-primary-color-filled);
+  }
+}
+
+.generateButtonQuantityInput {
+  margin-top: -16px;
+
+  input {
+    background: transparent;
+    border: none;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-top-left-radius: 0;
+    text-align: center;
+    padding-right: 37px; // 25 + 12
+    padding-top: 22px;
+    padding-bottom: 6px;
+    line-height: 1;
+    font-weight: 500;
+    height: auto;
+  }
+}
+
+.promptInputLabel {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 5px;
+  align-items: center;
+}
+
+.accordionLabel {
+  padding: 0;
+}
+
+.accordionItem {
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+
+  &:first-of-type {
+    border-top-left-radius: var(--mantine-radius-sm);
+    border-top-right-radius: var(--mantine-radius-sm);
+  }
+
+  &:last-of-type {
+    border-bottom-left-radius: var(--mantine-radius-sm);
+    border-bottom-right-radius: var(--mantine-radius-sm);
+  }
+
+  &[data-active] {
+    background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+  }
+}
+
+.accordionControl {
+  padding: 8px 8px 8px 12px;
+  display: flex;
+  gap: var(--mantine-spacing-md);
+
+  &:hover {
+    background: transparent;
+  }
+
+  &[data-active] {
+    border-radius: 0 !important;
+    border-bottom: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+  }
+}
+
+.accordionContent {
+  padding: 8px 12px 12px 12px;
+}
+
+.formError {
+  border-color: var(--mantine-color-red-6);
+  color: var(--mantine-color-red-6);
+}

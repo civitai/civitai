@@ -6,7 +6,6 @@ import {
   Center,
   Chip,
   Container,
-  Divider,
   Group,
   Image,
   Loader,
@@ -15,11 +14,9 @@ import {
   Stack,
   Text,
   Title,
-  createStyles,
   HoverCard,
 } from '@mantine/core';
 import { IconAlertCircle, IconBrandSpeedtest, IconCircleCheck } from '@tabler/icons-react';
-import { IconCheck } from '@tabler/icons-react';
 import { IconArrowUpRight } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -30,8 +27,8 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BuildBudget, BuildFeatures } from '~/server/schema/build-guide.schema';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
-import dayjs from 'dayjs';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import classes from './index.module.css';
 
 const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
 const processors = ['AMD', 'Intel'] as const;
@@ -41,58 +38,6 @@ type State = {
   selectedProcessor: (typeof processors)[number];
 };
 
-const useStyles = createStyles((theme) => ({
-  section: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
-
-    [theme.fn.smallerThan('sm')]: {
-      padding: theme.spacing.md,
-    },
-  },
-
-  component: {
-    '&:not(:first-of-type)': {
-      paddingTop: theme.spacing.sm,
-      borderTop: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-      }`,
-    },
-  },
-
-  componentTitleWrapper: {
-    [theme.fn.smallerThan('sm')]: {
-      flexDirection: 'row-reverse',
-      width: '100%',
-    },
-  },
-
-  // Chip styles
-  chipLabel: {
-    '&[data-variant="filled"]': {
-      '&[data-checked]': {
-        '&, &:hover': {
-          color: theme.colors.blue[4],
-          backgroundColor: theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.2),
-          padding: `0 ${theme.spacing.lg}px`,
-        },
-      },
-    },
-  },
-
-  chipIconWrapper: { display: 'none' },
-
-  hideMobile: {
-    [theme.fn.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-  hideDesktop: {
-    [theme.fn.largerThan('sm')]: {
-      display: 'none',
-    },
-  },
-}));
-
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg }) => {
@@ -100,9 +45,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const aDayAgo = dayjs().subtract(1, 'day').toDate();
 export default function BuildPage() {
-  const { classes } = useStyles();
   const [state, setState] = useState<State>({ selectedBudget: 'Mid', selectedProcessor: 'AMD' });
   const { data: builds, isLoading } = trpc.buildGuide.getAll.useQuery();
   const buildName = `${state.selectedBudget}_${state.selectedProcessor}`.toLowerCase();
@@ -117,45 +60,45 @@ export default function BuildPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]}
       />
       <Container size={800}>
-        <Stack spacing="xl">
-          <Stack spacing={0}>
+        <Stack gap="xl">
+          <Stack gap={0}>
             <Title>Hardware We Love</Title>
-            <Text size="sm" color="dimmed" mb="sm">
+            <Text size="sm" c="dimmed" mb="sm">
               Any purchases made using these links directly contributes to Civitai ❤️
             </Text>
-            <Group position="apart" spacing={8}>
-              <Stack spacing={8}>
-                <Text size="lg" weight={500} color="dimmed">
+            <Group justify="space-between" gap={8}>
+              <Stack gap={8}>
+                <Text size="lg" fw={500} c="dimmed">
                   Select your budget
                 </Text>
                 <Chip.Group
-                  spacing={4}
                   value={state.selectedBudget}
                   onChange={(value) =>
                     setState((curr) => ({ ...curr, selectedBudget: value as BuildBudget }))
                   }
                 >
-                  {buildBudgets.map((budget) => (
-                    <Chip
-                      key={budget}
-                      classNames={{
-                        label: classes.chipLabel,
-                        iconWrapper: classes.chipIconWrapper,
-                      }}
-                      value={budget}
-                      variant="filled"
-                    >
-                      <span>{budget}</span>
-                    </Chip>
-                  ))}
+                  <Group gap={4}>
+                    {buildBudgets.map((budget) => (
+                      <Chip
+                        key={budget}
+                        classNames={{
+                          label: classes.chipLabel,
+                          iconWrapper: classes.chipIconWrapper,
+                        }}
+                        value={budget}
+                        variant="filled"
+                      >
+                        <span>{budget}</span>
+                      </Chip>
+                    ))}
+                  </Group>
                 </Chip.Group>
               </Stack>
-              <Stack spacing={8}>
-                <Text size="lg" weight={500} color="dimmed">
+              <Stack gap={8}>
+                <Text size="lg" fw={500} c="dimmed">
                   Processor
                 </Text>
                 <Chip.Group
-                  spacing={4}
                   value={state.selectedProcessor}
                   onChange={(value) =>
                     setState((curr) => ({
@@ -164,19 +107,21 @@ export default function BuildPage() {
                     }))
                   }
                 >
-                  {processors.map((processor) => (
-                    <Chip
-                      key={processor}
-                      classNames={{
-                        label: classes.chipLabel,
-                        iconWrapper: classes.chipIconWrapper,
-                      }}
-                      value={processor}
-                      variant="filled"
-                    >
-                      <span>{processor}</span>
-                    </Chip>
-                  ))}
+                  <Group gap={4}>
+                    {processors.map((processor) => (
+                      <Chip
+                        key={processor}
+                        classNames={{
+                          label: classes.chipLabel,
+                          iconWrapper: classes.chipIconWrapper,
+                        }}
+                        value={processor}
+                        variant="filled"
+                      >
+                        <span>{processor}</span>
+                      </Chip>
+                    ))}
+                  </Group>
                 </Chip.Group>
               </Stack>
             </Group>
@@ -189,12 +134,12 @@ export default function BuildPage() {
             <>
               <Paper className={classes.section} p="xl" radius="md" withBorder>
                 <Stack>
-                  <Group spacing={8} position="apart">
+                  <Group gap={8} justify="space-between">
                     <HoverCard shadow="md" width={300} zIndex={100} withArrow>
                       <HoverCard.Target>
-                        <Stack spacing={8}>
-                          <Group spacing={8} noWrap>
-                            <Text size="xl" weight={600}>
+                        <Stack gap={8}>
+                          <Group gap={8} wrap="nowrap">
+                            <Text size="xl" fw={600}>
                               Generation Speed
                             </Text>
                             <IconBrandSpeedtest size={32} />
@@ -207,7 +152,7 @@ export default function BuildPage() {
                         </Stack>
                       </HoverCard.Target>
                       <HoverCard.Dropdown>
-                        <Text color="yellow" weight={500}>
+                        <Text c="yellow" fw={500}>
                           About Generation Speed
                         </Text>
                         <Text size="sm">
@@ -219,7 +164,7 @@ export default function BuildPage() {
                     </HoverCard>
                     <PriceTag price={data?.totalPrice ?? 0} size={48} />
                   </Group>
-                  <Group spacing={4}>
+                  <Group gap={4}>
                     {Object.entries(BuildFeatures).map(([key, name]) => {
                       const hasFeature = data?.capabilities?.features.includes(key as any);
 
@@ -249,18 +194,13 @@ export default function BuildPage() {
                       radius="sm"
                       px="lg"
                       py="sm"
-                      sx={(theme) => ({
-                        backgroundColor:
-                          theme.colorScheme === 'dark'
-                            ? theme.colors.dark[5]
-                            : theme.colors.gray[0],
-                      })}
+                      className="bg-gray-0 dark:bg-dark-5"
                       withBorder
                     >
-                      <Group spacing="lg" align="start" noWrap>
+                      <Group gap="lg" align="start" wrap="nowrap">
                         {data?.user && <UserAvatar user={data.user} avatarSize={64} />}
-                        <Stack spacing={8}>
-                          <Text size="lg" weight="bold">
+                        <Stack gap={8}>
+                          <Text size="lg" fw="bold">
                             {data?.user.username}
                           </Text>
                           <ContentClamp maxHeight={60}>
@@ -278,24 +218,19 @@ export default function BuildPage() {
                 {data?.components.map((component) => (
                   <Card.Section key={component.productId} withBorder p="xl">
                     <Stack className={classes.component}>
-                      <Group spacing={80} position="apart" w="100%" noWrap>
-                        <Group className={classes.componentTitleWrapper} spacing="lg" noWrap>
-                          <Image
-                            src={component.imageUrl}
-                            alt={component.name}
-                            width={72}
-                            radius="sm"
-                          />
-                          <Stack spacing={8} align="flex-start" style={{ flex: 1 }}>
+                      <Group gap={80} justify="space-between" w="100%" wrap="nowrap">
+                        <Group className={classes.componentTitleWrapper} gap="lg" wrap="nowrap">
+                          <Image src={component.imageUrl} alt={component.name} w={72} radius="sm" />
+                          <Stack gap={8} align="flex-start" style={{ flex: 1 }}>
                             <Badge color="orange" radius="sm" tt="capitalize">
                               {component.type}
                             </Badge>
-                            <Text size="lg" weight={600} lineClamp={2} lh={1.2}>
+                            <Text size="lg" fw={600} lineClamp={2} lh={1.2}>
                               {component.name}
                             </Text>
                           </Stack>
                         </Group>
-                        <Group className={classes.hideMobile} spacing={40} noWrap>
+                        <Group className={classes.hideMobile} gap={40} wrap="nowrap">
                           {showPrices && <PriceTag price={component.price} size={24} />}
                           <Button
                             component="a"
@@ -303,7 +238,7 @@ export default function BuildPage() {
                             rel="nofollow noreferrer"
                             target="_blank"
                             tt="uppercase"
-                            rightIcon={<IconArrowUpRight size={16} />}
+                            rightSection={<IconArrowUpRight size={16} />}
                           >
                             {showPrices && component.price ? 'Buy' : 'Check Price'}
                           </Button>
@@ -324,7 +259,7 @@ export default function BuildPage() {
                         rel="nofollow noreferrer"
                         target="_blank"
                         tt="uppercase"
-                        rightIcon={<IconArrowUpRight size={16} />}
+                        rightSection={<IconArrowUpRight size={16} />}
                       >
                         {component.price ? 'Buy' : 'Check Price'}
                       </Button>
@@ -332,8 +267,8 @@ export default function BuildPage() {
                   </Card.Section>
                 ))}
                 {data && data.updatedAt && (
-                  <Group position="apart" mt={5}>
-                    <Text color="dimmed" size="xs">
+                  <Group justify="space-between" mt={5}>
+                    <Text c="dimmed" size="xs">
                       Prices last updated <DaysFromNow date={data.updatedAt} />
                     </Text>
                   </Group>
@@ -366,11 +301,11 @@ function PriceTag({
   const decimalFontSize = size / PRICE_FONT_SIZE_COEFFICIENT;
 
   return (
-    <Group className={className} spacing={4} align="start" noWrap>
-      <Text size={size} weight={600} color={color} inline>
+    <Group className={className} gap={4} align="start" wrap="nowrap">
+      <Text fz={size} fw={600} c={color} inline>
         ${intPart}
       </Text>
-      <Text size={decimalFontSize} weight={600} color={color ?? 'dimmed'} inline>
+      <Text fz={decimalFontSize} fw={600} c={color ?? 'dimmed'} inline>
         {decimalPart}
       </Text>
     </Group>

@@ -1,0 +1,98 @@
+.root {
+  flex-grow: 1;
+
+  @container (max-width: theme('screens.md')) {
+    height: 100%;
+    flex-grow: 1;
+  }
+}
+
+.wrapper {
+  @container (max-width: theme('screens.md')) {
+    height: 100%;
+  }
+}
+
+.input {
+  border-radius: 0 !important;
+
+  @container (max-width: theme('screens.md')) {
+    height: 100%;
+  }
+}
+
+.dropdown {
+  @container (max-width: theme('screens.sm')) {
+    margin-top: -7px;
+  }
+}
+
+.targetSelectorRoot {
+  width: 110px;
+
+  @container (max-width: theme('screens.md')) {
+    display: none; // TODO.search: Remove this once we figure out a way to prevent hiding the whole bar when selecting a target
+    height: 100%;
+
+    &,
+    &>[role="combobox"],
+    &>[role="combobox"] * {
+      height: 100%;
+    }
+  }
+
+  @container (max-width: theme('screens.sm')) {
+    width: 25%;
+  }
+}
+
+.targetSelectorInput {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  background-color: light-dark(
+    var(--mantine-color-gray-3),
+    var(--mantine-color-gray-8)
+  );
+  padding-right: 18px;
+
+  &:not(:focus) {
+    border-right-style: none;
+  }
+
+  @container (max-width: theme('screens.md')) {
+    height: 100%;
+  }
+}
+
+.targetSelectorRightSection {
+  pointer-events: none;
+}
+
+.searchButton {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-color: light-dark(
+    var(--mantine-color-gray-4),
+    var(--mantine-color-dark-4)
+  ) !important;
+  border-left: none !important;
+  background-color: light-dark(
+    var(--mantine-color-gray-3),
+    var(--mantine-color-gray-8)
+  ) !important;
+  color: light-dark(
+    var(--mantine-color-black),
+    var(--mantine-color-white)
+  );
+
+  &:hover {
+    background-color: light-dark(
+      var(--mantine-color-gray-4),
+      var(--mantine-color-gray-7)
+    ) !important;
+  }
+
+  @container (max-width: theme('screens.md')) {
+    display: none;
+  }
+}

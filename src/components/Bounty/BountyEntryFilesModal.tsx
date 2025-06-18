@@ -65,15 +65,15 @@ function BountyEntryFiles({ bountyEntry }: Props) {
           unlock amount.
         </Text>
       )}
-      <ScrollArea.Autosize maxHeight={400}>
-        <Stack spacing="md">
+      <ScrollArea.Autosize mah={400}>
+        <Stack gap="md">
           {files.map((file) => {
             const isLocked = !file.url;
 
             return (
               <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
                 <Stack>
-                  <Group position="apart">
+                  <Group justify="space-between">
                     <Group>
                       {isLocked ? (
                         <Tooltip
@@ -88,7 +88,7 @@ function BountyEntryFiles({ bountyEntry }: Props) {
                       ) : (
                         <IconLockOpen />
                       )}
-                      <Stack spacing={0}>
+                      <Stack gap={0}>
                         {file.url && !isLocked ? (
                           <Anchor
                             href={`/api/download/attachments/${file.id}`}
@@ -99,17 +99,17 @@ function BountyEntryFiles({ bountyEntry }: Props) {
                             {file.name}
                           </Anchor>
                         ) : (
-                          <Text size="sm" weight={500} lineClamp={1}>
+                          <Text size="sm" fw={500} lineClamp={1}>
                             {file.name}
                           </Text>
                         )}
-                        <Text color="dimmed" size="xs">
+                        <Text c="dimmed" size="xs">
                           {formatKBytes(file.sizeKB)}
                         </Text>
                       </Stack>
                     </Group>
 
-                    <Group spacing={0}>
+                    <Group gap={0}>
                       {file.metadata.benefactorsOnly && (
                         <Tooltip
                           label="Only users who award this entry will have access to this file"

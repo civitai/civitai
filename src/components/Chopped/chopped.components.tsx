@@ -59,6 +59,7 @@ import { useBase64Audio } from '~/server/utils/audio-utils';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { openConfirmModal } from '@mantine/modals';
 import { useChoppedServer } from '~/components/Chopped/chopped.connection';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type JudgeThinkType = 'critiquing' | 'deciding';
 
@@ -94,9 +95,9 @@ export function ChoppedLayoutOld({
               }`}
             >
               {canBack && (
-                <ActionIcon onClick={() => setGameState(undefined)}>
+                <LegacyActionIcon onClick={() => setGameState(undefined)}>
                   <IconArrowLeft />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
               {typeof title === 'string' ? <Title>{title}</Title> : title}
             </div>
@@ -162,25 +163,25 @@ export function ChoppedLayout({
               }`}
             >
               {canBack && (
-                <ActionIcon onClick={() => setGameState(undefined)}>
+                <LegacyActionIcon onClick={() => setGameState(undefined)}>
                   <IconArrowLeft />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
               {typeof title === 'string' ? <Title>{title}</Title> : title}
               <Menu position="bottom-end">
                 <Menu.Target>
-                  <ActionIcon className="ml-auto">
+                  <LegacyActionIcon className="ml-auto">
                     <IconMenu2 />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown>
                   <Menu.Item
                     onClick={toggleAutoplay}
-                    icon={autoplay ? <IconVolume /> : <IconVolumeOff />}
+                    leftSection={autoplay ? <IconVolume /> : <IconVolumeOff />}
                   >
                     {autoplay ? 'Disable' : 'Enable'} Audio Autoplay
                   </Menu.Item>
-                  <Menu.Item color="red" icon={<IconLogout />} onClick={exitGame}>
+                  <Menu.Item color="red" leftSection={<IconLogout />} onClick={exitGame}>
                     Leave Game
                   </Menu.Item>
                 </Menu.Dropdown>
@@ -213,9 +214,9 @@ export function ChoppedHeader({
   return (
     <Group>
       {canBack && (
-        <ActionIcon onClick={() => setGameState(undefined)}>
+        <LegacyActionIcon onClick={() => setGameState(undefined)}>
           <IconArrowLeft />
-        </ActionIcon>
+        </LegacyActionIcon>
       )}
       {typeof children === 'string' ? <Title>{children}</Title> : children}
     </Group>
@@ -353,9 +354,15 @@ export function ChoppedJudgeComment({
               {indicator}
             </div>
             {audio && (
-              <ActionIcon color="gray" variant="filled" radius="xl" size="xl" onClick={toggleAudio}>
+              <LegacyActionIcon
+                color="gray"
+                variant="filled"
+                radius="xl"
+                size="xl"
+                onClick={toggleAudio}
+              >
                 <Icon />
-              </ActionIcon>
+              </LegacyActionIcon>
             )}
           </div>
           <div className="flex-1">
@@ -441,7 +448,7 @@ function ErrorBoundaryContent({
   return (
     <Alert color="yellow" title="An error has occurred">
       <div className="flex flex-col gap-3">
-        {error && <Text color="red">{error.message}</Text>}
+        {error && <Text c="red">{error.message}</Text>}
         <Text>To continue, try reloading your webpage.</Text>
         <Button onClick={handleClick}>Leave game</Button>
       </div>
