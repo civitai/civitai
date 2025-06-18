@@ -97,6 +97,10 @@ button, input, optgroup, select, textarea {
   color: inherit;
 }
 
+.mantine-Button-loader {
+  transform: translate(-50%, calc(-50% + calc(0.0625rem * var(--mantine-scale))));
+}
+
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
   input:focus,
