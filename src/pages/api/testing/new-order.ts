@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-import { poolCounters } from '~/server/games/new-order/utils';
+import { poolCounters, blessedBuzzCounter } from '~/server/games/new-order/utils';
 import { addImageToQueue, getImagesQueue } from '~/server/services/games/new-order.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
@@ -29,11 +29,16 @@ const removeFromQueueSchema = z.object({
   rankType: z.nativeEnum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const),
 });
 
+const getBlessedBuzzSchema = z.object({
+  action: z.literal('get-blessed-buzz'),
+});
+
 const schema = z.discriminatedUnion('action', [
   insertInQueueSchema,
   getQueueSchema,
   showAllQueuesSchema,
   removeFromQueueSchema,
+  getBlessedBuzzSchema,
 ]);
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
@@ -126,6 +131,14 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     return res.status(200).json({
       message: 'Non-existing images removed from queue successfully',
     });
+  }
+
+  if (action === 'get-blessed-buzz') {
+    // Retrieve all entries with their scores
+    const allEntries = await blessedBuzzCounter.getAll({ withCount: true, limit: 100000 });
+    // Filter out entries with negative values
+    const filtered = allEntries.filter((entry) => Number(entry.score) < 0);
+    return res.status(200).json({ results: filtered });
   }
 
   return res.status(200).json({ how: 'did i get here?' });
