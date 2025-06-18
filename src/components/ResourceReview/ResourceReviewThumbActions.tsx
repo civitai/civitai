@@ -1,5 +1,5 @@
 import type { MantineSize } from '@mantine/core';
-import { Button, createStyles, Group, Text } from '@mantine/core';
+import { Button, Group, Text } from '@mantine/core';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import {
   useCreateResourceReview,
@@ -14,26 +14,7 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import type { ResourceReviewSimpleModel } from '~/server/selectors/resourceReview.selector';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-
-const useThumbActionStyles = createStyles(() => ({
-  button: {
-    overflow: 'hidden',
-    '.mantine-Button-leftIcon': {
-      position: 'absolute',
-      left: 12,
-      top: '50%',
-      transform: 'translateY(-50%)',
-    },
-    '&:last-of-type .mantine-Button-leftIcon': {
-      right: 12,
-      left: 'auto',
-      marginRight: 0,
-    },
-    '&[data-loading]::before': {
-      borderRadius: 0,
-    },
-  },
-}));
+import classes from './ResourceReviewThumbActions.module.scss';
 
 export function ResourceReviewThumbActions({
   modelId,
@@ -48,7 +29,6 @@ export function ResourceReviewThumbActions({
   withCount?: boolean;
   size?: MantineSize;
 }) {
-  const { classes } = useThumbActionStyles();
   const { totals, loading: loadingTotals } = useQueryResourceReviewTotals(
     {
       modelId,
@@ -106,8 +86,8 @@ export function ResourceReviewThumbActions({
           size={size}
           fullWidth
         >
-          <Text color="success.5" size="xs" inline>
-            <Group spacing={4} noWrap>
+          <Text component="div" c="success.5" size="xs" inline>
+            <Group gap={4} wrap="nowrap">
               <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
               {withCount && !loadingTotals && abbreviateNumber(totals?.up ?? 0)}
             </Group>
@@ -127,7 +107,7 @@ export function ResourceReviewThumbActions({
           size={size}
           fullWidth
         >
-          <Text color="red" inline>
+          <Text component="div" c="red" inline>
             <ThumbsDownIcon size={20} filled={isThumbsDown} />
           </Text>
         </Button>
@@ -162,7 +142,7 @@ export function ResourceReviewThumbBadge({
       color={hasReview ? 'success.5' : 'gray'}
       size="lg"
       icon={<ThumbsUpIcon size={16} filled />}
-      sx={{ cursor: 'pointer' }}
+      style={{ cursor: 'pointer' }}
       onClick={onClick}
     >
       <Text>{abbreviateNumber(totals?.up ?? 0)}</Text>

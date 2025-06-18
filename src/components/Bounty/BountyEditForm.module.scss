@@ -1,0 +1,9 @@
+.title {
+  @container (max-width: theme('screens.sm')) {
+    font-size: 24px;
+  }
+}
+
+.fluid {
+  max-width: 100% !important;
+}

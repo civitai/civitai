@@ -1,7 +1,5 @@
-/* eslint-disable react/jsx-no-undef */
 import type { GroupProps, StackProps } from '@mantine/core';
 import {
-  ActionIcon,
   Group,
   Popover,
   Stack,
@@ -10,7 +8,6 @@ import {
   Title,
   Paper,
   Indicator,
-  createStyles,
   ScrollArea,
   Divider,
   Center,
@@ -20,8 +17,7 @@ import {
   ColorSwatch,
   useMantineTheme,
   List,
-  Box,
-  Badge,
+  defaultVariantColorsResolver,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification } from '@mantine/notifications';
@@ -55,6 +51,8 @@ import { constants } from '~/server/common/constants';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { openCivitaiLinkWizardModal } from '~/components/Dialog/dialog-registry';
+import classes from './CivitaiLinkPopover.module.scss';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function CivitaiLinkPopover() {
   return (
@@ -122,10 +120,10 @@ function SupporterHelp() {
       Are you a supporter and seeing this message?{' '}
       <Text
         component="span"
-        variant="link"
+        c="blue.4"
         td="underline"
         onClick={() => refreshSession()}
-        sx={{ cursor: 'pointer' }}
+        style={{ cursor: 'pointer' }}
       >
         Click here
       </Text>
@@ -146,16 +144,16 @@ function AboutCivitaiLink() {
         This feature is currently in early access and only available to Supporters.
       </AlertWithIcon>
       <SupporterHelp />
-      <Stack py="sm" px="lg" spacing={4}>
+      <Stack py="sm" px="lg" gap={4}>
         <Center p="md" pb={0}>
           <CivitaiLinkSvg />
         </Center>
         <Text my="xs">Interact with any Stable Diffusion instance in realtime from Civitai</Text>
       </Stack>
       <Divider />
-      <Group spacing={0} grow>
+      <Group gap={0} grow>
         <Button
-          leftIcon={<IconVideo size={18} />}
+          leftSection={<IconVideo size={18} />}
           radius={0}
           component="a"
           href="/v/civitai-link-intro"
@@ -163,7 +161,7 @@ function AboutCivitaiLink() {
         >
           Video Demo
         </Button>
-        <Button rightIcon={<IconHeart size={18} />} radius={0} component={Link} href="/pricing">
+        <Button rightSection={<IconHeart size={18} />} radius={0} component={Link} href="/pricing">
           Become a Supporter
         </Button>
       </Group>
@@ -185,23 +183,23 @@ function LinkDropdown() {
 
   return (
     <Paper style={{ overflow: 'hidden' }}>
-      <Stack spacing={0} p="xs">
-        <Group position="apart" noWrap>
-          <Group spacing="xs">
+      <Stack gap={0} p="xs">
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap="xs">
             <Title order={4} size="sm">
               Civitai Link
             </Title>
           </Group>
           {canToggleManageInstances && (
             <Tooltip label="Manage instances">
-              <ActionIcon onClick={handleManageClick}>
+              <LegacyActionIcon onClick={handleManageClick}>
                 <IconSettings size={20} />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Tooltip>
           )}
         </Group>
         {!!instances?.length && (
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             {instance?.name ?? 'no instance selected'}
           </Text>
         )}
@@ -227,15 +225,15 @@ function LinkDropdown() {
 
 function NotConnected({ error }: { error?: string }) {
   return (
-    <Stack p="xl" align="center" spacing={0}>
+    <Stack p="xl" align="center" gap={0}>
       <IconNetworkOff size={60} strokeWidth={1} />
       <Text>Cannot Connect</Text>
       <Text
-        color="dimmed"
+        c="dimmed"
         size="xs"
       >{`We're unable to connect to the Civitai Link Coordination Server.`}</Text>
       {error && (
-        <Text color="red" size="xs">
+        <Text c="red" size="xs">
           {error}
         </Text>
       )}
@@ -245,15 +243,15 @@ function NotConnected({ error }: { error?: string }) {
 
 function LostConnection({ error }: { error?: string }) {
   return (
-    <Stack p="xl" align="center" spacing={0}>
+    <Stack p="xl" align="center" gap={0}>
       <IconNetworkOff size={60} strokeWidth={1} />
       <Text>Connection Lost</Text>
       <Text
-        color="dimmed"
+        c="dimmed"
         size="xs"
       >{`We've lost connect to the Civitai Link Coordination Server.`}</Text>
       {error && (
-        <Text color="red" size="xs">
+        <Text c="red" size="xs">
           {error}
         </Text>
       )}
@@ -262,8 +260,6 @@ function LostConnection({ error }: { error?: string }) {
 }
 
 function InstancesManager() {
-  const { classes } = useStyles();
-
   const {
     instances,
     instance: selectedInstance,
@@ -281,48 +277,47 @@ function InstancesManager() {
   const showControls = status !== 'no-socket-connection';
 
   return (
-    <Stack spacing={0}>
-      <Group position="apart" p="xs">
-        <Text weight={500}>Stable Diffusion Instances</Text>
+    <Stack gap={0}>
+      <Group justify="space-between" p="xs">
+        <Text fw={500}>Stable Diffusion Instances</Text>
         {showControls && (
           <Button
-            compact
-            size="xs"
+            size="compact-xs"
             variant="outline"
-            leftIcon={<IconPlus size={18} />}
+            leftSection={<IconPlus size={18} />}
             onClick={handleAddClick}
           >
             Add Instance
           </Button>
         )}
       </Group>
-      <ScrollArea.Autosize maxHeight={410}>
+      <ScrollArea.Autosize mah={410}>
         {instances?.map((instance) => {
           const isSelected = instance.id === selectedInstance?.id;
           return (
-            <Group key={instance.id} className={classes.listItem} position="apart" p="xs">
+            <Group key={instance.id} className={classes.listItem} justify="space-between" p="xs">
               <Text>{instance.name}</Text>
-              <Group spacing="xs">
+              <Group gap="xs">
                 {isSelected && <BigIndicator />}
                 {showControls && (
                   <>
                     {isSelected ? (
                       <Tooltip label="disconnect" withinPortal>
-                        <ActionIcon onClick={deselectInstance}>
+                        <LegacyActionIcon onClick={deselectInstance}>
                           <IconLinkOff size={20} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     ) : (
                       <Tooltip label="connect" withinPortal>
-                        <ActionIcon onClick={() => selectInstance(instance.id)}>
+                        <LegacyActionIcon onClick={() => selectInstance(instance.id)}>
                           <IconLink size={20} />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Tooltip>
                     )}
                     <Tooltip label="delete" withinPortal>
-                      <ActionIcon color="red" onClick={() => deleteInstance(instance.id)}>
+                      <LegacyActionIcon color="red" onClick={() => deleteInstance(instance.id)}>
                         <IconTrash size={20} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Tooltip>
                   </>
                 )}
@@ -338,10 +333,10 @@ function InstancesManager() {
 function BigIndicator() {
   const theme = useMantineTheme();
   const { status } = useCivitaiLink();
-  const swatch = theme.fn.variant({
+  const swatch = defaultVariantColorsResolver({
     variant: 'filled',
-    primaryFallback: false,
     color: civitaiLinkStatusColors[status],
+    theme,
   });
   return swatch.background ? <ColorSwatch color={swatch.background} size={20} /> : null;
 }
@@ -349,7 +344,7 @@ function BigIndicator() {
 function GetStarted() {
   return (
     <>
-      <Stack py="sm" px="lg" spacing={4}>
+      <Stack py="sm" px="lg" gap={4}>
         <Center p="md" pb={0}>
           <CivitaiLinkSvg />
         </Center>
@@ -358,7 +353,7 @@ function GetStarted() {
       <Divider />
       <Stack>
         <Button
-          leftIcon={<IconPlus size={18} />}
+          leftSection={<IconPlus size={18} />}
           radius={0}
           onClick={() => openCivitaiLinkWizardModal()}
         >
@@ -382,10 +377,10 @@ function GetReconnected() {
         size="md"
         color="yellow"
       >{`Couldn't connect to SD instance!`}</AlertWithIcon>
-      <Stack p="sm" spacing={4}>
+      <Stack p="sm" gap={4}>
         {instance?.key && (
-          <Stack spacing={0} align="center" mb="md">
-            <Text size="md" weight={700}>
+          <Stack gap={0} align="center" mb="md">
+            <Text size="md" fw={700}>
               Link Key
             </Text>
             <CopyButton value={instance.key}>
@@ -396,7 +391,7 @@ function GetReconnected() {
                     variant="default"
                     size="lg"
                     px="sm"
-                    rightIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                    rightSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
                   >
                     {!copied ? instance.key : 'Copied'}
                   </Button>
@@ -405,7 +400,7 @@ function GetReconnected() {
             </CopyButton>
           </Stack>
         )}
-        <Text size="md" weight={500}>
+        <Text size="md" fw={500}>
           Troubleshooting
         </Text>
         <List type="unordered">
@@ -413,7 +408,7 @@ function GetReconnected() {
           <List.Item>
             If your instance is running and you are still unable to connect,{' '}
             <Text
-              variant="link"
+              c="blue.4"
               display="inline"
               style={{ cursor: 'pointer' }}
               onClick={handleGenerateKey}
@@ -430,27 +425,18 @@ function GetReconnected() {
 
 function ActivityList() {
   const ids = useCivitaiLinkStore((state) => state.ids);
-  const { classes } = useStyles();
   return ids.length > 0 ? (
-    <ScrollArea.Autosize maxHeight={410}>
+    <ScrollArea.Autosize mah={410}>
       {ids.map((id) => (
         <LinkActivity key={id} id={id} p="xs" pr="sm" className={classes.listItem} />
       ))}
     </ScrollArea.Autosize>
   ) : (
     <Center p="lg">
-      <Text color="dimmed">No activity for this instance</Text>
+      <Text c="dimmed">No activity for this instance</Text>
     </Center>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  listItem: {
-    '&:nth-of-type(2n + 1)': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    },
-  },
-}));
 
 function LinkButton() {
   // only show the connected indicator if there are any instances
@@ -459,22 +445,22 @@ function LinkButton() {
   const color = civitaiLinkStatusColors[status];
 
   return (
-    <Box sx={{ position: 'relative' }}>
-      <ActionIcon>
-        <Indicator color={color} showZero={!!color} dot={!!color}>
+    <div className="relative">
+      <Indicator className="flex items-center" color={color} disabled={!color}>
+        <LegacyActionIcon variant="subtle" color="gray">
           <IconScreenShare />
-        </Indicator>
-      </ActionIcon>
+        </LegacyActionIcon>
+      </Indicator>
       {activityProgress && activityProgress > 0 && activityProgress < 100 && (
         <Progress
           value={activityProgress}
           striped
-          animate
+          animated
           size="sm"
-          sx={{ position: 'absolute', bottom: -3, width: '100%' }}
+          style={{ position: 'absolute', bottom: -3, width: '100%' }}
         />
       )}
-    </Box>
+    </div>
   );
 }
 
@@ -492,10 +478,10 @@ function LinkActivity({ id, ...props }: { id: string } & GroupProps) {
   };
 
   return (
-    <Group align="center" noWrap spacing="xs" {...props}>
+    <Group align="center" wrap="nowrap" gap="xs" {...props}>
       {isAdd ? <IconDownload /> : <IconTrash />}
-      <Stack style={{ flex: 1 }} spacing={0}>
-        <Text lineClamp={1} size="md" weight={500} style={{ lineHeight: 1 }}>
+      <Stack style={{ flex: 1 }} gap={0}>
+        <Text lineClamp={1} size="md" fw={500} style={{ lineHeight: 1 }}>
           {activity.resource.modelName || (isAdd ? activity.resource.name : undefined)}
         </Text>
         {isAdd && activity.status === 'processing' ? (
@@ -507,11 +493,11 @@ function LinkActivity({ id, ...props }: { id: string } & GroupProps) {
             onCancel={handleCancel}
           />
         ) : activity.status === 'error' ? (
-          <Text color="red" size="xs">
+          <Text c="red" size="xs">
             {activity.status}: {activity.error}
           </Text>
         ) : (
-          <Text color="dimmed" size="xs">
+          <Text c="dimmed" size="xs">
             {activity.status === 'success'
               ? isAdd
                 ? 'Downloaded'
@@ -539,28 +525,29 @@ function RequestProgress({
   if (!progress && !remainingTime && !speed) return null;
 
   return (
-    <Stack spacing={2} {...props}>
+    <Stack gap={2} {...props}>
       {progress && (
-        <Group spacing={4}>
-          <Progress
-            sx={{ width: '100%', flex: 1 }}
-            size="xl"
-            value={progress}
-            label={`${Math.floor(progress)}%`}
-            color={progress < 100 ? 'blue' : 'green'}
-            striped
-            animate
-          />
-          <ActionIcon onClick={onCancel}>
+        <Group gap={4}>
+          <Progress.Root style={{ width: '100%', flex: 1 }} size="xl">
+            <Progress.Section
+              value={progress}
+              color={progress < 100 ? 'blue' : 'green'}
+              striped
+              animated
+            >
+              <Progress.Label>{`${Math.floor(progress)}%`}</Progress.Label>
+            </Progress.Section>
+          </Progress.Root>
+          <LegacyActionIcon onClick={onCancel}>
             <IconX />
-          </ActionIcon>
+          </LegacyActionIcon>
         </Group>
       )}
       {(speed || remainingTime) && (
-        <Group position="apart">
-          {speed ? <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text> : <span />}
+        <Group justify="space-between">
+          {speed ? <Text size="xs" c="dimmed">{`${formatBytes(speed)}/s`}</Text> : <span />}
           {remainingTime ? (
-            <Text size="xs" color="dimmed">{`${formatSeconds(remainingTime)} remaining`}</Text>
+            <Text size="xs" c="dimmed">{`${formatSeconds(remainingTime)} remaining`}</Text>
           ) : (
             <span />
           )}

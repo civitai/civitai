@@ -15,7 +15,7 @@ import {
   ScrollArea,
   SimpleGrid,
   Card,
-  createStyles,
+  useComputedColorScheme,
 } from '@mantine/core';
 import {
   IconInfoCircle,
@@ -27,10 +27,10 @@ import {
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
+import classes from './RunPartners.module.scss';
 
 export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
-  const { theme, classes } = useStyles();
-
+  const colorScheme = useComputedColorScheme('dark');
   const { data: strategies = [], isLoading: strategiesLoading } =
     trpc.modelVersion.getRunStrategies.useQuery({ id: modelVersionId });
   const { data: partners, isLoading: partnersLoading } = trpc.partner.getAll.useQuery();
@@ -50,7 +50,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
   const defaultBadgeProps: BadgeProps = {
     variant: 'outline',
     radius: 'sm',
-    color: theme.colorScheme === 'dark' ? 'gray' : 'dark',
+    color: colorScheme === 'dark' ? 'gray' : 'dark',
     styles: {
       root: { textTransform: 'none', userSelect: 'none' },
     },
@@ -77,7 +77,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
               <Text>{partner.name}</Text>
             </Card.Section>
             <Card.Section inheritPadding pb="xs">
-              <Group spacing={4}>
+              <Group gap={4}>
                 {partner.startupTime && (
                   <Badge {...defaultBadgeProps} leftSection={<IconRefresh size={14} />}>
                     {abbreviateTime(partner.startupTime)}
@@ -116,7 +116,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
   ) => {
     return (
       <Table striped verticalSpacing={0} horizontalSpacing={0}>
-        <tbody>
+        <Table.Tbody>
           {partners.map(
             (
               {
@@ -134,24 +134,24 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
               },
               index
             ) => (
-              <tr key={index} style={{ opacity: !enabled ? 1 : undefined }}>
-                <td>
-                  <Group position="apart" p="sm">
-                    <Group spacing="xs">
+              <Table.Tr key={index} style={{ opacity: !enabled ? 1 : undefined }}>
+                <Table.Td>
+                  <Group justify="space-between" p="sm">
+                    <Group gap="xs">
                       <Text>{name}</Text>
-                      <Popover width={400} withinPortal withArrow position="right">
+                      <Popover width={400} withinPortal withArrow>
                         <Popover.Target>
-                          <Center style={{ cursor: 'pointer' }}>
+                          <Center className="cursor-pointer">
                             <IconInfoCircle size={20} />
                           </Center>
                         </Popover.Target>
                         <Popover.Dropdown>
                           <Stack>
                             <Text>{about}</Text>
-                            <Group spacing="xs">
+                            <Group gap="xs">
                               {homepage && (
                                 <Button
-                                  compact
+                                  size="compact-sm"
                                   variant="light"
                                   component="a"
                                   href={homepage}
@@ -163,7 +163,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                               )}
                               {tos && (
                                 <Button
-                                  compact
+                                  size="compact-sm"
                                   variant="light"
                                   component="a"
                                   href={tos}
@@ -175,7 +175,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                               )}
                               {privacy && (
                                 <Button
-                                  compact
+                                  size="compact-sm"
                                   variant="light"
                                   component="a"
                                   href={privacy}
@@ -190,8 +190,8 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                         </Popover.Dropdown>
                       </Popover>
                     </Group>
-                    <Group spacing="xs" position="apart">
-                      <Group spacing="xs" noWrap>
+                    <Group gap="xs" justify="space-between">
+                      <Group gap="xs" wrap="nowrap">
                         {startupTime && (
                           <Tooltip {...defaultTooltipProps} label="Startup time">
                             <Badge {...defaultBadgeProps} leftSection={<IconRefresh size={14} />}>
@@ -215,8 +215,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                       {enabled && (
                         <Button
                           color="blue"
-                          compact
-                          size="xs"
+                          size="compact-xs"
                           px="md"
                           component="a"
                           href={`/api/run/${modelVersionId}?${QS.stringify({
@@ -230,12 +229,12 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                       )}
                     </Group>
                   </Group>
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )
           )}
           {extra}
-        </tbody>
+        </Table.Tbody>
       </Table>
     );
   };
@@ -250,7 +249,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
           <Loader />
         </Center>
       ) : !!partnersWithStrategies?.length ? (
-        <ScrollArea.Autosize maxHeight="55vh">
+        <ScrollArea.Autosize mah="55vh">
           <Stack>
             {renderPremiumPartners(premiumPartners)}
             {renderPartners(availablePartners)}
@@ -260,7 +259,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                   variant="dashed"
                   labelPosition="center"
                   label={
-                    <Group spacing={4}>
+                    <Group gap={4}>
                       <IconBan size={14} />
                       <Text>Not available</Text>
                     </Group>
@@ -276,12 +275,12 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
           Currently, there are no model generating services for this model
         </Alert>
       )}
-      <Group spacing={4}>
+      <Group gap={4}>
         <Text size="sm">{"Don't see your preferred service?"}</Text>
         <Text
           size="sm"
-          variant="link"
-          component={'a'}
+          component="a"
+          target="_blank"
           href="https://docs.google.com/forms/d/e/1FAIpQLSdlDQXJMIhgnOjmpgEqfesPThDpxskQNau2HtxPXoLSqDMbwA/viewform"
         >
           Request that they be added
@@ -302,11 +301,3 @@ const calculateStepsPerSecond = (value: number) => {
 
   return Math.round(parsed);
 };
-
-const useStyles = createStyles((theme) => ({
-  premiumPartner: {
-    '.mantine-Badge-root': {
-      padding: '2px 8px',
-    },
-  },
-}));

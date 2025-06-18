@@ -16,10 +16,14 @@ import { z } from 'zod';
 import { useSession } from 'next-auth/react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';
-import { profilePictureSchema, usernameInputSchema } from '~/server/schema/user.schema';
+import { usernameInputSchema } from '~/server/schema/user.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { CryptoTransactions } from '~/components/Account/CryptoTransactions';
+import { features } from 'process';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = z.object({
   id: z.number(),
@@ -30,6 +34,7 @@ export function ProfileCard() {
   const queryUtils = trpc.useUtils();
   const session = useCurrentUser();
   const { data } = useSession();
+  const features = useFeatureFlags();
 
   const currentUser = data?.user;
 
@@ -64,16 +69,15 @@ export function ProfileCard() {
         }}
       >
         <Stack>
-          <Group position="apart">
+          <Group justify="space-between">
             <Title order={2}>Account Info</Title>
             <Button
-              leftIcon={<IconPencilMinus size={16} />}
+              leftSection={<IconPencilMinus size={16} />}
               onClick={() => {
                 openUserProfileEditModal();
               }}
-              sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
-              radius="xl"
-              compact
+              style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+              size="compact-sm"
             >
               Customize profile
             </Button>
@@ -84,15 +88,17 @@ export function ProfileCard() {
             </Alert>
           )}
           <Grid>
-            <Grid.Col xs={12}>
+            <Grid.Col span={12}>
               <InputText name="username" label="Name" required />
             </Grid.Col>
-            <Grid.Col xs={12}>
+            <Grid.Col span={12}>
               <TextInput
                 value={currentUser?.email ?? ''}
                 label={
-                  <Group spacing="sm">
-                    <Text size="sm">Account Email</Text>
+                  <Group gap="sm">
+                    <Text className="font-medium" size="sm">
+                      Account Email
+                    </Text>
                     <Popover width={300} withArrow withinPortal shadow="sm">
                       <Popover.Target>
                         <IconInfoSquareRounded
@@ -101,15 +107,15 @@ export function ProfileCard() {
                         />
                       </Popover.Target>
                       <Popover.Dropdown>
-                        <Stack spacing="xs">
-                          <Text size="sm" weight={500}>
+                        <Stack gap="xs">
+                          <Text size="sm" fw={500}>
                             What is this email?
                           </Text>
                           <Text size="xs" lh={1.3}>
                             This is the email address associated with your account. You cannot edit
                             it here.
                           </Text>
-                          <Text size="xs" lh={1.3} color="dimmed">
+                          <Text size="xs" lh={1.3} c="dimmed">
                             If you need to update this address, please contact support@civitai.com
                           </Text>
                         </Stack>
@@ -124,14 +130,29 @@ export function ProfileCard() {
               />
             </Grid.Col>
             <Grid.Col span={12}>
-              <Button
-                type="submit"
-                loading={isLoading}
-                disabled={!form.formState.isDirty}
-                fullWidth
-              >
-                Save
-              </Button>
+              <Stack>
+                <Button
+                  type="submit"
+                  loading={isLoading}
+                  disabled={!form.formState.isDirty}
+                  fullWidth
+                >
+                  Save
+                </Button>
+                {features.coinbaseOnramp && (
+                  <Button
+                    color="teal"
+                    compact
+                    onClick={() => {
+                      dialogStore.trigger({
+                        component: CryptoTransactions,
+                      });
+                    }}
+                  >
+                    View Debit Card Transactions
+                  </Button>
+                )}
+              </Stack>
             </Grid.Col>
           </Grid>
         </Stack>

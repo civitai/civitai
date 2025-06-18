@@ -1,5 +1,13 @@
 import type { BadgeProps, MantineSize } from '@mantine/core';
-import { Badge, Box, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import {
+  Badge,
+  Box,
+  Group,
+  Text,
+  Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   IconUpload,
   IconUsers,
@@ -8,13 +16,11 @@ import {
   IconMoodSmile,
   IconBrush,
 } from '@tabler/icons-react';
-
+import Image from 'next/image';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import Image from 'next/image';
 
 export function UserStatBadges({
   followers,
@@ -26,28 +32,29 @@ export function UserStatBadges({
   colorOverrides,
 }: Props) {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   return (
-    <Group spacing={8} position="apart">
+    <Group gap={8} justify="space-between">
       <Badge
         size="lg"
         radius="xl"
         px={8}
         color="dark"
-        sx={
+        style={
           colorOverrides
             ? { backgroundColor: colorOverrides.backgroundColor ?? undefined }
             : undefined
         }
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
       >
-        <Group spacing="xs" noWrap>
+        <Group gap="xs" wrap="nowrap">
           {uploads != null ? (
             <IconBadge
               p={0}
               tooltip={<StatTooltip label="Uploads" value={uploads} />}
               icon={<IconUpload size={14} />}
-              sx={
+              style={
                 colorOverrides
                   ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
                   : undefined
@@ -56,7 +63,7 @@ export function UserStatBadges({
               // @ts-ignore: transparent variant does work
               variant="transparent"
             >
-              <Text size="xs" weight={600} inline>
+              <Text size="xs" fw={600} inline>
                 {abbreviateNumber(uploads)}
               </Text>
             </IconBadge>
@@ -67,7 +74,7 @@ export function UserStatBadges({
               tooltip={<StatTooltip label="Followers" value={followers} />}
               href={username ? `/user/${username}/followers` : undefined}
               icon={<IconUsers size={14} />}
-              sx={
+              style={
                 colorOverrides
                   ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
                   : undefined
@@ -76,7 +83,7 @@ export function UserStatBadges({
               // @ts-ignore: transparent variant does work
               variant="transparent"
             >
-              <Text size="xs" weight={600} inline>
+              <Text size="xs" fw={600} inline>
                 {abbreviateNumber(followers)}
               </Text>
             </IconBadge>
@@ -86,7 +93,7 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Likes" value={favorites} />}
               icon={<ThumbsUpIcon size={14} />}
-              sx={
+              style={
                 colorOverrides
                   ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
                   : undefined
@@ -95,7 +102,7 @@ export function UserStatBadges({
               variant="transparent"
               size="lg"
             >
-              <Text size="xs" weight={600} inline>
+              <Text size="xs" fw={600} inline>
                 {abbreviateNumber(favorites)}
               </Text>
             </IconBadge>
@@ -105,7 +112,7 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Downloads" value={downloads} />}
               icon={<IconDownload size={14} />}
-              sx={
+              style={
                 colorOverrides
                   ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
                   : undefined
@@ -114,7 +121,7 @@ export function UserStatBadges({
               variant="transparent"
               size="lg"
             >
-              <Text size="xs" weight={600} inline>
+              <Text size="xs" fw={600} inline>
                 {abbreviateNumber(downloads)}
               </Text>
             </IconBadge>
@@ -124,7 +131,7 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Answers" value={answers} />}
               icon={<IconChecks size={14} />}
-              sx={
+              style={
                 colorOverrides
                   ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
                   : undefined
@@ -133,7 +140,7 @@ export function UserStatBadges({
               variant="transparent"
               size="lg"
             >
-              <Text size="xs" weight={600} inline>
+              <Text size="xs" fw={600} inline>
                 {abbreviateNumber(answers)}
               </Text>
             </IconBadge>
@@ -157,9 +164,9 @@ const BadgedIcon = ({
   icon: React.ReactNode;
   textSize?: MantineSize;
 } & Omit<BadgeProps, 'leftSection'>) => (
-  <Group spacing={0} noWrap sx={{ position: 'relative' }}>
+  <Group gap={0} wrap="nowrap" className="relative">
     <Tooltip label={label}>
-      <Box pos="relative" sx={{ zIndex: 2, overflow: 'hidden' }} h={32}>
+      <Box pos="relative" style={{ zIndex: 2, overflow: 'hidden' }} h={32}>
         <Image src="/images/base-badge.png" alt={`${label} - ${value}`} width={32} height={32} />
         <Box
           style={{
@@ -176,17 +183,11 @@ const BadgedIcon = ({
     <IconBadge
       size={size}
       color="dark.6"
-      // @ts-ignore
       variant="filled"
-      sx={{
-        paddingLeft: 16,
-        marginLeft: -14,
-        borderTopLeftRadius: 0,
-        borderBottomLeftRadius: 0,
-      }}
+      className="ml-[-14px] rounded-l-none !pl-4"
       {...props}
     >
-      <Text size={textSize} inline title={numberWithCommas(value ?? 0)}>
+      <Text size={textSize} fw="bold" inline title={numberWithCommas(value ?? 0)}>
         {abbreviateNumber(value ?? 0)}
       </Text>
     </IconBadge>
@@ -203,7 +204,7 @@ export function UserStatBadgesV2({
   reactions,
 }: Props) {
   return (
-    <Group spacing={4} noWrap>
+    <Group gap={4} wrap="nowrap">
       {uploads != null ? (
         <BadgedIcon icon={<IconUpload size={18} color="white" />} label="Uploads" value={uploads} />
       ) : null}

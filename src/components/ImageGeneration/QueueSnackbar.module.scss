@@ -1,0 +1,10 @@
+.card {
+  box-shadow: inset 0 2px light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+  // &:hover {
+  //   background-color: light-dark(var(--mantine-color-dark-4), var(--mantine-color-gray-0));
+  // }
+}
+
+.label {
+  width: 100%;
+}

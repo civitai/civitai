@@ -1,12 +1,9 @@
-import type { AutocompleteItem } from '@mantine/core';
-import { Badge, Center, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import type { ComboboxItem } from '@mantine/core';
+import { Badge, Center, Group, Stack, Text, ThemeIcon, useMantineTheme } from '@mantine/core';
 import { IconBrush, IconDownload, IconMessageCircle2, IconPhotoOff } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
 import { Highlight } from 'react-instantsearch';
-import {
-  useSearchItemStyles,
-  ViewMoreItem,
-} from '~/components/AutocompleteSearch/renderItems/common';
+import { ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -17,13 +14,14 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import styles from './common.module.scss';
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: SearchIndexDataMap['models'][number] }
+  ComboboxItem & { hit: SearchIndexDataMap['models'][number] }
 >(({ value, hit, ...props }, ref) => {
   const features = useFeatureFlags();
-  const { classes, theme } = useSearchItemStyles();
+  const theme = useMantineTheme();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
@@ -32,14 +30,15 @@ export const ModelSearchItem = forwardRef<
   const alt = coverImage.name;
 
   return (
-    <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
+    <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
       <Center
-        sx={{
+        style={{
           width: 64,
           height: 64,
           position: 'relative',
           overflow: 'hidden',
           borderRadius: theme.radius.sm,
+          flexShrink: 0,
         }}
       >
         {coverImage ? (
@@ -69,10 +68,10 @@ export const ModelSearchItem = forwardRef<
           </ThemeIcon>
         )}
       </Center>
-      <Stack spacing={4} sx={{ flex: '1 !important' }}>
-        <Group spacing={8}>
+      <Stack gap={4} style={{ flex: '1 !important' }}>
+        <Group gap={8}>
           <Text>
-            <Highlight attribute="name" hit={hit} classNames={classes} />
+            <Highlight attribute="name" hit={hit} classNames={styles} />
           </Text>
           {features.imageGeneration && !!version?.generationCoverage?.covered && (
             <ThemeIcon color="white" variant="filled" radius="xl" size="sm">
@@ -80,7 +79,7 @@ export const ModelSearchItem = forwardRef<
             </ThemeIcon>
           )}
         </Group>
-        <Group spacing={8}>
+        <Group gap={8}>
           <UserAvatar size="xs" user={user} withUsername />
           {nsfw && (
             <Badge size="xs" color="red">
@@ -90,7 +89,7 @@ export const ModelSearchItem = forwardRef<
           <Badge size="xs">{getDisplayName(type)}</Badge>
           {category && category.name && <Badge size="xs">{getDisplayName(category.name)}</Badge>}
         </Group>
-        <Group spacing={4}>
+        <Group gap={4}>
           <IconBadge icon={<ThumbsUpIcon size={12} />}>
             {abbreviateNumber(metrics.thumbsUpCount)}
           </IconBadge>

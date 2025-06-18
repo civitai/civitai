@@ -398,8 +398,8 @@ export default function UserProfileEditModal() {
     <Modal {...dialog} withCloseButton={false} closeOnEscape={false} size="xl">
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
-          <Group position="apart">
-            <Text size={24} weight={590}>
+          <Group justify="space-between">
+            <Text fz={24} fw={590}>
               Customize Profile
             </Text>
 
@@ -446,20 +446,22 @@ export default function UserProfileEditModal() {
                 )}
               </>
             )}
-            <Stack spacing="md">
+            <Stack gap="md">
               {featureFlags.cosmeticShop && (
                 <>
                   <InputProfileImageUpload name="profilePicture" label="Edit avatar" />
                   <Divider label="Showcase Stats" />
-                  <InputChipGroup spacing={8} name="creatorCardStatsPreferences" multiple>
-                    {Object.values(creatorCardStats).map((type, index) => (
-                      <Chip key={index} value={type} {...chipProps}>
-                        <span>{getDisplayName(type)}</span>
-                      </Chip>
-                    ))}
+                  <InputChipGroup name="creatorCardStatsPreferences" multiple>
+                    <Group gap={8}>
+                      {Object.values(creatorCardStats).map((type, index) => (
+                        <Chip key={index} value={type} {...chipProps}>
+                          <span>{getDisplayName(type)}</span>
+                        </Chip>
+                      ))}
+                    </Group>
                   </InputChipGroup>
                   {(creatorCardStatsPreferences?.length ?? 0) > creatorCardMaxStats && (
-                    <Text color="red" size="xs">
+                    <Text c="red" size="xs">
                       A maximum of {creatorCardMaxStats} stats can be displayed
                     </Text>
                   )}
@@ -501,19 +503,19 @@ export default function UserProfileEditModal() {
                 name="nameplateId"
                 placeholder="Select style"
                 label={
-                  <Group spacing={4} noWrap>
+                  <Group gap={4} wrap="nowrap">
                     <Input.Label>Nameplate Style</Input.Label>
                     <Popover withArrow width={300} withinPortal position="top">
                       <Popover.Target>
                         <Box
                           display="inline-block"
-                          sx={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
+                          style={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
                         >
                           <IconInfoCircle size={16} />
                         </Box>
                       </Popover.Target>
                       <Popover.Dropdown>
-                        <Text weight={500} size="sm">
+                        <Text fw={500} size="sm">
                           Nameplates
                         </Text>
                         <Text size="sm">
@@ -525,7 +527,7 @@ export default function UserProfileEditModal() {
                     </Popover>
                   </Group>
                 }
-                nothingFound="Your earned nameplate styles will appear here"
+                nothingFoundMessage="Your earned nameplate styles will appear here"
                 data={
                   nameplates.map((cosmetic) => ({
                     label: cosmetic.name,
@@ -574,7 +576,7 @@ export default function UserProfileEditModal() {
             maxLength={constants.profile.messageMaxLength}
             labelProps={{ style: { width: '100%' } }}
             label={
-              <Group position="apart">
+              <Group className="w-full" justify="space-between">
                 <Text>Announcement</Text>
                 <Text size="xs">
                   {message?.length ?? 0}/{constants.profile.messageMaxLength}
@@ -586,7 +588,7 @@ export default function UserProfileEditModal() {
             name="bio"
             labelProps={{ style: { width: '100%' } }}
             label={
-              <Group position="apart">
+              <Group className="w-full" justify="space-between">
                 <Text>Bio</Text>
                 <Text size="xs">
                   {bio?.length ?? 0}/{constants.profile.bioMaxLength}
@@ -600,7 +602,7 @@ export default function UserProfileEditModal() {
             name="location"
             labelProps={{ style: { width: '100%' } }}
             label={
-              <Group position="apart">
+              <Group className="w-full" justify="space-between">
                 <Text>Location</Text>
                 <Text size="xs">
                   {location?.length ?? 0}/{constants.profile.locationMaxLength}
@@ -625,7 +627,7 @@ export default function UserProfileEditModal() {
               description={`Select up to ${constants.profile.showcaseItemsLimit} items to showcase on your profile. You do this via the "Add to showcase" button on models and images`}
             />
           )}
-          <Group position="right" align="flex-end">
+          <Group justify="flex-end" align="flex-end">
             <Button radius="xl" size="md" loading={loading} type="submit">
               Save Changes
             </Button>
@@ -674,7 +676,7 @@ export function ProfilePreview({
     });
 
   return (
-    <Stack spacing={4}>
+    <Stack gap={4}>
       <Input.Label>Preview</Input.Label>
       <Paper p="sm" withBorder>
         <UserAvatar

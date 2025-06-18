@@ -3,7 +3,6 @@ import {
   Anchor,
   Center,
   Container,
-  createStyles,
   Group,
   List,
   Loader,
@@ -24,10 +23,12 @@ import FourOhFour from '~/pages/404';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
+import styles from './[list].module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx }) => {
@@ -41,24 +42,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const useStyles = createStyles((theme) => ({
-  striped: {
-    li: {
-      display: 'flex',
-      padding: theme.spacing.xs * 0.8, // 8px
-
-      '&:nth-of-type(2n)': {
-        backgroundColor:
-          theme.colorScheme === 'dark'
-            ? theme.fn.lighten(theme.colors.dark[7], 0.05)
-            : theme.fn.darken(theme.colors.gray[0], 0.01),
-      },
-    },
-  },
-}));
-
 export default function UserLists() {
-  const { classes } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { list, username } = router.query as {
@@ -74,22 +58,19 @@ export default function UserLists() {
 
   return (
     <Container size="xs">
-      <ContainerGrid gutter="xl">
-        <ContainerGrid.Col span={12}>
-          <Group spacing="xl">
+      <ContainerGrid2 gutter="xl">
+        <ContainerGrid2.Col span={12}>
+          <Group gap="xl">
             <Link legacyBehavior href={`/user/${username}`} passHref>
-              <ActionIcon component="a">
+              <LegacyActionIcon component="a">
                 <IconArrowLeft />
-              </ActionIcon>
+              </LegacyActionIcon>
             </Link>
             <Title order={1}>{`@${username}`}</Title>
           </Group>
-        </ContainerGrid.Col>
-        <ContainerGrid.Col span={12}>
-          <Tabs
-            defaultValue={list}
-            onTabChange={(value) => router.push(`/user/${username}/${value}`)}
-          >
+        </ContainerGrid2.Col>
+        <ContainerGrid2.Col span={12}>
+          <Tabs value={list} onChange={(value) => router.push(`/user/${username}/${value}`)}>
             <Tabs.List grow>
               <Tabs.Tab value="following">{`Following (${abbreviateNumber(
                 data?.followingCount ?? 0
@@ -118,26 +99,24 @@ export default function UserLists() {
                   <List
                     listStyleType="none"
                     styles={{ itemWrapper: { width: '100%' } }}
-                    className={classes.striped}
+                    className={styles.striped}
                   >
                     {data.following.length > 0 ? (
                       data.following.map((user) => (
-                        <List.Item key={user.id} p={8}>
-                          <Link legacyBehavior href={`/user/${user.username}`} passHref>
-                            <Anchor variant="text">
-                              <Group position="apart">
-                                <UserAvatar user={user} withUsername />
-                                <FollowUserButton userId={user.id} compact />
-                              </Group>
-                            </Anchor>
-                          </Link>
+                        <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
+                          <Text component={Link} variant="text" href={`/user/${user.username}`}>
+                            <Group className="w-full" justify="space-between">
+                              <UserAvatar user={user} withUsername />
+                              <FollowUserButton userId={user.id} size="compact-sm" />
+                            </Group>
+                          </Text>
                         </List.Item>
                       ))
                     ) : (
-                      <List.Item>
-                        <Paper p="xl" sx={{ width: '100%' }} withBorder>
+                      <List.Item classNames={{ itemLabel: 'w-full' }}>
+                        <Paper p="xl" style={{ width: '100%' }} withBorder>
                           <Center>
-                            <Text size="lg" weight="bold">
+                            <Text size="lg" fw="bold">
                               There are no following to show
                             </Text>
                           </Center>
@@ -150,26 +129,26 @@ export default function UserLists() {
                   <List
                     listStyleType="none"
                     styles={{ itemWrapper: { width: '100%' } }}
-                    className={classes.striped}
+                    className={styles.striped}
                   >
                     {data.followers.length > 0 ? (
                       data.followers.map((user) => (
-                        <List.Item key={user.id} p={8}>
+                        <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
                           <Link legacyBehavior href={`/user/${user.username}`} passHref>
                             <Anchor variant="text">
-                              <Group position="apart">
+                              <Group justify="space-between">
                                 <UserAvatar user={user} withUsername />
-                                <FollowUserButton userId={user.id} compact />
+                                <FollowUserButton userId={user.id} size="compact-sm" />
                               </Group>
                             </Anchor>
                           </Link>
                         </List.Item>
                       ))
                     ) : (
-                      <List.Item>
-                        <Paper p="xl" sx={{ width: '100%' }} withBorder>
+                      <List.Item classNames={{ itemLabel: 'w-full' }}>
+                        <Paper p="xl" style={{ width: '100%' }} withBorder>
                           <Center>
-                            <Text size="lg" weight="bold">
+                            <Text size="lg" fw="bold">
                               There are no followers to show
                             </Text>
                           </Center>
@@ -184,26 +163,26 @@ export default function UserLists() {
                       <List
                         listStyleType="none"
                         styles={{ itemWrapper: { width: '100%' } }}
-                        className={classes.striped}
+                        className={styles.striped}
                       >
                         {data.hidden.length > 0 ? (
                           data.hidden.map((user) => (
-                            <List.Item key={user.id} p={8}>
+                            <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
                               <Link legacyBehavior href={`/user/${user.username}`} passHref>
                                 <Anchor variant="text">
-                                  <Group position="apart">
+                                  <Group justify="space-between">
                                     <UserAvatar user={user} withUsername />
-                                    <HideUserButton userId={user.id} compact />
+                                    <HideUserButton userId={user.id} size="compact-sm" />
                                   </Group>
                                 </Anchor>
                               </Link>
                             </List.Item>
                           ))
                         ) : (
-                          <List.Item>
-                            <Paper p="xl" sx={{ width: '100%' }} withBorder>
+                          <List.Item classNames={{ itemLabel: 'w-full' }}>
+                            <Paper p="xl" style={{ width: '100%' }} withBorder>
                               <Center>
-                                <Text size="lg" weight="bold">
+                                <Text size="lg" fw="bold">
                                   There are no hidden users to show
                                 </Text>
                               </Center>
@@ -216,26 +195,26 @@ export default function UserLists() {
                       <List
                         listStyleType="none"
                         styles={{ itemWrapper: { width: '100%' } }}
-                        className={classes.striped}
+                        className={styles.striped}
                       >
                         {data.blocked.length > 0 ? (
                           data.blocked.map((user) => (
-                            <List.Item key={user.id} p={8}>
+                            <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
                               <Link legacyBehavior href={`/user/${user.username}`} passHref>
                                 <Anchor variant="text">
-                                  <Group position="apart">
+                                  <Group justify="space-between">
                                     <Text>{user.username}</Text>
-                                    <BlockUserButton userId={user.id} compact />
+                                    <BlockUserButton userId={user.id} size="compact-sm" />
                                   </Group>
                                 </Anchor>
                               </Link>
                             </List.Item>
                           ))
                         ) : (
-                          <List.Item>
-                            <Paper p="xl" sx={{ width: '100%' }} withBorder>
+                          <List.Item classNames={{ itemLabel: 'w-full' }}>
+                            <Paper p="xl" style={{ width: '100%' }} withBorder>
                               <Center>
-                                <Text size="lg" weight="bold">
+                                <Text size="lg" fw="bold">
                                   There are no blocked users to show
                                 </Text>
                               </Center>
@@ -249,8 +228,8 @@ export default function UserLists() {
               </>
             )}
           </Tabs>
-        </ContainerGrid.Col>
-      </ContainerGrid>
+        </ContainerGrid2.Col>
+      </ContainerGrid2>
     </Container>
   );
 }

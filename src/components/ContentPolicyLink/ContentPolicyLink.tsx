@@ -4,11 +4,16 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export function ContentPolicyLink(props: Props) {
   return (
-    <Link legacyBehavior href="/safety#content-policies" passHref>
-      <Anchor {...props} target="_blank" rel="nofollow" span>
-        Content Policies
-      </Anchor>
-    </Link>
+    <Anchor
+      {...props}
+      component={Link}
+      href="/safety#content-policies"
+      target="_blank"
+      rel="nofollow"
+      span
+    >
+      Content Policies
+    </Anchor>
   );
 }
 

@@ -21,13 +21,14 @@ import {
   Button,
   Chip,
   Code,
-  createStyles,
   Group,
   HoverCard,
   MultiSelect,
   Select,
   Text,
   TextInput,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import React, {
   forwardRef,
@@ -42,45 +43,44 @@ import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { filter, uniqBy } from 'lodash-es';
-import { DatePicker } from '@mantine/dates';
+import { DatePickerInput } from '@mantine/dates';
 import dayjs from 'dayjs';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
 import { Flags } from '~/shared/utils';
 import { getBlockedNsfwWords, getPossibleBlockedNsfwWords } from '~/utils/metadata/audit';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
+import styles from './CustomSearchComponents.module.scss';
 
-const useStyles = createStyles((theme) => ({
-  divider: {
-    flex: 1,
-    borderBottom: 0,
-    border: '1px solid',
-    borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[3],
-  },
-}));
+// const useStyles = createStyles((theme) => ({
+//   divider: {
+//     flex: 1,
+//     borderBottom: 0,
+//     border: '1px solid',
+//     borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[3],
+//   },
+// }));
 
-const useSearchInputStyles = createStyles(() => ({
-  root: {
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  wrapper: {
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  input: {
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-}));
+// const useSearchInputStyles = createStyles(() => ({
+//   root: {
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//     },
+//   },
+//   wrapper: {
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//     },
+//   },
+//   input: {
+//     [containerQuery.smallerThan('md')]: {
+//       height: '100%',
+//     },
+//   },
+// }));
 
 export function SortBy({ title, ...props }: SortByProps & { title: string }) {
-  const { classes } = useStyles();
   const { options, refine, currentRefinement } = useSortBy(props);
 
   if (options.length === 0) {
@@ -92,10 +92,10 @@ export function SortBy({ title, ...props }: SortByProps & { title: string }) {
       <Accordion.Item value={title}>
         <Accordion.Control>
           <Group>
-            <Text size="md" weight={500}>
+            <Text size="md" fw={500}>
               {title}
             </Text>
-            <Box className={classes.divider} />
+            <Box className={styles.divider} />
           </Group>
         </Accordion.Control>
         <Accordion.Panel>
@@ -115,7 +115,6 @@ export function SearchableMultiSelectRefinementList({
   title,
   ...props
 }: RefinementListProps & { title: string }) {
-  const { classes } = useStyles();
   const { items, refine, searchForItems } = useRefinementList({ ...props });
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
@@ -180,10 +179,10 @@ export function SearchableMultiSelectRefinementList({
       <Accordion.Item value={props.attribute}>
         <Accordion.Control>
           <Group>
-            <Text size="md" weight={500}>
+            <Text size="md" fw={500}>
               {title}
             </Text>
-            <Box className={classes.divider} />
+            <Box className={styles.divider} />
           </Group>
         </Accordion.Control>
         <Accordion.Panel>
@@ -195,7 +194,7 @@ export function SearchableMultiSelectRefinementList({
             searchValue={searchValue}
             onSearchChange={setSearchValue}
             placeholder={`Search ${title}`}
-            nothingFound={<TimeoutLoader renderTimeout={() => <span>Nothing found</span>} />}
+            nothingFoundMessage={<TimeoutLoader renderTimeout={() => <span>Nothing found</span>} />}
           />
         </Accordion.Panel>
       </Accordion.Item>
@@ -204,7 +203,6 @@ export function SearchableMultiSelectRefinementList({
 }
 
 export function ChipRefinementList({ title, ...props }: RefinementListProps & { title: string }) {
-  const { classes } = useStyles();
   const { items, refine } = useRefinementList({ ...props });
 
   if (!items.length) {
@@ -216,14 +214,14 @@ export function ChipRefinementList({ title, ...props }: RefinementListProps & { 
       <Accordion.Item value={props.attribute}>
         <Accordion.Control>
           <Group>
-            <Text size="md" weight={500}>
+            <Text size="md" fw={500}>
               {title}
             </Text>{' '}
-            <Box className={classes.divider} />
+            <Box className={styles.divider} />
           </Group>
         </Accordion.Control>
         <Accordion.Panel>
-          <Group spacing="xs">
+          <Group gap="xs">
             {items.map((item) => (
               <Chip
                 size="sm"
@@ -251,11 +249,11 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
 
   return (
     <Button
-      rightIcon={<IconTrash size={16} />}
+      rightSection={<IconTrash size={16} />}
       color="gray"
       variant="filled"
       size="md"
-      sx={{ flexShrink: 0 }}
+      style={{ flexShrink: 0 }}
       {...props}
       onClick={refine}
     >
@@ -298,8 +296,9 @@ export const CustomSearchBox = forwardRef<
   const [search, setSearch] = useState(query);
   // const config = useConfigure(getBlockedPromptFilters(query));
   const [debouncedSearch] = useDebouncedValue(search, 300);
-  const { classes } = useSearchInputStyles();
   const inputRef = useRef<HTMLInputElement>(null);
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   const blurInput = () => inputRef.current?.blur();
   const focusInput = () => inputRef.current?.focus();
@@ -333,9 +332,9 @@ export const CustomSearchBox = forwardRef<
   return (
     <TextInput
       {...props}
-      classNames={classes}
+      classNames={styles}
       variant={isMobile ? 'filled' : undefined}
-      icon={<IconSearch size={20} />}
+      leftSection={<IconSearch size={20} />}
       onChange={(e) => setSearch(e.target.value)}
       value={search}
       placeholder="Search..."
@@ -348,25 +347,25 @@ export const CustomSearchBox = forwardRef<
           <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
             <HoverCard.Target>
               <Text
-                weight="bold"
-                sx={(theme) => ({
+                fw="bold"
+                style={{
                   border: `1px solid ${
-                    theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                    colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
                   }`,
                   borderRadius: theme.radius.sm,
                   backgroundColor:
-                    theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-                  color: theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
+                    colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+                  color: colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
                   textAlign: 'center',
                   width: 24,
                   userSelect: 'none',
-                })}
+                }}
               >
                 /
               </Text>
             </HoverCard.Target>
             <HoverCard.Dropdown>
-              <Text size="sm" color="yellow" weight={500}>
+              <Text size="sm" color="yellow" fw={500}>
                 Pro-tip: Quick search faster!
               </Text>
               <Text size="xs" lh={1.2}>
@@ -384,7 +383,6 @@ export const CustomSearchBox = forwardRef<
 CustomSearchBox.displayName = 'CustomSearchBox';
 
 export function DateRangeRefinement({ title, ...props }: RangeInputProps & { title: string }) {
-  const { classes } = useStyles();
   const { start: active, range, refine } = useRange({ ...props });
 
   const startDate = active[0] && active[0] !== -Infinity ? new Date(active[0]) : null;
@@ -409,14 +407,14 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
       <Accordion.Item value={props.attribute}>
         <Accordion.Control>
           <Group>
-            <Text size="md" weight={500}>
+            <Text size="md" fw={500}>
               {title}
             </Text>
-            <Box className={classes.divider} />
+            <Box className={styles.divider} />
           </Group>
         </Accordion.Control>
         <Accordion.Panel>
-          <DatePicker
+          <DatePickerInput
             label="From"
             name="start"
             placeholder="Start date"
@@ -426,9 +424,11 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
             }}
             minDate={minDate}
             maxDate={endDate ? dayjs(endDate).subtract(1, 'day').toDate() : maxDate}
-            clearButtonLabel="Clear start date"
+            clearButtonProps={{
+              children: 'Clear start date',
+            }}
           />
-          <DatePicker
+          <DatePickerInput
             label="To"
             name="end"
             placeholder="End date"
@@ -437,7 +437,9 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
               onSetDate('end', date);
             }}
             minDate={startDate ? dayjs(startDate).add(1, 'day').toDate() : minDate}
-            clearButtonLabel="Clear end date"
+            clearButtonProps={{
+              children: 'Clear end date',
+            }}
             maxDate={maxDate}
           />
         </Accordion.Panel>

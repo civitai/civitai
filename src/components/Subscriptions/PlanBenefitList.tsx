@@ -9,7 +9,7 @@ const defaultBenefits = [
   { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
   {
     content: (
-      <Text variant="link" td="underline" component="a" href="/product/link" target="_blank">
+      <Text td="underline" component="a" href="/product/link" target="_blank">
         Civitai Link
       </Text>
     ),
@@ -22,7 +22,7 @@ const defaultBenefits = [
     content: (
       <Text>
         Access to the{' '}
-        <Anchor variant="link" td="underline" component="a" href="/creator-program" target="_blank">
+        <Anchor td="underline" component="a" href="/creator-program" target="_blank">
           Creator Program
         </Anchor>{' '}
         to get paid for earned Buzz
@@ -41,7 +41,6 @@ export const PlanBenefitList = ({
   return (
     <Stack>
       <List
-        spacing="xs"
         size="md"
         center
         icon={
@@ -50,55 +49,59 @@ export const PlanBenefitList = ({
           </ThemeIcon>
         }
       >
-        {benefits.map(({ content, icon, iconColor, iconVariant }, index) => (
-          <List.Item
-            key={index}
-            icon={
-              !icon ? undefined : (
-                <ThemeIcon
-                  color={iconColor ?? 'teal'}
-                  size={themeIconSize}
-                  radius="xl"
-                  variant={iconVariant}
-                >
-                  {icon}
-                </ThemeIcon>
-              )
-            }
-          >
-            {content}
-          </List.Item>
-        ))}
+        <Stack gap="xs">
+          {benefits.map(({ content, icon, iconColor, iconVariant }, index) => (
+            <List.Item
+              key={index}
+              icon={
+                !icon ? undefined : (
+                  <ThemeIcon
+                    color={iconColor ?? 'teal'}
+                    size={themeIconSize}
+                    radius="xl"
+                    variant={iconVariant}
+                  >
+                    {icon}
+                  </ThemeIcon>
+                )
+              }
+            >
+              {content}
+            </List.Item>
+          ))}
+        </Stack>
       </List>
       {useDefaultBenefits && (
         <>
           <Divider mx="-md" />
-          <List spacing="xs" size="md" center>
-            {defaultBenefits.map(({ content, tiers }, index) => {
-              const isUnavailable =
-                defaultBenefitsDisabled || (tiers && (!tier || !tiers.includes(tier)));
-              return (
-                <List.Item
-                  icon={
-                    <ThemeIcon
-                      color={isUnavailable ? 'gray' : 'green'}
-                      variant="light"
-                      size={themeIconSize}
-                      radius="xl"
-                    >
-                      {isUnavailable ? (
-                        <IconCircleX size={benefitIconSize} />
-                      ) : (
-                        <IconCircleCheck size={benefitIconSize} />
-                      )}
-                    </ThemeIcon>
-                  }
-                  key={index}
-                >
-                  {content}
-                </List.Item>
-              );
-            })}
+          <List size="md" center>
+            <Stack gap="xs">
+              {defaultBenefits.map(({ content, tiers }, index) => {
+                const isUnavailable =
+                  defaultBenefitsDisabled || (tiers && (!tier || !tiers.includes(tier)));
+                return (
+                  <List.Item
+                    icon={
+                      <ThemeIcon
+                        color={isUnavailable ? 'gray' : 'green'}
+                        variant="light"
+                        size={themeIconSize}
+                        radius="xl"
+                      >
+                        {isUnavailable ? (
+                          <IconCircleX size={benefitIconSize} />
+                        ) : (
+                          <IconCircleCheck size={benefitIconSize} />
+                        )}
+                      </ThemeIcon>
+                    }
+                    key={index}
+                  >
+                    {content}
+                  </List.Item>
+                );
+              })}
+            </Stack>
           </List>
         </>
       )}

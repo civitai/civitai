@@ -3,7 +3,6 @@ import {
   Group,
   Stack,
   Title,
-  createStyles,
   Text,
   ThemeIcon,
   Box,
@@ -12,7 +11,7 @@ import {
   AspectRatio,
   Skeleton,
 } from '@mantine/core';
-import { Fragment, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import {
   IconArrowRight,
   IconCategory,
@@ -30,10 +29,7 @@ import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
-import {
-  useHomeBlockStyles,
-  useHomeBlockGridStyles,
-} from '~/components/HomeBlocks/HomeBlock.Styles';
+import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
@@ -42,6 +38,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import clsx from 'clsx';
 
 const icons = {
   model: IconCategory,
@@ -71,7 +68,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
 
   const rows = metadata.collection?.rows ?? 2;
 
-  const { classes: homeBlockClasses } = useHomeBlockStyles();
   const currentUser = useCurrentUser();
 
   const { collection } = homeBlock ?? {};
@@ -95,11 +91,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     return filtered.slice(0, itemsToShow);
   }, [filtered, rows]);
 
-  const { classes, cx } = useHomeBlockGridStyles({
-    count: items.length ?? 0,
-    rows,
-  });
-
   // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 
   // useEffect(() => console.log('items'), [items]);
@@ -109,10 +100,10 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   const Icon = icons[itemType];
 
   const MetaDataTop = (
-    <Stack spacing="sm">
-      <Group spacing="xs" position="apart" className={homeBlockClasses.header}>
-        <Group noWrap>
-          <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
+    <Stack gap="sm">
+      <Group gap="xs" justify="space-between" className={classes.header}>
+        <Group wrap="nowrap">
+          <Title className={classes.title} order={1} lineClamp={1}>
             {metadata.title ?? collection?.name ?? 'Collection'}{' '}
           </Title>
           {!metadata.descriptionAlwaysVisible && currentUser && metadata.description && (
@@ -120,27 +111,27 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
               <Popover.Target>
                 <Box
                   display="inline-block"
-                  sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                  style={{ lineHeight: 0.3, cursor: 'pointer' }}
                   color="white"
                 >
                   <IconInfoCircle size={20} />
                 </Box>
               </Popover.Target>
               <Popover.Dropdown maw="100%">
-                <Text weight={500} size="lg" mb="xs">
+                <Text fw={500} size="lg" mb="xs">
                   {metadata.title ?? collection?.name ?? 'Collection'}
                 </Text>
                 {metadata.description && (
-                  <Text size="sm" mb="xs">
+                  <div className="mb-2 text-sm">
                     <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
                       {metadata.description}
                     </CustomMarkdown>
-                  </Text>
+                  </div>
                 )}
                 {metadata.link && (
                   <Link legacyBehavior href={metadata.link} passHref>
                     <Anchor size="sm">
-                      <Group spacing={4}>
+                      <Group gap={4}>
                         <Text inherit>{metadata.linkText ?? 'View All'} </Text>
                         <IconArrowRight size={16} />
                       </Group>
@@ -154,10 +145,10 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         {metadata.link && (
           <Link legacyBehavior href={metadata.link} passHref>
             <Button
-              className={homeBlockClasses.expandButton}
+              className={classes.expandButton}
               component="a"
               variant="subtle"
-              rightIcon={<IconArrowRight size={16} />}
+              rightSection={<IconArrowRight size={16} />}
             >
               {metadata.linkText ?? 'View All'}
             </Button>
@@ -165,11 +156,11 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         )}
       </Group>
       {metadata.description && (metadata.descriptionAlwaysVisible || !currentUser) && (
-        <Text>
+        <div className="text-base">
           <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
           </CustomMarkdown>
-        </Text>
+        </div>
       )}
     </Stack>
   );
@@ -182,16 +173,16 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
             <Icon />
           </ThemeIcon>
         )}
-        <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
+        <Title className={classes.title} order={1} lineClamp={1}>
           {metadata.title ?? collection?.name ?? 'Collection'}
         </Title>
       </Group>
       {metadata.description && (
-        <Text maw={520}>
+        <div className="max-w-[520px]">
           <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
           </CustomMarkdown>
-        </Text>
+        </div>
       )}
       {metadata.link && (
         <div>
@@ -201,7 +192,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
               component="a"
               variant="light"
               color="gray"
-              rightIcon={<IconArrowRight size={16} />}
+              rightSection={<IconArrowRight size={16} />}
             >
               {metadata.linkText ?? 'View All'}
             </Button>
@@ -217,8 +208,15 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     (!currentUser || metadata.descriptionAlwaysVisible);
 
   return (
-    <>
-      <Box mb="md" className={cx({ [classes.meta]: useGrid })}>
+    <div
+      style={
+        {
+          '--count': items.length ?? 0,
+          '--rows': rows,
+        } as React.CSSProperties
+      }
+    >
+      <Box mb="md" className={clsx({ [classes.meta]: useGrid })}>
         {MetaDataTop}
       </Box>
       {isLoading || loadingPreferences ? (
@@ -258,14 +256,14 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
 
       {metadata.footer && (
         <Stack mt="md">
-          <Text size="sm" mb="xs">
+          <div className="mb-2 text-sm">
             <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
               {metadata.footer}
             </CustomMarkdown>
-          </Text>
+          </div>
         </Stack>
       )}
-    </>
+    </div>
   );
 };
 

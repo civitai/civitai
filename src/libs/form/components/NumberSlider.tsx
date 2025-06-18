@@ -1,6 +1,7 @@
 import type { InputWrapperProps, NumberInputProps, SliderProps } from '@mantine/core';
-import { Group, Input, NumberInput, Slider, createStyles } from '@mantine/core';
+import { Group, Input, NumberInput, Slider } from '@mantine/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { Props as PresetOptionsProps } from './PresetOptions';
 import { PresetOptions } from './PresetOptions';
 import clsx from 'clsx';
@@ -55,9 +56,14 @@ export function NumberSlider({
     setState((current) => ({ ...current, value, selectedPreset: value?.toString() }));
   };
 
-  const handleInputChange = (value?: number) => {
-    setState((current) => ({ ...current, value, selectedPreset: value?.toString() }));
-    onChange?.(value);
+  const handleInputChange = (value?: number | string) => {
+    const parsedValue = typeof value === 'string' ? parseFloat(value) : value;
+    setState((current) => ({
+      ...current,
+      value: parsedValue,
+      selectedPreset: parsedValue?.toString(),
+    }));
+    onChange?.(parsedValue);
   };
 
   const precision = useMemo(
@@ -118,17 +124,17 @@ export function NumberSlider({
       {...inputWrapperProps}
       label={
         hasPresets ? (
-          <Group spacing={8} position="apart" noWrap>
+          <Group gap={8} className="w-full" justify="space-between" wrap="nowrap">
             {label}
             <PresetOptions
               disabled={disabled}
-              color="blue"
               options={presets}
               value={value?.toString()}
               onChange={(value) => {
                 setState((current) => ({ ...current, selectedPreset: value }));
                 onChange?.(Number(value));
               }}
+              chipPropsOverrides={{ color: 'blue' }}
             />
           </Group>
         ) : (
@@ -160,12 +166,12 @@ export function NumberSlider({
           className={clsx('min-w-[60px] flex-[0]', numberProps?.className)}
           style={{
             ...numberProps?.style,
-            minWidth: numberProps?.style?.minWidth ?? state.computedWidth,
+            minWidth: (numberProps?.style as CSSProperties)?.minWidth ?? state.computedWidth,
           }}
           min={min}
           max={max}
           step={step}
-          precision={precision}
+          decimalScale={precision}
           value={state.value}
           onChange={handleInputChange}
           onBlur={handleInputBlur}

@@ -6,12 +6,23 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { KontextProvider } from '~/components/Ads/Kontext/KontextProvider';
+import { KontextAd } from '~/components/Ads/Kontext/KontextAd';
+import { Fragment, useMemo } from 'react';
 
 export function Queue() {
   const filters = useFiltersContext((state) => state.generation);
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError, error } =
     useGetTextToImageRequests();
+
+  const kontextMessages = useMemo(
+    () =>
+      data?.flatMap((request) =>
+        request.steps.map((step) => ({ content: step.params.prompt, createdAt: request.createdAt }))
+      ),
+    [data]
+  );
 
   if (isError)
     return (
@@ -35,27 +46,27 @@ export function Queue() {
   if (!data.length)
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
-        <Stack spacing="xs" align="center" py="16">
+        <Stack gap="xs" align="center" py="16">
           <IconInbox size={64} stroke={1} />
           {filters.marker && (
-            <Stack spacing={0}>
-              <Text size={32} align="center">
+            <Stack gap={0}>
+              <Text fz={32} align="center">
                 No results found
               </Text>
               <Text align="center">{'Try adjusting your filters'}</Text>
             </Stack>
           )}
           {!filters.marker && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Text size="md" align="center">
                 The queue is empty
               </Text>
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 Try{' '}
                 <Text
-                  variant="link"
+                  c="blue.4"
                   onClick={() => generationPanel.setView('generate')}
-                  sx={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer' }}
                   span
                 >
                   generating
@@ -70,34 +81,38 @@ export function Queue() {
 
   return (
     <div className="flex flex-col gap-2 px-3">
-      <Text size="xs" color="dimmed" mt="xs">
+      <Text size="xs" c="dimmed" mt="xs">
         <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
         Creations are kept in the Generator for 30 days. Download or Post them to your Profile to
         save them!
       </Text>
-      <div className="flex flex-col gap-2">
-        {data.map((request) =>
-          request.steps.map((step) => {
-            const { marker } = filters;
+      <KontextProvider messages={kontextMessages}>
+        <div className="flex flex-col gap-2">
+          {data.map((request, index) =>
+            request.steps.map((step) => {
+              const { marker } = filters;
 
-            return (
-              <QueueItem
-                key={request.id}
-                id={request.id.toString()}
-                request={request}
-                step={step}
-                filter={{ marker }}
-              />
-            );
-          })
-        )}
-      </div>
+              return (
+                <Fragment key={request.id}>
+                  {index !== 0 && (index + 4) % 5 === 0 && <KontextAd index={index} />}
+                  <QueueItem
+                    id={request.id.toString()}
+                    request={request}
+                    step={step}
+                    filter={{ marker }}
+                  />
+                </Fragment>
+              );
+            })
+          )}
+        </div>
+      </KontextProvider>
       {hasNextPage ? (
         <InViewLoader
           loadFn={fetchNextPage}
           loadCondition={!isFetching && !isRefetching && hasNextPage}
         >
-          <Center sx={{ height: 60 }}>
+          <Center style={{ height: 60 }}>
             <Loader />
           </Center>
         </InViewLoader>

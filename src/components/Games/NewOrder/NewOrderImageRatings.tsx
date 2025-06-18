@@ -1,13 +1,4 @@
-import {
-  ActionIcon,
-  Badge,
-  Card,
-  Loader,
-  ScrollArea,
-  Text,
-  Tooltip,
-  UnstyledButton,
-} from '@mantine/core';
+import { Badge, Card, Loader, ScrollArea, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconChevronLeft, IconHammer } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { NsfwLevel } from '~/server/common/enums';
@@ -15,6 +6,7 @@ import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants'
 import { useInquisitorTools, useQueryImageRaters } from '~/components/Games/KnightsNewOrder.utils';
 import { PlayerStats } from '~/components/Games/PlayerCard';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
   const [opened, setOpened] = useState(false);
@@ -31,21 +23,23 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
         }`}
       >
         <UnstyledButton
-          className="flex size-10 items-center justify-center rounded-l-lg bg-dark-7 p-2 transition-all duration-300 hover:bg-dark-5"
+          className="flex size-10 items-center justify-center rounded-l-lg bg-gray-1 p-2 transition-all duration-300 hover:bg-gray-0 dark:bg-dark-7 dark:hover:bg-dark-5"
           onClick={() => setOpened((o) => !o)}
         >
           <IconChevronLeft
             size={32}
-            className={`text-white transition-transform duration-300 ${opened ? 'rotate-180' : ''}`}
+            className={`text-black transition-transform duration-300 dark:text-white ${
+              opened ? 'rotate-180' : ''
+            }`}
           />
         </UnstyledButton>
         <div
-          className={`flex w-[350px] flex-col gap-2 overflow-hidden rounded-l-lg bg-dark-7 p-4 transition-all duration-300 ${
+          className={`flex w-[350px] flex-col gap-2 overflow-hidden rounded-l-lg bg-gray-1 p-4 transition-all duration-300 dark:bg-dark-7 ${
             opened ? 'opacity-100' : 'opacity-0'
           }`}
         >
-          <h2 className="text-lg font-semibold text-white">Raters</h2>
-          <ScrollArea.Autosize maxHeight={400}>
+          <h2 className="text-lg font-semibold text-black dark:text-white">Raters</h2>
+          <ScrollArea.Autosize mah={400}>
             {isLoading ? (
               <div className="flex size-full items-center justify-center">
                 <Loader />
@@ -61,7 +55,9 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
 
                   return ratersForRank.length > 0 ? (
                     <div key={rankType}>
-                      <h3 className="mb-1 text-sm font-bold text-white">{rankType}s</h3>
+                      <h3 className="mb-1 text-sm font-bold text-black dark:text-white">
+                        {rankType}s
+                      </h3>
                       {ratersForRank.map(({ player, rating }) => {
                         const loading = smitePayload?.playerId === player.id && applyingSmite;
 
@@ -82,14 +78,14 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
                                 <PlayerStats stats={{ ...player.stats }} size="sm" showSmiteCount />
                               </div>
                               <Tooltip label="Smite player" withinPortal>
-                                <ActionIcon
+                                <LegacyActionIcon
                                   color="red"
                                   variant="filled"
                                   onClick={() => smitePlayer({ playerId: player.id, imageId })}
                                   loading={loading}
                                 >
                                   <IconHammer size={18} />
-                                </ActionIcon>
+                                </LegacyActionIcon>
                               </Tooltip>
                             </div>
                           </Card>

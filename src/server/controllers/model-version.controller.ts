@@ -233,7 +233,7 @@ export const upsertModelVersionHandler = async ({
     }
 
     if (!!input.earlyAccessConfig?.timeframe) {
-      const maxDays = getMaxEarlyAccessDays({ userMeta: ctx.user.meta });
+      const maxDays = getMaxEarlyAccessDays({ userMeta: ctx.user.meta, features: ctx.features });
 
       if (!ctx.user.isModerator && input.earlyAccessConfig?.timeframe > maxDays) {
         throw throwBadRequestError('Early access days exceeds user limit');
@@ -246,7 +246,8 @@ export const upsertModelVersionHandler = async ({
 
       if (
         !ctx.user.isModerator &&
-        activeEarlyAccess.length >= getMaxEarlyAccessModels({ userMeta: ctx.user.meta }) &&
+        activeEarlyAccess.length >=
+          getMaxEarlyAccessModels({ userMeta: ctx.user.meta, features: ctx.features }) &&
         (!input.id || !activeEarlyAccess.some((v) => v.id === input.id))
       ) {
         throw throwBadRequestError(

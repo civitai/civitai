@@ -17,6 +17,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 export const constants = {
   modelFilterDefaults: {
@@ -417,29 +418,7 @@ export const constants = {
   entityCollaborators: {
     maxCollaborators: 15,
   },
-  earlyAccess: {
-    article: 6341,
-    buzzChargedPerDay: 100,
-    timeframeValues: [3, 5, 7, 9, 12, 15],
-    scoreTimeFrameUnlock: [
-      // The maximum amount of days that can be set based off of score.
-      [40000, 3],
-      [65000, 5],
-      [90000, 7],
-      [125000, 9],
-      [200000, 12],
-      [250000, 15],
-    ],
-    scoreQuantityUnlock: [
-      // How many items can be marked EA at the same time based off of score.
-      [40000, 1],
-      [65000, 2],
-      [90000, 4],
-      [125000, 6],
-      [200000, 8],
-      [250000, 20],
-    ],
-  },
+
   autoLabel: {
     labelTypes: ['tag', 'caption'] as const,
   },
@@ -1155,6 +1134,11 @@ export const CurrencyConfig: Record<
     color: (theme) => theme.colors.yellow[7],
     fill: undefined,
   },
+  [Currency.USDC]: {
+    icon: IconCurrencyDollar,
+    color: (theme) => theme.colors.yellow[7],
+    fill: undefined,
+  },
 };
 
 export const BUZZ_FEATURE_LIST = [
@@ -1340,8 +1324,10 @@ export const newOrderConfig = {
     badgeIds: { acolyte: 858, knight: 859, templar: 860 },
   },
   limits: {
-    knightVoteLimit: 5,
-    templarVoteLimit: 2,
+    knightVotes: 5,
+    templarVotes: 2,
+    templarPicks: 24,
+    minKnightVotes: 4,
   },
 };
 
@@ -1376,6 +1362,7 @@ export const specialCosmeticRewards = {
     866, // bulk buzz buy - badge
     872, // bulk buzz buy - background
   ],
+  crypto: [874],
 };
 
 export type LiveFeatureFlags = {
@@ -1384,4 +1371,36 @@ export type LiveFeatureFlags = {
 
 export const DEFAULT_LIVE_FEATURE_FLAGS = {
   buzzGiftCards: true,
+};
+
+export const EARLY_ACCESS_CONFIG: {
+  article: number;
+  buzzChargedPerDay: number;
+  timeframeValues: number[];
+  scoreTimeFrameUnlock: Array<[number | ((args: { features?: FeatureAccess }) => boolean), number]>;
+  scoreQuantityUnlock: Array<[number | ((args: { features?: FeatureAccess }) => boolean), number]>;
+} = {
+  article: 6341,
+  buzzChargedPerDay: 100,
+  timeframeValues: [3, 5, 7, 9, 12, 15, 30],
+  scoreTimeFrameUnlock: [
+    // The maximum amount of days that can be set based off of score.
+    [40000, 3],
+    [65000, 5],
+    [90000, 7],
+    [125000, 9],
+    [200000, 12],
+    [250000, 15],
+    [({ features }: { features?: FeatureAccess }) => features?.thirtyDayEarlyAccess ?? false, 30],
+  ],
+  scoreQuantityUnlock: [
+    // How many items can be marked EA at the same time based off of score.
+    [40000, 1],
+    [65000, 2],
+    [90000, 4],
+    [125000, 6],
+    [200000, 8],
+    [250000, 20],
+    [({ features }: { features?: FeatureAccess }) => features?.thirtyDayEarlyAccess ?? false, 30],
+  ],
 };

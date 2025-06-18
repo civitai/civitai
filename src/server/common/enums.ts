@@ -368,7 +368,7 @@ export enum NewOrderDamnedReason {
   RealisticMinors = 'RealisticMinors',
   DepictsRealPerson = 'DepictsRealPerson',
   Bestiality = 'Bestiality',
-  GraphicViolence = 'GraphicViolence',
+  Other = 'Other',
 }
 
 export enum NewOrderSignalActions {
@@ -377,4 +377,8 @@ export enum NewOrderSignalActions {
   Reset = 'reset',
   AddImage = 'add-image',
   RemoveImage = 'remove-image',
+}
+
+export enum ExternalModerationType {
+  Clavata = 'Clavata',
 }

@@ -1,7 +1,6 @@
 import type { GroupProps } from '@mantine/core';
 import {
   Accordion,
-  ActionIcon,
   Button,
   Card,
   Center,
@@ -12,13 +11,12 @@ import {
   Text,
   Title,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 
 import React from 'react';
 import { formatDate } from '~/utils/date-helpers';
 import { useMutateStripe, useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
-import { IconCreditCard, IconCurrencyDollar, IconMoodDollar, IconTrash } from '@tabler/icons-react';
+import { IconCreditCard, IconTrash } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
 import type { UserPaymentMethod } from '~/types/router';
@@ -31,6 +29,7 @@ import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Pad
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { usePaddle } from '~/providers/PaddleProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const PaymentMethodItem = ({
   paymentMethod,
@@ -41,23 +40,23 @@ export const PaymentMethodItem = ({
 }) => {
   const { type } = paymentMethod;
   const groupProps: GroupProps = {
-    position: 'apart',
+    justify: 'space-between',
   };
 
   switch (type) {
     case 'card':
       return (
         <Group {...groupProps}>
-          <Stack spacing={0}>
-            <Text size="xs" color="dimmed">
+          <Stack gap={0}>
+            <Text size="xs" c="dimmed">
               Card
             </Text>
             <Text size="sm">
-              <Text component="span" weight="bold" transform="capitalize">
+              <Text component="span" fw="bold" tt="capitalize">
                 {paymentMethod.card?.brand}
               </Text>{' '}
               ending in{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {paymentMethod.card?.last4}
               </Text>
             </Text>
@@ -69,13 +68,13 @@ export const PaymentMethodItem = ({
     case 'sepa_debit':
       return (
         <Group {...groupProps}>
-          <Stack spacing={0}>
-            <Text size="xs" color="dimmed">
+          <Stack gap={0}>
+            <Text size="xs" c="dimmed">
               SEPA Debit
             </Text>
             <Text size="sm">
               Ending in{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {paymentMethod.sepa_debit?.last4}
               </Text>
             </Text>
@@ -87,13 +86,13 @@ export const PaymentMethodItem = ({
     case 'link':
       return (
         <Group {...groupProps}>
-          <Stack spacing={0}>
-            <Text size="xs" color="dimmed">
+          <Stack gap={0}>
+            <Text size="xs" c="dimmed">
               Link
             </Text>
             <Text size="sm">
               Email:{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {paymentMethod.link?.email}
               </Text>
             </Text>
@@ -105,8 +104,8 @@ export const PaymentMethodItem = ({
     default:
       return (
         <Group {...groupProps}>
-          <Stack spacing={0}>
-            <Text size="xs" transform="capitalize" color="dimmed">
+          <Stack gap={0}>
+            <Text size="xs" tt="capitalize" c="dimmed">
               {type.replace(/_/gi, ' ')}
             </Text>
             <Text size="sm">Created on: {formatDate(new Date(paymentMethod.created * 1000))}</Text>
@@ -136,7 +135,7 @@ const StripePaymentMethods = () => {
           <Text>
             Are you sure you want to delete this payment method? This action is destructive.
           </Text>
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             If you have delete all your payment methods, your club memberships will be unable to be
             charged and you will lose access to those assets.
           </Text>
@@ -158,7 +157,7 @@ const StripePaymentMethods = () => {
           Payment methods
         </Title>
         {result.success && result.data.missingPaymentMethod && (
-          <Text color="red" size="sm">
+          <Text c="red" size="sm">
             It looks like you are trying to upgrade your membership but we do not have a payment
             method setup for you. Please add one before attempting to upgrade.
           </Text>
@@ -166,15 +165,14 @@ const StripePaymentMethods = () => {
         <Divider label="Your payment methods" />
         {isLoadingPaymentMethods ? (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         ) : (userPaymentMethods?.length ?? 0) > 0 ? (
           <Stack>
-            {userPaymentMethods.map((paymentMethod, index) => {
-              const { type } = paymentMethod;
+            {userPaymentMethods.map((paymentMethod) => {
               const deleteAction = (
                 <Tooltip label="Delete payment method">
-                  <ActionIcon
+                  <LegacyActionIcon
                     color="red"
                     onClick={() => handleDeletePaymentMethod(paymentMethod.id)}
                     loading={deletingPaymentMethod}
@@ -182,7 +180,7 @@ const StripePaymentMethods = () => {
                     size="md"
                   >
                     <IconTrash size={14} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               );
 
@@ -194,7 +192,7 @@ const StripePaymentMethods = () => {
             })}
           </Stack>
         ) : (
-          <Text align="center" color="dimmed" size="sm">
+          <Text align="center" c="dimmed" size="sm">
             &hellip;You have no payment methods added yet&hellip;
           </Text>
         )}
@@ -202,9 +200,9 @@ const StripePaymentMethods = () => {
         <Accordion variant="default" px={0}>
           <Accordion.Item value="paymentMethod">
             <Accordion.Control py={8} px={0}>
-              <Group spacing={8}>
+              <Group gap={8}>
                 <IconCreditCard size={24} />
-                <Text size="lg" weight={700}>
+                <Text size="lg" fw={700}>
                   Add new payment method
                 </Text>
               </Group>
@@ -225,7 +223,6 @@ const PaddlePaymentMethods = () => {
   const { managementUrls, isLoading } = useSubscriptionManagementUrls();
   const { paddle } = usePaddle();
   const currentUser = useCurrentUser();
-  const { subscription } = useActiveSubscription();
   const { getOrCreateCustomer } = useMutatePaddle();
 
   if (!currentUser?.email) {
@@ -272,17 +269,21 @@ const PaddlePaymentMethods = () => {
         <Divider label="Your payment methods" />
         {isLoading && (
           <Center>
-            <Loader variant="bars" />
+            <Loader type="bars" />
           </Center>
         )}
         {managementUrls?.updatePaymentMethod && (
-          <Button component="a" href={managementUrls?.updatePaymentMethod}>
+          <Button
+            component="a"
+            classNames={{ label: 'text-white' }}
+            href={managementUrls?.updatePaymentMethod}
+          >
             Update your default payment method
           </Button>
         )}
         {!managementUrls?.updatePaymentMethod && managementUrls?.freeSubscriptionPriceId && (
           <Stack>
-            <Text align="center" size="sm" color="dimmed">
+            <Text align="center" size="sm" c="dimmed">
               We found no default payment method.
             </Text>
             <Button onClick={handleSetupDefaultPaymentMethod}>Setup default payment method</Button>

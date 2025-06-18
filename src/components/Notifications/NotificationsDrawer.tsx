@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { NotificationsComposed } from '~/components/Notifications/NotificationsComposed';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import classes from './NotificationsDrawer.module.scss';
 
 export default function NotificationsDrawer({ toggleNode }: { toggleNode: HTMLDivElement | null }) {
   const dialog = useDialogContext();
@@ -16,25 +17,12 @@ export default function NotificationsDrawer({ toggleNode }: { toggleNode: HTMLDi
     <Drawer
       position={mobile ? 'bottom' : 'right'}
       size={mobile ? '100dvh' : '710px'}
-      styles={(theme) => ({
-        root: {
-          [theme.fn.largerThan('xs')]: {
-            top: 'var(--header-height)',
-            height: `calc(100% - var(--header-height))`,
-          },
-        },
-        drawer: {
-          [theme.fn.largerThan('xs')]: {
-            top: 'var(--header-height)',
-            height: `calc(100% - var(--header-height))`,
-          },
-        },
-      })}
+      classNames={classes}
       shadow="lg"
+      transitionProps={{ transition: mobile ? 'slide-up' : 'slide-left' }}
       closeOnClickOutside={false}
       withCloseButton={false}
       withOverlay={mobile}
-      withinPortal
       {...dialog}
     >
       <div ref={setDrawer} className="flex size-full flex-col">

@@ -3,6 +3,7 @@ import { ActionIcon, Button, Input, LoadingOverlay, Paper, Text } from '@mantine
 import { IconX } from '@tabler/icons-react';
 import { openCollectionSelectModal } from '~/components/Dialog/dialog-registry';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { trpc } from '~/utils/trpc';
 
 export function CollectionSelectInput({ value, username, onChange, ...inputWrapperProps }: Props) {
@@ -41,9 +42,14 @@ export function CollectionSelectInput({ value, username, onChange, ...inputWrapp
               )}
               <Text lineClamp={1}>{data?.collection?.name}</Text>
             </div>
-            <ActionIcon radius="xl" color="red" variant="light" onClick={() => onChange?.(null)}>
+            <LegacyActionIcon
+              radius="xl"
+              color="red"
+              variant="light"
+              onClick={() => onChange?.(null)}
+            >
               <IconX />
-            </ActionIcon>
+            </LegacyActionIcon>
           </div>
         )}
       </Paper>

@@ -1,7 +1,7 @@
-import type { BuiltInProviderType } from 'next-auth/providers';
 import type { ButtonProps } from '@mantine/core';
-import { socialItems } from './Social';
+import type { BuiltInProviderType } from 'next-auth/providers/index';
 import { env } from '~/env/client';
+import { socialItems } from './Social';
 
 type Props = {
   provider: BuiltInProviderType;
@@ -14,7 +14,7 @@ export function SocialButton({ provider, ...buttonProps }: Props) {
   if (!Button) return null;
 
   return (
-    <Button leftIcon={Icon && <Icon size={20} />} {...buttonProps}>
+    <Button leftSection={Icon && <Icon size={20} />} {...buttonProps}>
       {label}
     </Button>
   );

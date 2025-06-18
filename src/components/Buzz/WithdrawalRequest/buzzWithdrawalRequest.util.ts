@@ -36,7 +36,7 @@ export const useQueryOwnedBuzzWithdrawalRequests = (
 };
 
 export const useMutateBuzzWithdrawalRequest = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const onError = (error: any, message = 'There was an error while performing your request') => {
     try {

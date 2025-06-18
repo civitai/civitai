@@ -1,6 +1,5 @@
 import type { GroupProps, HighlightProps } from '@mantine/core';
 import {
-  ActionIcon,
   Badge,
   Button,
   Divider,
@@ -35,13 +34,14 @@ import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -101,7 +101,7 @@ const PositionData = ({
           className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-30"
         />
       )}
-      <Text size="lg" weight="bold">
+      <Text size="lg" fw="bold">
         {position || '-'}
       </Text>
     </>
@@ -123,7 +123,7 @@ const SectionPosition = ({
   const mr = mobile ? -8 : -16;
 
   const el = (
-    <Stack align="center" spacing={0} className="relative md:w-[100px]" px={px} mr={mr}>
+    <Stack align="center" gap={0} className="relative md:w-[100px]" px={px} mr={mr}>
       <PositionData position={position} aboveThreshold={aboveThreshold} />
     </Stack>
   );
@@ -134,7 +134,7 @@ const SectionPosition = ({
     <Link href={`/auctions/${slugHref.slug}`}>
       <Tooltip
         label={
-          <Stack className="text-center" spacing={4}>
+          <Stack className="text-center" gap={4}>
             <Text>Position: {position || 'N/A'}</Text>
             <Text>Go to {slugHref.name}</Text>
           </Stack>
@@ -261,8 +261,8 @@ const SectionModelInfo = ({
   }, [blurNsfw]);
 
   const El = (
-    <Stack spacing={8} justify="space-around">
-      <Stack spacing={0}>
+    <Stack gap={8} justify="space-around">
+      <Stack gap={0}>
         {!hideText ? (
           <>
             <OverflowTooltip
@@ -282,7 +282,7 @@ const SectionModelInfo = ({
         ) : (
           <div className="flex">
             <Button
-              leftIcon={<IconEye size={14} strokeWidth={2.5} />}
+              leftSection={<IconEye size={14} strokeWidth={2.5} />}
               onClick={() => setHideText(false)}
               size="xs"
               variant="outline"
@@ -342,20 +342,21 @@ const SectionBidInfo = ({
     <Stack
       py="sm"
       px="xs"
-      w={140}
       align="center"
-      spacing="sm"
+      gap="sm"
       className={
-        mobile ? 'w-full border-t border-solid border-t-gray-4 dark:border-t-dark-4' : 'ml-[-16px]'
+        mobile
+          ? 'w-full border-t border-solid border-t-gray-4 dark:border-t-dark-4'
+          : 'ml-[-16px] w-[140px]'
       }
-      sx={{
+      style={{
         flexGrow: 1,
         flexDirection: mobile ? 'row-reverse' : undefined,
         justifyContent: mobile ? 'space-between' : undefined,
       }}
     >
       {top}
-      <Group noWrap spacing="sm" {...rightProps}>
+      <Group wrap="nowrap" gap="sm" {...rightProps}>
         <Tooltip label={currencyTooltip} disabled={!currencyTooltip}>
           <CurrencyBadge
             currency={Currency.BUZZ}
@@ -366,7 +367,7 @@ const SectionBidInfo = ({
             iconProps={{
               size: 14,
             }}
-            sx={{
+            style={{
               fontSize: '1.25rem',
             }}
             asCounter={true}
@@ -451,7 +452,7 @@ export const ModelMyBidCard = ({
 
   return (
     <CosmeticCard className="group hover:bg-gray-2 dark:hover:bg-dark-5">
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Group className="gap-y-2 max-md:flex-col">
           {!mobile && (
             <SectionPosition
@@ -479,7 +480,7 @@ export const ModelMyBidCard = ({
             top={
               <>
                 {!mobile && (
-                  <Text size="xs" color="dimmed" title={data.createdAt.toISOString()}>
+                  <Text size="xs" c="dimmed" title={data.createdAt.toISOString()}>
                     {formatDate(data.createdAt)}
                   </Text>
                 )}
@@ -490,9 +491,14 @@ export const ModelMyBidCard = ({
                       className={!mobile ? 'opacity-0 group-hover:opacity-100' : ''}
                       label="Cancel"
                     >
-                      <ActionIcon size="sm" color="red" variant="filled" onClick={handleDelete}>
+                      <LegacyActionIcon
+                        size="sm"
+                        color="red"
+                        variant="filled"
+                        onClick={handleDelete}
+                      >
                         <IconTrash size={16} />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Tooltip>
                   </Group>
                 )}
@@ -503,7 +509,7 @@ export const ModelMyBidCard = ({
               mobile && (
                 <Group>
                   {!data.isActive && data.isRefunded && <Badge>Refunded</Badge>}
-                  <Text size="xs" color="dimmed" title={data.createdAt.toISOString()}>
+                  <Text size="xs" c="dimmed" title={data.createdAt.toISOString()}>
                     {formatDate(data.createdAt)}
                   </Text>
                 </Group>
@@ -515,7 +521,7 @@ export const ModelMyBidCard = ({
         {!!data.additionalPriceNeeded && data.isActive && (
           <>
             <Divider />
-            <Group p="sm" position="right" w="100%">
+            <Group p="sm" justify="flex-end" w="100%">
               <Text>{`⚡${formatCurrencyForDisplay(
                 data.additionalPriceNeeded,
                 Currency.BUZZ
@@ -629,7 +635,7 @@ export const ModelMyRecurringBidCard = ({
 
   return (
     <CosmeticCard className="group hover:bg-gray-2 dark:hover:bg-dark-5">
-      <Stack spacing={0}>
+      <Stack gap={0}>
         <Group className="gap-y-2 max-md:flex-col">
           <Group className="flex gap-y-2 p-2 max-md:w-full md:flex-[10]">
             <SectionModelImage image={data.entityData?.image} />
@@ -642,12 +648,12 @@ export const ModelMyRecurringBidCard = ({
             amount={data.amount}
             aboveThreshold={false}
             top={
-              <Group spacing={4} className="absolute right-1 top-1 z-10">
+              <Group gap={4} className="absolute right-1 top-1 z-10">
                 <Tooltip
                   className={!mobile ? 'opacity-0 group-hover:opacity-100' : ''}
                   label={data.isPaused ? 'Resume' : 'Pause'}
                 >
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="sm"
                     color={data.isPaused ? 'green' : 'orange'}
                     variant="filled"
@@ -658,20 +664,20 @@ export const ModelMyRecurringBidCard = ({
                     ) : (
                       <IconPlayerPauseFilled size={16} />
                     )}
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
                 <Tooltip
                   className={!mobile ? 'opacity-0 group-hover:opacity-100' : ''}
                   label="Cancel"
                 >
-                  <ActionIcon size="sm" color="red" variant="filled" onClick={handleDelete}>
+                  <LegacyActionIcon size="sm" color="red" variant="filled" onClick={handleDelete}>
                     <IconTrash size={16} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               </Group>
             }
             bottom={
-              <Group spacing="xs">
+              <Group gap="xs">
                 <IconBadge
                   size="lg"
                   icon={<IconRepeat size={16} />}
@@ -714,7 +720,6 @@ export const ModelPlacementCard = ({
   const animatedRef = useRef<HTMLDivElement>(null);
   const node = useScrollAreaRef();
   const { ref: viewRef, inView } = useInView({ root: node?.current, rootMargin: '1800px 0px' });
-  const { classes: cardClasses } = useCardStyles({ aspectRatio: 1 });
 
   const { data: myBidData = [] } = trpc.auction.getMyBids.useQuery(undefined, {
     enabled: !!currentUser,
@@ -789,7 +794,7 @@ export const ModelPlacementCard = ({
             right={
               !!data.entityData && canBid ? (
                 <Tooltip label="Support this model" position="top" withinPortal>
-                  <ActionIcon
+                  <LegacyActionIcon
                     size="lg"
                     variant="light"
                     color="blue"
@@ -809,12 +814,12 @@ export const ModelPlacementCard = ({
                     }
                   >
                     <IconPlus size={16} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Tooltip>
               ) : undefined
             }
             bottom={
-              <Group noWrap spacing={4}>
+              <Group wrap="nowrap" gap={4}>
                 <IconUser size={14} />
                 <Text size="sm">{`${data.count} Bid${data.count !== 1 ? 's' : ''}`}</Text>
                 {!!myBid && (

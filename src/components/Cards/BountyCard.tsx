@@ -1,5 +1,5 @@
 import type { BadgeProps } from '@mantine/core';
-import { Badge, HoverCard, Text, ThemeIcon } from '@mantine/core';
+import { Badge, HoverCard, Text, ThemeIcon, useMantineTheme } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
@@ -11,7 +11,7 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import type { BountyGetAll } from '~/types/router';
@@ -21,6 +21,7 @@ import { BountyContextMenu } from '../Bounty/BountyContextMenu';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import clsx from 'clsx';
 
 const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
   radius: 'xl',
@@ -28,13 +29,14 @@ const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
   px: 8,
   h: 26,
   tt: 'capitalize',
+  fw: 'bold',
 };
 
 export function BountyCard({ data }: Props) {
-  const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const { id, name, images, type, expiresAt, stats, complete } = data;
   const image = images?.[0];
   const expired = expiresAt < new Date();
+  const theme = useMantineTheme();
 
   const { engagements } = useBountyEngagement();
 
@@ -46,23 +48,31 @@ export function BountyCard({ data }: Props) {
       {...sharedBadgeProps}
       color="dark"
       icon={<IconClockHour4 size={14} />}
-      sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+      style={{
+        backgroundColor: 'rgba(0, 0, 0, 0.31)',
+      }}
     >
-      <Text size="xs">
+      <Text fw="bold" size="xs">
         <DaysFromNow date={expiresAt} withoutSuffix />
       </Text>
     </IconBadge>
   );
 
   const expiredBadge = (
-    <Badge className={classes.chip} {...sharedBadgeProps} color="red" variant="filled" radius="xl">
+    <Badge
+      className={cardClasses.chip}
+      {...sharedBadgeProps}
+      color="red"
+      variant="filled"
+      radius="xl"
+    >
       Expired
     </Badge>
   );
 
   const completeBadge = (
     <Badge
-      className={classes.chip}
+      className={cardClasses.chip}
       {...sharedBadgeProps}
       color="yellow.7"
       variant="filled"
@@ -90,8 +100,12 @@ export function BountyCard({ data }: Props) {
         <div className="flex w-full justify-between">
           <div className="flex gap-1">
             {type && (
-              <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
-                <Text color="white" size="xs" transform="capitalize">
+              <Badge
+                className={clsx(cardClasses.infoChip, cardClasses.chip)}
+                variant="light"
+                radius="xl"
+              >
+                <Text c="white" size="xs" tt="capitalize" fw="bold">
                   {getDisplayName(type)}
                 </Text>
               </Badge>
@@ -105,9 +119,8 @@ export function BountyCard({ data }: Props) {
       footer={
         <div className="flex w-full flex-col gap-2">
           <UserAvatarSimple {...data.user} />
-          <div className="flex items-start justify-between gap-2"></div>
           <div className="flex items-start justify-between gap-2">
-            <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+            <Text size="xl" fw={700} lineClamp={2} lh={1.2}>
               {name}
             </Text>
             {!image.scannedAt && (
@@ -119,7 +132,7 @@ export function BountyCard({ data }: Props) {
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
                   <div>
-                    <Text color="yellow" weight={590}>
+                    <Text c="yellow" fw={590}>
                       Pending scan
                     </Text>
                     <Text size="sm">
@@ -138,12 +151,16 @@ export function BountyCard({ data }: Props) {
               radius="xl"
               px={8}
               variant="filled"
-              className={classes.chip}
-              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+              className={cardClasses.chip}
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.31)',
+              }}
             />
             <Badge
-              className={classes.chip}
-              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+              className={cardClasses.chip}
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.31)',
+              }}
               radius="xl"
               px={8}
               variant="filled"
@@ -156,10 +173,9 @@ export function BountyCard({ data }: Props) {
                       color={isTracked ? theme.colors.green[5] : 'currentColor'}
                     />
                   }
-                  color={isTracked ? 'green' : theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={isTracked ? 'green' : 'gray.0'}
                   p={0}
                   size="lg"
-                  // @ts-ignore: transparent variant does work
                   variant="transparent"
                 >
                   <Text size="xs">{abbreviateNumber(stats?.trackCountAllTime ?? 0)}</Text>
@@ -172,33 +188,36 @@ export function BountyCard({ data }: Props) {
                       fill={isFavorite ? theme.colors.red[5] : 'currentColor'}
                     />
                   }
-                  color={isFavorite ? 'red' : theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color={isFavorite ? 'red' : 'gray.0'}
                   p={0}
                   size="lg"
-                  // @ts-ignore
                   variant="transparent"
                 >
-                  <Text size="xs">{abbreviateNumber(stats?.favoriteCountAllTime ?? 0)}</Text>
+                  <Text fw="bold" size="xs">
+                    {abbreviateNumber(stats?.favoriteCountAllTime ?? 0)}
+                  </Text>
                 </IconBadge>
                 <IconBadge
                   icon={<IconMessageCircle2 size={14} />}
-                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color="gray.0"
                   p={0}
                   size="lg"
-                  // @ts-ignore
                   variant="transparent"
                 >
-                  <Text size="xs">{abbreviateNumber(stats?.commentCountAllTime ?? 0)}</Text>
+                  <Text fw="bold" size="xs">
+                    {abbreviateNumber(stats?.commentCountAllTime ?? 0)}
+                  </Text>
                 </IconBadge>
                 <IconBadge
                   icon={<IconSwords size={14} />}
-                  color={theme.colorScheme === 'dark' ? 'dark' : 'gray.0'}
+                  color="gray.0"
                   p={0}
                   size="lg"
-                  // @ts-ignore
                   variant="transparent"
                 >
-                  <Text size="xs">{abbreviateNumber(stats?.entryCountAllTime ?? 0)}</Text>
+                  <Text fw="bold" size="xs">
+                    {abbreviateNumber(stats?.entryCountAllTime ?? 0)}
+                  </Text>
                 </IconBadge>
               </div>
             </Badge>

@@ -18,7 +18,7 @@ import { trpc } from '~/utils/trpc';
 
 export default function Downloads() {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.download.getAllByUser.useInfiniteQuery(
@@ -60,14 +60,13 @@ export default function Downloads() {
 
   return (
     <Container size="xs">
-      <Group position="apart" align="flex-end">
+      <Group justify="space-between" align="flex-end">
         <Title order={1}>Downloads</Title>
-        <Group spacing={8}>
+        <Group gap={8}>
           <Button
-            rightIcon={<IconTrash size={16} />}
+            rightSection={<IconTrash size={16} />}
             variant="subtle"
-            size="xs"
-            compact
+            size="compact-xs"
             onClick={() => handleHide({ all: true })}
           >
             Clear History
@@ -93,7 +92,7 @@ export default function Downloads() {
               loadCondition={!isRefetching}
               style={{ gridColumn: '1/-1' }}
             >
-              <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Center p="xl" style={{ height: 36 }} mt="md">
                 <Loader />
               </Center>
             </InViewLoader>
@@ -104,7 +103,7 @@ export default function Downloads() {
           <ThemeIcon size={96} radius={100}>
             <IconCloudOff size={60} />
           </ThemeIcon>
-          <Text size={18} align="center">
+          <Text size="18px" align="center">
             No downloads in your history
           </Text>
         </Stack>

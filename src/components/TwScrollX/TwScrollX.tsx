@@ -1,7 +1,7 @@
-import { ActionIcon } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 
 export function TwScrollX({ children, className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
@@ -44,9 +44,14 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
             { ['hidden']: isMobile }
           )}
         >
-          <ActionIcon variant="transparent" radius={0} onClick={scrollLeft} className="h-full">
+          <LegacyActionIcon
+            variant="transparent"
+            radius={0}
+            onClick={scrollLeft}
+            className="h-full"
+          >
             <IconChevronLeft stroke={2.5} size={28} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </div>
       )}
       {/* TODO - add a mutation observer to check node scroll width when children are added/removed */}
@@ -60,9 +65,14 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
             { ['hidden']: isMobile }
           )}
         >
-          <ActionIcon variant="transparent" radius={0} onClick={scrollRight} className="h-full">
+          <LegacyActionIcon
+            variant="transparent"
+            radius={0}
+            onClick={scrollRight}
+            className="h-full"
+          >
             <IconChevronRight stroke={2.5} size={28} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </div>
       )}
     </div>

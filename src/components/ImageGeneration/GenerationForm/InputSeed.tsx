@@ -45,12 +45,12 @@ function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: Props) {
         />
         <NumberInputWrapper
           value={value ?? undefined}
-          onChange={handleChange}
+          onChange={onChange ? (v) => onChange(v ? Number(v) : undefined) : undefined}
           placeholder="Random"
           clearable
           min={1}
           max={generation.maxValues.seed}
-          sx={{ flex: 1 }}
+          style={{ flex: 1 }}
           hideControls
           format="default"
           disabled={disabled}

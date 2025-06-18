@@ -23,13 +23,13 @@ export default function BrowsingLevelGuide() {
           return (
             <Card withBorder key={browsingLevel}>
               <Card.Section withBorder inheritPadding py="xs">
-                <Text weight={500}>{browsingLevelLabels[browsingLevel]}</Text>
+                <Text fw={500}>{browsingLevelLabels[browsingLevel]}</Text>
               </Card.Section>
               <Card.Section withBorder inheritPadding py="xs">
                 <Stack>
                   <Text>{browsingLevelDescriptions[browsingLevel]}</Text>
                   {!!tags.length && (
-                    <Group spacing="xs">
+                    <Group gap="xs">
                       {tags.map((tag) => (
                         <Badge key={tag.id}>{tag.name}</Badge>
                       ))}

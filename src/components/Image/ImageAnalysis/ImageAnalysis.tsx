@@ -11,29 +11,39 @@ export function ImageAnalysis({
 }) {
   const nsfwScore = (nsfwScan.porn + nsfwScan.hentai + nsfwScan.sexy / 2) * 100;
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       {faces?.map((face, i) => {
         return (
           <React.Fragment key={i}>
             <Divider label={`Face ${i + 1}`} />
             <SimpleGrid cols={2} verticalSpacing="xs">
-              <Group spacing="xs">
-                <Text size="sm" mr="xs" weight={500}>
+              <Group gap="xs">
+                <Text size="sm" mr="xs" fw={500}>
                   Age
                 </Text>
                 <Code
-                  sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
+                  style={{
+                    flex: '1',
+                    textAlign: 'right',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                  }}
                   color={face.age < 18 ? 'red' : undefined}
                 >
                   {face.age.toFixed(2)}
                 </Code>
               </Group>
-              <Group spacing="xs">
-                <Text size="sm" mr="xs" weight={500}>
+              <Group gap="xs">
+                <Text size="sm" mr="xs" fw={500}>
                   Gender
                 </Text>
                 <Code
-                  sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
+                  style={{
+                    flex: '1',
+                    textAlign: 'right',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                  }}
                   color={face.genderConfidence > 0.8 ? 'teal' : undefined}
                 >
                   {face.gender}
@@ -45,12 +55,12 @@ export function ImageAnalysis({
       })}
       <Divider label="NSFW Asessment" />
       <SimpleGrid cols={2} verticalSpacing="xs">
-        <Group spacing="xs">
-          <Text size="sm" mr="xs" weight={500}>
+        <Group gap="xs">
+          <Text size="sm" mr="xs" fw={500}>
             NSFW
           </Text>
           <Code
-            sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
+            style={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
             color={nsfwScore > 60 ? 'red' : undefined}
           >
             {nsfwScore.toFixed(2)}
@@ -59,12 +69,12 @@ export function ImageAnalysis({
         {Object.entries(nsfwScan)
           .sort(([, v1], [, v2]) => v2 - v1)
           .map(([label, value]) => (
-            <Group key={label} spacing="xs">
-              <Text size="sm" mr="xs" weight={500}>
+            <Group key={label} gap="xs">
+              <Text size="sm" mr="xs" fw={500}>
                 {capitalize(label)}
               </Text>
               <Code
-                sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
+                style={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}
               >
                 {(value * 100).toFixed(2)}
               </Code>

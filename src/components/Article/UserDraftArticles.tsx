@@ -3,7 +3,6 @@ import {
   Anchor,
   Badge,
   Center,
-  createStyles,
   Group,
   LoadingOverlay,
   Pagination,
@@ -20,35 +19,12 @@ import { useState } from 'react';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles((theme) => ({
-  header: {
-    position: 'sticky',
-    top: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    transition: 'box-shadow 150ms ease',
-    zIndex: 10,
-
-    '&::after': {
-      content: '""',
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2]
-      }`,
-    },
-  },
-
-  scrolled: {
-    boxShadow: theme.shadows.sm,
-  },
-}));
+import classes from './UserDraftArticles.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function UserDraftArticles() {
-  const { classes, cx } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
@@ -85,75 +61,77 @@ export function UserDraftArticles() {
   return (
     <Stack>
       <ScrollArea style={{ height: 400 }} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
-        <Table verticalSpacing="md" fontSize="md" striped={hasDrafts}>
-          <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
-            <tr>
-              <th>Title</th>
-              <th>Status</th>
-              <th>Category</th>
-              <th>Created</th>
-              <th>Last Updated</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
+        <Table verticalSpacing="md" fz="md" striped={hasDrafts}>
+          <Table.Thead className={clsx(classes.header, { [classes.scrolled]: scrolled })}>
+            <Table.Tr>
+              <Table.Th>Title</Table.Th>
+              <Table.Th>Status</Table.Th>
+              <Table.Th>Category</Table.Th>
+              <Table.Th>Created</Table.Th>
+              <Table.Th>Last Updated</Table.Th>
+              <Table.Th />
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
             {isLoading && (
-              <tr>
-                <td colSpan={5}>
+              <Table.Tr>
+                <Table.Td colSpan={5}>
                   <LoadingOverlay visible />
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )}
             {hasDrafts ? (
               items.map((article) => (
-                <tr key={article.id}>
-                  <td>
+                <Table.Tr key={article.id}>
+                  <Table.Td>
                     <Link legacyBehavior href={`/articles/${article.id}/edit`} passHref>
                       <Anchor lineClamp={2}>
                         {article.title} <IconExternalLink size={16} stroke={1.5} />
                       </Anchor>
                     </Link>
-                  </td>
-                  <td>
+                  </Table.Td>
+                  <Table.Td>
                     {
                       <Badge color={article.status === 'Draft' ? 'gray' : 'yellow'}>
                         {article.status}
                       </Badge>
                     }
-                  </td>
-                  <td>{article.category ? <Badge>{article.category.name}</Badge> : 'N/A'}</td>
-                  <td>{article.createdAt ? formatDate(article.createdAt) : 'N/A'}</td>
-                  <td>{article.updatedAt ? formatDate(article.updatedAt) : 'N/A'}</td>
-                  <td>
-                    <Group position="right" pr="xs">
-                      <ActionIcon
+                  </Table.Td>
+                  <Table.Td>
+                    {article.category ? <Badge>{article.category.name}</Badge> : 'N/A'}
+                  </Table.Td>
+                  <Table.Td>{article.createdAt ? formatDate(article.createdAt) : 'N/A'}</Table.Td>
+                  <Table.Td>{article.updatedAt ? formatDate(article.updatedAt) : 'N/A'}</Table.Td>
+                  <Table.Td>
+                    <Group justify="flex-end" pr="xs">
+                      <LegacyActionIcon
                         color="red"
                         variant="subtle"
                         size="sm"
                         onClick={() => handleDeleteArticle(article)}
                       >
                         <IconTrash />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Group>
-                  </td>
-                </tr>
+                  </Table.Td>
+                </Table.Tr>
               ))
             ) : (
-              <tr>
-                <td colSpan={5}>
+              <Table.Tr>
+                <Table.Td colSpan={5}>
                   <Center py="md">
                     <NoContent message="You have no draft articles" />
                   </Center>
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )}
-          </tbody>
+          </Table.Tbody>
         </Table>
       </ScrollArea>
       {pagination.totalPages > 1 && (
-        <Group position="apart">
+        <Group justify="space-between">
           <Text>Total {pagination.totalItems} items</Text>
-          <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
+          <Pagination value={page} onChange={setPage} total={pagination.totalPages} />
         </Group>
       )}
     </Stack>

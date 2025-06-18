@@ -1,5 +1,5 @@
 import React, { forwardRef } from 'react';
-import type { AutocompleteItem } from '@mantine/core';
+import type { ComboboxItem } from '@mantine/core';
 import { Group, Image, Text, ThemeIcon } from '@mantine/core';
 import { IconUser } from '@tabler/icons-react';
 import { ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
@@ -8,21 +8,19 @@ import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 export const ToolSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: SearchIndexDataMap['tools'][number] }
+  ComboboxItem & { hit: SearchIndexDataMap['tools'][number] }
 >(({ value, hit, ...props }, ref) => {
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { name, icon } = hit;
 
   return (
-    <Group ref={ref} {...props} key={hit.id} spacing="md" noWrap>
+    <Group ref={ref} {...props} key={hit.id} gap="md" wrap="nowrap">
       {icon ? (
         <Image
           src={getEdgeUrl(icon, { width: 96 })}
           alt={name ?? ''}
-          width={32}
-          height={32}
-          radius="xl"
+          className="size-8 rounded-full"
         />
       ) : (
         <ThemeIcon variant="light" size={32} radius="xl">

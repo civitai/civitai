@@ -43,6 +43,7 @@ import { createSelectStore } from '~/store/select.store';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const imageSelectStore = createSelectStore<number>();
 
@@ -66,7 +67,7 @@ export default function ImageTags() {
             withBorder
             shadow="lg"
             p="xs"
-            sx={{
+            style={{
               display: 'inline-flex',
               float: 'right',
               alignSelf: 'flex-end',
@@ -80,9 +81,9 @@ export default function ImageTags() {
             <ModerationControls images={images} filters={filters} />
           </Paper>
 
-          <Stack spacing={0} mb="lg">
+          <Stack gap={0} mb="lg">
             <Title order={1}>Tags Needing Review</Title>
-            <Text color="dimmed">
+            <Text c="dimmed">
               These are images with moderation tags that users have voted to remove.
             </Text>
           </Stack>
@@ -118,7 +119,7 @@ export default function ImageTags() {
               loadCondition={!isRefetching}
               style={{ gridColumn: '1/-1' }}
             >
-              <Center p="xl" sx={{ height: 36 }} mt="md">
+              <Center p="xl" style={{ height: 36 }} mt="md">
                 <Loader />
               </Center>
             </InViewLoader>
@@ -138,7 +139,7 @@ function ModerationControls<T extends { id: number }>({
 }) {
   const selected = imageSelectStore.useSelection();
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const moderateTagsMutation = trpc.tag.moderateTags.useMutation({
     async onMutate({ entityIds, disable }) {
       await queryUtils.image.getModeratorReviewQueue.cancel();
@@ -202,16 +203,16 @@ function ModerationControls<T extends { id: number }>({
   };
 
   return (
-    <Group noWrap spacing="xs">
+    <Group wrap="nowrap" gap="xs">
       <ButtonTooltip label="Select all" {...tooltipProps}>
-        <ActionIcon variant="outline" onClick={handleSelectAll}>
+        <LegacyActionIcon variant="outline" onClick={handleSelectAll}>
           <IconSquareCheck size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <ButtonTooltip label="Clear selection" {...tooltipProps}>
-        <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+        <LegacyActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
           <IconSquareOff size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
       <PopConfirm
         message={`Are you sure you want to approve ${selected.length} tag removal(s)?`}
@@ -220,9 +221,9 @@ function ModerationControls<T extends { id: number }>({
         withArrow
       >
         <ButtonTooltip label="Approve selected" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
             <IconCheck size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <PopConfirm
@@ -232,15 +233,15 @@ function ModerationControls<T extends { id: number }>({
         withArrow
       >
         <ButtonTooltip label="Decline selected" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
             <IconBan size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <ButtonTooltip label="Refresh" {...tooltipProps}>
-        <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+        <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
           <IconReload size="1.25rem" />
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
     </Group>
   );
@@ -268,25 +269,20 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
   const selected = imageSelectStore.useIsSelected(image.id);
 
   return (
-    <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
+    <Card shadow="sm" p="xs" style={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
       <Card.Section
-        sx={{ height: `${height}px`, cursor: 'pointer' }}
+        style={{ height: `${height}px`, cursor: 'pointer' }}
         onClick={() => imageSelectStore.toggle(image.id)}
       >
         <Checkbox
           checked={selected}
           readOnly
           size="lg"
-          sx={{
-            position: 'absolute',
-            top: 5,
-            right: 5,
-            zIndex: 9,
-          }}
+          className="absolute right-[5px] top-[5px] z-10"
         />
         <ImageGuard2 image={image}>
           {(safe) => (
-            <Box sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
+            <Box style={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
               <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
               {!safe ? (
                 <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
@@ -304,13 +300,13 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                   />
                   {entityUrl && (
                     <Link legacyBehavior href={entityUrl} passHref>
-                      <ActionIcon
+                      <LegacyActionIcon
                         component="a"
                         variant="transparent"
-                        style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                        className="absolute bottom-[5px] left-[5px]"
                         size="lg"
                         target="_blank"
-                        onClick={(e) => {
+                        onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
                           e.stopPropagation();
                         }}
                       >
@@ -321,12 +317,12 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                           strokeWidth={2.5}
                           size={26}
                         />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </Link>
                   )}
                   {image.meta && (
                     <ImageMetaPopover meta={image.meta as ImageMetaProps}>
-                      <ActionIcon
+                      <LegacyActionIcon
                         variant="transparent"
                         style={{ position: 'absolute', bottom: '5px', right: '5px' }}
                         size="lg"
@@ -338,7 +334,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                           strokeWidth={2.5}
                           size={26}
                         />
-                      </ActionIcon>
+                      </LegacyActionIcon>
                     </ImageMetaPopover>
                   )}
                 </>

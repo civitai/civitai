@@ -1,0 +1,41 @@
+.label {
+  padding: 0 var(--mantine-spacing-xs);
+
+  &[data-checked] {
+    background-color: var(--mantine-color-blue-6);
+    color: var(--mantine-color-white);
+
+    &:hover {
+      background-color: var(--mantine-color-blue-6);
+      color: var(--mantine-color-white);
+    }
+
+    .iconWrapper {
+      display: none;
+    }
+  }
+}
+
+.iconWrapper {
+  /* Used for hiding icon when checked */
+}
+
+.root {
+  display: flex;
+}
+
+.nextButton {
+  background-color: var(--mantine-color-gray-0);
+  color: var(--mantine-color-dark-9);
+  opacity: 0.65;
+  transition: opacity 300ms ease;
+
+  &:hover {
+    opacity: 1;
+    background-color: var(--mantine-color-gray-0);
+  }
+
+  &[data-loading="true"] {
+    background-color: var(--mantine-color-dark-6);
+  }
+}

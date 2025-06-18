@@ -1,4 +1,14 @@
-import { Badge, Text, Button, createStyles, Progress, Card, Popover } from '@mantine/core';
+import {
+  Badge,
+  Text,
+  Button,
+  Progress,
+  Card,
+  Popover,
+  useMantineTheme,
+  defaultVariantColorsResolver,
+  Anchor,
+} from '@mantine/core';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { IconHandStop } from '@tabler/icons-react';
@@ -11,10 +21,12 @@ import React from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import classes from './QueueSnackbar.module.scss';
+import clsx from 'clsx';
 
 export function QueueSnackbar() {
   const router = useRouter();
-  const { classes, cx, theme } = useStyles();
+  const theme = useMantineTheme();
   const {
     queued,
     queueStatus,
@@ -59,7 +71,7 @@ export function QueueSnackbar() {
         {includeQueueLink ? (
           <Text
             inline
-            variant="link"
+            c="blue.4"
             className="cursor-pointer"
             onClick={() => generationPanel.setView('queue')}
           >
@@ -76,8 +88,9 @@ export function QueueSnackbar() {
     <div className="flex w-full flex-col gap-2 ">
       <Card
         radius="md"
-        p={0}
-        className={cx(classes.card, 'flex justify-center px-1 gap-2 items-stretch ')}
+        px={4}
+        py={0}
+        className={clsx(classes.card, 'flex flex-row items-stretch justify-center gap-2')}
       >
         <div className="flex basis-20 items-center py-2 pl-1">
           {queueStatus ? (
@@ -102,22 +115,23 @@ export function QueueSnackbar() {
               </Popover.Target>
               <Popover.Dropdown>
                 <div className="flex flex-col items-center">
-                  <Text weight={600}>Generation Buzz Credit </Text>
-                  <Text component={Link} variant="link" href="/articles/7012" target="_blank">
+                  <Text fw={600}>Generation Buzz Credit</Text>
+                  <Anchor component={Link} href="/articles/7012" target="_blank">
                     Learn more
-                  </Text>
+                  </Anchor>
                 </div>
               </Popover.Dropdown>
             </Popover>
           ) : null}
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-1 py-2">
-          <Text weight={500} className="flex items-center gap-1 text-sm">
+          <Text fw={500} component="div" className="flex items-center gap-1 text-sm">
             {!!queued.length && queueStatus ? (
               dictionary[queueStatus]()
             ) : includeQueueLink ? (
               <Text
-                variant="link"
+                c="blue.4"
+                size="sm"
                 className="cursor-pointer"
                 onClick={() => generationPanel.setView('queue')}
               >
@@ -130,33 +144,38 @@ export function QueueSnackbar() {
           <div className="flex w-full justify-center gap-2">
             {slots.map((slot, i) => {
               const item = queued[i];
-              const colors = theme.fn.variant({
+              const colors = defaultVariantColorsResolver({
                 color: item ? generationStatusColors[item.status] : 'gray',
                 variant: 'light',
+                theme,
               });
               const quantity = item ? item.quantity : 0;
               const complete = quantity ? item.complete / quantity : 0;
               const processing = quantity ? item.processing / quantity : 0;
               return (
-                <Progress
+                <Progress.Root
                   key={i}
                   color={item ? generationStatusColors[item.status] : 'gray'}
                   radius="xl"
-                  sections={[
-                    { value: complete * 100, color: 'green' },
-                    { value: processing * 100, color: 'yellow' },
-                  ]}
                   h={6}
                   w="100%"
                   maw={32}
                   style={{ backgroundColor: item ? colors.background : undefined }}
                   className="flex-1"
-                  styles={{
-                    bar: {
-                      transition: 'width 200ms, left 200ms',
-                    },
-                  }}
-                />
+                  transitionDuration={200}
+                >
+                  {[
+                    { value: complete * 100, color: 'green' },
+                    { value: processing * 100, color: 'yellow' },
+                  ].map((section, index) => (
+                    <Progress.Section
+                      key={index}
+                      animated
+                      value={section.value}
+                      color={section.color}
+                    />
+                  ))}
+                </Progress.Root>
               );
             })}
           </div>
@@ -172,8 +191,8 @@ export function QueueSnackbar() {
                 You can queue {requestLimit} jobs at once
               </div>
             </Text>
-            <Button compact color="dark" radius="xl" component={Link} href="/pricing">
-              <Text color="yellow">Increase</Text>
+            <Button size="compact-sm" color="dark" radius="xl" component={Link} href="/pricing">
+              <Text c="yellow">Increase</Text>
             </Button>
           </div>
         </Badge>
@@ -181,16 +200,3 @@ export function QueueSnackbar() {
     </div>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    boxShadow: `inset 0 2px ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-    }`,
-
-    // '&:hover': {
-    //   backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[0],
-    // },
-  },
-  inner: { width: '100%' },
-}));

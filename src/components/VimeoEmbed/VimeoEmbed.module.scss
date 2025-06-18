@@ -1,4 +1,6 @@
 .vimeoWrapper {
+  position: relative;
+  overflow: hidden;
   background: #000;
 
   & iframe {

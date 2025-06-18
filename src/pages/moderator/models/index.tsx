@@ -126,7 +126,7 @@ export default function ModeratorModels() {
             }
             value={state.section}
           />
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Unpublished models for violating ToS which their owners have requested a review
           </Text>
         </Stack>
@@ -157,18 +157,10 @@ export default function ModeratorModels() {
                     return (
                       <List.Item
                         key={model.id}
-                        sx={(theme) => ({
-                          padding: theme.spacing.sm,
-                          border: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[2]
-                          }`,
-                          '& > *': { width: '100%' },
-                        })}
+                        className="border border-gray-2 p-2 dark:border-dark-4"
                       >
-                        <Stack spacing={8}>
-                          <Group position="apart" align="flex-start" noWrap>
+                        <Stack className="w-full" gap={8}>
+                          <Group justify="space-between" align="flex-start" wrap="nowrap">
                             {hasVersion ? (
                               <Badge color="violet" radius="xl">
                                 Model Version
@@ -178,10 +170,9 @@ export default function ModeratorModels() {
                             )}
                             <Button
                               variant="subtle"
-                              size="xs"
                               color="red"
                               onClick={() => toggleModal({ selectedModel: model })}
-                              compact
+                              size="compact-xs"
                             >
                               Decline Request
                             </Button>
@@ -207,13 +198,13 @@ export default function ModeratorModels() {
                             </Anchor>
                           </Link>
                           {unpublishedAt && (
-                            <Text size="xs" color="dimmed">
+                            <Text size="xs" c="dimmed">
                               Unpublished at: {formatDate(unpublishedAt)}
                             </Text>
                           )}
                           {unpublishedReason && (
                             <Text size="sm">
-                              <Text weight={500} size="sm" span>
+                              <Text fw={500} size="sm" span>
                                 Reason initially unpublished:
                               </Text>{' '}
                               {`${unpublishReasons[unpublishedReason].optionLabel}${
@@ -227,10 +218,10 @@ export default function ModeratorModels() {
                   })}
                 </List>
                 {pagination.totalPages > 1 && (
-                  <Group position="apart">
+                  <Group justify="space-between">
                     <Text>Total {pagination.totalItems} items</Text>
                     <Pagination
-                      page={state.page}
+                      value={state.page}
                       onChange={(page) => setState((s) => ({ ...s, page }))}
                       total={pagination.totalPages}
                     />
@@ -246,7 +237,7 @@ export default function ModeratorModels() {
                       value={state.declineReason}
                       onChange={(e) => setState((s) => ({ ...s, declineReason: e.target.value }))}
                     />
-                    <Group position="right">
+                    <Group justify="flex-end">
                       <Button variant="default" onClick={() => toggleModal()}>
                         Cancel
                       </Button>
@@ -263,7 +254,7 @@ export default function ModeratorModels() {
             ) : (
               <Paper p="xl" withBorder>
                 <Center>
-                  <Text size="md" color="dimmed">
+                  <Text size="md" c="dimmed">
                     There are no models that need review
                   </Text>
                 </Center>

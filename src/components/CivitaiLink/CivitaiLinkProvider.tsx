@@ -20,7 +20,7 @@ import type {
   WorkerIncomingMessage,
   Instance,
 } from '~/workers/civitai-link-worker-types';
-import type { MantineColor } from '@mantine/styles';
+import type { MantineColor } from '@mantine/core';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type CivitaiLinkStatus = (typeof statuses)[number];

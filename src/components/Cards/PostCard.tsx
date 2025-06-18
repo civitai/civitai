@@ -1,6 +1,6 @@
 import { Text } from '@mantine/core';
 import React from 'react';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
+import cardClasses from '~/components/Cards/Cards.module.css';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { IconPhoto } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -14,7 +14,6 @@ import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 
 export function PostCard({ data }: Props) {
   const currentUser = useCurrentUser();
-  const { classes } = useCardStyles({ aspectRatio: 1 });
 
   const image = data.images[0];
   const isOwner = currentUser?.id === data.user.id;
@@ -51,12 +50,12 @@ export function PostCard({ data }: Props) {
           <div className="flex flex-col gap-2">
             <UserAvatarSimple {...data.user} />
             {data.title && (
-              <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
+              <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} lh={1.2}>
                 {data.title}
               </Text>
             )}
           </div>
-          <IconBadge className={classes.iconBadge} icon={<IconPhoto size={14} />}>
+          <IconBadge className={cardClasses.iconBadge} icon={<IconPhoto size={14} />}>
             <Text size="xs">{abbreviateNumber(data.imageCount)}</Text>
           </IconBadge>
         </div>

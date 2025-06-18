@@ -1,7 +1,7 @@
-import { Alert, Code, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Alert, Code, Paper, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconExclamationMark, IconMail } from '@tabler/icons-react';
 import dayjs from 'dayjs';
-import type { BuiltInProviderType } from 'next-auth/providers';
+import type { BuiltInProviderType } from 'next-auth/providers/index';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
@@ -69,9 +69,10 @@ export function LoginContent(args: {
       <div className="flex items-center justify-center">
         <Logo className="max-h-10" />
       </div>
-      <h1 className="text-center text-xl font-bold">Sign Up or Log In</h1>
+      <Title order={1} className="text-center text-xl font-bold">Sign Up or Log In</Title>
       {message && (
         <Alert
+          py="sm"
           color="yellow"
           icon={
             <ThemeIcon color="yellow">
@@ -85,7 +86,7 @@ export function LoginContent(args: {
       {referrer && (
         <Paper withBorder className="p-3">
           <div className="flex flex-col gap-2">
-            <Text color="dimmed" size="sm">
+            <Text c="dimmed" size="sm">
               You have been referred by
             </Text>
             <CreatorCardV2 user={referrer} withActions={false} />
@@ -126,12 +127,12 @@ export function LoginContent(args: {
             wrapper: 'items-center',
           }}
         >
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text
               size="md"
-              // sx={{ lineHeight: 1.1 }}
+              // style={{ lineHeight: 1.1 }}
             >{`Check your email for a special login link`}</Text>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" c="dimmed">
               Be sure to check your spam...
             </Text>
           </Stack>

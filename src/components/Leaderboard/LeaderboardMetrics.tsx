@@ -1,5 +1,5 @@
 import type { MantineTheme } from '@mantine/core';
-import { createStyles, Group, Rating, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Group, Rating, Stack, Text, ThemeIcon, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import {
   IconArrowsHorizontal,
   IconBadges,
@@ -44,16 +44,20 @@ const iconProps = {
 };
 const metricTypes: Record<
   string,
-  (metrics: { type: string; value: number }[], theme: MantineTheme) => MetricDisplayOptions
+  (
+    metrics: { type: string; value: number }[],
+    theme: MantineTheme,
+    colorScheme: 'light' | 'dark'
+  ) => MetricDisplayOptions
 > = {
-  ratingCount: (metrics, theme) => ({
+  ratingCount: (metrics, theme, colorScheme) => ({
     icon: (
       <Rating
         size="xs"
         value={metrics.find((x) => x.type === 'rating')?.value ?? 0}
         readOnly
         emptySymbol={
-          theme.colorScheme === 'dark' ? (
+          colorScheme === 'dark' ? (
             <IconStar {...iconProps} fill="rgba(255,255,255,.3)" color="transparent" />
           ) : undefined
         }
@@ -161,7 +165,7 @@ const metricTypes: Record<
   diamond: () => ({
     tooltip: 'Diamond Days',
     icon: (
-      <ThemeIcon color="blue" variant="outline" sx={{ border: 'none' }}>
+      <ThemeIcon color="blue" variant="outline" style={{ border: 'none' }}>
         <IconHexagonFilled {...iconProps} />
       </ThemeIcon>
     ),
@@ -169,7 +173,7 @@ const metricTypes: Record<
   gold: () => ({
     tooltip: 'Gold Days',
     icon: (
-      <ThemeIcon color="yellow" variant="outline" sx={{ border: 'none' }}>
+      <ThemeIcon color="yellow" variant="outline" style={{ border: 'none' }}>
         <IconHexagonFilled {...iconProps} />
       </ThemeIcon>
     ),
@@ -177,7 +181,7 @@ const metricTypes: Record<
   silver: () => ({
     tooltip: 'Silver Days',
     icon: (
-      <ThemeIcon color="gray" variant="outline" sx={{ border: 'none' }}>
+      <ThemeIcon color="gray" variant="outline" style={{ border: 'none' }}>
         <IconHexagonFilled {...iconProps} />
       </ThemeIcon>
     ),
@@ -185,7 +189,7 @@ const metricTypes: Record<
   bronze: () => ({
     tooltip: 'Bronze Days',
     icon: (
-      <ThemeIcon color="orange" variant="outline" sx={{ border: 'none' }}>
+      <ThemeIcon color="orange" variant="outline" style={{ border: 'none' }}>
         <IconHexagonFilled {...iconProps} />
       </ThemeIcon>
     ),
@@ -209,23 +213,24 @@ export function LeaderboardMetrics({
   score: number;
   delta?: number;
 }) {
-  const { theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
 
   return (
-    <Group spacing={4}>
+    <Group gap={4}>
       <IconBadge
         size="lg"
         color="gray"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        variant={colorScheme === 'dark' ? 'filled' : 'light'}
         icon={<IconTrophy {...iconProps} />}
         tooltip={
-          <Stack spacing={0} align="center">
-            {delta && delta != 0 && (
+          <Stack gap={0} align="center">
+            {delta && delta !== 0 ? (
               <Text size="xs" color={delta > 0 ? 'green' : 'red'}>
                 {delta > 0 ? '+' : ''}
                 {numberWithCommas(delta)}
               </Text>
-            )}
+            ) : null}
             <>Score</>
           </Stack>
         }
@@ -236,14 +241,14 @@ export function LeaderboardMetrics({
         const typeProcessor = metricTypes[type];
         if (!typeProcessor) return null;
 
-        const badge = typeProcessor(metrics, theme);
+        const badge = typeProcessor(metrics, theme, colorScheme);
         if (value === 0 && badge.hideEmpty) return null;
 
         return (
           <IconBadge
             size="lg"
             color="gray"
-            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            variant={colorScheme === 'dark' ? 'filled' : 'light'}
             key={type}
             icon={badge.icon}
             tooltip={badge.tooltip}
@@ -255,16 +260,3 @@ export function LeaderboardMetrics({
     </Group>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  creatorCard: {
-    '&.active': {
-      borderColor: theme.colors.blue[8],
-      boxShadow: `0 0 10px ${theme.colors.blue[8]}`,
-    },
-    '&:hover': {
-      backgroundColor:
-        theme.colorScheme === 'dark' ? 'rgba(255,255,255, 0.03)' : 'rgba(0,0,0, 0.01)',
-    },
-  },
-}));

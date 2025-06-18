@@ -38,13 +38,13 @@ export const ManageClubMembershipModal = ({ clubId, clubTierIds }: Props) => {
 
       {isLoading ? (
         <Center>
-          <Loader variant="bars" />
+          <Loader type="bars" />
         </Center>
       ) : club ? (
-        <Stack spacing="md">
+        <Stack gap="md">
           <Text>
             Manage your club membership on club{' '}
-            <Text component="span" weight="bold">
+            <Text component="span" fw="bold">
               {club.name}
             </Text>
           </Text>
@@ -56,13 +56,13 @@ export const ManageClubMembershipModal = ({ clubId, clubTierIds }: Props) => {
               ))}
             </>
           ) : (
-            <Text color="dimmed" size="sm">
+            <Text c="dimmed" size="sm">
               The owner of this club has not added any club tiers yet.
             </Text>
           )}
         </Stack>
       ) : (
-        <Text color="dimmed">This club does not exist.</Text>
+        <Text c="dimmed">This club does not exist.</Text>
       )}
 
       <Divider
@@ -73,7 +73,7 @@ export const ManageClubMembershipModal = ({ clubId, clubTierIds }: Props) => {
         labelPosition="center"
       />
       <Link legacyBehavior href={`/clubs/${clubId}`} passHref>
-        <Button fullWidth onClick={handleClose} leftIcon={<IconClubs size={16} />}>
+        <Button fullWidth onClick={handleClose} leftSection={<IconClubs size={16} />}>
           Check this club&rsquo;s page
         </Button>
       </Link>

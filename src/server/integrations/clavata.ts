@@ -1,4 +1,41 @@
+import Clavata, { type EvaluateRequest, StreamError } from '@clavata/sdk';
 import { env } from '~/env/server';
+
+export const clavataSDK = env.CLAVATA_TOKEN
+  ? new Clavata({ apiKey: env.CLAVATA_TOKEN }) // , server: env.CLAVATA_ENDPOINT // TODO this gives a name resolution error
+  : undefined;
+
+export const clavataEvaluate = async function* (
+  request: EvaluateRequest,
+  confidenceThreshold = 0.5
+) {
+  if (!clavataSDK) throw new Error('Clavata SDK not initialized');
+
+  const stream = clavataSDK.evaluate(request);
+
+  for await (const item of stream) {
+    if (item instanceof StreamError) throw item;
+    // console.log(JSON.stringify(item, null, 4));
+
+    const { metadata, report, jobUuid, result, score, matches } = item;
+
+    const reports = report?.sectionReports;
+
+    const tags = reports
+      ?.map((r) => ({
+        tag: r.name,
+        confidence: Math.round((r.score ?? 0) * 100),
+        outcome: r.result,
+        message: r.message,
+      }))
+      .filter((t) => t.confidence > confidenceThreshold * 100)
+      .sort((a, b) => b.confidence - a.confidence);
+
+    // TODO other data?
+
+    yield { externalId: jobUuid, tags, result, metadata, score, matches };
+  }
+};
 
 // clavata-api-client.ts
 export interface ClavataApiClientOptions {
@@ -12,10 +49,10 @@ export interface ClavataApiClientOptions {
   confidenceThreshold?: number;
 }
 
-export interface ImageTag {
+export interface ClavataTag {
   tag: string;
   confidence: number; // 0-100
-  outcome: 'OUTCOME_FALSE' | 'OUTCOME_TRUE' | 'OUTCOME_UNSPECIFIED';
+  outcome?: string;
 }
 
 export class ClavataApiClient {
@@ -40,7 +77,7 @@ export class ClavataApiClient {
     image: string,
     policyId?: string,
     signal?: AbortSignal
-  ): Promise<{ externalId: string; tags: ReadonlyArray<ImageTag> }> {
+  ): Promise<{ externalId: string; tags: ReadonlyArray<ClavataTag> }> {
     const base64 =
       image.startsWith('data:') || /^[A-Za-z0-9+/]+=*$/.test(image)
         ? image
@@ -62,11 +99,12 @@ export class ClavataApiClient {
       : btoa(String.fromCharCode(...new Uint8Array(buffer)));
   }
 
+  // TODO switch to API
   private async runJobWithBase64(
     base64Image: string,
     policyId?: string,
     signal?: AbortSignal
-  ): Promise<{ externalId: string; tags: ReadonlyArray<ImageTag> }> {
+  ): Promise<{ externalId: string; tags: ReadonlyArray<ClavataTag> }> {
     const body = {
       contentData: [{ image: base64Image }],
       policyId: policyId ?? this.opts.policyId,
@@ -97,14 +135,14 @@ export class ClavataApiClient {
 
     const sectionReports = json.result.policyEvaluationReport?.sectionEvaluationReports ?? [];
 
-    const tags: ImageTag[] = sectionReports
+    const tags: ClavataTag[] = sectionReports
       .map((r: any) => ({
         tag: r.name as string,
         confidence: Math.round((r.reviewResult?.score ?? 0) * 100),
         outcome: r.reviewResult?.outcome,
       }))
-      .filter((t: ImageTag) => t.tag && t.confidence > this.opts.confidenceThreshold * 100)
-      .sort((a: ImageTag, b: ImageTag) => b.confidence - a.confidence);
+      .filter((t: ClavataTag) => t.tag && t.confidence > this.opts.confidenceThreshold * 100)
+      .sort((a: ClavataTag, b: ClavataTag) => b.confidence - a.confidence);
 
     return { externalId, tags };
   }

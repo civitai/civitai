@@ -1,0 +1,9 @@
+.scrollbar {
+  &[data-orientation="horizontal"] {
+    display: none;
+  }
+}
+
+.viewport {
+  padding: 0;
+}

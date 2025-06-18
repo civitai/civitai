@@ -4,6 +4,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AuctionTopSection } from '~/components/Auction/AuctionInfo';
 import { ModelMyBidCard, ModelMyRecurringBidCard } from '~/components/Auction/AuctionPlacementCard';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GetMyBidsReturn, GetMyRecurringBidsReturn } from '~/server/services/auction.service';
 import { AuctionType } from '~/shared/utils/prisma/enums';
@@ -70,21 +71,26 @@ export const AuctionMyBids = () => {
   );
 
   return (
-    <Stack w="100%" spacing="sm">
+    <Stack w="100%" gap="sm">
       <AuctionTopSection showHistory={false} />
 
       <Title order={3}>My Bids</Title>
       <TextInput
-        icon={<IconSearch size={16} />}
+        leftSection={<IconSearch size={16} />}
         placeholder="Filter items..."
         value={searchText}
         maxLength={150}
         disabled={!bidData.length && !bidRecurringData.length}
         onChange={(event) => setSearchText(event.currentTarget.value)}
         rightSection={
-          <ActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
+          <LegacyActionIcon
+            color="gray"
+            variant="subtle"
+            onClick={() => setSearchText('')}
+            disabled={!searchText.length}
+          >
             <IconX size={16} />
-          </ActionIcon>
+          </LegacyActionIcon>
         }
       />
 
@@ -103,7 +109,7 @@ export const AuctionMyBids = () => {
         </Center>
       ) : !activeBids.length ? (
         <Center my="lg">
-          <Stack spacing="xs" className="text-center">
+          <Stack gap="xs" className="text-center">
             <Text>No active bids.</Text>
             <Text>Choose an auction in the list to get started.</Text>
           </Stack>

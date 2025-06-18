@@ -2,9 +2,7 @@ import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import {
   ProfileSection,
   ProfileSectionPreview,
-  useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
-import { useInView } from '~/hooks/useInView';
 import { IconHeart } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
@@ -13,6 +11,8 @@ import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import classes from '~/components/Profile/ProfileSection.module.css';
+import clsx from 'clsx';
 
 export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   const [ref, inView] = useInViewDynamic({ id: 'profile-showcase-section' });
@@ -44,13 +44,6 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     data: transformed,
   });
 
-  const { classes, cx } = useProfileSectionStyles({
-    // count: coverImages.length,
-    count: showcaseItems.length,
-    rowCount: 2,
-    widthGrid: '280px',
-  });
-
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
 
   if (isNullState) {
@@ -58,7 +51,17 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   }
 
   return (
-    <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
+    <div
+      ref={ref}
+      className={isNullState ? undefined : classes.profileSection}
+      style={
+        {
+          '--count': showcaseItems.length,
+          '--row-count': 2,
+          '--width-grid': '280px',
+        } as React.CSSProperties
+      }
+    >
       {inView &&
         (isLoading ? (
           <ProfileSectionPreview rowCount={2} />
@@ -67,7 +70,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
             <ShowcaseGrid
               itemCount={showcaseItems.length}
               rows={2}
-              className={cx({
+              className={clsx({
                 [classes.nullState]: !coverImages.length,
                 [classes.loading]: isRefetching,
               })}

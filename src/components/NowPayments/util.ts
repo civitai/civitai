@@ -15,7 +15,7 @@ export const useNowPaymentsStatus = () => {
 const CREATE_TRANSACTION_TOAST_ID = 'CREATE_TRANSACTION_TOAST_ID';
 
 export const useMutateNowPayments = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const getPriceEstimateMutation = trpc.nowPayments.getPriceEstimate.useMutation({
     async onSuccess() {

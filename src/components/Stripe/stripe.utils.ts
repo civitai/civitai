@@ -13,7 +13,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { useDebouncer } from '~/utils/debouncer';
 
 export const useMutateStripe = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const deletePaymentMethodMutation = trpc.user.deletePaymentMethod.useMutation({
     async onSuccess() {

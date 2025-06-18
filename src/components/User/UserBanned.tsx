@@ -15,7 +15,7 @@ export default function UserBanned() {
       <ThemeIcon size={128} radius={100} color="red">
         <IconBan size={80} />
       </ThemeIcon>
-      <Title order={1} align="center">
+      <Title order={1} className="text-center">
         You have been banned
       </Title>
       <Text size="lg" align="center">

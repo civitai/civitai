@@ -1,15 +1,5 @@
 import type { CardProps } from '@mantine/core';
-import { Card, Stack, Text, Title, createStyles } from '@mantine/core';
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    padding: '32px !important',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    [theme.fn.smallerThan('sm')]: {
-      padding: '16px !important',
-    },
-  },
-}));
+import { Card, Stack, Text, Title } from '@mantine/core';
 
 export function SectionCard({
   title,
@@ -18,19 +8,18 @@ export function SectionCard({
   headerAlign = 'center',
   ...cardProps
 }: Props) {
-  const { classes } = useStyles();
   return (
-    <Card className={classes.card} radius="lg" {...cardProps}>
-      <Stack align="center" spacing={48}>
+    <Card className="bg-gray-0 p-4 md:p-8 dark:bg-dark-6" radius="lg" {...cardProps}>
+      <Stack align="center" gap={48}>
         {(title || subtitle) && (
-          <Stack spacing={4} align={headerAlign}>
+          <Stack gap={4} align={headerAlign}>
             {title && (
-              <Title order={2} size={32} align={headerAlign}>
+              <Title order={2} size={32} ta={headerAlign}>
                 {title}
               </Title>
             )}
             {subtitle && (
-              <Text color="dimmed" size="xl" align={headerAlign}>
+              <Text c="dimmed" size="xl" align={headerAlign}>
                 {subtitle}
               </Text>
             )}

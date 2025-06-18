@@ -1,0 +1,241 @@
+.wiggle {
+  animation: wiggle 0.5s ease-in-out infinite;
+}
+
+.bounceRight {
+  animation: bounceRight 1s ease-in-out infinite;
+}
+
+.vibrate {
+  animation: vibrate 0.5s ease-in-out infinite;
+}
+
+.jelloVertical {
+  animation: jelloVertical 0.5s ease-in-out infinite;
+}
+
+.enterFall {
+  animation: enterFall 1s ease-in-out forwards;
+}
+
+.fadeInOut {
+  animation: fadeInOut 0.5s ease-in-out forwards;
+}
+
+.blink {
+  animation: blink 0.5s ease-in-out infinite;
+}
+
+.jelloFall {
+  animation-name: enterFall, jelloVertical;
+  animation-duration: 1.5s, 2s;
+  animation-delay: 0s, 1.5s;
+  animation-iteration-count: 1, 1;
+}
+
+.rainbowBackground {
+  animation: movingRainbow 10s linear infinite;
+}
+
+@keyframes wiggle {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  25% {
+    transform: rotate(-5deg); // Default amount is 5; adjust dynamically in JS if needed
+  }
+
+  75% {
+    transform: rotate(5deg);
+  }
+
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes bounceRight {
+  0% {
+    transform: translateX(48px);
+    animation-timing-function: ease-in;
+    opacity: 1;
+  }
+
+  24% {
+    opacity: 1;
+  }
+
+  40% {
+    transform: translateX(26px);
+    animation-timing-function: ease-in;
+  }
+
+  65% {
+    transform: translateX(13px);
+    animation-timing-function: ease-in;
+  }
+
+  82% {
+    transform: translateX(6.5px);
+    animation-timing-function: ease-in;
+  }
+
+  93% {
+    transform: translateX(4px);
+    animation-timing-function: ease-in;
+  }
+
+  25%,
+  55%,
+  75%,
+  87%,
+  98% {
+    transform: translateX(0px);
+    animation-timing-function: ease-out;
+  }
+
+  100% {
+    transform: translateX(0px);
+    animation-timing-function: ease-out;
+    opacity: 1;
+  }
+}
+
+@keyframes vibrate {
+  0% {
+    transform: translate(0);
+  }
+
+  20% {
+    transform: translate(-2px, 2px); // Default amount is 2; adjust dynamically in JS if needed
+  }
+
+  40% {
+    transform: translate(-2px, -2px);
+  }
+
+  60% {
+    transform: translate(2px, 2px);
+  }
+
+  80% {
+    transform: translate(2px, -2px);
+  }
+
+  100% {
+    transform: translate(0);
+  }
+}
+
+@keyframes jelloVertical {
+  0% {
+    transform: scale3d(1, 1, 1);
+  }
+
+  30% {
+    transform: scale3d(0.75, 1.25, 1);
+  }
+
+  40% {
+    transform: scale3d(1.25, 0.75, 1);
+  }
+
+  50% {
+    transform: scale3d(0.85, 1.15, 1);
+  }
+
+  65% {
+    transform: scale3d(1.05, 0.95, 1);
+  }
+
+  75% {
+    transform: scale3d(0.95, 1.05, 1);
+  }
+
+  100% {
+    transform: scale3d(1, 1, 1);
+  }
+}
+
+@keyframes enterFall {
+  0% {
+    transform: translateY(-500px);
+    animation-timing-function: ease-in;
+    opacity: 0;
+  }
+
+  38% {
+    transform: translateY(0);
+    animation-timing-function: ease-out;
+    opacity: 1;
+  }
+
+  55% {
+    transform: translateY(-65px);
+    animation-timing-function: ease-in;
+  }
+
+  72% {
+    transform: translateY(0);
+    animation-timing-function: ease-out;
+  }
+
+  81% {
+    transform: translateY(-28px);
+    animation-timing-function: ease-in;
+  }
+
+  90% {
+    transform: translateY(0);
+    animation-timing-function: ease-out;
+  }
+
+  95% {
+    transform: translateY(-8px);
+    animation-timing-function: ease-in;
+  }
+
+  100% {
+    transform: translateY(0);
+    animation-timing-function: ease-out;
+  }
+}
+
+@keyframes fadeInOut {
+  0% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes blink {
+  0% {
+    opacity: 0.25;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes movingRainbow {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}

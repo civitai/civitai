@@ -20,7 +20,7 @@ const VaultUpsell = () => {
         <ThemeIcon size={100} radius={50} color="teal" variant="light">
           <IconCloudLock size={50} />
         </ThemeIcon>
-        <Text weight={700} align="center">
+        <Text fw={700} align="center">
           Try Civitai Vault
         </Text>
         <Text align="center" size="sm">
@@ -65,7 +65,7 @@ const MembershipUpsell = () => {
         <ThemeIcon size={100} radius={50} color="teal" variant="light">
           <IconServerBolt size={50} />
         </ThemeIcon>
-        <Text weight={700} align="center">
+        <Text fw={700} align="center">
           Looks like you&rsquo;re running out of storage
         </Text>
         <Text align="center" size="sm">

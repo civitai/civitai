@@ -9,6 +9,8 @@ import {
   IconMail,
 } from '@tabler/icons-react';
 import type { BuiltInProviderType } from 'next-auth/providers';
+import classes from './Social.module.css';
+import clsx from 'clsx';
 
 type SocialProps = Partial<
   Record<
@@ -49,97 +51,22 @@ export const socialItems: SocialProps = {
   },
 };
 
-const discordColor = '#5865F2';
-const googleColor = '#4285F4';
-const redditColor = '#FF5700';
-const emailColor = '#666';
-
 export function DiscordButton(props: ButtonProps) {
-  return (
-    <Button
-      sx={(theme) => ({
-        backgroundColor: theme.colorScheme === 'dark' ? discordColor : discordColor,
-        '&:hover': {
-          backgroundColor:
-            theme.colorScheme === 'dark'
-              ? theme.fn.lighten(discordColor, 0.05)
-              : theme.fn.darken(discordColor, 0.05),
-        },
-      })}
-      {...props}
-    />
-  );
+  return <Button {...props} className={clsx(classes.discordButton, props.className)} />;
 }
 
 export function GitHubButton(props: ButtonProps) {
-  return (
-    <Button
-      {...props}
-      sx={(theme) => {
-        const backgroundColor = theme.colors.dark?.[theme.colorScheme === 'dark' ? 9 : 6];
-
-        return {
-          backgroundColor,
-          color: '#fff',
-          '&:hover': {
-            backgroundColor:
-              theme.colorScheme === 'dark'
-                ? theme.fn.lighten(backgroundColor, 0.02)
-                : theme.fn.lighten(backgroundColor, 0.05),
-          },
-        };
-      }}
-    />
-  );
+  return <Button {...props} className={clsx(classes.githubButton, props.className)} />;
 }
 
 export function GoogleButton(props: ButtonProps) {
-  return (
-    <Button
-      {...props}
-      sx={(theme) => ({
-        backgroundColor: theme.colorScheme === 'dark' ? googleColor : googleColor,
-        '&:hover': {
-          backgroundColor:
-            theme.colorScheme === 'dark'
-              ? theme.fn.lighten(googleColor, 0.05)
-              : theme.fn.darken(googleColor, 0.05),
-        },
-      })}
-    />
-  );
+  return <Button {...props} className={clsx(classes.googleButton, props.className)} />;
 }
 
 export function RedditButton(props: ButtonProps) {
-  return (
-    <Button
-      {...props}
-      sx={(theme) => ({
-        backgroundColor: redditColor,
-        '&:hover': {
-          backgroundColor:
-            theme.colorScheme === 'dark'
-              ? theme.fn.lighten(redditColor, 0.1)
-              : theme.fn.darken(redditColor, 0.05),
-        },
-      })}
-    />
-  );
+  return <Button {...props} className={clsx(classes.redditButton, props.className)} />;
 }
 
 export function EmailButton(props: ButtonProps) {
-  return (
-    <Button
-      {...props}
-      sx={(theme) => ({
-        backgroundColor: emailColor,
-        '&:hover': {
-          backgroundColor:
-            theme.colorScheme === 'dark'
-              ? theme.fn.lighten(emailColor, 0.1)
-              : theme.fn.darken(emailColor, 0.05),
-        },
-      })}
-    />
-  );
+  return <Button {...props} className={clsx(classes.emailButton, props.className)} />;
 }

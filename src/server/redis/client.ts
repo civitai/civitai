@@ -356,6 +356,7 @@ export const REDIS_SYS_KEYS = {
     ENGINES: 'generation:engines',
     TOKENS: 'generation:tokens',
     EXPERIMENTAL: 'generation:experimental',
+    CUSTOM_CHALLENGE: 'generation:custom-challenge',
   },
   TRAINING: {
     STATUS: 'training:status',
@@ -416,6 +417,43 @@ export const REDIS_SYS_KEYS = {
       ALL: 'new-order:judgments:all',
       CORRECT: 'new-order:judgments:correct',
       ACOLYTE_FAILED: 'new-order:judgments:acolyte-failed',
+    },
+  },
+  ENTITY_MODERATION: {
+    // hset
+    BASE: 'system:entity-moderation',
+    KEYS: {
+      /*
+        Use: Specify a default policy and an optional override for each entity.
+        Structure: json ({"default": string, "overrides": { EntityType?: string } })
+       */
+      CLAVATA_POLICIES: 'clavata-policies',
+      /*
+        Use: Disable certain entities from running.
+        Structure: json ({ EntityType?: false })
+       */
+      ENTITIES: 'entities',
+      /*
+        Use: Toggle the wordlist check.
+        Structure: boolean
+       */
+      RUN_WORDLISTS: 'run-wordlists',
+      /*
+        Use: Specify which wordlists to use.
+        Structure: json (string[])
+       */
+      WORDLISTS: 'wordlists',
+      /*
+        Use: Specify which urllists to use.
+        Structure: json (string[])
+       */
+      URLLISTS: 'urllists',
+    },
+    WORDLISTS: {
+      // hset, dynamic keys with packed string[]
+      WORDS: 'packed:system:entity-moderation:words',
+      // hset, dynamic keys with packed string[]
+      URLS: 'packed:system:entity-moderation:urls',
     },
   },
 } as const;

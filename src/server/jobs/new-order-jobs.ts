@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { newOrderConfig } from '~/server/common/constants';
-import { NewOrderImageRatingStatus } from '~/server/common/enums';
+import { NewOrderImageRatingStatus, NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   allJudgmentsCounter,
@@ -11,11 +11,13 @@ import {
   correctJudgmentsCounter,
   expCounter,
   fervorCounter,
+  poolCounters,
 } from '~/server/games/new-order/utils';
 import { createJob } from '~/server/jobs/job';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { calculateFervor, cleanseSmite } from '~/server/services/games/new-order.service';
+import { createNotification } from '~/server/services/notification.service';
 import { claimCosmetic } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
@@ -87,11 +89,17 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
     }));
 
     await createBuzzTransactionMany(transactions);
+
+    // Deduct the blessed buzz from the counter
+    await Promise.all(
+      batch.map((player) => {
+        const blessedBuzzValue = player.balance / newOrderConfig.blessedBuzzConversionRatio;
+        return blessedBuzzCounter.decrement({ id: player.userId, value: blessedBuzzValue });
+      })
+    );
     log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`);
     loopCount++;
   }
-
-  await Promise.all(validPlayers.map(({ userId: id }) => blessedBuzzCounter.reset({ id })));
 
   log('BlessedBuzz :: Granting Blessed Buzz :: done');
 });
@@ -123,13 +131,20 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     return;
   }
 
-  const json = users.map((u) => `'${JSON.stringify(u)}'`);
-  const userData = await clickhouse.$query<DailyResetQueryResult>`
+  const userBatches = chunk(users, 1000);
+  log(`DailyReset:: Processing ${users.length} users in ${userBatches.length} batches`);
+  let userData: DailyResetQueryResult[] = [];
+  let userLoopCount = 1;
+  for (const batch of userBatches) {
+    log(`DailyReset:: Processing users :: ${userLoopCount} of ${userBatches.length}`);
+
+    const tuples = batch.map((u) => `(${u.userId},'${u.startAt.toISOString()}')`).join(',');
+    const data = await clickhouse.$query<DailyResetQueryResult>`
     WITH u AS (
       SELECT 
-        arrayJoin([${json}]) as user,
-        JSONExtractInt(user, 'userId') as userId,
-        JSONExtractString(user, 'startAt') as startAt
+        arrayJoin([${tuples}]) as user_tuple,
+        user_tuple.1 as userId,
+        user_tuple.2 as startAt
     )
     SELECT 
       knoir."userId",
@@ -157,12 +172,20 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     GROUP BY knoir."userId"
   `;
 
+    if (data.length) {
+      userData = [...userData, ...data];
+    }
+
+    log(`DailyReset:: Processing users :: ${userLoopCount} of ${userBatches.length} :: done`);
+    userLoopCount++;
+  }
+
   if (!userData.length) {
     log('DailyReset:: No judgments found');
     return;
   }
 
-  const batches = chunk(userData, 500);
+  const batches = chunk(userData, 200);
   let loopCount = 1;
   for (const batch of batches) {
     log(`DailyReset:: Processing judgments :: ${loopCount} of ${batches.length}`);
@@ -206,7 +229,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   log('DailyReset:: Cleared counters');
 });
 
-const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', async () => {
+const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * *', async () => {
   if (!clickhouse) return;
   log('PickTemplars :: Picking templars');
 
@@ -255,32 +278,38 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
     return acc;
   }, {} as Record<number, number>);
 
-  // Clear fervor counters
-  await Promise.all(
-    Object.keys(playersFervor).map((id) => fervorCounter.reset({ id: Number(id) }))
-  );
-
-  // Update fervor counter with new data
-  await Promise.all(
-    Object.entries(playersFervor).map(([id, fervor]) =>
-      fervorCounter.increment({ id: Number(id), value: fervor })
-    )
-  );
-
-  const candidates = await fervorCounter.getAll({ limit: 12 });
+  // Pick the top 24 players based on fervor
+  const candidates = Object.entries(playersFervor)
+    .sort((a, b) => b[1] - a[1]) // Sort by fervor descending
+    .slice(0, newOrderConfig.limits.templarPicks) // Take the top 24
+    .map(([userId]) => Number(userId)); // Extract userIds
+  if (candidates.length === 0) {
+    log('PickTemplars :: No candidates found');
+    return;
+  }
 
   log(`PickTemplars :: Candidates: ${candidates}`);
 
-  const playerIds = candidates.map(Number);
   // Update the new templars:
   const selectedTemplars = await dbWrite.newOrderPlayer.updateManyAndReturn({
     select: { userId: true },
-    where: { userId: { in: playerIds }, rankType: NewOrderRankType.Knight },
+    where: {
+      userId: { in: candidates },
+      rankType: { not: NewOrderRankType.Acolyte },
+    },
     data: { rankType: NewOrderRankType.Templar },
   });
 
   // Grant cosmetic to new templars
   for (const templar of selectedTemplars) {
+    createNotification({
+      category: NotificationCategory.Other,
+      type: 'new-order-templar-promotion',
+      key: `new-order-templar-promotion:${templar.userId}:${endDate.valueOf()}`,
+      userId: templar.userId,
+      details: {},
+    }).catch();
+
     await claimCosmetic({
       id: newOrderConfig.cosmetics.badgeIds.templar,
       userId: templar.userId,
@@ -288,14 +317,28 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
   }
   log(`PickTemplars :: Granted templar badge to ${selectedTemplars.length} players`);
 
-  // Update the new knights:
-  await dbWrite.newOrderPlayer.updateMany({
+  // Get a list of players who are not candidates
+  const nonCandidates = players.filter((p) => !candidates.includes(p.userId)).map((p) => p.userId);
+
+  // Update the demoted knights:
+  const demotedKnights = await dbWrite.newOrderPlayer.updateManyAndReturn({
+    select: { userId: true },
     where: {
-      userId: { in: players.filter((p) => !playerIds.includes(p.userId)).map((p) => p.userId) },
+      userId: { in: nonCandidates },
       rankType: { not: NewOrderRankType.Acolyte },
     },
     data: { rankType: NewOrderRankType.Knight },
   });
+
+  for (const knight of demotedKnights) {
+    createNotification({
+      category: NotificationCategory.Other,
+      type: 'new-order-knight-demoted',
+      key: `new-order-knight-demoted:${knight.userId}:${endDate.valueOf()}`,
+      userId: knight.userId,
+      details: {},
+    }).catch();
+  }
 
   log('PickTemplars :: Picking templars :: done');
 });
@@ -328,9 +371,54 @@ const newOrderCleanseSmites = createJob('new-order-cleanse-smites', '0 0 * * *',
   log(`CleanseSmites :: Cleansing smites :: done`);
 });
 
+const ranksToClean = [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'] as const;
+const newOrderCleanupQueues = createJob('new-order-cleanup-queues', '*/10 * * * *', async () => {
+  log('CleanupQueues :: Cleaning up queues');
+
+  for (const rank of ranksToClean) {
+    log(`CleanupQueues :: Cleaning up ${rank} queues`);
+
+    // Fetch current image IDs from the rankType queue
+    const currentImageIds = (
+      await Promise.all(poolCounters[rank].map((pool) => pool.getAll({ limit: 10000 })))
+    )
+      .flat()
+      .map((value) => Number(value));
+
+    if (currentImageIds.length === 0) {
+      log(`CleanupQueues :: No images found for ${rank}`);
+      continue;
+    }
+
+    const chunks = chunk(currentImageIds, 1000);
+    for (const chunk of chunks) {
+      // Check against the database to find non-existing image IDs
+      const existingImages = await dbRead.image.findMany({
+        where: { id: { in: chunk } },
+        select: { id: true, nsfwLevel: true },
+      });
+      const existingImageIds = new Set(existingImages.map((image) => image.id));
+      const blockedImageIds = new Set(
+        existingImages
+          .filter((image) => image.nsfwLevel === NsfwLevel.Blocked)
+          .map((image) => image.id)
+      );
+      const imageIdsToRemove = chunk.filter(
+        (id) => !existingImageIds.has(id) || blockedImageIds.has(id)
+      );
+      if (imageIdsToRemove.length === 0) continue;
+
+      // Remove non-existing images from the queue
+      await Promise.all([poolCounters[rank].map((pool) => pool.reset({ id: imageIdsToRemove }))]);
+    }
+  }
+  log('CleanupQueues :: Cleaning up queues :: done');
+});
+
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
   newOrderDailyReset,
   newOrderPickTemplars,
   newOrderCleanseSmites,
+  newOrderCleanupQueues,
 ];

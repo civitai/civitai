@@ -20,7 +20,7 @@
 
 .ai,
 .accent {
-  fill: theme('colors.blue.8');
+  fill: var(--mantine-color-blue-8);
 }
 
 .flyOver {
@@ -37,34 +37,34 @@
   left: 50%;
   transform: translateX(-50%);
   z-index: 3;
-  background: theme('colors.gray.1');
+  background: var(--mantine-color-gray-1);
 
   @container (max-width: theme('screens.sm')) {
     bottom: -7px;
   }
 }
 
-:global(.dark) {
+:global([data-mantine-color-scheme="dark"]) {
   .c,
   .ivit {
-    fill: theme('colors.dark.0');
+    fill: var(--mantine-color-dark-0);
   }
   .liveNow {
-    background: theme('colors.dark.8');
+    background: var(--mantine-color-dark-8);
   }
 }
 
 :global(.green) {
   .ai,
   .accent {
-    fill: theme('colors.green.8');
+    fill: var(--mantine-color-green-8);
   }
 }
 
 :global(.red) {
   .ai,
   .accent {
-    fill: theme('colors.red.8');
+    fill: var(--mantine-color-red-8);
   }
 }
 
@@ -138,7 +138,7 @@
 .christmas {
   .ai,
   .accent {
-    fill: theme('colors.red.8');
+    fill: var(--mantine-color-red-8);
   }
   .svg {
     z-index: 2;
@@ -254,7 +254,7 @@
   }
   .ai,
   .accent {
-    fill: theme('colors.orange.6');
+    fill: var(--mantine-color-orange-6);
   }
   .svg {
     z-index: 2;
@@ -262,10 +262,11 @@
 }
 .newyear {
 }
+
 .stpatty {
   .ai,
   .accent {
-    fill: theme('colors.green.8');
+    fill: var(--mantine-color-green-8);
   }
 }
 .pride {

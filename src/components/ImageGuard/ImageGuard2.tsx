@@ -19,7 +19,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { useImageStore } from '~/store/image.store';
-import classes from './ImageGuard.module.scss';
+import classes from './ImageGuard.module.css';
 
 type ImageProps = {
   id: number;
@@ -165,7 +165,10 @@ function ImageGuardContentInner({
       {(inView === undefined || inView) && !show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-[60%] flex-col items-center gap-2 text-white">
+            <div
+              className="pointer-events-none absolute left-1/2 top-1/2 z-20 flex flex-col items-center gap-2 text-white"
+              style={{ transform: 'translate(-50%, -60%)' }}
+            >
               <Text size="sm" className="shadow-black/50 text-shadow-sm">
                 This image is rated
               </Text>
@@ -177,25 +180,7 @@ function ImageGuardContentInner({
               >
                 {browsingLevelLabels[browsingLevel as NsfwLevel]}
               </Badge>
-              <Button
-                className="pointer-events-auto"
-                onClick={toggle}
-                radius="xl"
-                sx={(theme) => ({
-                  color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
-                  backgroundColor: theme.fn.rgba(
-                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-                    0.6
-                  ),
-                  boxShadow: theme.shadows.sm,
-                  '&:hover': {
-                    backgroundColor: theme.fn.rgba(
-                      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-                      0.7
-                    ),
-                  },
-                })}
-              >
+              <Button className={classes.showButton} onClick={toggle} radius="xl">
                 Show
               </Button>
             </div>
@@ -280,7 +265,7 @@ function BlurToggle({
         className={badgeClass}
         onClick={
           isOwnerOrModerator
-            ? (e) => {
+            ? (e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
@@ -331,7 +316,7 @@ function toggleShow({
       component: ConfirmDialog,
       props: {
         message: (
-          <Text size="sm" weight={500} sx={{ flex: 1 }}>
+          <Text size="sm" fw={500} style={{ flex: 1 }}>
             Login now to continue viewing mature content and unblur everything.
           </Text>
         ),

@@ -4,7 +4,6 @@ import {
   Alert,
   Badge,
   Card,
-  createStyles,
   Group,
   Loader,
   RingProgress,
@@ -59,6 +58,9 @@ import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TransactionsPopover } from '~/components/ImageGeneration/GenerationForm/TransactionsPopover';
+import classes from './QueueItem.module.scss';
+import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -79,7 +81,6 @@ export function QueueItem({
   id: string;
   filter: { marker?: string } | undefined;
 }) {
-  const { classes, cx } = useStyle();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const [ref, inView] = useInViewDynamic({ id });
@@ -202,7 +203,7 @@ export function QueueItem({
                 />
               )}
 
-              <Text size="xs" color="dimmed">
+              <Text size="xs" c="dimmed">
                 {formatDateMin(request.createdAt)}
               </Text>
               {!!request.cost?.total && (
@@ -218,15 +219,15 @@ export function QueueItem({
             <div className="flex gap-1">
               <SubmitBlockedImagesForReviewButton step={step} />
               <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
-                <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
+                <LegacyActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                   {copied ? <IconCheck /> : <IconInfoHexagon />}
-                </ActionIcon>
+                </LegacyActionIcon>
               </ButtonTooltip>
               {generationStatus.available && canRemix && (
                 <ButtonTooltip {...tooltipProps} label="Remix">
-                  <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
+                  <LegacyActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
                     <IconArrowsShuffle />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </ButtonTooltip>
               )}
               <CancelOrDeleteWorkflow workflowId={request.id} cancellable={cancellable} />
@@ -245,7 +246,7 @@ export function QueueItem({
                     <IconAlertTriangleFilled size={20} />
                   </Text>
                   <Text size="xs" lh={1.2} color="yellow">
-                    <Text weight={500} component="span">
+                    <Text fw={500} component="span">
                       This is taking longer than usual.
                     </Text>
                     {` Don't want to wait? Cancel this job to get refunded for any undelivered images. If we aren't done by ${formatDateMin(
@@ -258,20 +259,30 @@ export function QueueItem({
 
             {prompt && (
               <ContentClamp maxHeight={36} labelSize="xs">
-                <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
+                <Text lh={1.3} style={{ wordBreak: 'break-all' }}>
                   {prompt}
                 </Text>
               </ContentClamp>
             )}
 
-            <div className="-my-2">
+            <div className="-my-2 flex gap-2">
               {workflowDefinition && (
-                <Badge radius="sm" color="violet" size="sm">
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
                   {workflowDefinition.label}
                 </Badge>
               )}
               {engine && (
-                <Badge radius="sm" color="violet" size="sm">
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
                   {engine}
                 </Badge>
               )}
@@ -280,7 +291,7 @@ export function QueueItem({
             {failureReason && <Alert color="red">{failureReason}</Alert>}
 
             <div
-              className={cx(classes.grid, {
+              className={clsx(classes.grid, {
                 [classes.asSidebar]: !features.largerGenerationImages,
               })}
             >
@@ -309,7 +320,7 @@ export function QueueItem({
                       ) : (
                         <>
                           <Loader size={24} />
-                          <Text color="dimmed" size="xs" align="center">
+                          <Text c="dimmed" size="xs" align="center">
                             Generating
                           </Text>
                         </>
@@ -320,23 +331,23 @@ export function QueueItem({
                     (queuePosition ? (
                       <>
                         {queuePosition.support === 'unavailable' && (
-                          <Text color="dimmed" size="xs" align="center">
+                          <Text c="dimmed" size="xs" align="center">
                             Currently unavailable
                           </Text>
                         )}
                         {!!queuePosition.precedingJobs && (
-                          <Text color="dimmed" size="xs" align="center">
+                          <Text c="dimmed" size="xs" align="center">
                             Your position in queue: {queuePosition.precedingJobs}
                           </Text>
                         )}
                         {queuePosition.startAt && (
-                          <Text size="xs" color="dimmed">
+                          <Text size="xs" c="dimmed">
                             Estimated start time: {formatDateMin(new Date(queuePosition.startAt))}
                           </Text>
                         )}
                       </>
                     ) : (
-                      <Text color="dimmed" size="xs" align="center">
+                      <Text c="dimmed" size="xs" align="center">
                         Pending
                       </Text>
                     ))}
@@ -348,48 +359,18 @@ export function QueueItem({
       )}
 
       {inView && (
-        <Card.Section
-          withBorder
-          sx={(theme) => ({
-            marginLeft: -theme.spacing.xs,
-            marginRight: -theme.spacing.xs,
-          })}
-        >
+        <Card.Section withBorder className="-mx-2">
           <GenerationDetails
             label="Additional Details"
             params={details}
             labelWidth={150}
-            paperProps={{ radius: 0, sx: { borderWidth: '1px 0 0 0' } }}
+            paperProps={{ radius: 0, style: { borderWidth: '1px 0 0 0' } }}
           />
         </Card.Section>
       )}
     </Card>
   );
 }
-
-const useStyle = createStyles((theme) => ({
-  stopped: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[1],
-  },
-  grid: {
-    display: 'grid',
-    gap: theme.spacing.xs,
-    gridTemplateColumns: 'repeat(1, 1fr)', // default for larger screens, max 6 columns
-
-    [`@container (min-width: 530px)`]: {
-      gridTemplateColumns: 'repeat(3, 1fr)', // 3 columns for screens smaller than md
-    },
-    [`@container (min-width: 900px)`]: {
-      gridTemplateColumns: 'repeat(4, 1fr)', // 5 columns for screens smaller than xl
-    },
-    [`@container (min-width: 1200px)`]: {
-      gridTemplateColumns: 'repeat(auto-fill, minmax(256px, 1fr))',
-    },
-  },
-  asSidebar: {
-    gridTemplateColumns: 'repeat(2, 1fr)',
-  },
-}));
 
 const ResourceBadge = (props: GenerationResource) => {
   const { unstableResources } = useUnstableResources();
@@ -399,16 +380,17 @@ const ResourceBadge = (props: GenerationResource) => {
   const hasEpochDetails = !!epochDetails?.epochNumber;
 
   const badge = (
-    <Group spacing={0} noWrap>
+    <Group gap={4} wrap="nowrap">
       <Badge
         size="sm"
         color={unstable ? 'yellow' : undefined}
-        sx={{
+        style={{
           maxWidth: 200,
           cursor: 'pointer',
           borderTopRightRadius: hasEpochDetails ? 0 : undefined,
           borderBottomRightRadius: hasEpochDetails ? 0 : undefined,
         }}
+        classNames={{ label: '!overflow-hidden' }}
         component={Link}
         href={`/models/${model.id}?modelVersionId=${id}`}
         onClick={() => generationPanel.close()}
@@ -420,10 +402,11 @@ const ResourceBadge = (props: GenerationResource) => {
           <Badge
             size="sm"
             color={unstable ? 'yellow' : undefined}
-            sx={{
+            style={{
               borderTopLeftRadius: hasEpochDetails ? 0 : undefined,
               borderBottomLeftRadius: hasEpochDetails ? 0 : undefined,
             }}
+            classNames={{ label: '!overflow-hidden' }}
           >
             #{epochDetails?.epochNumber}
           </Badge>
@@ -449,7 +432,7 @@ const ProgressIndicator = ({
       thickness={8}
       sections={[{ value, color }]}
       label={
-        <Text color="blue" weight={700} align="center">
+        <Text c="blue" fw={700} align="center">
           {value.toFixed(0)}%
         </Text>
       }
@@ -501,9 +484,9 @@ function CancelOrDeleteWorkflow({
       disabled={cancellingDeleting}
     >
       <ButtonTooltip {...tooltipProps} label={cancellable ? 'Cancel' : 'Delete'}>
-        <ActionIcon size="md" disabled={cancellingDeleting} color="red">
+        <LegacyActionIcon size="md" disabled={cancellingDeleting} color="red">
           {cancellable ? <IconBan size={20} /> : <IconTrash size={20} />}
-        </ActionIcon>
+        </LegacyActionIcon>
       </ButtonTooltip>
     </PopConfirm>
   );
@@ -516,7 +499,7 @@ function SubmitBlockedImagesForReviewButton({ step }: { step: NormalizedGenerate
 
   return (
     <ButtonTooltip {...tooltipProps} label="Submit blocked images for review">
-      <ActionIcon
+      <LegacyActionIcon
         component="a"
         target="_blank"
         size="md"
@@ -532,7 +515,7 @@ function SubmitBlockedImagesForReviewButton({ step }: { step: NormalizedGenerate
         )}&Job%20IDs=${encodeURIComponent(blockedImages.map((x) => x.jobId).join(','))}`}
       >
         <IconFlagQuestion size={20} />
-      </ActionIcon>
+      </LegacyActionIcon>
     </ButtonTooltip>
   );
 }

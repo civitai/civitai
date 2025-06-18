@@ -1,4 +1,3 @@
-import type { MantineNumberSize } from '@mantine/core';
 import { ActionIcon, Button, Checkbox, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconTrash } from '@tabler/icons-react';
@@ -25,13 +24,15 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { getStepMeta } from './GenerationForm/generation.utils';
+import classes from './GeneratedImageActions.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
   actionIconSize = 'lg',
   iconSize = 20,
 }: {
-  actionIconSize?: MantineNumberSize;
+  actionIconSize?: MantineSpacing;
   iconSize?: number;
 }) {
   const router = useRouter();
@@ -199,30 +200,30 @@ export function GeneratedImageActions({
   const hasSelected = !!selectedCount;
 
   return (
-    <div className="flex items-center justify-end gap-6">
+    <div className="flex items-center justify-end gap-2">
       <SortFilter type="generation" />
       {!selectedCount && <MarkerFiltersDropdown />}
       {hasSelected && (
         <div className="flex gap-2">
           <Tooltip label="Download selected">
-            <ActionIcon
+            <LegacyActionIcon
               size={actionIconSize}
               onClick={downloadSelected}
               variant="light"
               loading={zipping}
             >
               <IconDownload size={iconSize} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
           <Tooltip label="Delete selected">
-            <ActionIcon
+            <LegacyActionIcon
               size={actionIconSize}
               onClick={deleteSelectedImages}
               color="red"
               variant="light"
             >
               <IconTrash size={iconSize} />
-            </ActionIcon>
+            </LegacyActionIcon>
           </Tooltip>
           <Tooltip label="Post your generations to earn Buzz!">
             <Button
@@ -233,13 +234,7 @@ export function GeneratedImageActions({
               onClick={postSelectedImages}
               loading={isMutating}
               disabled={!hasSelected}
-              sx={(theme) => ({
-                '&[data-disabled]': {
-                  background: theme.colors.blue[theme.fn.primaryShade()],
-                  color: 'white',
-                  opacity: 0.5,
-                },
-              })}
+              className={classes.buttonPost}
             >
               Post
             </Button>

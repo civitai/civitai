@@ -1,31 +1,25 @@
 import React from 'react';
 
-import { Button, Group, Text, Title, TypographyStylesProvider } from '@mantine/core';
+import { Button, Group, Text, Title } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconArrowRight } from '@tabler/icons-react';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import homeBlockClasses from '~/components/HomeBlocks/HomeBlock.module.scss';
+import clsx from 'clsx';
+import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 
 const HomeBlockHeaderMeta = ({ metadata, htmlMode }: Props) => {
-  const { classes: homeBlockClasses } = useHomeBlockStyles();
-
   return (
     <>
       {metadata?.title && (
         <Group
-          position="apart"
+          justify="space-between"
           align="center"
           pb="md"
-          sx={(theme) => ({
-            [containerQuery.smallerThan('sm')]: {
-              paddingRight: theme.spacing.md,
-            },
-          })}
-          className={homeBlockClasses.header}
-          noWrap
+          className={clsx(homeBlockClasses.header, 'pr-2 md:pr-0')}
+          wrap="nowrap"
         >
           <Title className={homeBlockClasses.title}>{metadata?.title}</Title>
           {metadata.link && (
@@ -34,7 +28,7 @@ const HomeBlockHeaderMeta = ({ metadata, htmlMode }: Props) => {
                 className={homeBlockClasses.expandButton}
                 component="a"
                 variant="subtle"
-                rightIcon={<IconArrowRight size={16} />}
+                rightSection={<IconArrowRight size={16} />}
               >
                 {metadata.linkText ?? 'View All'}
               </Button>
@@ -46,9 +40,9 @@ const HomeBlockHeaderMeta = ({ metadata, htmlMode }: Props) => {
         <>
           {htmlMode ? (
             <ContentClamp maxHeight={200}>
-              <TypographyStylesProvider>
+              <TypographyStylesWrapper>
                 <RenderHtml html={metadata?.description} />
-              </TypographyStylesProvider>
+              </TypographyStylesWrapper>
             </ContentClamp>
           ) : (
             <Text mb="md">{metadata?.description}</Text>

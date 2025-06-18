@@ -13,7 +13,7 @@ import {
 import { IconArrowRight, IconCircleCheck } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PlanCard } from '~/components/Subscriptions/PlanCard';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
@@ -26,7 +26,7 @@ export default function Confirm() {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.tier !== undefined;
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const [email, setEmail] = useState(currentUser?.email);
   const { data: air, isLoading } = trpc.integration.airStatus.useQuery(undefined, {
     enabled: !!currentUser,
@@ -54,9 +54,9 @@ export default function Confirm() {
   const confirmEmail = (
     <Container size="xs">
       <Stack>
-        <Text size="xl" weight={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
+        <Text size="xl" fw={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
         <Text>{`To complete your application, please enter the email that you used when you applied for the Artist in Residence program`}</Text>
-        <Stack spacing={5}>
+        <Stack gap={5}>
           <TextInput
             placeholder="Email"
             value={email}
@@ -82,19 +82,22 @@ export default function Confirm() {
   const confirmed = (
     <Container size="xs">
       <Stack>
-        <Text size="xl" weight={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
+        <Text size="xl" fw={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
         <Alert color="green" my="lg">
-          <Group noWrap>
+          <Group wrap="nowrap">
             <ThemeIcon size={46} color="green">
               <IconCircleCheck size={30} />
             </ThemeIcon>
-            <Text size="xl" sx={{ lineHeight: 1.2 }}>{`Your membership has been confirmed`}</Text>
+            <Text
+              size="xl"
+              style={{ lineHeight: 1.2 }}
+            >{`Your membership has been confirmed`}</Text>
           </Group>
         </Alert>
         <Button
           component="a"
           href="https://studio.civitai.com/cohort-application/success"
-          rightIcon={<IconArrowRight />}
+          rightSection={<IconArrowRight />}
           size="lg"
         >
           Return to Studio Cohort Application
@@ -106,17 +109,17 @@ export default function Confirm() {
   const subscriptionsLoading = subscriptionLoading || productsLoading;
   const notMember = (
     <Stack>
-      <Text size="xl" weight={500} ta="center">{`Become a Member today!`}</Text>
+      <Text size="xl" fw={500} ta="center">{`Become a Member today!`}</Text>
       {subscriptionsLoading ? (
         <Loader />
       ) : (
-        <ContainerGrid justify="center">
+        <ContainerGrid2 justify="center">
           {products?.map((product) => (
-            <ContainerGrid.Col key={product.id} md={4} sm={6} xs={12}>
+            <ContainerGrid2.Col key={product.id} span={{ base: 12, xs: 6, sm: 4 }}>
               <PlanCard product={product} subscription={subscription} />
-            </ContainerGrid.Col>
+            </ContainerGrid2.Col>
           ))}
-        </ContainerGrid>
+        </ContainerGrid2>
       )}
     </Stack>
   );
@@ -126,7 +129,7 @@ export default function Confirm() {
   const isConfirmed = air.status === 'connected';
   return (
     <Container>
-      <Title order={1} align="center" mb="lg">
+      <Title order={1} className="text-center" mb="lg">
         Studio Member Confirmation
       </Title>
       {!isMember ? notMember : isConfirmed ? confirmed : confirmEmail}

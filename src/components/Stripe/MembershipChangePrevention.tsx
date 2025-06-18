@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Center,
-  createStyles,
   Group,
   Image,
   Loader,
@@ -38,15 +37,6 @@ import { trpc } from '~/utils/trpc';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
 
-const useStyles = createStyles((theme) => ({
-  card: {
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.lg,
-  },
-}));
-
 export const DowngradeFeedbackModal = ({
   priceId,
   upcomingVaultSizeKb,
@@ -77,19 +67,19 @@ export const DowngradeFeedbackModal = ({
         <Stack>
           <Radio.Group
             value={downgradeReason}
-            orientation="vertical"
             label="Help us improve our services by leaving your feedback about the reason you want to downgrade."
             onChange={(value) => {
               setDowngradeReason(value);
             }}
             withAsterisk
-            spacing="xs"
           >
-            {downgradeReasons.map((item) => (
-              <Paper key={item} withBorder radius="md" p="md">
-                <Radio value={item} label={item} />
-              </Paper>
-            ))}
+            <Stack gap="xs">
+              {downgradeReasons.map((item) => (
+                <Paper key={item} withBorder radius="md" p="md">
+                  <Radio value={item} label={item} />
+                </Paper>
+              ))}
+            </Stack>
           </Radio.Group>
           <AlertWithIcon color="red" icon={<IconAlertTriangle size={20} />} iconColor="red">
             <Stack>
@@ -100,7 +90,7 @@ export const DowngradeFeedbackModal = ({
               </Text>
               <Text>
                 If you have created{' '}
-                <Text component="span" weight="bold">
+                <Text component="span" fw="bold">
                   private models
                 </Text>{' '}
                 during your time with your membership, you will have 10 days to make these public or
@@ -172,19 +162,19 @@ export function CancelMembershipFeedbackModal() {
         <Stack>
           <Radio.Group
             value={cancelReason}
-            orientation="vertical"
             label="Help us improve our service by leaving your feedback about the reason you wish to cancel"
             onChange={(value) => {
               setCancelReason(value);
             }}
             withAsterisk
-            spacing="xs"
           >
-            {cancelReasons.map((item) => (
-              <Paper key={item} withBorder radius="md" p="md">
-                <Radio value={item} label={item} />
-              </Paper>
-            ))}
+            <Stack gap="xs">
+              {cancelReasons.map((item) => (
+                <Paper key={item} withBorder radius="md" p="md">
+                  <Radio value={item} label={item} />
+                </Paper>
+              ))}
+            </Stack>
           </Radio.Group>
           <Group grow>
             <Button
@@ -380,31 +370,31 @@ export const VaultStorageDowngrade = ({
         </Center>
       ) : (
         <Stack>
-          <Group noWrap position="center">
+          <Group wrap="nowrap" justify="center">
             {shownItems.map((item) => (
               <Image
                 key={item.id}
                 src={item.coverImageUrl}
                 alt="Model Image"
                 radius="lg"
-                width={100}
-                height={100}
+                w={100}
+                h={100}
               />
             ))}
           </Group>
-          <Stack spacing={0}>
+          <Stack gap={0}>
             <Text align="center">
               You have{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {formatKBytes(vault?.usedStorageKb ?? 0)}
               </Text>{' '}
               of storage used and{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 {pagination?.totalItems ?? 0} models
               </Text>{' '}
               stored on your Vault. After downgrading, your Vault will be frozen.
             </Text>
-            <Text color="dimmed" align="center">
+            <Text c="dimmed" align="center">
               You will have a 7 day grace period to download models from your Vault.
             </Text>
           </Stack>
@@ -441,7 +431,6 @@ export const MembershipUpgradeModal = ({
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { name, image, benefits } = meta;
-  const { classes } = useStyles();
 
   return (
     <Modal
@@ -468,7 +457,7 @@ export const MembershipUpgradeModal = ({
         )}
 
         {benefits && (
-          <Paper withBorder className={classes.card}>
+          <Paper className="h-full rounded-md bg-gray-0 p-5 dark:bg-dark-8" withBorder>
             <PlanBenefitList benefits={benefits} />
           </Paper>
         )}
@@ -477,7 +466,7 @@ export const MembershipUpgradeModal = ({
           <Stack>
             <Text>
               Please note there will be up to{' '}
-              <Text component="span" weight="bold">
+              <Text component="span" fw="bold">
                 an hour
               </Text>{' '}
               delay from when you upgrade to when you receive your Buzz &amp; get charged. All other

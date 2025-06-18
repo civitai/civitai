@@ -42,42 +42,39 @@ export function ClubAdminUpdateForm({ clubAdmin, onSuccess, onCancel }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={32}>
+      <Stack gap={32}>
         <Grid gutter="xl">
-          <Grid.Col xs={12}>
-            <Stack spacing={32}>
-              <Stack spacing="xl">
-                <InputCheckboxGroup
-                  name="permissions"
-                  orientation="vertical"
-                  label="Permissions"
-                  spacing={8}
-                >
-                  {Object.keys(ClubAdminPermission).map((permission) => {
-                    return (
-                      <Checkbox
-                        key={permission}
-                        value={permission.toString()}
-                        label={
-                          <Group spacing="xs" position="apart" w="100%" noWrap>
-                            <Text lineClamp={1} inherit>
-                              {getDisplayName(permission)}
-                            </Text>
-                          </Group>
-                        }
-                      />
-                    );
-                  })}
+          <Grid.Col span={12}>
+            <Stack gap={32}>
+              <Stack gap="xl">
+                <InputCheckboxGroup name="permissions" label="Permissions">
+                  <Stack gap={8}>
+                    {Object.keys(ClubAdminPermission).map((permission) => {
+                      return (
+                        <Checkbox
+                          key={permission}
+                          value={permission.toString()}
+                          label={
+                            <Group gap="xs" justify="space-between" w="100%" wrap="nowrap">
+                              <Text lineClamp={1} inherit>
+                                {getDisplayName(permission)}
+                              </Text>
+                            </Group>
+                          }
+                        />
+                      );
+                    })}
+                  </Stack>
                 </InputCheckboxGroup>
               </Stack>
             </Stack>
           </Grid.Col>
         </Grid>
-        <Group position="right">
+        <Group justify="flex-end">
           {onCancel && (
             <Button
               loading={updating}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onCancel?.();

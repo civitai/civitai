@@ -140,7 +140,7 @@ export function ReorderImagesButton() {
       disabled={!canReorder}
       loading={isLoading}
       variant={!isReordering ? 'outline' : undefined}
-      leftIcon={!isReordering ? <IconArrowsSort /> : <IconCheck />}
+      leftSection={!isReordering ? <IconArrowsSort /> : <IconCheck />}
     >
       {!isReordering ? 'Rearrange' : 'Done Rearranging'}
     </Button>

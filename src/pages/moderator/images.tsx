@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   AspectRatio,
   Badge,
@@ -7,16 +6,16 @@ import {
   Center,
   Checkbox,
   Group,
+  Indicator,
   Loader,
   Paper,
-  SegmentedControl,
   Stack,
   Text,
   Textarea,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
-import type { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
+import { Radio, RadioGroup } from '@headlessui/react';
+import type { TooltipProps } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
@@ -51,6 +50,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -71,6 +71,8 @@ import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import clsx from 'clsx';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -122,7 +124,7 @@ const ImageReviewType = {
 type ImageReviewType = keyof typeof ImageReviewType;
 
 export default function Images() {
-  // const queryUtils = trpc.useContext();
+  // const queryUtils = trpc.useUtils();
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
   const [type, setType] = useState<ImageReviewType>('minor');
@@ -156,6 +158,8 @@ export default function Images() {
 
   useEffect(deselectAll, [type, deselectAll]);
 
+  const { data: counts } = trpc.image.getModeratorReviewQueueCounts.useQuery();
+
   const segments = Object.entries(ImageReviewType)
     // filter out csam and appeal if not enabled
     .filter(([key]) => {
@@ -166,6 +170,11 @@ export default function Images() {
     .map(([key, value]) => ({
       value: key,
       label: value,
+      // label: (
+      //   <Indicator label={counts?.[key]} showZero={false} dot={false} offset={-4}>
+      //     <span>{value}</span>
+      //   </Indicator>
+      // ),
     }));
 
   return (
@@ -176,7 +185,7 @@ export default function Images() {
             withBorder
             shadow="lg"
             p="xs"
-            sx={{
+            style={{
               display: 'inline-flex',
               float: 'right',
               alignSelf: 'flex-end',
@@ -193,18 +202,23 @@ export default function Images() {
           <div className="mb-4 flex flex-col items-start">
             <Group>
               <Title order={1}>Images Needing Review</Title>
-              <SegmentedControl
+              {/* <SegmentedControl
                 size="sm"
                 data={segments}
-                onChange={handleTypeChange}
+                onChange={(type) => handleTypeChange(type as ImageReviewType)}
                 value={type}
-              />
+              /> */}
             </Group>
-            <Text color="dimmed">
+            <Text c="dimmed">
               These are images that have been{' '}
               {viewingReported ? 'reported by users' : 'marked by our AI'} which needs further
               attention from the mods
             </Text>
+            <RadioGroup value={type} onChange={handleTypeChange} className="mt-2 flex gap-2">
+              {segments.map(({ label, value }) => (
+                <RadioInput key={value} value={value} label={label} indicator={counts?.[value]} />
+              ))}
+            </RadioGroup>
           </div>
 
           {type === 'poi' && nameTags && (
@@ -225,10 +239,10 @@ export default function Images() {
                     style={{ cursor: 'pointer' }}
                     onClick={() => setActiveNameTag(isActive ? null : tag.id)}
                   >
-                    <Text component="span" size="xs" weight={500}>
+                    <Text component="span" size="xs" fw={500}>
                       {tag.name}
                     </Text>{' '}
-                    <Text component="span" size="xs" color="dimmed" weight={500}>
+                    <Text component="span" size="xs" c="dimmed" fw={500}>
                       {tag.count}
                     </Text>
                   </Badge>
@@ -261,7 +275,7 @@ export default function Images() {
                   loadCondition={!isRefetching && hasNextPage}
                   style={{ gridColumn: '1/-1' }}
                 >
-                  <Center p="xl" sx={{ height: 36 }} mt="md">
+                  <Center p="xl" style={{ height: 36 }} mt="md">
                     <Loader />
                   </Center>
                 </InViewLoader>
@@ -279,7 +293,6 @@ export default function Images() {
 function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const selected = useStore(useCallback((state) => state.selected[image.id] ?? false, [image.id]));
   const toggleSelected = useStore((state) => state.toggleSelected);
-  const theme = useMantineTheme();
 
   const hasReport = !!image.report;
   const hasAppeal = !!image.appeal;
@@ -291,165 +304,178 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const mergedRef = useMergedRef(inViewRef, ref);
 
   return (
-    <MasonryCard
+    <Card
       shadow="sm"
       withBorder
       ref={mergedRef as any}
-      style={{
+      style={(theme) => ({
         minHeight: height,
         outline: selected
-          ? `3px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`
+          ? `3px solid ${
+              theme.colors[theme.primaryColor][
+                typeof theme.primaryShade === 'number'
+                  ? theme.primaryShade
+                  : theme.primaryShade.dark
+              ]
+            }`
           : undefined,
         opacity: !image.needsReview && !pendingReport ? 0.2 : undefined,
-      }}
+      })}
     >
-      <>
-        <Card.Section sx={{ height: `${height}px` }} className="relative">
-          {inView && (
-            <>
-              <Checkbox
-                checked={selected}
-                onChange={() => toggleSelected(image.id)}
-                size="lg"
-                className="absolute right-2 top-2 z-10"
-              />
+      <Card.Section style={{ height: `${height}px` }} className="relative">
+        {inView && (
+          <>
+            <Checkbox
+              checked={selected}
+              onChange={() => toggleSelected(image.id)}
+              size="lg"
+              className="absolute right-2 top-2 z-10"
+            />
 
-              <ImageGuard2 image={image}>
-                {(safe) => (
-                  <div className="relative" onClick={() => toggleSelected(image.id)}>
-                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                    {!safe ? (
-                      <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
-                        <MediaHash {...image} />
-                      </AspectRatio>
-                    ) : (
-                      <EdgeMedia
-                        src={image.url}
-                        name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
-                        type={image.type}
-                        width={450}
-                        placeholder="empty"
-                      />
-                    )}
-                  </div>
-                )}
-              </ImageGuard2>
-              {!!entityUrl && (
-                <ActionIcon
-                  component={Link}
-                  href={`${entityUrl}?moderator`}
+            <ImageGuard2 image={image}>
+              {(safe) => (
+                <div className="relative" onClick={() => toggleSelected(image.id)}>
+                  <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                  {!safe ? (
+                    <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
+                      <MediaHash {...image} />
+                    </AspectRatio>
+                  ) : (
+                    <EdgeMedia
+                      src={image.url}
+                      name={image.name ?? image.id.toString()}
+                      alt={image.name ?? undefined}
+                      type={image.type}
+                      width={450}
+                      placeholder="empty"
+                    />
+                  )}
+                </div>
+              )}
+            </ImageGuard2>
+            {!!entityUrl && (
+              <LegacyActionIcon
+                component={Link}
+                href={`${entityUrl}?moderator`}
+                variant="transparent"
+                style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                size="lg"
+                target="_blank"
+              >
+                <IconExternalLink
+                  color="white"
+                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                  opacity={0.8}
+                  strokeWidth={2.5}
+                  size={26}
+                />
+              </LegacyActionIcon>
+            )}
+            {image.meta ? (
+              <ImageMetaPopover meta={image.meta}>
+                <LegacyActionIcon
                   variant="transparent"
-                  style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                  style={{ position: 'absolute', bottom: '5px', right: '5px' }}
                   size="lg"
-                  target="_blank"
                 >
-                  <IconExternalLink
+                  <IconInfoCircle
                     color="white"
                     filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
                     opacity={0.8}
                     strokeWidth={2.5}
                     size={26}
                   />
-                </ActionIcon>
-              )}
-              {image.meta ? (
-                <ImageMetaPopover meta={image.meta}>
-                  <ActionIcon
-                    variant="transparent"
-                    style={{ position: 'absolute', bottom: '5px', right: '5px' }}
-                    size="lg"
-                  >
-                    <IconInfoCircle
-                      color="white"
-                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                      opacity={0.8}
-                      strokeWidth={2.5}
-                      size={26}
-                    />
-                  </ActionIcon>
-                </ImageMetaPopover>
-              ) : image.metadata?.profilePicture ? (
-                <Badge
-                  variant="filled"
-                  style={{ position: 'absolute', bottom: '10px', right: '5px' }}
-                >
-                  Avatar
-                </Badge>
-              ) : null}
-            </>
+                </LegacyActionIcon>
+              </ImageMetaPopover>
+            ) : image.metadata?.profilePicture ? (
+              <Badge
+                variant="filled"
+                style={{ position: 'absolute', bottom: '10px', right: '5px' }}
+              >
+                Avatar
+              </Badge>
+            ) : null}
+          </>
+        )}
+      </Card.Section>
+      {hasReport && (
+        <Stack gap={8} p="xs" style={{ cursor: 'auto', color: 'initial' }}>
+          <Group justify="space-between" wrap="nowrap">
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed" inline>
+                Reported by
+              </Text>
+              <Group gap={4}>
+                <Link legacyBehavior href={`/user/${image.report?.user.username}`} passHref>
+                  <Anchor size="xs" target="_blank" lineClamp={1} inline>
+                    {image.report?.user.username}
+                  </Anchor>
+                </Link>
+                {(image.report?.count ?? 0) > 1 && (
+                  <Badge size="xs" color="red">
+                    +{(image.report?.count ?? 0) - 1}
+                  </Badge>
+                )}
+              </Group>
+            </Stack>
+            <Stack gap={2} align="flex-end">
+              <Text size="xs" c="dimmed" inline>
+                Reported for
+              </Text>
+              <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
+            </Stack>
+          </Group>
+          {image.acceptableMinor && (
+            <Badge variant="light" color="pink">
+              Acceptable Minor
+            </Badge>
           )}
+          <ContentClamp maxHeight={150}>
+            {image.report?.details
+              ? Object.entries(image.report.details).map(([key, value]) => (
+                  <Text key={key} size="sm">
+                    <Text fw="bold" span className="capitalize">
+                      {splitUppercase(key)}:
+                    </Text>{' '}
+                    {value}
+                  </Text>
+                ))
+              : null}
+          </ContentClamp>
+        </Stack>
+      )}
+      {image.needsReview === 'minor' && (
+        <Stack>
+          {image.acceptableMinor && (
+            <Badge variant="light" color="pink">
+              Acceptable Minor
+            </Badge>
+          )}
+          <PromptHighlight prompt={image.meta?.prompt} negativePrompt={image.meta?.negativePrompt}>
+            {({ includesInappropriate, html }) =>
+              !includesInappropriate ? (
+                <></>
+              ) : (
+                <Card.Section p="xs" mt={0} style={{ cursor: 'auto', color: 'initial' }}>
+                  <RenderHtml className="break-words text-sm leading-[1.2]" html={html} />
+                </Card.Section>
+              )
+            }
+          </PromptHighlight>
+        </Stack>
+      )}
+      {image.reviewTags.length > 0 && (
+        <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
+          <Group gap={4}>
+            {image.reviewTags.map((tag) => (
+              <Badge key={tag.id} size="sm">
+                {tag.name}
+              </Badge>
+            ))}
+          </Group>
         </Card.Section>
-        {hasReport && (
-          <Stack spacing={8} p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-            <Group position="apart" noWrap>
-              <Stack spacing={2}>
-                <Text size="xs" color="dimmed" inline>
-                  Reported by
-                </Text>
-                <Group spacing={4}>
-                  <Link legacyBehavior href={`/user/${image.report?.user.username}`} passHref>
-                    <Anchor size="xs" target="_blank" lineClamp={1} inline>
-                      {image.report?.user.username}
-                    </Anchor>
-                  </Link>
-                  {(image.report?.count ?? 0) > 1 && (
-                    <Badge size="xs" color="red">
-                      +{(image.report?.count ?? 0) - 1}
-                    </Badge>
-                  )}
-                </Group>
-              </Stack>
-              <Stack spacing={2} align="flex-end">
-                <Text size="xs" color="dimmed" inline>
-                  Reported for
-                </Text>
-                <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
-              </Stack>
-            </Group>
-            {image.acceptableMinor && (
-              <Badge variant="light" color="pink">
-                Acceptable Minor
-              </Badge>
-            )}
-            <ContentClamp maxHeight={150}>
-              {image.report?.details
-                ? Object.entries(image.report.details).map(([key, value]) => (
-                    <Text key={key} size="sm">
-                      <Text weight="bold" span className="capitalize">
-                        {splitUppercase(key)}:
-                      </Text>{' '}
-                      {value}
-                    </Text>
-                  ))
-                : null}
-            </ContentClamp>
-          </Stack>
-        )}
-        {image.needsReview === 'minor' && (
-          <Stack>
-            {image.acceptableMinor && (
-              <Badge variant="light" color="pink">
-                Acceptable Minor
-              </Badge>
-            )}
-            <PromptHighlight
-              prompt={image.meta?.prompt}
-              negativePrompt={image.meta?.negativePrompt}
-            >
-              {({ includesInappropriate, html }) =>
-                !includesInappropriate ? (
-                  <></>
-                ) : (
-                  <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-                    <Text size="sm" lh={1.2} dangerouslySetInnerHTML={{ __html: html }} />
-                  </Card.Section>
-                )
-              }
-            </PromptHighlight>
-          </Stack>
-        )}
-        {image.needsReview === 'poi' && !!image.names?.length && (
+      )}
+      {/* {image.needsReview === 'poi' && !!image.names?.length && (
           <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
             <Group spacing={4}>
               {image.names.map((name) => (
@@ -459,84 +485,83 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               ))}
             </Group>
           </Card.Section>
-        )}
-        {image.needsReview === 'tag' && !!image.tags && (
-          <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-            <Group spacing={4}>
-              {image.tags
-                .filter((x) => x.nsfwLevel === NsfwLevel.Blocked)
-                .map(({ name }) => (
-                  <Badge key={name} size="sm">
-                    {name}
-                  </Badge>
-                ))}
+        )} */}
+      {image.needsReview === 'tag' && !!image.tags && (
+        <Card.Section p="xs" style={{ cursor: 'auto', color: 'initial' }}>
+          <Group gap={4}>
+            {image.tags
+              .filter((x) => x.nsfwLevel === NsfwLevel.Blocked)
+              .map(({ name }) => (
+                <Badge key={name} size="sm">
+                  {name}
+                </Badge>
+              ))}
+          </Group>
+        </Card.Section>
+      )}
+      {image.needsReview === 'appeal' && hasAppeal && (
+        <Card.Section p="xs">
+          <Stack gap={8} style={{ cursor: 'auto', color: 'initial' }}>
+            <Group justify="space-between" wrap="nowrap">
+              <Stack gap={2}>
+                <Text size="xs" c="dimmed" inline>
+                  Appealed by
+                </Text>
+                <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
+                  <Anchor size="xs" target="_blank" lineClamp={1} inline>
+                    {image.appeal?.user.username}
+                  </Anchor>
+                </Link>
+              </Stack>
+              <Stack gap={2} align="flex-end">
+                <Text size="xs" c="dimmed" inline>
+                  Created at
+                </Text>
+                {image.appeal?.createdAt ? (
+                  <Text size="xs">{formatDate(image.appeal?.createdAt)}</Text>
+                ) : null}
+              </Stack>
             </Group>
-          </Card.Section>
-        )}
-        {image.needsReview === 'appeal' && hasAppeal && (
-          <Card.Section p="xs">
-            <Stack spacing={8} sx={{ cursor: 'auto', color: 'initial' }}>
-              <Group position="apart" noWrap>
-                <Stack spacing={2}>
-                  <Text size="xs" color="dimmed" inline>
-                    Appealed by
+            {image.appeal?.moderator && (
+              <Group justify="space-between" wrap="nowrap">
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed" inline>
+                    Moderated by
                   </Text>
-                  <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
-                    <Anchor size="xs" target="_blank" lineClamp={1} inline>
-                      {image.appeal?.user.username}
-                    </Anchor>
-                  </Link>
+                  <Text size="xs" lineClamp={1} inline>
+                    {image.appeal?.moderator.username}
+                  </Text>
                 </Stack>
-                <Stack spacing={2} align="flex-end">
-                  <Text size="xs" color="dimmed" inline>
-                    Created at
+                <Stack gap={2} align="flex-end">
+                  <Text size="xs" c="dimmed" inline>
+                    Removed at
                   </Text>
-                  {image.appeal?.createdAt ? (
-                    <Text size="xs">{formatDate(image.appeal?.createdAt)}</Text>
-                  ) : null}
+                  {image.removedAt ? <Text size="xs">{formatDate(image.removedAt)}</Text> : null}
                 </Stack>
               </Group>
-              {image.appeal?.moderator && (
-                <Group position="apart" noWrap>
-                  <Stack spacing={2}>
-                    <Text size="xs" color="dimmed" inline>
-                      Moderated by
-                    </Text>
-                    <Text size="xs" lineClamp={1} inline>
-                      {image.appeal?.moderator.username}
-                    </Text>
-                  </Stack>
-                  <Stack spacing={2} align="flex-end">
-                    <Text size="xs" color="dimmed" inline>
-                      Removed at
-                    </Text>
-                    {image.removedAt ? <Text size="xs">{formatDate(image.removedAt)}</Text> : null}
-                  </Stack>
-                </Group>
-              )}
-              {image.tosReason ? (
-                <Badge size="sm" color="pink">
-                  Removed for: {getDisplayName(image.tosReason)}
-                </Badge>
-              ) : null}
-              <ContentClamp maxHeight={150}>
-                {image.appeal?.reason ? <Text size="sm">{image.appeal.reason}</Text> : null}
-              </ContentClamp>
-            </Stack>
-          </Card.Section>
-        )}
-        {image.needsReview === 'modRule' && image.metadata?.ruleReason && (
-          <Card.Section p="xs">
-            <Stack>
-              <Text>{image.metadata.ruleReason}</Text>
-              {image.metadata.ruleId && (
-                <RuleDefinitionPopover ruleId={image.metadata.ruleId} entityType="Image" />
-              )}
-            </Stack>
-          </Card.Section>
-        )}
-      </>
-    </MasonryCard>
+            )}
+            {image.tosReason ? (
+              <Badge size="sm" color="pink">
+                Removed for: {getDisplayName(image.tosReason)}
+              </Badge>
+            ) : null}
+            <ContentClamp maxHeight={150}>
+              {image.appeal?.reason ? <Text size="sm">{image.appeal.reason}</Text> : null}
+            </ContentClamp>
+          </Stack>
+        </Card.Section>
+      )}
+      {image.needsReview === 'modRule' && image.metadata?.ruleReason && (
+        <Card.Section p="xs">
+          <Stack>
+            <Text>{image.metadata.ruleReason}</Text>
+            {image.metadata.ruleId && (
+              <RuleDefinitionPopover ruleId={image.metadata.ruleId} entityType="Image" />
+            )}
+          </Stack>
+        </Card.Section>
+      )}
+    </Card>
   );
 }
 
@@ -597,7 +622,7 @@ function ModerationControls({
     },
   });
 
-  const createCsamReport = useReportCsamImages({
+  const reportCsamImages = useReportCsamImages({
     async onSuccess() {
       await queryUtils.image.getModeratorReviewQueue.invalidate();
       deselectAll();
@@ -664,7 +689,7 @@ function ModerationControls({
       const userIds = Object.keys(userImages);
       router.push(`/moderator/csam/${userIds.join(',')}`);
     } else {
-      createCsamReport.mutate({ imageIds: selected });
+      reportCsamImages.mutate({ imageIds: selected });
     }
   };
 
@@ -731,20 +756,20 @@ function ModerationControls({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <Group noWrap spacing="xs">
+      <Group wrap="nowrap" gap="xs">
         <ButtonTooltip label="Select all" {...tooltipProps}>
-          <ActionIcon
+          <LegacyActionIcon
             variant="outline"
             onClick={handleSelectAll}
             disabled={selected.length === images.length}
           >
             <IconSquareCheck size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
         <ButtonTooltip label="Clear selection" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+          <LegacyActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
             <IconSquareOff size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
         {view === 'appeal' ? (
           <AppealActions selected={selected} filters={filters} />
@@ -757,9 +782,9 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Accept" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="green">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
                 <IconCheck size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
@@ -772,9 +797,9 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Not POI" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="green">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
                 <IconUserOff size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
@@ -787,9 +812,9 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Remove Name" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="yellow">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="yellow">
                 <IconUserMinus size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
@@ -802,30 +827,30 @@ function ModerationControls({
             withinPortal
           >
             <ButtonTooltip label="Delete" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} color="red">
+              <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
                 <IconTrash size="1.25rem" />
-              </ActionIcon>
+              </LegacyActionIcon>
             </ButtonTooltip>
           </PopConfirm>
         )}
 
         <ButtonTooltip {...tooltipProps} label="Report CSAM">
-          <ActionIcon
+          <LegacyActionIcon
             variant="outline"
             disabled={!selected.length}
             onClick={handleReportCsam}
             color="orange"
           >
             <IconAlertTriangle size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
         <ButtonTooltip label="Refresh" {...tooltipProps}>
-          <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+          <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
             <IconReload size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </Group>
-      <BrowsingLevelsGrouped spacing={4} size="xs" />
+      <BrowsingLevelsGrouped gap={4} size="xs" />
     </div>
   );
 }
@@ -906,9 +931,9 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
         withinPortal
       >
         <ButtonTooltip label="Approve" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
             <IconCheck size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
       <PopConfirm
@@ -927,9 +952,9 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
         withinPortal
       >
         <ButtonTooltip label="Reject" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
             <IconBan size="1.25rem" />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
     </>
@@ -948,7 +973,7 @@ function ConfirmResolvedAppeal({
   error?: string;
 }) {
   return (
-    <Stack spacing="xs">
+    <Stack gap="xs">
       <Text size="sm">
         Are you sure you want to {status === AppealStatus.Approved ? 'approve' : 'reject'}{' '}
         {itemCount} image(s)?
@@ -964,5 +989,40 @@ function ConfirmResolvedAppeal({
         autosize
       />
     </Stack>
+  );
+}
+
+function RadioInput({
+  value,
+  label,
+  disabled,
+  indicator,
+}: {
+  value: any;
+  label: React.ReactNode;
+  disabled?: boolean;
+  indicator?: number;
+}) {
+  return (
+    <Indicator
+      label={indicator ?? 0 > 999 ? '999+' : indicator}
+      size={16}
+      zIndex={10}
+      color="red"
+      disabled={!indicator}
+    >
+      <Radio
+        value={value}
+        disabled={disabled}
+        className={clsx(
+          !disabled ? 'cursor-pointer focus:outline-none' : 'cursor-not-allowed opacity-25',
+          'flex flex-1 items-center justify-center rounded-md  p-2 text-sm font-semibold ring-1  data-[checked]:text-white   data-[checked]:ring-0 data-[focus]:data-[checked]:ring-2 data-[focus]:ring-2 data-[focus]:ring-offset-2  sm:flex-1  [&:not([data-focus])]:[&:not([data-checked])]:ring-inset  ',
+          'bg-white text-dark-9 ring-gray-4 hover:bg-gray-1 data-[checked]:bg-blue-5 data-[focus]:ring-blue-5 ',
+          'dark:bg-dark-5 dark:text-white dark:ring-dark-4 dark:hover:bg-dark-4 dark:data-[checked]:bg-blue-8 dark:data-[focus]:ring-blue-8 '
+        )}
+      >
+        {label}
+      </Radio>
+    </Indicator>
   );
 }

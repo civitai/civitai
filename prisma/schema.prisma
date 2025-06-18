@@ -209,6 +209,37 @@ model CashWithdrawal {
   @@index([userId])
 }
 
+model CryptoWallet {
+  userId       Int     @id
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet       String  @unique
+  smartAccount String? @unique
+}
+
+enum CryptoTransactionStatus {
+  WaitingForRamp // Ramp url created
+  RampTimedOut // Been 5 minutes since url was created and still not tx associated with key
+  RampFailed // Failed to ramp
+  RampInProgress // Ramp is in progress
+  RampSuccess // Ramp completed successfully
+  WaitingForSweep // Sweep tx created
+  SweepFailed // Sweep tx failed
+  Complete // Sweep tx completed, Buzz paid
+}
+
+model CryptoTransaction {
+  key         String                  @id @default(cuid())
+  userId      Int
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status      CryptoTransactionStatus @default(WaitingForRamp)
+  amount      Int // (compute in pennies for USDC)
+  currency    Currency                @default(USDC)
+  sweepTxHash String?
+  note        String?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+}
+
 enum RewardsEligibility {
   Eligible
   Ineligible
@@ -348,6 +379,8 @@ model User {
   recurringBids              BidRecurring[]
   moderationRules            ModerationRule[]
   playerInfo                 NewOrderPlayer?
+  CryptoWallet               CryptoWallet[]
+  CryptoTransaction          CryptoTransaction[]
 
   @@index([deletedAt])
 }
@@ -1031,6 +1064,7 @@ enum ReportReason {
   AdminAttention
   Claim
   CSAM
+  Automated
 }
 
 enum ReportStatus {
@@ -1066,6 +1100,7 @@ model Report {
   bounty         BountyReport?
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
+  automated      ReportAutomated?
 }
 
 model ResourceReviewReport {
@@ -1391,12 +1426,22 @@ model Image {
   flags               ImageFlag[]
   ratingRequests      ImageRatingRequest[]
   tagsNew             TagsOnImageNew[]
-  ImageResourceNew    ImageResourceNew[]
+  imageResourceNew    ImageResourceNew[]
+  imageTagsForReview  ImageTagForReview[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
   @@index([sortAt])
+}
+
+model ImageTagForReview {
+  imageId Int
+  image   Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId   Int
+
+  @@id([imageId, tagId])
+  @@index([tagId])
 }
 
 model ImageFlag {
@@ -2030,7 +2075,7 @@ model Thread {
   clubPostId    Int?            @unique
   clubPost      ClubPost?       @relation(fields: [clubPostId], references: [id], onDelete: SetNull)
 
-  metadata Json @default("{}")
+  metadata Json @default("{}") // unused
 
   comments       CommentV2[] @relation("thread")
   directChildren Thread[]    @relation("childThread")
@@ -2311,7 +2356,7 @@ model Article {
   content          String
   cover            String?
   coverId          Int?          @unique
-  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: NoAction)
+  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
   userId           Int
   user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -2628,6 +2673,7 @@ model BuzzTip {
 enum Currency {
   USD
   BUZZ
+  USDC
 }
 
 enum BountyType {
@@ -3185,6 +3231,12 @@ enum EntityType {
   ModelVersion
   Model
   Collection
+  Comment
+  CommentV2
+  User
+  UserProfile
+  ResourceReview
+  ChatMessage
 }
 
 enum JobQueueType {
@@ -3193,6 +3245,7 @@ enum JobQueueType {
   UpdateNsfwLevel
   UpdateSearchIndex
   CleanIfEmpty
+  ModerationRequest
 }
 
 model JobQueue {
@@ -3588,6 +3641,14 @@ model NewOrderSmite {
   createdAt      DateTime       @default(now())
   cleansedAt     DateTime?
   cleansedReason String?
+}
+
+model ReportAutomated {
+  id        Int      @id @default(autoincrement())
+  reportId  Int      @unique
+  report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
 }
 
 /// @view

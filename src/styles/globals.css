@@ -3,7 +3,7 @@
   --footer-height: 45px;
 }
 
-@layer tailwind {
+@layer {
   @tailwind base;
 }
 
@@ -40,9 +40,65 @@ button, input, optgroup, select, textarea {
   flex-direction: column;
 }
 
-button,
-a {
-  pointer-events: auto;
+@layer theme {
+  button, a {
+    pointer-events: auto;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  ul {
+    margin: 0;
+    padding: 0;
+  }
+
+  button {
+    background: transparent;
+    border: none;
+  }
+
+  [id] {
+    scroll-margin-top: var(--header-height);
+  }
+}
+
+/* Mantine overrides */
+
+.mantine-Badge-label *,
+.mantine-Button-label * {
+  font-size: inherit;
+  font-weight: inherit;
+  font-family: inherit;
+  line-height: inherit;
+}
+  
+.mantine-Accordion-label {
+  padding: 0 !important;
+}
+
+.mantine-InputWrapper-label {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.mantine-Badge-root {
+  flex-shrink: 0;
+}
+
+.mantine-Divider-label {
+  font-size: var(--mantine-font-size-sm);
+  font-weight: bold;
+}
+
+.mantine-Alert-body .markdown-content a {
+  color: inherit;
+}
+
+.mantine-Button-loader {
+  transform: translate(-50%, calc(-50% + calc(0.0625rem * var(--mantine-scale))));
 }
 
 /* Don't zoom text input on iOS */
@@ -74,11 +130,6 @@ a {
     transform: translateX(-50%);
     bottom: unset;
   }
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
 }
 
 * {
@@ -161,10 +212,6 @@ a {
     margin-bottom: 0.75em;
     margin-top: 0.75em;
   }
-}
-
-.mantine-Alert-body .markdown-content a {
-  color: inherit;
 }
 
 .light .markdown-content blockquote {
@@ -381,7 +428,7 @@ ol {
     box-shadow: inset 0 2px theme('colors.gray.2');
   }
 
-  .dark .shadow-topper {
+  [data-mantine-color-scheme="dark"] .shadow-topper {
     box-shadow: inset 0 2px theme('colors.dark.4');
   }
 
@@ -393,7 +440,7 @@ ol {
     @apply absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2;
   }
 
-  .dark .card {
+  [data-mantine-color-scheme="dark"] .card {
     @apply bg-dark-6 shadow-dark-8 border-dark-4;
   }
 

@@ -13,7 +13,7 @@ import {
   ScrollArea,
   Stack,
   Text,
-  createStyles,
+  useMantineTheme,
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -33,45 +33,8 @@ import { GenerationPromptModal } from '~/components/Model/Generation/GenerationP
 import { usePicFinder } from '~/libs/picfinder';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles((theme, _params, getRef) => ({
-  label: {
-    padding: `0 ${theme.spacing.xs}px`,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-        color: theme.white,
-      },
-
-      [`& .${getRef('iconWrapper')}`]: {
-        display: 'none',
-      },
-    },
-  },
-
-  iconWrapper: {
-    ref: getRef('iconWrapper'),
-  },
-
-  root: { display: 'flex' },
-
-  nextButton: {
-    backgroundColor: theme.colors.gray[0],
-    color: theme.colors.dark[9],
-    opacity: 0.65,
-    transition: 'opacity 300ms ease',
-
-    '&:hover': {
-      opacity: 1,
-      backgroundColor: theme.colors.gray[0],
-    },
-
-    '&[data-loading="true"]': {
-      backgroundColor: theme.colors.dark[6],
-    },
-  },
-}));
+import classes from './ModelGenerationCard.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = {
   columnWidth: number;
@@ -89,8 +52,8 @@ export function ModelGenerationCard({
   modelId,
   withEditingActions,
 }: Props) {
-  const { classes, theme } = useStyles();
-  const queryUtils = trpc.useContext();
+  const theme = useMantineTheme();
+  const queryUtils = trpc.useUtils();
 
   const { data = [] } = trpc.modelVersion.getExplorationPromptsById.useQuery({ id: versionId });
 
@@ -176,29 +139,28 @@ export function ModelGenerationCard({
       >
         <Card
           ref={cardRef}
-          sx={{
-            backgroundColor: theme.colors.dark[7],
+          className="bg-gray-1 dark:bg-dark-7"
+          style={{
             boxShadow: `0 0 8px 0 ${theme.colors.yellow[7]}`,
           }}
           withBorder
         >
           <Card.Section py="xs" inheritPadding withBorder>
-            <Stack spacing={4}>
-              <Group spacing="xs" position="apart">
-                <Group spacing={8}>
+            <Stack gap={4}>
+              <Group gap="xs" justify="space-between">
+                <Group gap={8}>
                   <Image
                     src="https://downloads.intercomcdn.com/i/o/415875/17821df0928378c5e14e54e6/17c1c63527031e39c565ab2c57308471.png"
-                    width={32}
-                    height={32}
+                    w={32}
+                    h={32}
                     alt="some alt"
                     radius="sm"
-                    withPlaceholder
                   />
-                  <Stack spacing={0}>
-                    <Text size="sm" weight="bold">
+                  <Stack gap={0}>
+                    <Text size="sm" fw="bold">
                       Generated Exploration
                     </Text>
-                    <Text size="xs" color="dimmed">
+                    <Text size="xs" c="dimmed">
                       A service provided by{' '}
                       <Anchor
                         href="https://picfinder.ai"
@@ -214,9 +176,9 @@ export function ModelGenerationCard({
                 </Group>
                 <Popover width={300} withArrow withinPortal>
                   <Popover.Target>
-                    <ActionIcon radius="xl" variant="transparent">
+                    <LegacyActionIcon radius="xl" variant="transparent">
                       <IconInfoCircle />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </Popover.Target>
                   <Popover.Dropdown>
                     The images you see here are being generated on demand by the PicFinder service.
@@ -232,7 +194,7 @@ export function ModelGenerationCard({
             </Stack>
           </Card.Section>
           <Card.Section
-            sx={{ position: 'relative', height, overflow: 'hidden' }}
+            style={{ position: 'relative', height, overflow: 'hidden' }}
             onKeyDown={getHotkeyHandler([
               ['ArrowLeft', (e) => e.preventDefault()],
               ['ArrowRight', (e) => e.preventDefault()],
@@ -240,7 +202,7 @@ export function ModelGenerationCard({
           >
             {loading && !images.length ? (
               <Center h="100%">
-                <Loader size="md" variant="bars" />
+                <Loader size="md" type="bars" />
               </Center>
             ) : (
               <>
@@ -256,24 +218,23 @@ export function ModelGenerationCard({
                     <Image
                       key={index}
                       src={url}
-                      height={height}
-                      width={imageContainerWidth}
+                      h={height}
+                      w={imageContainerWidth}
                       alt={`AI generated image with prompt: ${prompt}`}
                       styles={{
-                        image: { objectPosition: 'top' },
-                        root: { scrollSnapAlign: 'start' },
+                        root: { scrollSnapAlign: 'start', objectPosition: 'top' },
                       }}
                     />
                   ))}
                 </div>
                 {!!data.length && !!images.length && currentIndex > 0 && (
-                  <ActionIcon
+                  <LegacyActionIcon
                     className={classes.nextButton}
                     radius="xl"
                     size="md"
                     color="gray"
                     p={4}
-                    sx={{ position: 'absolute', top: '50%', left: 10 }}
+                    style={{ position: 'absolute', top: '50%', left: 10 }}
                     onClick={() => {
                       viewportRef.current?.scrollBy({
                         left: imageContainerWidth * -1,
@@ -291,17 +252,17 @@ export function ModelGenerationCard({
                     }}
                   >
                     <IconChevronLeft />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 )}
                 {!!data.length && !!images.length && (
-                  <ActionIcon
+                  <LegacyActionIcon
                     className={classes.nextButton}
                     radius="xl"
                     size="md"
                     color="gray"
                     p={4}
                     loading={loading && currentIndex >= images.length}
-                    sx={{ position: 'absolute', top: '50%', right: 10 }}
+                    style={{ position: 'absolute', top: '50%', right: 10 }}
                     onClick={() => {
                       viewportRef.current?.scrollBy({
                         left: imageContainerWidth,
@@ -320,15 +281,15 @@ export function ModelGenerationCard({
                     }}
                   >
                     <IconChevronRight />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 )}
               </>
             )}
           </Card.Section>
           <Card.Section pt="xs" inheritPadding withBorder>
-            <Group spacing={8} align="flex-start" noWrap>
+            <Group gap={8} align="flex-start" wrap="nowrap">
               {withEditingActions && (
-                <ActionIcon
+                <LegacyActionIcon
                   variant="outline"
                   size="sm"
                   onClick={() =>
@@ -340,11 +301,10 @@ export function ModelGenerationCard({
                   }
                 >
                   <IconPlus />
-                </ActionIcon>
+                </LegacyActionIcon>
               )}
               <ScrollArea styles={{ viewport: { overflowY: 'hidden' } }} offsetScrollbars>
                 <Chip.Group
-                  spacing={4}
                   value={prompt}
                   onChange={(prompt) => {
                     setPrompt(prompt);
@@ -356,55 +316,56 @@ export function ModelGenerationCard({
                     }
                   }}
                   multiple={false}
-                  noWrap
                 >
-                  {data.map((prompt) => (
-                    <Chip
-                      key={prompt.name}
-                      classNames={classes}
-                      value={prompt.prompt}
-                      size="xs"
-                      radius="sm"
-                    >
-                      <Group spacing={4} position="apart" noWrap>
-                        <Text inherit inline>
-                          {prompt.name}
-                        </Text>
-                        {withEditingActions && (
-                          <Menu position="top-end" withinPortal>
-                            <Menu.Target>
-                              <ActionIcon size="xs" variant="transparent">
-                                <IconDotsVertical />
-                              </ActionIcon>
-                            </Menu.Target>
-                            <Menu.Dropdown>
-                              <Menu.Item
-                                color="red"
-                                icon={<IconTrash size={14} stroke={1.5} />}
-                                onClick={() => handleDeletePrompt(prompt.name)}
-                              >
-                                Delete
-                              </Menu.Item>
-                              <Menu.Item
-                                icon={<IconEdit size={14} stroke={1.5} />}
-                                onClick={() => {
-                                  const selected = data.find((p) => p.prompt === prompt.prompt);
-                                  if (selected)
-                                    setState((current) => ({
-                                      ...current,
-                                      modalOpened: true,
-                                      editingPrompt: selected,
-                                    }));
-                                }}
-                              >
-                                Edit
-                              </Menu.Item>
-                            </Menu.Dropdown>
-                          </Menu>
-                        )}
-                      </Group>
-                    </Chip>
-                  ))}
+                  <Group gap={4} wrap="nowrap">
+                    {data.map((prompt) => (
+                      <Chip
+                        key={prompt.name}
+                        classNames={classes}
+                        value={prompt.prompt}
+                        size="xs"
+                        radius="sm"
+                      >
+                        <Group gap={4} justify="space-between" wrap="nowrap">
+                          <Text inherit inline>
+                            {prompt.name}
+                          </Text>
+                          {withEditingActions && (
+                            <Menu position="top-end" withinPortal>
+                              <Menu.Target>
+                                <LegacyActionIcon size="xs" variant="transparent">
+                                  <IconDotsVertical />
+                                </LegacyActionIcon>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                <Menu.Item
+                                  color="red"
+                                  leftSection={<IconTrash size={14} stroke={1.5} />}
+                                  onClick={() => handleDeletePrompt(prompt.name)}
+                                >
+                                  Delete
+                                </Menu.Item>
+                                <Menu.Item
+                                  leftSection={<IconEdit size={14} stroke={1.5} />}
+                                  onClick={() => {
+                                    const selected = data.find((p) => p.prompt === prompt.prompt);
+                                    if (selected)
+                                      setState((current) => ({
+                                        ...current,
+                                        modalOpened: true,
+                                        editingPrompt: selected,
+                                      }));
+                                  }}
+                                >
+                                  Edit
+                                </Menu.Item>
+                              </Menu.Dropdown>
+                            </Menu>
+                          )}
+                        </Group>
+                      </Chip>
+                    ))}
+                  </Group>
                 </Chip.Group>
               </ScrollArea>
             </Group>

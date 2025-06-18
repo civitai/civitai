@@ -13,7 +13,6 @@ export function ContentClamp({
       showLabel={<Text size={labelSize}>{label ?? 'Show More'}</Text>}
       hideLabel={<Text size={labelSize}>Hide</Text>}
       maxHeight={maxHeight}
-      sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
       {...props}
     >
       {children}

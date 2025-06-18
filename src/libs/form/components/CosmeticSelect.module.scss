@@ -1,0 +1,24 @@
+.decoration {
+  border-radius: var(--mantine-radius-md);
+  /* Replace with Mantine's medium radius variable */
+  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-8));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+}
+
+.selected {
+  border: 2px solid var(--mantine-color-blue-4);
+  /* Replace with Mantine's blue[4] variable */
+}
+
+.noContent {
+  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-8));
+  grid-column: 2 / min-content;
+}
+
+.noContentNoUrl {
+  grid-column: 1 / min-content;
+}

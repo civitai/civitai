@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Center,
-  createStyles,
   Group,
   List,
   Overlay,
@@ -11,6 +10,7 @@ import {
   Text,
   Title,
   useMantineTheme,
+  rgba,
 } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -29,13 +29,13 @@ import type { CommentGetById, CommentGetCommentsById } from '~/types/router';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from './CommentSection.module.css';
 
 export function CommentSection({ comments, modelId, parent, highlights }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const theme = useMantineTheme();
-  const queryUtils = trpc.useContext();
-  const { classes } = useStyles();
+  const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
   highlights = highlights?.filter((x) => x);
 
@@ -97,8 +97,8 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
     saveCommentMutation.mutate({ ...data });
 
   return (
-    <Stack spacing="xl">
-      <Group position="apart">
+    <Stack gap="xl">
+      <Group justify="space-between">
         <Title order={3}>{`${commentCount.toLocaleString()} ${
           commentCount === 1 ? 'Comment' : 'Comments'
         }`}</Title>
@@ -107,16 +107,16 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
         <Group align="flex-start">
           <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
           <Form form={form} onSubmit={handleSubmitComment} style={{ flex: '1 1 0' }}>
-            <Stack spacing="xs">
-              <Box sx={{ position: 'relative' }}>
+            <Stack gap="xs">
+              <Box style={{ position: 'relative' }}>
                 {!currentUser ? (
-                  <Overlay color={theme.fn.rgba(theme.colors.gray[9], 0.6)} opacity={1} zIndex={5}>
-                    <Stack align="center" justify="center" spacing={2} sx={{ height: '100%' }}>
+                  <Overlay color={rgba(theme.colors.gray[9], 0.6)} opacity={1} zIndex={5}>
+                    <Stack align="center" justify="center" gap={2} style={{ height: '100%' }}>
                       <Text size="xs" color={theme.colors.gray[4]}>
                         You must be logged in to add a comment
                       </Text>
                       <Link href={`/login?returnUrl=${router.asPath}`}>
-                        <Button size="xs" onClick={() => dialogStore.closeLatest()} compact>
+                        <Button size="compact-xs" onClick={() => dialogStore.closeLatest()}>
                           Log In
                         </Button>
                       </Link>
@@ -140,7 +140,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                 />
               </Box>
               {showCommentActions ? (
-                <Group spacing="xs" position="right">
+                <Group gap="xs" justify="flex-end">
                   <Button
                     variant="default"
                     onClick={() => {
@@ -169,7 +169,11 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
           </Center>
         </Alert>
       )}
-      <List listStyleType="none" spacing="lg" styles={{ itemWrapper: { width: '100%' } }}>
+      <List
+        listStyleType="none"
+        spacing="lg"
+        styles={{ itemWrapper: { width: '100%' }, itemLabel: { width: '100%' } }}
+      >
         {comments.map((comment) => {
           const isHighlighted = highlights?.includes(comment.id);
 
@@ -202,11 +206,3 @@ type Props = {
   parent?: CommentGetById;
   highlights?: number[];
 };
-
-const useStyles = createStyles((theme) => ({
-  highlightedComment: {
-    background: theme.fn.rgba(theme.colors.blue[5], 0.2),
-    margin: `-${theme.spacing.xs}px`,
-    padding: `${theme.spacing.xs}px`,
-  },
-}));

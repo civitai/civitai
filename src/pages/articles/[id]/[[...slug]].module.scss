@@ -1,0 +1,25 @@
+.titleWrapper {
+  gap: var(--mantine-spacing-xs);
+
+  @container (max-width: theme('screens.md')) {
+    gap: calc(var(--mantine-spacing-xs) * 0.4);
+  }
+}
+
+.title {
+  word-break: break-word;
+
+  @container (max-width: theme('screens.md')) {
+    font-size: 24px; // theme.fontSizes.xs * 2.4
+    width: 100%;
+    padding-bottom: 0;
+  }
+}
+
+.badgeText {
+  font-size: var(--mantine-font-size-md);
+
+  @container (max-width: theme('screens.md')) {
+    font-size: var(--mantine-font-size-sm);
+  }
+}

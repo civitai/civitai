@@ -34,10 +34,10 @@ export const trainingFailEmail = createEmail({
 
     return `
   <body style="background: ${color.background};">
-    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; margin: auto;">
+    <table width="100%" border="0" cellgap="0" cellpadding="0" style="max-width: 600px; margin: auto;">
       <tr><td height="20"></td></tr>
       <tr><td>
-        <table width="100%" border="0" cellspacing="20" cellpadding="0" style="background: ${
+        <table width="100%" border="0" cellgap="20" cellpadding="0" style="background: ${
           color.mainBackground
         }; border-radius: 10px;">
           <tr>
@@ -60,7 +60,7 @@ export const trainingFailEmail = createEmail({
           </tr>
           <tr>
             <td align="center" style="padding: 0;">
-              <table border="0" cellspacing="0" cellpadding="0">
+              <table border="0" cellgap="0" cellpadding="0">
                 <tr>
                   <td align="center" style="border-radius: 5px;" bgcolor="${
                     color.buttonBackground

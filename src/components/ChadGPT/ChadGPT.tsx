@@ -58,7 +58,7 @@ import { IconCircleX } from '@tabler/icons-react';
 //           iframe.style.visibility = 'visible';
 //         }}
 //       />
-//       <ActionIcon
+//       <LegacyActionIcon
 //         size={48}
 //         variant="transparent"
 //         style={{
@@ -72,7 +72,7 @@ import { IconCircleX } from '@tabler/icons-react';
 //         onClick={() => dialog.onClose()}
 //       >
 //         <IconCircleX size={48} strokeWidth={1} />
-//       </ActionIcon>
+//       </LegacyActionIcon>
 //     </Modal>
 //   );
 // }

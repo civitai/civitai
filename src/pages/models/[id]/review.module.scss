@@ -1,0 +1,17 @@
+.card {
+  padding: var(--mantine-spacing-xl);
+  /* Replace with Mantine's spacing variable */
+
+  @media (max-width: calc(var(--mantine-breakpoint-sm) - 1px)) {
+    padding: var(--mantine-spacing-sm);
+  }
+}
+
+.actionsWrapper {
+  gap: var(--mantine-spacing-md);
+  /* Replace with Mantine's spacing variable */
+
+  @media (max-width: calc(var(--mantine-breakpoint-sm) - 1px)) {
+    gap: 8px;
+  }
+}

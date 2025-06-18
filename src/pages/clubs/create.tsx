@@ -38,7 +38,7 @@ export default function ClubCreate() {
   return (
     <Container size="md">
       <Stack>
-        <Group spacing="md" noWrap>
+        <Group gap="md" wrap="nowrap">
           <BackButton url="/clubs" />
           <Title>Create new club</Title>
         </Group>

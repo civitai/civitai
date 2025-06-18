@@ -25,6 +25,7 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
+import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
@@ -88,7 +89,10 @@ import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
+import { deleteImagTagsForReviewByImageIds } from '~/server/services/image-review.service';
+import type { ImageModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -131,6 +135,7 @@ import {
   EntityType,
   ImageIngestionStatus,
   MediaType,
+  NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
@@ -239,10 +244,10 @@ export const deleteImageById = async ({
       // Ignore errors
     }
 
-    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    await imagesMetricsSearchIndex.queueUpdate([
-      { id, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
+    await queueImageSearchIndexUpdate({
+      ids: [id],
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
 
     // await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
     if (updatePost && image.postId) {
@@ -411,6 +416,11 @@ export const moderateImages = async ({
 
     await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   }
+  await Promise.all([
+    // deleteImageForReviewMultiple(ids),
+    deleteImagTagsForReviewByImageIds(ids),
+  ]);
+
   return null;
 };
 
@@ -494,11 +504,13 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   return await ingestImage({ image: images[0] });
 };
 
-const scanner = env.EXTERNAL_IMAGE_SCANNER;
-const clavataScan = env.CLAVATA_SCAN;
-const scanTypes: ImageScanType[] = [ImageScanType.WD14, ImageScanType.Hash];
-if (clavataScan !== 'off' || scanner === 'clavata') scanTypes.push(ImageScanType.Clavata);
-if (scanner === 'hive') scanTypes.push(ImageScanType.Hive);
+// const scanner = env.EXTERNAL_IMAGE_SCANNER;
+// const clavataScan = env.CLAVATA_SCAN;
+export const imageScanTypes: ImageScanType[] = [
+  ImageScanType.WD14,
+  ImageScanType.Hash,
+  ImageScanType.Clavata,
+];
 
 export const ingestImage = async ({
   image,
@@ -556,7 +568,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: scanTypes,
+      scans: imageScanTypes,
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -638,7 +650,7 @@ export const ingestImageBulk = async ({
           width: image.width,
           height: image.height,
           prompt: image.prompt,
-          scans: scans ?? scanTypes,
+          scans: scans ?? imageScanTypes,
           callbackUrl,
         }))
       ),
@@ -3580,8 +3592,8 @@ const imageReviewQueueJoinMap = {
         LIMIT 1
       ) appeal ON true
       JOIN "User" au ON au.id = appeal."userId"
-      JOIN "ModActivity" ma ON ma."entityId" = i.id AND ma."entityType" = 'image'
-      JOIN "User" mu ON mu.id = ma."userId"
+      LEFT JOIN "ModActivity" ma ON ma."entityId" = i.id AND ma."entityType" = 'image'
+      LEFT JOIN "User" mu ON mu.id = ma."userId"
     `,
   },
 } as const;
@@ -3639,13 +3651,13 @@ type GetImageModerationReviewQueueRaw = {
   acceptableMinor: boolean;
   poi?: boolean;
 };
+type ReviewTag = { id: number; name: string; nsfwLevel: number; imageId: number };
 export const getImageModerationReviewQueue = async ({
   limit,
   cursor,
   needsReview,
   tagReview,
   reportReview,
-  tagIds,
   browsingLevel,
 }: ImageReviewQueueInput) => {
   const AND: Prisma.Sql[] = [];
@@ -3655,14 +3667,9 @@ export const getImageModerationReviewQueue = async ({
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
   }
-
-  if (tagIds?.length) {
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "TagsOnImageDetails" toi
-      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tagIds)})
-    )`);
+  if (needsReview && needsReview !== 'appeal') {
+    AND.push(Prisma.sql`(i."ingestion" = 'Scanned')`);
   }
-
   // Order by oldest first. This is to ensure that images that have been in the queue the longest
   // are reviewed first.
   let orderBy = `i."id" DESC`;
@@ -3703,10 +3710,10 @@ export const getImageModerationReviewQueue = async ({
         ? `WITH tags_review AS (
             SELECT
               toi."imageId"
-            FROM "TagsOnImageNew" toi  JOIN "Image" i ON toi."imageId" = i.id
+            FROM "TagsOnImageDetails" toi  JOIN "Image" i ON toi."imageId" = i.id
             WHERE
-            (toi."attributes" >> 9) & 1 = 1
-            AND (toi."attributes" >> 10) & 1 != 1
+            toi."needsReview"
+            AND toi.disabled = false
             AND i."nsfwLevel" < 32
             ${cursor ? `AND "imageId" <= ${cursor}` : ''}
             ORDER BY (toi."imageId", toi."tagId") DESC
@@ -3769,7 +3776,7 @@ export const getImageModerationReviewQueue = async ({
   const imageIds = rawImages.map((i) => i.id);
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
 
-  if (tagReview || needsReview === 'tag') {
+  if (tagReview) {
     const rawTags = await dbRead.imageTag.findMany({
       where: { imageId: { in: imageIds } },
       select: {
@@ -3795,24 +3802,19 @@ export const getImageModerationReviewQueue = async ({
     }));
   }
 
-  let namesMap: Map<number, string[]> | undefined;
-  if (needsReview === 'poi' && imageIds.length > 0) {
-    namesMap = new Map();
-    const names = await dbRead.$queryRaw<{ imageId: number; name: string }[]>`
-      SELECT
-        toi."imageId",
-        t.name
-      FROM "TagsOnImageNew" toi
-      JOIN "TagsOnTags" tot ON tot."toTagId" = toi."tagId"
-      JOIN "Tag" t ON t.id = tot."toTagId"
-      JOIN "Tag" f ON f.id = tot."fromTagId" AND f.name = 'real person'
-      WHERE toi."imageId" IN (${Prisma.join(imageIds)});
-    `;
-    for (const x of names) {
-      if (!namesMap.has(x.imageId)) namesMap.set(x.imageId, []);
-      namesMap.get(x.imageId)?.push(x.name);
-    }
-  }
+  const reviewTags =
+    needsReview && imageIds.length > 0
+      ? await dbWrite.$queryRaw<ReviewTag[]>`
+    SELECT
+      t.id,
+      t.name,
+      t."nsfwLevel",
+      itr."imageId"
+    FROM "ImageTagForReview" itr
+    JOIN "Tag" t ON itr."tagId" = t.id
+    WHERE itr."imageId" IN (${Prisma.join(imageIds)})
+  `
+      : [];
 
   let tosDetails: Map<number, { tosReason: string }> | undefined;
   if (clickhouse && needsReview === 'appeal' && imageIds.length > 0) {
@@ -3834,7 +3836,6 @@ export const getImageModerationReviewQueue = async ({
     Omit<ImageV2Model, 'stats' | 'metadata'> & {
       meta: ImageMetaProps | null;
       tags?: VotableTagModel[] | undefined;
-      names?: string[];
       report?:
         | {
             id: number;
@@ -3863,6 +3864,7 @@ export const getImageModerationReviewQueue = async ({
       tosReason?: string | null;
       minor: boolean;
       acceptableMinor: boolean;
+      reviewTags: ReviewTag[];
     }
   > = rawImages.map(
     ({
@@ -3900,7 +3902,7 @@ export const getImageModerationReviewQueue = async ({
       },
       reactions: [],
       tags: tagsVar?.filter((x) => x.imageId === i.id),
-      names: namesMap?.get(i.id) ?? undefined,
+      reviewTags: reviewTags.filter((x) => x.imageId === i.id),
       report: reportId
         ? {
             id: reportId,
@@ -3927,6 +3929,33 @@ export const getImageModerationReviewQueue = async ({
 
   return { nextCursor, items: images };
 };
+
+export async function getImageModerationCounts() {
+  const result = await dbWrite.$queryRaw<{ needsReview: string; count: number }[]>`
+    SELECT
+      "needsReview",
+      COUNT(*)
+    FROM (
+      SELECT "needsReview" FROM "Image"
+      WHERE "needsReview" IS NOT NULL AND (("needsReview" != 'appeal' AND "ingestion" = 'Scanned') OR "needsReview" = 'appeal')
+
+      UNION ALL
+
+      SELECT 'reported' AS "needsReview" FROM (
+        SELECT ir."imageId" FROM "Report" r
+        JOIN "ImageReport" ir ON ir."reportId" = r.id
+        WHERE r.status = 'Pending'
+        GROUP BY ir."imageId"
+      )
+    )
+    GROUP BY "needsReview";
+  `;
+
+  return result.reduce<Record<string, number>>(
+    (acc, { needsReview, count }) => ({ ...acc, [needsReview]: Number(count) }),
+    {}
+  );
+}
 
 export async function get404Images() {
   const imagesRaw = await dbRead.$queryRaw<
@@ -4096,7 +4125,12 @@ export async function updateImageNsfwLevel({
   userId,
   status,
   isModerator,
-}: UpdateImageNsfwLevelOutput & { userId: number; isModerator?: boolean }) {
+  activity,
+}: UpdateImageNsfwLevelOutput & {
+  userId: number;
+  isModerator?: boolean;
+  activity?: ImageModActivity['activity'];
+}) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
@@ -4112,14 +4146,14 @@ export async function updateImageNsfwLevel({
     await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,
-      activity: 'setNsfwLevel',
+      activity: activity ?? 'setNsfwLevel',
     });
   } else {
     // Track potential content leaking
     // If the image is currently PG and the new level is R or higher, and the image isn't from the original user, increment the counter
     const current = await dbWrite.image.findFirst({
       where: { id },
-      select: { nsfwLevel: true, userId: true },
+      select: { nsfwLevel: true, userId: true, nsfwLevelLocked: true },
     });
     if (!current) return;
     if (
@@ -4130,13 +4164,24 @@ export async function updateImageNsfwLevel({
       leakingContentCounter.inc();
     }
 
+    // TODO: In the future, we might need to revise if the Knights are doing a great job.
+    if (!current?.nsfwLevelLocked && current.userId === userId) {
+      // Add it to knights queue so they can review this:
+      await addImageToQueue({
+        imageIds: id,
+        rankType: NewOrderRankType.Knight,
+        priority: 1,
+      });
+    }
+
     await dbWrite.imageRatingRequest.upsert({
       where: { imageId_userId: { imageId: id, userId: userId } },
       create: {
         nsfwLevel,
         imageId: id,
         userId: userId,
-        weight: current.userId === userId ? 3 : 1,
+        // -5 means it was added to the queue, 3 means it was locked so mods should see.
+        weight: current.userId === userId ? (current?.nsfwLevelLocked ? 3 : -5) : 1,
       },
       update: { nsfwLevel },
     });
@@ -4780,6 +4825,16 @@ export async function queueImageSearchIndexUpdate({
 }) {
   await imagesSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
+
+  if (action === SearchIndexUpdateQueueAction.Delete) {
+    // Bust the thumbnail cache for deleted images
+    await thumbnailCache.bust(ids);
+    // Remove the image from the knights of new order pool counters
+    await Promise.all([
+      ...poolCounters.Knight.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Templar.map((queue) => queue.reset({ id: ids })),
+    ]);
+  }
 }
 
 export async function getPostDetailByImageId({ imageId }: { imageId: number }) {

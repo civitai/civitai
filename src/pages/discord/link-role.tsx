@@ -1,27 +1,23 @@
 import {
+  Alert,
+  Button,
   Container,
+  Group,
   Paper,
   Stack,
   Text,
-  Alert,
-  Group,
   ThemeIcon,
-  Divider,
   Title,
-  Button,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons-react';
-import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import type { BuiltInProviderType } from 'next-auth/providers';
 import { getProviders, signIn } from 'next-auth/react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { SocialButton } from '~/components/Social/SocialButton';
 import { dbRead } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
 import { getUserDiscordMetadata } from '~/server/jobs/push-discord-metadata';
-
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
@@ -70,28 +66,28 @@ export default function LinkRole({ providers, linked }: Props) {
     <Container size="xs">
       <Paper radius="md" p="xl" withBorder>
         {linked ? (
-          <Stack spacing="md" align="center">
-            <Title align="center" order={1} sx={{ lineHeight: 1.2 }}>
+          <Stack gap="md" align="center">
+            <Title ta="center" order={1} lh={1.2}>
               Civitai + Discord = ❤️
             </Title>
             <Alert color="green" my="lg">
-              <Group noWrap>
+              <Group wrap="nowrap">
                 <ThemeIcon size={46} color="green">
                   <IconCircleCheck size={30} />
                 </ThemeIcon>
                 <Text
                   size="xl"
-                  sx={{ lineHeight: 1.2 }}
+                  lh={1.2}
                 >{`We've updated your Discord account with the latest data from Civitai`}</Text>
               </Group>
             </Alert>
-            <Button size="lg" leftIcon={<IconHome />} component={Link} href="/">
+            <Button size="lg" leftSection={<IconHome />} component={Link} href="/">
               Back home!
             </Button>
           </Stack>
         ) : (
-          <Stack spacing="md">
-            <Title order={3} sx={{ lineHeight: 1.2 }}>
+          <Stack gap="md">
+            <Title order={3} lh={1.2}>
               Connect your Discord account to your Civitai account
             </Title>
             <Text>{`Take your Civitai accolades into Discord to get special roles and perks by connecting your account.`}</Text>

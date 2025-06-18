@@ -70,9 +70,9 @@ export default function UserBanModal({ username, userId }: Props) {
 
   return (
     <Modal {...dialog} size="md" withCloseButton={false} centered>
-      <Stack spacing={32}>
-        <Group align="flex-start" position="apart" spacing="xs" noWrap>
-          <Title order={4} color="gray.1">
+      <Stack gap={32}>
+        <Group align="flex-start" justify="space-between" gap="xs" wrap="nowrap">
+          <Title order={4} className="text-gray-1">
             Are you sure you want to ban this user?
           </Title>
           <CloseButton aria-label="Close support modal" size="md" onClick={dialog.onClose} />
@@ -88,9 +88,8 @@ export default function UserBanModal({ username, userId }: Props) {
           placeholder="Select a ban reason"
           data={dataLabels}
           value={reasonCode}
-          onChange={(value: BanReasonCode) => setReasonCode(value as BanReasonCode)}
+          onChange={(value) => setReasonCode(value as BanReasonCode)}
           withAsterisk
-          withinPortal
         />
 
         <RichTextEditor
@@ -111,7 +110,7 @@ export default function UserBanModal({ username, userId }: Props) {
           hideToolbar
         />
 
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <Button color="red" onClick={handleBan} loading={toggleBanMutation.isLoading}>
             Ban this user
           </Button>

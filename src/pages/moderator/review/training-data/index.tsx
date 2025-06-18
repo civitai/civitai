@@ -51,11 +51,11 @@ export default function ReviewTrainingDataPage() {
                   <Text lineClamp={1}>
                     {item.model.name} - {item.name}
                   </Text>
-                  <Text color="dimmed" size="xs">
+                  <Text c="dimmed" size="xs">
                     Created: {formatDate(item.createdAt)}
                   </Text>
                 </div>
-                <Button compact component={Link} href={`${router.asPath}/${item.id}`}>
+                <Button size="compact-sm" component={Link} href={`${router.asPath}/${item.id}`}>
                   Review
                 </Button>
               </div>

@@ -1,9 +1,10 @@
-import { ActionIcon, Group, Text } from '@mantine/core';
+import { Group, Text } from '@mantine/core';
 import { IconPencil, IconTrash } from '@tabler/icons-react';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import type { GetUserLinksResult } from '~/server/controllers/user-link.controller';
 import { trpc } from '~/utils/trpc';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function SocialLink({
   link,
@@ -21,19 +22,24 @@ export function SocialLink({
   });
 
   return (
-    <Group noWrap spacing="sm">
+    <Group wrap="nowrap" gap="sm">
       <DomainIcon url={link.url} />
       <Text lineClamp={1} size="sm" style={{ flex: 1 }}>
         {link.url}
       </Text>
-      <Group noWrap spacing="xs">
+      <Group wrap="nowrap" gap="xs">
         <ButtonTooltip label="Edit link">
-          <ActionIcon onClick={() => setSelected(link)} variant="default" size="md">
+          <LegacyActionIcon
+            color="gray"
+            onClick={() => setSelected(link)}
+            variant="default"
+            size="md"
+          >
             <IconPencil size={14} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
         <ButtonTooltip label="Delete link">
-          <ActionIcon
+          <LegacyActionIcon
             color="red"
             onClick={() => mutate({ id: link.id })}
             loading={isLoading}
@@ -41,7 +47,7 @@ export function SocialLink({
             size="md"
           >
             <IconTrash size={14} />
-          </ActionIcon>
+          </LegacyActionIcon>
         </ButtonTooltip>
       </Group>
     </Group>

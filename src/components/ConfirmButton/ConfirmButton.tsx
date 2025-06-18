@@ -20,9 +20,10 @@ export const ConfirmButton = ({
   return (
     <Button
       {...props}
-      onClick={(e) => {
+      onClick={(e: React.MouseEvent) => {
         if (confirming) {
           clearTimeout(timeoutRef.current);
+          // @ts-ignore
           onClick(e);
         } else {
           timeoutRef.current = setTimeout(() => {

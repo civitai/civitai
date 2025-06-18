@@ -11,13 +11,17 @@ import {
   Stack,
   useMantineTheme,
   Tooltip,
+  useComputedColorScheme,
+  Group,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
+import { useCreatorProgramMutate } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { PeriodFilter } from '~/components/Filters';
 import { FilterChip } from '~/components/Filters/FilterChip';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -47,6 +51,7 @@ export function MediaFiltersDropdown({
   hideTools = false,
   ...buttonProps
 }: Props) {
+  const colorScheme = useComputedColorScheme('dark');
   const theme = useMantineTheme();
   const mobile = useIsMobile();
   const isClient = useIsClient();
@@ -132,8 +137,7 @@ export function MediaFiltersDropdown({
       label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
+      disabled={!filterLength}
       inline
     >
       <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
@@ -143,9 +147,9 @@ export function MediaFiltersDropdown({
   );
 
   const dropdown = (
-    <Stack spacing="lg" p="md">
-      <Stack spacing="md">
-        <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
+    <Stack gap="lg" p="md">
+      <Stack gap="md">
+        <Divider label="Time period" className="text-sm font-bold" mb={4} />
         {query?.period && onChange ? (
           <PeriodFilter
             type={filterType}
@@ -158,56 +162,57 @@ export function MediaFiltersDropdown({
         )}
       </Stack>
       {!hideBaseModels && (
-        <Stack spacing="md">
-          <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Stack gap="md">
+          <Divider label="Base model" className="text-sm font-bold" mb={4} />
           <Chip.Group
-            spacing={8}
             value={mergedFilters.baseModels ?? []}
-            onChange={(baseModels: BaseModel[]) => handleChange({ baseModels })}
+            onChange={(baseModels) => handleChange({ baseModels: baseModels as BaseModel[] })}
             multiple
-            my={4}
           >
-            {displayedBaseModels.map((baseModel, index) => (
-              <FilterChip key={index} value={baseModel}>
-                <span>{baseModel}</span>
-              </FilterChip>
-            ))}
-            {activeBaseModels.length > baseModelLimit && (
-              <ActionIcon
-                variant="transparent"
-                size="sm"
-                onClick={() => setTruncateBaseModels((prev) => !prev)}
-              >
-                {truncateBaseModels ? (
-                  <IconChevronDown strokeWidth={3} />
-                ) : (
-                  <IconChevronUp strokeWidth={3} />
-                )}
-              </ActionIcon>
-            )}
+            <Group gap={8} className="my-4">
+              {displayedBaseModels.map((baseModel, index) => (
+                <FilterChip key={index} value={baseModel}>
+                  <span>{baseModel}</span>
+                </FilterChip>
+              ))}
+              {activeBaseModels.length > baseModelLimit && (
+                <LegacyActionIcon
+                  variant="transparent"
+                  size="sm"
+                  onClick={() => setTruncateBaseModels((prev) => !prev)}
+                >
+                  {truncateBaseModels ? (
+                    <IconChevronDown strokeWidth={3} />
+                  ) : (
+                    <IconChevronUp strokeWidth={3} />
+                  )}
+                </LegacyActionIcon>
+              )}
+            </Group>
           </Chip.Group>
         </Stack>
       )}
 
-      <Stack spacing="md">
+      <Stack gap="md">
         {!hideMediaTypes && (
           <>
-            <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Divider label="Media type" className="text-sm font-bold" mb={4} />
             <Chip.Group
-              spacing={8}
               value={mergedFilters.types ?? []}
-              onChange={(types: MediaType[]) => handleChange({ types })}
+              onChange={(types) => handleChange({ types: types as MediaType[] })}
               multiple
             >
-              {availableMediaTypes.map((type, index) => (
-                <FilterChip key={index} value={type}>
-                  <span>{titleCase(getDisplayName(type))}</span>
-                </FilterChip>
-              ))}
+              <Group gap={8}>
+                {availableMediaTypes.map((type, index) => (
+                  <FilterChip key={index} value={type}>
+                    <span>{titleCase(getDisplayName(type))}</span>
+                  </FilterChip>
+                ))}
+              </Group>
             </Chip.Group>
           </>
         )}
-        <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <div className="flex flex-wrap gap-2">
           <FilterChip
             checked={mergedFilters.withMeta}
@@ -289,7 +294,7 @@ export function MediaFiltersDropdown({
 
         {filterType === 'modelImages' && (
           <>
-            <Divider label="Resources" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Divider label="Resources" className="text-sm font-bold" mb={4} />
             <div className="flex gap-2">
               <FilterChip
                 checked={mergedFilters.hideManualResources}
@@ -309,7 +314,7 @@ export function MediaFiltersDropdown({
 
         {isModerator && (
           <>
-            <Divider label="Moderator" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Divider label="Moderator" className="text-sm font-bold" mb={4} />
             <div className="flex gap-2">
               <FilterChip
                 checked={mergedFilters.notPublished}
@@ -329,26 +334,28 @@ export function MediaFiltersDropdown({
 
         {!hideTools && (
           <>
-            <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Divider label="Tools" className="text-sm font-bold" mb={4} />
             <ToolMultiSelect
               value={mergedFilters.tools ?? []}
               onChange={(tools) => handleChange({ tools })}
               placeholder="Created with..."
+              comboboxProps={{ withinPortal: false }}
             />
           </>
         )}
 
-        <Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Techniques" className="text-sm font-bold" mb={4} />
         <TechniqueMultiSelect
           value={mergedFilters.techniques ?? []}
           onChange={(techniques) => handleChange({ techniques })}
           placeholder="Created with..."
+          comboboxProps={{ withinPortal: false }}
         />
       </Stack>
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -368,14 +375,14 @@ export function MediaFiltersDropdown({
           size="90%"
           position="bottom"
           styles={{
-            drawer: {
+            content: {
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+            close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
           {dropdown}
@@ -395,7 +402,7 @@ export function MediaFiltersDropdown({
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p={0} w="100%">
-        <ScrollArea.Autosize type="hover" maxHeight={'calc(90vh - var(--header-height) - 56px)'}>
+        <ScrollArea.Autosize type="hover" mah={'calc(90vh - var(--header-height) - 56px)'}>
           {dropdown}
         </ScrollArea.Autosize>
       </Popover.Dropdown>

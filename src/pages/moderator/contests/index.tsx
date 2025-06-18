@@ -14,6 +14,7 @@ import {
 import { IconEdit, IconExternalLink } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { useQueryCollections } from '~/components/Collections/collection.utils';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CollectionSort } from '~/server/common/enums';
@@ -42,9 +43,9 @@ export default function Contests() {
     <>
       <Meta title="Contests - Settings" deIndex />
       <Container size="md">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Contests</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Manage our contests &amp; banned users{' '}
           </Text>
         </Stack>
@@ -62,39 +63,41 @@ export default function Contests() {
             </Center>
           ) : flatData?.length ?? 0 ? (
             <Stack>
-              <Table highlightOnHover withBorder>
-                <thead>
-                  <tr>
-                    <th>Contest Name</th>
-                    <th>Created at</th>
-                    <th>Type</th>
-                    <th>Submissions Start Date</th>
-                    <th>Submissions End Date</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
+              <Table highlightOnHover withTableBorder>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Contest Name</Table.Th>
+                    <Table.Th>Created at</Table.Th>
+                    <Table.Th>Type</Table.Th>
+                    <Table.Th>Submissions Start Date</Table.Th>
+                    <Table.Th>Submissions End Date</Table.Th>
+                    <Table.Th />
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {flatData.map((collection) => (
-                    <tr key={collection.id}>
-                      <td>
-                        <Group spacing={4}>
+                    <Table.Tr key={collection.id}>
+                      <Table.Td>
+                        <Group gap={4}>
                           <Text>{collection.name}</Text>
                         </Group>
-                      </td>
-                      <td>{formatDate(collection.createdAt)}</td>
-                      <td>{collection.type ? getDisplayName(collection.type) : 'N/A'}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{formatDate(collection.createdAt)}</Table.Td>
+                      <Table.Td>
+                        {collection.type ? getDisplayName(collection.type) : 'N/A'}
+                      </Table.Td>
+                      <Table.Td>
                         {collection.metadata?.submissionStartDate
                           ? formatDate(collection.metadata?.submissionStartDate)
                           : 'N/A'}
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         {collection.metadata?.submissionEndDate
                           ? formatDate(collection.metadata?.submissionEndDate)
                           : 'N/A'}
-                      </td>
-                      <td>
-                        <ActionIcon
+                      </Table.Td>
+                      <Table.Td>
+                        <LegacyActionIcon
                           component={Link}
                           href={`/collections/${collection.id}`}
                           variant="transparent"
@@ -107,11 +110,11 @@ export default function Contests() {
                             strokeWidth={2.5}
                             size={26}
                           />
-                        </ActionIcon>
-                      </td>
-                    </tr>
+                        </LegacyActionIcon>
+                      </Table.Td>
+                    </Table.Tr>
                   ))}
-                </tbody>
+                </Table.Tbody>
               </Table>
               {hasNextPage && (
                 <Center>

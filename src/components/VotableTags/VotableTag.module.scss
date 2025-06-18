@@ -1,0 +1,18 @@
+.mainBadge {
+  position: relative;
+  user-select: none;
+  border-color: var(--badge-border-color);
+  background-color: var(--badge-bg-color);
+  color: var(--badge-color);
+  display: flex;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    background-color: var(--progress-bg);
+    width: var(--progress-width);
+  }
+}

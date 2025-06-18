@@ -85,14 +85,16 @@ export const publicProcedure = t.procedure
  * Reusable middleware to ensure
  * users are logged in
  */
-const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin }, next }) => {
+const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) => {
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
   if (user.bannedAt)
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'You cannot perform this action because your account has been banned',
     });
-  return next({ ctx: { user, acceptableOrigin } });
+  return next({
+    ctx: { ...ctx, user, acceptableOrigin },
+  });
 });
 
 const isMuted = middleware(async ({ ctx, next }) => {
@@ -105,21 +107,20 @@ const isMuted = middleware(async ({ ctx, next }) => {
     });
 
   return next({
-    ctx: {
-      ...ctx,
-      user,
-    },
+    ctx: { ...ctx, user },
   });
 });
 
-const isMod = t.middleware(({ ctx: { user, acceptableOrigin }, next }) => {
+const isMod = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) => {
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
   if (!user.isModerator)
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'You do not have permission to perform this action',
     });
-  return next({ ctx: { user, acceptableOrigin } });
+  return next({
+    ctx: { ...ctx, user, acceptableOrigin },
+  });
 });
 
 export const isFlagProtected = (flag: keyof FeatureAccess) =>
@@ -139,7 +140,9 @@ const isOnboarded = t.middleware(({ ctx, next }) => {
       message: 'You must complete the onboarding process before performing this action',
     });
   }
-  return next({ ctx: { ...ctx, user } });
+  return next({
+    ctx: { ...ctx, user },
+  });
 });
 
 /**

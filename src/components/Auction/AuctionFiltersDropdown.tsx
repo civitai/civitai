@@ -3,10 +3,11 @@ import {
   Chip,
   Divider,
   Drawer,
+  Group,
   Indicator,
   Popover,
   Stack,
-  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
@@ -16,9 +17,10 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { BaseModel } from '~/server/common/constants';
 import { getDisplayName } from '~/utils/string-helpers';
+import classes from './AuctionFiltersDropdown.module.scss';
 
 export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[] }) => {
-  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const [opened, setOpened] = useState(false);
 
@@ -43,8 +45,7 @@ export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[]
       label={filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
-      showZero={false}
-      dot={false}
+      disabled={!filterLength}
       inline
     >
       <FilterButton
@@ -59,27 +60,29 @@ export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[]
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing={0}>
-        <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} mb="sm" />
+    <Stack gap="lg">
+      <Stack gap={0}>
+        <Divider label="Base model" classNames={{ label: 'font-bold text-sm' }} mb="sm" />
         <Chip.Group
-          spacing={8}
           value={(filters.baseModels as string[]) ?? []}
-          onChange={(baseModels: BaseModel[]) => setFilters({ ...filters, baseModels })}
+          onChange={(baseModels) =>
+            setFilters({ ...filters, baseModels: baseModels as BaseModel[] })
+          }
           multiple
-          my={4}
         >
-          {baseModels.map((baseModel, index) => (
-            <FilterChip key={index} value={baseModel}>
-              <span>{getDisplayName(baseModel, { splitNumbers: false })}</span>
-            </FilterChip>
-          ))}
+          <Group gap={8} my={4}>
+            {baseModels.map((baseModel, index) => (
+              <FilterChip key={index} value={baseModel}>
+                <span>{getDisplayName(baseModel, { splitNumbers: false })}</span>
+              </FilterChip>
+            ))}
+          </Group>
         </Chip.Group>
       </Stack>
       {filterLength > 0 && (
         <Button
           color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
           onClick={clearFilters}
           fullWidth
         >
@@ -98,16 +101,7 @@ export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[]
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          styles={{
-            drawer: {
-              height: 'auto',
-              maxHeight: 'calc(100dvh - var(--header-height))',
-              overflowY: 'auto',
-            },
-            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
-            header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
-          }}
+          classNames={{ ...classes }}
         >
           {dropdown}
         </Drawer>

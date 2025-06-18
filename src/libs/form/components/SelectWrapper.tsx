@@ -1,11 +1,12 @@
-import type { SelectItem, SelectProps } from '@mantine/core';
+import type { ComboboxItem, ComboboxItemGroup, SelectProps } from '@mantine/core';
 import { Group, Loader, Select } from '@mantine/core';
 import { useMemo, useState, useEffect } from 'react';
 import type { Props as PresetOptionsProps } from './PresetOptions';
 import { PresetOptions } from './PresetOptions';
 
-type SelectItemProps<T extends string | number> = Omit<SelectItem, 'value'> & {
+type SelectItemProps<T extends string | number> = Omit<ComboboxItem, 'value'> & {
   value: T;
+  group?: string;
 };
 
 type SelectWrapperProps<T extends string | number> = Omit<
@@ -41,13 +42,25 @@ export function SelectWrapper<T extends string | number>({
     if (value?.toString() !== selectedPreset) setSelectedPreset(value?.toString());
   }, [value]);
 
-  const parsedData = data.map((x): string | SelectItem => {
-    if (typeof x === 'string') return x;
-    return {
-      ...x,
-      value: String(x.value),
-    } as SelectItem;
-  });
+  const parsedData = data.reduce<Array<string | ComboboxItem | ComboboxItemGroup>>((acc, x) => {
+    if (typeof x === 'string') {
+      acc.push(x);
+    } else if (x.group) {
+      let group = acc.find(
+        (item): item is { group: string; items: { label: string; value: string }[] } =>
+          typeof item !== 'string' && 'group' in item && item.group === x.group
+      );
+      if (!group) {
+        group = { group: x.group, items: [] };
+        acc.push(group);
+      }
+      group.items.push({ label: x.label, value: String(x.value) });
+    } else {
+      acc.push({ ...x, value: String(x.value) });
+    }
+
+    return acc;
+  }, []);
 
   const parsedValue = useMemo(
     () => (value !== undefined && value !== null ? String(value) : null),
@@ -59,7 +72,7 @@ export function SelectWrapper<T extends string | number>({
     [defaultValue]
   );
 
-  const handleChange = (value: string) => {
+  const handleChange = (value: string | null) => {
     const returnValue = initialType === 'number' && value != null ? Number(value) : value;
     setSelectedPreset(returnValue as string);
     onChange?.(returnValue as T);
@@ -69,7 +82,7 @@ export function SelectWrapper<T extends string | number>({
 
   return (
     <Select
-      data={parsedData as (string | SelectItem)[]}
+      data={parsedData as (string | ComboboxItem)[]}
       value={parsedValue}
       onChange={handleChange}
       defaultValue={parsedDefaultValue}
@@ -78,17 +91,17 @@ export function SelectWrapper<T extends string | number>({
       disabled={disabled}
       label={
         hasPresets ? (
-          <Group spacing={8} position="apart" noWrap>
+          <Group gap={8} justify="space-between" className="w-full" wrap="nowrap">
             {label}
             <PresetOptions
               disabled={disabled}
-              color="blue"
               options={presets}
               value={selectedPreset}
               onChange={(value) => {
                 setSelectedPreset(value);
                 onChange?.(value as T);
               }}
+              chipPropsOverrides={{ color: 'blue' }}
             />
           </Group>
         ) : (

@@ -3,6 +3,7 @@ import { ActionIcon, Popover, Box, Stack, Group, Text, TextInput, Divider } from
 import { getHotkeyHandler, useClickOutside } from '@mantine/hooks';
 import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ActionIconSelect<T>({
   items,
@@ -86,14 +87,15 @@ export function ActionIconSelect<T>({
   return (
     <Popover opened={editing} position="bottom-start" shadow="lg" {...popoverProps}>
       <Popover.Target>
-        <ActionIcon
+        <LegacyActionIcon
+          color="gray"
           variant="outline"
           {...actionIconProps}
           ref={setToggle}
           onClick={() => setEditing((x) => !x)}
         >
           {children}
-        </ActionIcon>
+        </LegacyActionIcon>
       </Popover.Target>
       <Popover.Dropdown p={0}>
         <TextInput
@@ -119,7 +121,7 @@ export function ActionIconSelect<T>({
         <Divider />
         <Box style={{ width: 300, maxHeight: 400, overflowY: 'auto' }} ref={setDropdown}>
           {!!filteredData?.length && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               {filteredData.map((item, index) => (
                 <Group
                   key={item.label}

@@ -24,7 +24,7 @@ function PostsPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts`, rel: 'canonical' }]}
       />
       <MasonryContainer>
-        <Stack spacing="xs">
+        <Stack gap="xs">
           <IsClient>
             <PostCategories />
             <PostsInfinite filters={query} showEof showAds />

@@ -11,7 +11,6 @@ import {
   Stack,
   Title,
   Button,
-  ActionIcon,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -27,6 +26,7 @@ import { formatDate } from '~/utils/date-helpers';
 
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function Rewards() {
   const [filters, setFilters] = useState<
@@ -43,18 +43,18 @@ export default function Rewards() {
     <>
       <Meta title="Rewards" deIndex />
       <Container size="lg">
-        <Stack spacing={0} mb="xl">
+        <Stack gap={0} mb="xl">
           <Title order={1}>Purchasable Rewards</Title>
-          <Text size="sm" color="dimmed">
+          <Text size="sm" c="dimmed">
             Manage the rewards that users can purchase with their Buzz.
           </Text>
         </Stack>
-        <Group position="apart" mb="md">
+        <Group justify="space-between" mb="md">
           <Group>
             <Button
               component={Link}
               href="/moderator/rewards/create"
-              leftIcon={<IconPlus size={16} />}
+              leftSection={<IconPlus size={16} />}
               radius="xl"
             >
               Create
@@ -76,66 +76,66 @@ export default function Rewards() {
             <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
             <Table>
-              <thead>
-                <tr>
-                  <th>Created by</th>
-                  <th>Name</th>
-                  <th>Price (Buzz)</th>
-                  <th>Usage</th>
-                  <th>Available From</th>
-                  <th>Available To</th>
-                  <th>Archived</th>
-                  <th>Remaining Codes</th>
-                  <th>Available slots</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Created by</Table.Th>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Price (Buzz)</Table.Th>
+                  <Table.Th>Usage</Table.Th>
+                  <Table.Th>Available From</Table.Th>
+                  <Table.Th>Available To</Table.Th>
+                  <Table.Th>Archived</Table.Th>
+                  <Table.Th>Remaining Codes</Table.Th>
+                  <Table.Th>Available slots</Table.Th>
+                  <Table.Th>&nbsp;</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {purchasableRewards.map((purchasableReward) => {
                   return (
-                    <tr key={purchasableReward.id}>
-                      <td>
+                    <Table.Tr key={purchasableReward.id}>
+                      <Table.Td>
                         <UserAvatar size="sm" user={purchasableReward.addedBy} withUsername />
-                      </td>
-                      <td>{purchasableReward.title}</td>
-                      <td>{numberWithCommas(purchasableReward.unitPrice)}</td>
-                      <td>{getDisplayName(purchasableReward.usage)}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{purchasableReward.title}</Table.Td>
+                      <Table.Td>{numberWithCommas(purchasableReward.unitPrice)}</Table.Td>
+                      <Table.Td>{getDisplayName(purchasableReward.usage)}</Table.Td>
+                      <Table.Td>
                         {purchasableReward.availableFrom
                           ? formatDate(purchasableReward.availableFrom)
                           : '-'}
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         {purchasableReward.availableTo
                           ? formatDate(purchasableReward.availableTo)
                           : '-'}
-                      </td>
-                      <td>{purchasableReward.archived ? 'Y' : 'N'}</td>
-                      <td>{purchasableReward.codes.length}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{purchasableReward.archived ? 'Y' : 'N'}</Table.Td>
+                      <Table.Td>{purchasableReward.codes.length}</Table.Td>
+                      <Table.Td>
                         {purchasableReward.availableCount
                           ? `${
                               purchasableReward.availableCount - purchasableReward._count.purchases
                             }/${purchasableReward.availableCount}`
                           : '-'}
-                      </td>
-                      <td>
-                        <ActionIcon
+                      </Table.Td>
+                      <Table.Td>
+                        <LegacyActionIcon
                           component={Link}
                           href={`/moderator/rewards/update/${purchasableReward.id}`}
                         >
                           <IconEdit />
-                        </ActionIcon>
-                      </td>
-                    </tr>
+                        </LegacyActionIcon>
+                      </Table.Td>
+                    </Table.Tr>
                   );
                 })}
-              </tbody>
+              </Table.Tbody>
               {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
+                <Group justify="space-between">
                   <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                   <Pagination
-                    page={filters.page}
+                    value={filters.page}
                     onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                     total={pagination.totalPages}
                   />

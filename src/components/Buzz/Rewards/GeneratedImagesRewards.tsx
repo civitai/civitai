@@ -1,4 +1,14 @@
-import { Center, Loader, MultiSelect, Paper, Stack, Text, Title } from '@mantine/core';
+import {
+  Center,
+  Loader,
+  MultiSelect,
+  Paper,
+  Stack,
+  Text,
+  Title,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import type { ChartOptions } from 'chart.js';
 import {
   CategoryScale,
@@ -13,7 +23,7 @@ import {
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import classes from '~/components/Buzz/buzz.module.scss';
 import { maxDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -35,9 +45,9 @@ export const GeneratedImagesReward = () => {
     trpc.modelVersion.modelVersionsGeneratedImagesOnTimeframe.useQuery({
       timeframe: DEFAULT_TIMEFRAME,
     });
-
-  const { classes, theme } = useBuzzDashboardStyles();
-  const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
+  const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
 
   const options = useMemo<ChartOptions<'line'>>(
     () => ({
@@ -123,10 +133,10 @@ export const GeneratedImagesReward = () => {
   }
 
   return (
-    <Paper withBorder className={classes.tileCard} h="100%">
+    <Paper className={classes.tileCard} h="100%">
       <Stack p="md">
         <Title order={3}>Images generated with your models</Title>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text>
             This chart shows the number of images generated with your resources over the past 30
             days.
@@ -144,7 +154,7 @@ export const GeneratedImagesReward = () => {
               onChange={(data) => setFilteredVersionIds(data.map((x) => Number(x)))}
               searchable
               placeholder="Search models"
-              nothingFound="No models found..."
+              nothingFoundMessage="No models found..."
               label="Filter models. "
               description="By default, we only show you your 10 most performant models. Only models with generated images are shown."
               limit={50}
@@ -164,7 +174,7 @@ export const GeneratedImagesReward = () => {
           </Center>
         ) : (
           <Center>
-            <Text color="dimmed">
+            <Text c="dimmed">
               Whoops! Looks like we are still collecting data on your models for this month. Come
               back later
             </Text>

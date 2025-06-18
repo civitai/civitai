@@ -50,7 +50,7 @@ export const ClubRequirementNotice = ({
     // This is a user that can't see clubs yet, so we don't want to show them the club requirement notice
     return (
       <Alert color="blue">
-        <Stack spacing={4}>
+        <Stack gap={4}>
           <ThemeIcon radius="xl">
             <IconClubs />
           </ThemeIcon>
@@ -74,11 +74,11 @@ export const ClubRequirementNotice = ({
 
   return (
     <Alert color="blue">
-      <Stack spacing={4}>
+      <Stack gap={4}>
         <ThemeIcon radius="xl">
           <IconClubs />
         </ThemeIcon>
-        <Text size="sm" weight="bold">
+        <Text size="sm" fw="bold">
           This {getDisplayName(entityType)} is exclusive to club supporters.
         </Text>
         {clubs.length > 0 && (
@@ -102,21 +102,22 @@ export const ClubRequirementNotice = ({
 
                 return (
                   <List.Item key={club.id}>
-                    <Stack spacing={0}>
+                    <Stack gap={0}>
                       <LoginPopover>
                         <Anchor
-                          onClick={(e) => {
-                            // dialogStore.trigger({
-                            //   component: ManageClubMembershipModal,
-                            //   props: {
-                            //     clubId: club.id,
-                            //     clubTierIds:
-                            //       requiredTiers.length > 0
-                            //         ? requiredTiers.map((t) => t.id)
-                            //         : undefined,
-                            //   },
-                            // });
-                          }}
+                          // onClick={
+                          //   (e) => {
+                          //   // dialogStore.trigger({
+                          //   //   component: ManageClubMembershipModal,
+                          //   //   props: {
+                          //   //     clubId: club.id,
+                          //   //     clubTierIds:
+                          //   //       requiredTiers.length > 0
+                          //   //         ? requiredTiers.map((t) => t.id)
+                          //   //         : undefined,
+                          //   //   },
+                          //   // });
+                          // }}
                           span
                         >
                           {club.name} by {club.user.username}{' '}
@@ -224,7 +225,7 @@ export const ClubRequirementButton = ({
   return (
     <Menu position="bottom" shadow="md">
       <Menu.Target>
-        <Button radius="md" leftIcon={<IconClubs size={16} />} {...actionBtnProps}>
+        <Button radius="md" leftSection={<IconClubs size={16} />} {...actionBtnProps}>
           {label}
         </Button>
       </Menu.Target>
@@ -244,18 +245,18 @@ export const ClubRequirementButton = ({
           return (
             <Menu.Item
               key={club.id}
-              onClick={(e) => {
-                // dialogStore.trigger({
-                //   component: ManageClubMembershipModal,
-                //   props: {
-                //     clubId: club.id,
-                //     clubTierIds:
-                //       requiredTiers.length > 0 ? requiredTiers.map((t) => t.id) : undefined,
-                //   },
-                // });
-              }}
+              // onClick={(e) => {
+              // dialogStore.trigger({
+              //   component: ManageClubMembershipModal,
+              //   props: {
+              //     clubId: club.id,
+              //     clubTierIds:
+              //       requiredTiers.length > 0 ? requiredTiers.map((t) => t.id) : undefined,
+              //   },
+              // });
+              // }}
             >
-              <Stack spacing={0}>
+              <Stack gap={0}>
                 <Text>
                   {club.name} by {club.user.username}{' '}
                 </Text>

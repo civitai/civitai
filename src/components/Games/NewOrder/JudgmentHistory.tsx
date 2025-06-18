@@ -17,6 +17,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useQueryInfiniteKnightsNewOrderHistory } from '~/components/Games/KnightsNewOrder.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -39,9 +40,8 @@ export default function JudgmentHistoryModal() {
   return (
     <Modal
       {...dialog}
-      transition="scale"
+      transitionProps={{ transition: 'scale', duration: 300 }}
       size="80%"
-      transitionDuration={300}
       withCloseButton={false}
       padding={0}
     >
@@ -117,7 +117,7 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
   const { ref: inViewRef, inView } = useInView();
   const theme = useMantineTheme();
 
-  const { image, rating, grantedExp, multiplier, status } = data;
+  const { image, rating, grantedExp, multiplier, status, originalLevel } = data;
   const totalExp = Math.floor(grantedExp * (multiplier ?? 1));
   const isPending = status === NewOrderImageRatingStatus.Pending;
   const isCorrect =
@@ -139,7 +139,7 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
         <>
           <EdgeMedia2 src={image.url} className="h-full object-cover" type="image" width={450} />
 
-          <ActionIcon
+          <LegacyActionIcon
             component={Link}
             href={`/images/${image.id}`}
             target="_blank"
@@ -150,7 +150,7 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
             className="absolute bottom-2 right-2 text-white"
           >
             <IconExternalLink size={16} color="currentColor" />
-          </ActionIcon>
+          </LegacyActionIcon>
 
           <div className="absolute left-0 top-0 flex w-full justify-between gap-4 p-2">
             <div className="relative flex flex-col gap-1">

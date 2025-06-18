@@ -19,7 +19,7 @@ export function NewsletterToggle({
   }) => JSX.Element | null;
 }) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { data: subscription, isLoading } = trpc.newsletter.getSubscription.useQuery();
   const { mutate } = trpc.newsletter.updateSubscription.useMutation({
     async onMutate({ subscribed }) {
@@ -51,22 +51,22 @@ export function NewsletterToggle({
   if (children) return children({ subscribed, setSubscribed, isLoading });
 
   return (
-    <Group spacing="sm" noWrap align="flex-start">
+    <Group gap="sm" wrap="nowrap" align="flex-start">
       <Switch
         checked={subscribed}
         disabled={isLoading}
         onChange={({ target }) => setSubscribed(target.checked)}
       />
-      <Stack spacing={0}>
-        <Group spacing="sm">
+      <Stack gap={0}>
+        <Group gap="sm">
           <Text size="sm">{label ?? 'Newsletter'}</Text>
           <Popover width={300} withArrow withinPortal shadow="sm">
             <Popover.Target>
               <IconInfoSquareRounded size={16} style={{ cursor: 'pointer', opacity: 0.7 }} />
             </Popover.Target>
             <Popover.Dropdown>
-              <Stack spacing="xs">
-                <Text size="sm" weight={500}>
+              <Stack gap="xs">
+                <Text size="sm" fw={500}>
                   {`What's the Civitai Newsletter?`}
                 </Text>
                 <Text size="xs" lh={1.3}>
@@ -76,7 +76,7 @@ export function NewsletterToggle({
                 <Text size="xs" lh={1.3}>
                   {`We hate spam as much as you do, so we'll only send you the good stuff.`}
                 </Text>
-                <Text size="xs" color="dimmed" lh={1.3}>
+                <Text size="xs" c="dimmed" lh={1.3}>
                   Emails will be sent to{' '}
                   <Text component="span" td="underline">
                     {currentUser.email}
@@ -87,7 +87,7 @@ export function NewsletterToggle({
           </Popover>
         </Group>
         {description && (
-          <Text size="xs" color="dimmed">
+          <Text size="xs" c="dimmed">
             {description}
           </Text>
         )}

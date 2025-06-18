@@ -1,17 +1,12 @@
 import {
-  ActionIcon,
   Alert,
-  Box,
   Center,
-  Code,
-  CopyButton,
   Group,
   Loader,
   LoadingOverlay,
   Pagination,
   Table,
   Text,
-  Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
@@ -28,6 +23,7 @@ import { showSuccessNotification } from '../../../utils/notifications';
 import { UserAvatar } from '../../UserAvatar/UserAvatar';
 // import { ClubAdminUpdateModal } from '../ClubAdminUpsertForm';
 import type { ClubAdmin } from '../../../types/router';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ClubAdminsPaged({ clubId }: Props) {
   // TODO.clubs: Add some custom filters for admins
@@ -77,28 +73,28 @@ export function ClubAdminsPaged({ clubId }: Props) {
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <Table>
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Admin since</th>
-                <th>Permissions</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>User</Table.Th>
+                <Table.Th>Admin since</Table.Th>
+                <Table.Th>Permissions</Table.Th>
+                <Table.Th>&nbsp;</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {admins.map((admin) => {
                 return (
-                  <tr key={admin.user.id}>
-                    <td>
+                  <Table.Tr key={admin.user.id}>
+                    <Table.Td>
                       <UserAvatar withUsername user={admin.user} />
-                    </td>
-                    <td>{formatDate(admin.createdAt)}</td>
-                    <td style={{ maxWidth: 300 }}>
+                    </Table.Td>
+                    <Table.Td>{formatDate(admin.createdAt)}</Table.Td>
+                    <Table.Td style={{ maxWidth: 300 }}>
                       <Text>{admin.permissions.map((p) => getDisplayName(p)).join(', ')}</Text>
-                    </td>
-                    <td>
-                      <Group position="right">
-                        <ActionIcon
+                    </Table.Td>
+                    <Table.Td>
+                      <Group justify="flex-end">
+                        <LegacyActionIcon
                           variant="transparent"
                           aria-label="Update invite"
                           onClick={() => {
@@ -111,8 +107,8 @@ export function ClubAdminsPaged({ clubId }: Props) {
                           }}
                         >
                           <IconPencil />
-                        </ActionIcon>
-                        <ActionIcon
+                        </LegacyActionIcon>
+                        <LegacyActionIcon
                           variant="transparent"
                           aria-label="Delete invite"
                           loading={deletingAdmin}
@@ -121,18 +117,18 @@ export function ClubAdminsPaged({ clubId }: Props) {
                           }}
                         >
                           <IconTrash />
-                        </ActionIcon>
+                        </LegacyActionIcon>
                       </Group>
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 );
               })}
-            </tbody>
+            </Table.Tbody>
             {pagination && pagination.totalPages > 1 && (
-              <Group position="apart">
+              <Group justify="space-between">
                 <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
                 <Pagination
-                  page={filters.page}
+                  value={filters.page}
                   onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
                   total={pagination.totalPages}
                 />

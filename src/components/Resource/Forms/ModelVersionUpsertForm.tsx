@@ -10,6 +10,8 @@ import {
   Stack,
   Switch,
   Text,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
@@ -28,6 +30,7 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
+  InputCreatableMultiSelect,
   InputMultiSelect,
   InputNumber,
   InputRTE,
@@ -37,7 +40,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { activeBaseModels, constants } from '~/server/common/constants';
+import { activeBaseModels, constants, EARLY_ACCESS_CONFIG } from '~/server/common/constants';
 import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
@@ -74,7 +77,7 @@ const schema = modelVersionUpsertSchema2
       .extend({
         timeframe: z
           .number()
-          .refine((v) => constants.earlyAccess.timeframeValues.some((x) => x === v), {
+          .refine((v) => EARLY_ACCESS_CONFIG.timeframeValues.some((x) => x === v), {
             message: 'Invalid value',
           }),
       })
@@ -83,7 +86,7 @@ const schema = modelVersionUpsertSchema2
     recommendedResources: generationResourceSchema
       .merge(recommendedSettingsSchema)
       .array()
-      .optional(),
+      .nullish(),
   })
   .refine((data) => (!data.skipTrainedWords ? (data.trainedWords ?? []).length > 0 : true), {
     message: 'You need to specify at least one trained word',
@@ -133,6 +136,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
+  const colorScheme = useComputedColorScheme('dark');
+  const theme = useMantineTheme();
 
   const acceptsTrainedWords = [
     'Checkpoint',
@@ -150,7 +155,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     version?.status === 'Published' &&
     (!version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt));
 
-  const MAX_EARLY_ACCCESS = 15;
+  const MAX_EARLY_ACCCESS = 30;
 
   // Get VAE options
   const { data: vaes } = trpc.modelVersion.getModelVersionsByModelType.useQuery(
@@ -184,7 +189,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         ? {
             ...(version?.earlyAccessConfig ?? {}),
             timeframe:
-              version.earlyAccessConfig?.timeframe ?? constants.earlyAccess.timeframeValues[0],
+              version.earlyAccessConfig?.timeframe ?? EARLY_ACCESS_CONFIG.timeframeValues[0],
           }
         : null,
     modelId: model?.id ?? -1,
@@ -306,15 +311,18 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
-  const maxEarlyAccessModels = getMaxEarlyAccessModels({ userMeta: currentUser?.meta });
-  const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
+  const maxEarlyAccessModels = getMaxEarlyAccessModels({ userMeta: currentUser?.meta, features });
+  const earlyAccessUnlockedDays = EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock
     // TODO: Update to model scores.
-    .map(([, days]) =>
-      currentUser?.isModerator || days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta })
+    .map((data) => {
+      const [_, days] = data;
+      return currentUser?.isModerator ||
+        days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta, features })
         ? days
-        : null
-    )
+        : null;
+    })
     .filter(isDefined);
+
   const atEarlyAccess = !!version?.earlyAccessEndsAt;
   const isPublished = version?.status === 'Published';
   const isPrivateModel = model?.availability === Availability.Private;
@@ -396,7 +404,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           )}
 
           {showEarlyAccessInput && (
-            <Stack spacing={0}>
+            <Stack gap={0}>
               <Divider label="Early Access Set Up" mb="md" />
 
               <DismissibleAlert
@@ -404,14 +412,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 size="sm"
                 color="yellow"
                 title={
-                  <Group spacing="xs">
+                  <Group gap="xs">
                     <Text>Earn Buzz with early access! </Text>
                     <Popover width={300} withArrow withinPortal shadow="sm">
                       <Popover.Target>
                         <IconInfoCircle size={16} />
                       </Popover.Target>
                       <Popover.Dropdown>
-                        <Stack spacing="xs">
+                        <Stack gap="xs">
                           <Text size="sm">
                             Early Access helps creators monetize, learn more{' '}
                             <Anchor href="/articles/6341">here</Anchor>
@@ -451,7 +459,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     'earlyAccessConfig',
                     e.target.checked
                       ? {
-                          timeframe: constants.earlyAccess.timeframeValues[0],
+                          timeframe: EARLY_ACCESS_CONFIG.timeframeValues[0],
                           chargeForDownload: modelDownloadEnabled ? true : false,
                           downloadPrice: modelDownloadEnabled ? 5000 : undefined,
                           chargeForGeneration: !modelDownloadEnabled ? true : false,
@@ -469,14 +477,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 <Stack>
                   <Input.Wrapper
                     label={
-                      <Group spacing="xs">
-                        <Text weight="bold">Early Access Time Frame</Text>
+                      <Group gap="xs">
+                        <Text fw="bold">Early Access Time Frame</Text>
                         <Popover width={300} withArrow withinPortal shadow="sm">
                           <Popover.Target>
                             <IconInfoCircle size={16} />
                           </Popover.Target>
                           <Popover.Dropdown>
-                            <Stack spacing="xs">
+                            <Stack gap="xs">
                               <Text size="sm">
                                 The amount of resources you can have in early access and for how
                                 long is determined by actions you&rsquo;ve taken on the site.
@@ -497,7 +505,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       }
                       value={
                         earlyAccessConfig?.timeframe?.toString() ??
-                        constants.earlyAccess.timeframeValues[0]
+                        EARLY_ACCESS_CONFIG.timeframeValues[0]
                       }
                       data={earlyAccessUnlockedDays.map((v) => ({
                         label: `${v} days`,
@@ -506,23 +514,21 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       }))}
                       color="blue"
                       size="xs"
-                      styles={(theme) => ({
+                      styles={{
                         root: {
                           border: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[4]
+                            colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
                           }`,
                           background: 'none',
-                          marginTop: theme.spacing.xs * 0.5, // 5px
+                          marginTop: 'calc(var(--mantine-spacing-xs) * 0.5)', // 5px
                         },
-                      })}
+                      }}
                       fullWidth
                       disabled={isEarlyAccessOver}
                     />
                     {earlyAccessUnlockedDays.length !==
-                      constants.earlyAccess.timeframeValues.length && (
-                      <Group noWrap>
+                      EARLY_ACCESS_CONFIG.timeframeValues.length && (
+                      <Group wrap="nowrap">
                         <Text size="xs" color="yellow">
                           You will unlock more early access day over time by posting models to the
                           site.
@@ -530,7 +536,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       </Group>
                     )}
                     {!canIncreaseEarlyAccess && (
-                      <Text size="xs" color="dimmed" mt="sm">
+                      <Text size="xs" c="dimmed" mt="sm">
                         You cannot increase early access value after a model has been published
                       </Text>
                     )}
@@ -539,9 +545,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     {modelDownloadEnabled && (
                       <Card withBorder>
                         <Card.Section withBorder>
-                          <Group py="sm" px="md" position="apart" noWrap>
+                          <Group py="sm" px="md" justify="space-between" wrap="nowrap">
                             <div>
-                              <Text weight={500} size="sm">
+                              <Text fw={500} size="sm">
                                 Allow users to pay for download (Includes ability to generate)
                               </Text>
                               <Text size="xs">
@@ -568,7 +574,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                                   : MAX_DONATION_GOAL
                               }
                               step={100}
-                              icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                              leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                               withAsterisk
                               disabled={isEarlyAccessOver}
                             />
@@ -578,9 +584,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     )}
                     <Card withBorder>
                       <Card.Section withBorder>
-                        <Group py="sm" px="md" position="apart" noWrap>
+                        <Group py="sm" px="md" justify="space-between" wrap="nowrap">
                           <div>
-                            <Text weight={500} size="sm">
+                            <Text fw={500} size="sm">
                               Allow users to pay for generation only - no download.
                             </Text>
                             <Text size="xs">
@@ -614,7 +620,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                               min={50}
                               max={earlyAccessConfig?.downloadPrice}
                               step={100}
-                              icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                              leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                               disabled={isEarlyAccessOver}
                               withAsterisk
                             />
@@ -637,9 +643,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       features.donationGoals && (
                         <Card withBorder>
                           <Card.Section withBorder>
-                            <Group py="sm" px="md" position="apart" noWrap>
+                            <Group py="sm" px="md" justify="space-between" wrap="nowrap">
                               <div>
-                                <Text weight={500} size="sm">
+                                <Text fw={500} size="sm">
                                   Enable donation goal
                                 </Text>
                                 <Text size="xs">
@@ -677,7 +683,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                                   min={MIN_DONATION_GOAL}
                                   max={MAX_DONATION_GOAL}
                                   step={100}
-                                  icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                                   disabled={
                                     !!version?.earlyAccessConfig?.donationGoalId ||
                                     isEarlyAccessOver
@@ -702,7 +708,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               <Divider my="md" />
             </Stack>
           )}
-          <Group spacing="xs" grow>
+          <Group gap="xs" grow>
             <InputSelect
               name="baseModel"
               label="Base Model"
@@ -725,11 +731,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               <Text>
                 On-site generation with SD3 is unsupported.{' '}
                 <Text
-                  variant="link"
                   td="underline"
                   component="a"
                   target="_blank"
-                  href={`/articles/${constants.earlyAccess.article}`}
+                  href={`/articles/${EARLY_ACCESS_CONFIG.article}`}
                 >
                   Learn more
                 </Text>
@@ -745,9 +750,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             editorSize="xl"
           />
           {acceptsTrainedWords && (
-            <Stack spacing="xs">
+            <Stack gap="xs">
               {!skipTrainedWords && (
-                <InputMultiSelect
+                <InputCreatableMultiSelect
                   name="trainedWords"
                   label="Trigger Words"
                   placeholder="e.g.: Master Chief"
@@ -755,11 +760,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     isTextualInversion ? ' (max 1 word)' : ''
                   }`}
                   data={trainedWords}
-                  getCreateLabel={(query) => `+ Create ${query}`}
-                  maxSelectedValues={isTextualInversion ? 1 : undefined}
-                  creatable
+                  maxValues={isTextualInversion ? 1 : undefined}
                   clearable
-                  searchable
                   required
                 />
               )}
@@ -774,16 +776,16 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               )}
             </Stack>
           )}
-          <Stack spacing={4}>
+          <Stack gap={4}>
             <Divider label="Training Params" />
-            <Group spacing="xs" grow>
+            <Group gap="xs" grow>
               <InputNumber
                 name="epochs"
                 label="Epochs"
                 placeholder="Training Epochs"
                 min={0}
                 max={100000}
-                sx={{ flexGrow: 1 }}
+                style={{ flexGrow: 1 }}
               />
               <InputNumber
                 name="steps"
@@ -791,13 +793,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 placeholder="Training Steps"
                 min={0}
                 step={500}
-                sx={{ flexGrow: 1 }}
+                style={{ flexGrow: 1 }}
               />
             </Group>
           </Stack>
-          <Stack spacing={4}>
+          <Stack gap={4}>
             <Divider label="Recommended Settings" />
-            <Group spacing="xs" sx={{ '&>*': { flexGrow: 1 } }}>
+            <Group gap="xs" className="*:grow">
               <InputNumber
                 name="clipSkip"
                 label="Clip Skip"
@@ -812,7 +814,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     label="Min Strength"
                     min={-100}
                     max={100}
-                    precision={1}
+                    decimalScale={1}
                     step={0.1}
                   />
                   <InputNumber
@@ -820,7 +822,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     label="Max Strength"
                     min={-100}
                     max={100}
-                    precision={1}
+                    decimalScale={1}
                     step={0.1}
                   />
                   <InputNumber
@@ -828,7 +830,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     label="Strength"
                     min={minStrength ?? -1}
                     max={maxStrength ?? 2}
-                    precision={1}
+                    decimalScale={1}
                     step={0.1}
                   />
                 </Group>
@@ -862,7 +864,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             </Group>
           </Stack>
           {modelDownloadEnabled && (
-            <Stack spacing={8}>
+            <Stack gap={8}>
               <Divider label="Additional options" />
 
               <InputSwitch

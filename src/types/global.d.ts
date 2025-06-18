@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import type { MantineSize } from '@mantine/core';
 import type { FileWithPath } from '@mantine/dropzone';
 import type { ImageAnalysisInput } from '~/server/schema/image.schema';
 import type { TrainingResults } from '~/server/schema/model-file.schema';
@@ -39,6 +40,10 @@ declare global {
 
   type MixedObject = Record<string, any>;
   type BaseEntity = { id: number | string } & MixedObject;
+
+  type Entries<T> = {
+    [K in keyof T]: [K, T[K]];
+  }[keyof T][];
 
   type CustomFile = {
     id?: number;
@@ -165,4 +170,6 @@ declare global {
     isAuthed?: boolean;
     authChecked?: boolean;
   }
+
+  type MantineSpacing = MantineSize | number;
 }

@@ -1,8 +1,7 @@
 import type { NumberInputProps } from '@mantine/core';
 import { CloseButton, NumberInput, Text } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
-import { forwardRef, useEffect, useMemo, useRef } from 'react';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { forwardRef, useEffect, useRef } from 'react';
 import { constants } from '~/server/common/constants';
 
 type Props = NumberInputProps & {
@@ -45,7 +44,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
       if (value === undefined || typeof value !== 'number') handleClearInput();
     }, [value]); //eslint-disable-line
 
-    const handleChange = (value: number | undefined) => {
+    const handleChange = (value: number | string) => {
       onChange?.(value);
     };
 
@@ -60,73 +59,26 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         onClick={() => {
           handleClearInput();
           onClear?.();
-          onChange?.(undefined);
+          onChange?.('');
         }}
       />
     );
 
-    const { parser, formatter } = useMemo(() => {
-      switch (format) {
-        case 'delimited':
-          return {
-            parser: (value?: string) => value && value.replace(/\$\s?|(,*)/g, ''),
-            formatter: (value?: string) => numberWithCommas(value),
-          };
-        case 'currency':
-          return {
-            parser: (value?: string) => {
-              if (!value) {
-                return '';
-              }
-
-              const number = value
-                // Technically, we can go ahead with a single replace/regexp, but this is more readable.
-                .replace(/\$\s?|(,*)/g, '') // Remove the commas & spaces
-                .replace('.', ''); // Remove the periods.
-              const int = parseInt(number);
-
-              return isNaN(int) ? '' : int.toString();
-            },
-            formatter: (value?: string) => {
-              if (!value) {
-                return '';
-              }
-
-              const int = parseInt(value);
-
-              if (isNaN(int)) {
-                return '';
-              }
-
-              const [intPart, decimalPart] = (int / 100).toFixed(2).split('.');
-
-              return `${numberWithCommas(intPart)}.${decimalPart}`;
-            },
-          };
-        default: {
-          return {
-            parser: undefined,
-            formatter: undefined,
-          };
-        }
-      }
-    }, [format]);
+    const isCurrency = format === 'currency';
+    const parsedValue = typeof value === 'number' ? (isCurrency ? value / 100 : value) : 0;
 
     return (
       <NumberInput
         ref={mergedRef}
-        parser={parser}
-        formatter={formatter}
+        thousandSeparator={format !== 'default'}
         rightSection={
-          format === 'currency' ? (
-            <Text size="xs">{currency}</Text>
-          ) : showCloseButton ? (
-            closeButton
-          ) : null
+          isCurrency ? <Text size="xs">{currency}</Text> : showCloseButton ? closeButton : null
         }
-        rightSectionWidth={format === 'currency' ? 45 : undefined}
+        rightSectionWidth={isCurrency ? 45 : undefined}
+        decimalScale={isCurrency ? 2 : undefined}
+        fixedDecimalScale={isCurrency}
         onChange={handleChange}
-        value={value}
+        value={isCurrency ? (parsedValue ?? 0) / 100 : parsedValue}
         {...props}
       />
     );

@@ -1,13 +1,16 @@
-import type { AutocompleteItem, AutocompleteProps } from '@mantine/core';
+import type { AutocompleteProps, ComboboxData } from '@mantine/core';
 import {
   ActionIcon,
   Code,
+  ComboboxItem,
   Group,
   HoverCard,
+  Portal,
   Select,
   Stack,
   Text,
-  createStyles,
+  useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
@@ -50,7 +53,10 @@ import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tool
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { getBlockedNsfwWords, includesPoi } from '~/utils/metadata/audit';
+import { getBlockedNsfwWords, includesInappropriate, includesPoi } from '~/utils/metadata/audit';
+import classes from './AutocompleteSearch.module.scss';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { truncate } from 'lodash-es';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -91,84 +97,6 @@ const searchClient: InstantSearchProps['searchClient'] = {
 };
 
 const DEFAULT_DROPDOWN_ITEM_LIMIT = 6;
-const useStyles = createStyles((theme) => ({
-  root: {
-    flexGrow: 1,
-
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-      flexGrow: 1,
-    },
-  },
-  wrapper: {
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  input: {
-    borderRadius: 0,
-
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  dropdown: {
-    [theme.fn.smallerThan('sm')]: {
-      marginTop: '-7px',
-    },
-  },
-
-  targetSelectorRoot: {
-    width: '110px',
-
-    [theme.fn.smallerThan('md')]: {
-      display: 'none', // TODO.search: Remove this once we figure out a way to prevent hiding the whole bar when selecting a target
-      height: '100%',
-
-      '&, & > [role="combobox"], & > [role="combobox"] *': {
-        height: '100%',
-      },
-    },
-
-    [theme.fn.smallerThan('sm')]: {
-      width: '25%',
-    },
-  },
-
-  targetSelectorInput: {
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    paddingRight: '18px',
-
-    '&:not(:focus)': {
-      borderRightStyle: 'none',
-    },
-
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-
-  targetSelectorRightSection: {
-    pointerEvents: 'none',
-  },
-
-  searchButton: {
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-
-    '&:hover': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.gray[4],
-    },
-
-    [theme.fn.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-}));
 
 const targetData = [
   { value: 'models', label: 'Models' },
@@ -262,8 +190,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   ref: React.ForwardedRef<{ focus: () => void }>
 ) {
   // const currentUser = useCurrentUser();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const { classes } = useStyles();
   const router = useRouter();
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
@@ -279,7 +208,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
     : indexNameProp;
 
-  const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
   const [search, setSearch] = useState(query);
   const [filters, setFilters] = useState('');
   const [searchPageQuery, setSearchPageQuery] = useState('');
@@ -295,12 +224,80 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   });
 
   const items = useMemo(() => {
+    const isIllegalQuery = debouncedSearch
+      ? includesInappropriate({ prompt: debouncedSearch }) === 'minor'
+      : false;
+    const canPerformQuery = debouncedSearch
+      ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
+      : true;
+    const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
+
+    if (isIllegalQuery) {
+      return [
+        {
+          key: 'blocked',
+          value: debouncedSearch,
+          hit: null as any,
+          label: 'Blocked',
+        },
+      ];
+    }
+
+    if (!canPerformQuery) {
+      return [
+        {
+          key: 'disabled',
+          value: debouncedSearch,
+          hit: null as any,
+          label: 'Blocked',
+        },
+      ];
+    }
+    if (hasBlockedWords) {
+      return [
+        {
+          key: 'blocked-words',
+          value: debouncedSearch,
+          hit: null as any,
+          label: 'Blocked',
+        },
+      ];
+    }
+
+    if (searchErrorState) {
+      return [
+        {
+          key: 'error',
+          value: debouncedSearch,
+          hit: null as any,
+          label: 'Error',
+        },
+      ];
+    }
+
     if (status === 'stalled') {
       return []; // Wait it out
     }
-    const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: '' }));
+
+    const items = filtered.map((hit) => ({
+      key: String(hit.id),
+      hit,
+      value: String(hit.id),
+      label:
+        'prompt' in hit
+          ? truncate(hit.prompt, { length: 50 })
+          : 'name' in hit
+          ? hit.name
+          : 'title' in hit
+          ? hit.title
+          : 'username' in hit
+          ? hit.username
+          : '',
+    }));
+
     if (!!results?.nbHits && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT)
-      items.push({ key: 'view-more', value: query, hit: null as any });
+      items.push({ key: 'view-more', value: query, hit: null as any, label: 'View more results' });
+
     return items;
   }, [status, filtered, results?.nbHits, query]);
 
@@ -335,7 +332,29 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onClear?.();
   };
 
-  const handleItemClick = (item: AutocompleteItem) => {
+  const getItemFromValue = (value: string) => {
+    return (
+      items.find((i) => i.value === value) ?? {
+        key: 'view-more',
+        hit: null,
+        value,
+      }
+    );
+  };
+
+  const handleItemClick = (value: string) => {
+    const item = getItemFromValue(value);
+
+    if (
+      item.key === 'blocked' ||
+      item.key === 'disabled' ||
+      item.key === 'blocked-words' ||
+      item.key === 'error'
+    ) {
+      // Do not allow to click on blocked items
+      return;
+    }
+
     if (item.hit) {
       // when an item is clicked
       router.push(processHitUrl(item.hit));
@@ -347,7 +366,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       });
     }
 
-    setSelectedItem(item);
+    setSelectedItem({ label: item.key, value });
     onSubmit?.();
   };
 
@@ -403,21 +422,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     }
   };
 
-  const canPerformQuery = debouncedSearch
-    ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
-    : true;
-
-  const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
-
   return (
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
-      <Group className={classes.wrapper} spacing={0} noWrap>
+      <Group className={classes.wrapper} gap={0} wrap="nowrap">
         <Select
           classNames={{
             root: classes.targetSelectorRoot,
             input: classes.targetSelectorInput,
-            rightSection: classes.targetSelectorRightSection,
+          }}
+          rightSectionProps={{
+            className: classes.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
           defaultValue={targetData[0].value}
@@ -430,10 +445,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               (features.toolSearch ? true : value !== 'tools')
           )}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
-          sx={{ flexShrink: 1 }}
-          onChange={onTargetChange}
+          style={{ flexShrink: 1 }}
+          onChange={(v: string | null) => onTargetChange(v as TKey)}
           autoComplete="off"
-          withinPortal
         />
         <ClearableAutoComplete
           ref={inputRef}
@@ -442,28 +456,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           classNames={classes}
           placeholder="Search Civitai"
           type="search"
-          nothingFound={
-            !canPerformQuery ? (
-              <Stack spacing={0} align="center">
-                <Text>
-                  Due to your current browsing settings, searching for people of interest has been
-                  disabled.
-                </Text>
-                <Text size="xs">
-                  You may remove X and XXX browsing settings to search for these.
-                </Text>
-              </Stack>
-            ) : searchErrorState ? (
-              <Stack spacing={0} align="center">
-                <Text>There was an error while performing your request&hellip;</Text>
-                <Text size="xs">Please try again later</Text>
-              </Stack>
-            ) : query && !hits.length ? (
-              <Stack spacing={0} align="center">
-                <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-              </Stack>
-            ) : undefined
-          }
           limit={
             results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
               ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
@@ -471,7 +463,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           }
           defaultValue={query}
           value={search}
-          data={canPerformQuery && !hasBlockedWords ? items : []}
+          data={items}
           onChange={setSearch}
           onBlur={handleClear}
           onClear={handleClear}
@@ -479,32 +471,86 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             ['Escape', blurInput],
             ['Enter', handleSubmit],
           ])}
-          onItemSubmit={handleItemClick}
-          itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
+          onOptionSubmit={(v) => handleItemClick(v)}
+          renderOption={({ option }) => {
+            const item = getItemFromValue(option.value);
+            // Render special states
+            if (item.key === 'blocked') {
+              return (
+                <Stack gap="xs" align="center">
+                  <Text size="sm" align="center">
+                    Your search query contains inappropriate content and has been blocked.
+                  </Text>
+                  <Text size="xs" align="center">
+                    Please try a different search term.
+                  </Text>
+                </Stack>
+              );
+            }
+            if (item.key === 'disabled') {
+              return (
+                <Stack gap="xs" align="center">
+                  <Text size="sm" align="center">
+                    Due to your current browsing settings, searching for people of interest has been
+                    disabled.
+                  </Text>
+                  <Text size="xs" align="center">
+                    You may remove X and XXX browsing settings to search for these.
+                  </Text>
+                </Stack>
+              );
+            }
+            if (item.key === 'blocked-words') {
+              return (
+                <Stack gap="xs" align="center">
+                  <Text size="sm" align="center">
+                    Your search query contains blocked words and has been filtered.
+                  </Text>
+                  <Text size="xs" align="center">
+                    Please try a different search term.
+                  </Text>
+                </Stack>
+              );
+            }
+            if (item.key === 'error') {
+              return (
+                <Stack gap="xs" align="center">
+                  <Text size="sm" align="center">
+                    There was an error while performing your request&hellip;
+                  </Text>
+                  <Text size="xs" align="center">
+                    Please try again later
+                  </Text>
+                </Stack>
+              );
+            }
+
+            const Render = IndexRenderItem[indexName] ?? ModelSearchItem;
+            return <Render {...item} />;
+          }}
           rightSection={
             <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
               <HoverCard.Target>
                 <Text
-                  weight="bold"
-                  sx={(theme) => ({
+                  fw="bold"
+                  style={{
                     border: `1px solid ${
-                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                      colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
                     }`,
                     borderRadius: theme.radius.sm,
                     backgroundColor:
-                      theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-                    color:
-                      theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
+                      colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+                    color: colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
                     textAlign: 'center',
                     width: 24,
                     userSelect: 'none',
-                  })}
+                  }}
                 >
                   /
                 </Text>
               </HoverCard.Target>
               <HoverCard.Dropdown>
-                <Text size="sm" color="yellow" weight={500}>
+                <Text size="sm" color="yellow" fw={500}>
                   Pro-tip: Quick search faster!
                 </Text>
                 <Text size="xs" lh={1.2}>
@@ -515,19 +561,20 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             </HoverCard>
           }
           // prevent default filtering behavior
-          filter={() => true}
+          filter={({ options }) => options}
           clearable={query.length > 0}
-          maxDropdownHeight={isMobile ? 'calc(90vh - var(--header-height))' : undefined}
+          maxDropdownHeight={isMobile ? 'calc(90vh - var(--header-height))' : 500}
           {...autocompleteProps}
         />
-        <ActionIcon
+        <LegacyActionIcon
           className={classes.searchButton}
+          color="gray"
           variant="filled"
           size={36}
           onMouseDown={handleSubmit}
         >
           <IconSearch size={18} />
-        </ActionIcon>
+        </LegacyActionIcon>
       </Group>
     </>
   );
@@ -535,7 +582,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
 const AutocompleteSearchContent = React.forwardRef(AutocompleteSearchContentInner);
 
-const IndexRenderItem: Record<SearchIndexKey, React.FC> = {
+const IndexRenderItem: Record<SearchIndexKey, React.ComponentType<any>> = {
   models: ModelSearchItem,
   articles: ArticlesSearchItem,
   users: UserSearchItem,

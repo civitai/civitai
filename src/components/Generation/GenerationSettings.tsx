@@ -15,6 +15,7 @@ import { useCurrentUserSettings, useMutateUserSettings } from '~/components/User
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useEffect, useRef } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type GenerationKeys = keyof UserSettingsSchema['generation'];
 type GenerationSettingOption = {
@@ -63,9 +64,9 @@ function GenerationSettingsOption({
         <div className="flex items-center gap-1">
           <span>{option.label}</span>
           {option.info && (
-            <ActionIcon onClick={option.info} size="sm">
+            <LegacyActionIcon onClick={option.info} size="sm">
               <IconInfoCircle size={16} />
-            </ActionIcon>
+            </LegacyActionIcon>
           )}
         </div>
       }

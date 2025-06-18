@@ -1,14 +1,16 @@
-import { createStyles, Paper, Stack, Text } from '@mantine/core';
+import { Paper, Stack, Text, useMantineTheme } from '@mantine/core';
 import { IconChevronDown, IconChevronUp, IconCrown } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { LeaderboardMetrics } from '~/components/Leaderboard/LeaderboardMetrics';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { LeaderboardGetModel } from '~/types/router';
 import { useInView } from '~/hooks/useInView';
 import { useEffect } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import classes from './CreatorCard.module.scss';
+import clsx from 'clsx';
 
 const linkQuery: Record<string, string> = {
   overall: '/models',
@@ -38,8 +40,8 @@ export function CreatorCard({
   index: number;
 }) {
   const { ref, inView } = useInView();
-  const { classes, theme, cx } = useStyles();
   const router = useRouter();
+  const theme = useMantineTheme();
 
   const { position: queryPosition, id: leaderboardId } = router.query as {
     position: string;
@@ -66,15 +68,15 @@ export function CreatorCard({
       {inView && (
         <Link href={link}>
           <Paper
-            className={cx(classes.creatorCard, Number(queryPosition) === position && 'active')}
+            className={clsx(classes.creatorCard, Number(queryPosition) === position && 'active')}
             p="sm"
             radius="md"
             shadow="xs"
             withBorder
           >
-            <ContainerGrid align="center">
-              <ContainerGrid.Col span={2}>
-                <Stack align="center" spacing={0} sx={{ position: 'relative' }}>
+            <ContainerGrid2 align="center">
+              <ContainerGrid2.Col span={2}>
+                <Stack align="center" gap={0} style={{ position: 'relative' }}>
                   {isTop3 && (
                     <IconCrown
                       size={64}
@@ -83,13 +85,13 @@ export function CreatorCard({
                       style={{ fill: iconColor }}
                     />
                   )}
-                  <Text size="lg" weight="bold">
+                  <Text size="lg" fw="bold">
                     {position}
                   </Text>
                   {delta && delta.position !== 0 && (
                     <Text
                       size="xs"
-                      weight="bold"
+                      fw="bold"
                       color={delta.position > 0 ? 'red' : 'green'}
                       className={classes.delta}
                     >
@@ -102,47 +104,17 @@ export function CreatorCard({
                     </Text>
                   )}
                 </Stack>
-              </ContainerGrid.Col>
-              <ContainerGrid.Col span={10}>
-                <Stack spacing={8}>
+              </ContainerGrid2.Col>
+              <ContainerGrid2.Col span={10}>
+                <Stack gap={8}>
                   <UserAvatar user={user} textSize="lg" size="md" withUsername />
                   <LeaderboardMetrics score={score} metrics={metrics} delta={delta?.score} />
                 </Stack>
-              </ContainerGrid.Col>
-            </ContainerGrid>
+              </ContainerGrid2.Col>
+            </ContainerGrid2>
           </Paper>
         </Link>
       )}
     </div>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  wrapper: {
-    minHeight: 98,
-  },
-  creatorCard: {
-    // height: 98,
-    '&.active': {
-      borderColor: theme.colors.blue[8],
-      boxShadow: `0 0 10px ${theme.colors.blue[8]}`,
-    },
-    '&:hover': {
-      backgroundColor:
-        theme.colorScheme === 'dark' ? 'rgba(255,255,255, 0.03)' : 'rgba(0,0,0, 0.01)',
-    },
-  },
-  crown: {
-    position: 'absolute',
-    top: '40%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    opacity: 0.4,
-  },
-  delta: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: -25,
-  },
-}));

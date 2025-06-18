@@ -21,7 +21,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
   const modelId = Number(router.query.id);
   const [initialContent, setInitialContent] = useState(value);
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { data, isLoading, isFetching } = trpc.comment.getById.useQuery(
     { id: commentId ?? 0 },
     { enabled: !!commentId, keepPreviousData: false }
@@ -88,7 +88,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
     >
       <LoadingOverlay visible={loadingComment} />
       <Form form={form} onSubmit={handleSaveComment}>
-        <Stack spacing="md">
+        <Stack gap="md">
           <InputRTE
             name="content"
             placeholder="Type your thoughts..."
@@ -98,7 +98,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
             inputClasses="break-all"
             // withLinkValidation
           />
-          <Group position="apart">
+          <Group justify="space-between">
             <Button variant="default" onClick={handleClose}>
               Cancel
             </Button>

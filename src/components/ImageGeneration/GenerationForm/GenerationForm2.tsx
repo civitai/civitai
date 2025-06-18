@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   Center,
-  createStyles,
   Divider,
   Group,
   Input,
@@ -16,6 +15,8 @@ import {
   Paper,
   Stack,
   Text,
+  useMantineTheme,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -102,6 +103,7 @@ import {
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
   getImageGenerationBaseModels,
+  fluxDraftAir,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
@@ -113,6 +115,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import classes from './GenerationForm2.module.scss';
 
 let total = 0;
 const tips = {
@@ -122,7 +125,8 @@ const tips = {
 
 // #region [form component]
 export function GenerationFormContent() {
-  const { classes, cx, theme } = useStyles();
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
   const featureFlags = useFeatureFlags();
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
@@ -238,13 +242,6 @@ export function GenerationFormContent() {
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
-    delete params.engine;
-    if (model.id === fluxModelId && fluxUltraRaw && params.fluxMode === fluxUltraAir)
-      params.engine = 'flux-pro-raw';
-    if (model.id === generationConfig.OpenAI.checkpoint.id) {
-      params.engine = 'openai';
-    }
-
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
     if (isFlux && isFluxStandard) {
@@ -255,6 +252,13 @@ export function GenerationFormContent() {
     } else {
       delete params.fluxMode;
       delete params.fluxUltraAspectRatio;
+    }
+
+    delete params.engine;
+    if (isFluxStandard && fluxUltraRaw && params.fluxMode === fluxUltraAir)
+      params.engine = 'flux-pro-raw';
+    if (model.id === generationConfig.OpenAI.checkpoint.id) {
+      params.engine = 'openai';
     }
 
     if (workflowDefinition?.type === 'txt2img') params.sourceImage = null;
@@ -425,7 +429,7 @@ export function GenerationFormContent() {
           const isImg2Img = workflow?.startsWith('img') || (isOpenAI && sourceImage);
           const isFluxStandard = getIsFluxStandard(model.model.id);
           const isDraft = isFluxStandard
-            ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
+            ? fluxMode === fluxDraftAir
             : isSD3
             ? model.id === 983611
             : features.draft && !!draft && !isOpenAI && !isFlux;
@@ -490,7 +494,7 @@ export function GenerationFormContent() {
                         loading={loadingWorkflows}
                       />
                       {workflowDefinition?.description && (
-                        <Text size="xs" lh={1.2} color="dimmed" className="my-2">
+                        <Text size="xs" lh={1.2} c="dimmed" className="my-2">
                           {workflowDefinition.description}
                         </Text>
                       )}
@@ -509,7 +513,7 @@ export function GenerationFormContent() {
                     Model
                   </Input.Label>
                   <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                    <Text weight={400}>
+                    <Text fw={400}>
                       Models are the resources you&apos;re generating with. Using a different base
                       model can drastically alter the style and composition of images, while adding
                       additional resource can change the characters, concepts and objects
@@ -543,18 +547,19 @@ export function GenerationFormContent() {
 
                     return (
                       <Card
-                        className={cx(
+                        className={clsx(
                           { [classes.formError]: form.formState.errors.resources },
-                          'overflow-visible'
+                          'flex gap-3 overflow-visible'
                         )}
-                        withBorder
-                        p="sm"
+                        p={0}
                         radius="sm"
+                        withBorder
                       >
                         <InputResourceSelect
                           name="model"
                           buttonLabel="Add Model"
                           allowRemove={false}
+                          className="px-3 pt-3"
                           options={{
                             canGenerate: true,
                             resources: resourceTypes
@@ -578,10 +583,10 @@ export function GenerationFormContent() {
                         />
                         {!disableAdditionalResources && (
                           <Card.Section
-                            className={cx(
-                              { [classes.formError]: form.formState.errors.resources },
-                              'border-b-0 mt-3'
-                            )}
+                            className={clsx({
+                              [classes.formError]: form.formState.errors.resources,
+                            })}
+                            m={0}
                             withBorder
                           >
                             <PersistentAccordion
@@ -590,18 +595,19 @@ export function GenerationFormContent() {
                                 item: classes.accordionItem,
                                 control: classes.accordionControl,
                                 content: classes.accordionContent,
+                                label: classes.accordionLabel,
                               }}
                               transitionDuration={0}
                             >
                               <Accordion.Item value="resources" className="border-b-0">
                                 <Accordion.Control
-                                  className={cx({
+                                  className={clsx({
                                     [classes.formError]: form.formState.errors.resources,
                                   })}
                                 >
                                   <div className="flex flex-col gap-1">
                                     <div className="flex items-center gap-1">
-                                      <Text size="sm" weight={590}>
+                                      <Text size="sm" fw={590}>
                                         Additional Resources
                                       </Text>
                                       {resources.length > 0 && (
@@ -612,9 +618,9 @@ export function GenerationFormContent() {
 
                                       <Button
                                         component="span"
-                                        compact
+                                        size="compact-sm"
                                         variant="light"
-                                        onClick={(e) => {
+                                        onClick={(e: React.MouseEvent) => {
                                           e.preventDefault();
                                           e.stopPropagation();
                                           const formResources = form.getValues('resources') ?? [];
@@ -637,7 +643,7 @@ export function GenerationFormContent() {
                                         classNames={{ inner: 'flex gap-1' }}
                                       >
                                         <IconPlus size={16} />
-                                        <Text size="sm" weight={500}>
+                                        <Text size="sm" fw={500}>
                                           Add
                                         </Text>
                                       </Button>
@@ -649,7 +655,7 @@ export function GenerationFormContent() {
                                           <Anchor
                                             color="yellow"
                                             rel="nofollow"
-                                            onClick={(e) => e.stopPropagation()}
+                                            onClick={(e: React.MouseEvent) => e.stopPropagation()}
                                           >
                                             Become a member
                                           </Anchor>
@@ -676,7 +682,7 @@ export function GenerationFormContent() {
                         )}
 
                         {unstableResources.length > 0 && (
-                          <Card.Section>
+                          <Card.Section m={0}>
                             <Alert color="yellow" title="Unstable Resources" radius={0}>
                               <Text size="xs">
                                 The following resources are experiencing a high generation failure
@@ -695,7 +701,7 @@ export function GenerationFormContent() {
                           </Card.Section>
                         )}
                         {(!!minorFlaggedResources.length || !!sfwFlaggedResources.length) && (
-                          <Card.Section>
+                          <Card.Section m={0}>
                             <Alert color="yellow" title="Content Restricted" radius={0}>
                               <Text size="xs">
                                 {!!minorFlaggedResources.length
@@ -776,15 +782,15 @@ export function GenerationFormContent() {
                               <Alert
                                 style={{
                                   background:
-                                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
+                                    colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
                                   borderTopLeftRadius: 0,
                                   borderBottomLeftRadius: 0,
                                 }}
                                 h="100%"
                                 py={0}
                               >
-                                <Stack spacing={0} h="100%">
-                                  <Text weight="bold" size="sm" mt={2}>
+                                <Stack gap={0} h="100%">
+                                  <Text fw="bold" size="sm" mt={2}>
                                     Remixing
                                   </Text>
                                   {remixSimilarity >= 0.75 && (
@@ -800,7 +806,7 @@ export function GenerationFormContent() {
                                           that this generation will be treated as a new image rather
                                           than a remix
                                         </Text>
-                                        <Group spacing="xs" grow noWrap>
+                                        <Group gap="xs" grow wrap="nowrap">
                                           <Button
                                             variant="default"
                                             onClick={() => {
@@ -823,7 +829,7 @@ export function GenerationFormContent() {
                                             color="default"
                                             fullWidth
                                             h={30}
-                                            leftIcon={<IconRestore size={14} />}
+                                            leftSection={<IconRestore size={14} />}
                                           >
                                             Restore Prompt
                                           </Button>
@@ -841,7 +847,7 @@ export function GenerationFormContent() {
                                             }}
                                             fullWidth
                                             h={30}
-                                            leftIcon={<IconX size={14} />}
+                                            leftSection={<IconX size={14} />}
                                           >
                                             Stop Remixing
                                           </Button>
@@ -891,44 +897,35 @@ export function GenerationFormContent() {
 
                         return (
                           <Paper
-                            px="sm"
-                            sx={(theme) => ({
-                              borderBottomLeftRadius: showFillForm ? 0 : undefined,
-                              borderBottomRightRadius: showFillForm ? 0 : undefined,
-                              borderColor: errors.prompt
-                                ? theme.colors.red[theme.fn.primaryShade()]
-                                : undefined,
-                              marginBottom: errors.prompt ? 5 : undefined,
-                              background:
-                                theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
-
-                              // Apply focus styles if textarea is focused
-                              '&:has(textarea:focus)': {
-                                ...theme.focusRingStyles.inputStyles(theme),
+                            className={clsx(
+                              classes.promptPaper,
+                              {
+                                [classes.noFillForm]: !showFillForm,
+                                [classes.fillForm]: showFillForm,
+                                [classes.hasError]: errors.prompt,
                               },
-                            })}
+                              'mantine-focus-auto'
+                            )}
                             withBorder
                           >
                             <InputPrompt
                               name="prompt"
                               data-tour="gen:prompt"
                               placeholder="Your prompt goes here..."
+                              minRows={2}
                               autosize
-                              unstyled
                               styles={(theme) => ({
                                 input: {
-                                  background: 'transparent',
                                   width: '100%',
                                   resize: 'none',
                                   border: 'none',
-                                  padding: '0',
                                   outline: 'none',
                                   fontFamily: theme.fontFamily,
                                   fontSize: theme.fontSizes.sm,
-                                  lineHeight: theme.lineHeight,
+                                  lineHeight: theme.lineHeights.sm,
                                   overflow: 'hidden',
-                                  color:
-                                    theme.colorScheme === 'dark' ? theme.colors.dark[0] : undefined,
+                                  backgroundColor: 'transparent',
+                                  padding: '10px 0',
                                 },
                                 // Prevents input from displaying form error
                                 error: { display: 'none' },
@@ -942,7 +939,7 @@ export function GenerationFormContent() {
                             {trainedWords.length > 0 ? (
                               <div className="mb-1 flex flex-col gap-2">
                                 <Divider />
-                                <Text color="dimmed" className="text-xs font-semibold">
+                                <Text c="dimmed" className="text-xs font-semibold">
                                   Trigger words
                                 </Text>
                                 <div className="mb-2 flex items-center gap-1">
@@ -955,11 +952,10 @@ export function GenerationFormContent() {
                                     {({ copied, copy, Icon, color }) => (
                                       <Button
                                         variant="subtle"
-                                        size="xs"
                                         color={color ?? 'blue.5'}
                                         onClick={copy}
-                                        compact
-                                        classNames={{ inner: 'flex gap-1' }}
+                                        size="compact-xs"
+                                        classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
                                       >
                                         {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
                                       </Button>
@@ -977,8 +973,8 @@ export function GenerationFormContent() {
                     <Button
                       variant="light"
                       onClick={handleParsePrompt}
-                      leftIcon={<IconArrowAutofitDown size={16} />}
-                      sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
+                      leftSection={<IconArrowAutofitDown size={16} />}
+                      style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
                       fullWidth
                     >
                       Apply Parameters
@@ -1038,7 +1034,7 @@ export function GenerationFormContent() {
                         <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
                           Draft Mode will generate images faster, cheaper, and with slightly less
                           quality. Use this for exploring concepts quickly.
-                          <Text size="xs" color="dimmed" mt={4}>
+                          <Text size="xs" c="dimmed" mt={4}>
                             Requires generating in batches of 4
                           </Text>
                         </InfoPopover>
@@ -1070,12 +1066,13 @@ export function GenerationFormContent() {
                       item: classes.accordionItem,
                       control: classes.accordionControl,
                       content: classes.accordionContent,
+                      label: classes.accordionLabel,
                     }}
                     transitionDuration={0}
                   >
                     <Accordion.Item value="advanced">
                       <Accordion.Control>
-                        <Text size="sm" weight={590}>
+                        <Text size="sm" fw={590}>
                           Advanced
                         </Text>
                       </Accordion.Control>
@@ -1084,12 +1081,12 @@ export function GenerationFormContent() {
                           {!isDraft && (
                             <div className="relative flex flex-col gap-3">
                               {/* <LoadingOverlay
-                            color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+                            color={colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
                             opacity={0.8}
                             m={-8}
                             radius="md"
                             loader={
-                              <Text color="yellow" weight={500}>
+                              <Text c="yellow" fw={500}>
                                 Not available in Draft Mode
                               </Text>
                             }
@@ -1320,13 +1317,13 @@ export function GenerationFormContent() {
                         variant="light"
                         onClick={clearWarning}
                         style={{ marginTop: 10 }}
-                        leftIcon={<IconCheck />}
+                        leftSection={<IconCheck />}
                         fullWidth
                       >
                         I Understand, Continue Generating
                       </Button>
                     </Alert>
-                    <Text size="xs" color="dimmed" mt={4}>
+                    <Text size="xs" c="dimmed" mt={4}>
                       Is this a mistake?{' '}
                       <Text
                         component="a"
@@ -1362,7 +1359,8 @@ export function GenerationFormContent() {
                           <Text component={Link} href="/safety#content-policies" td="underline">
                             our content policies
                           </Text>{' '}
-                          will result in the loss of your access to the image generator. Illegal or exploitative content will be removed and reported.
+                          will result in the loss of your access to the image generator. Illegal or
+                          exploitative content will be removed and reported.
                         </Text>
                         <Button
                           color="yellow"
@@ -1372,7 +1370,7 @@ export function GenerationFormContent() {
                             if (running) helpers?.next();
                           }}
                           style={{ marginTop: 10 }}
-                          leftIcon={<IconCheck />}
+                          leftSection={<IconCheck />}
                           fullWidth
                         >
                           I Confirm, Start Generating
@@ -1396,7 +1394,7 @@ export function GenerationFormContent() {
                         <WhatIfAlert />
                         <div className="flex gap-2">
                           <Card withBorder className="flex max-w-24 flex-1 flex-col p-0">
-                            <Text className="pr-6 text-center text-xs font-semibold" color="dimmed">
+                            <Text className="pr-6 text-center text-xs font-semibold" c="dimmed">
                               Quantity
                             </Text>
                             <InputQuantity
@@ -1444,7 +1442,7 @@ function ReadySection() {
   const { data } = useTextToImageWhatIfContext();
 
   return data?.ready === false ? (
-    <Card.Section>
+    <Card.Section m={0}>
       <Alert color="yellow" title="Potentially slow generation" radius={0}>
         <Text size="xs">
           {`We need to download additional resources to fulfill your request. This generation may take longer than usual to complete.`}
@@ -1524,73 +1522,6 @@ function SubmitButton(props: { isLoading?: boolean }) {
 
 // #endregion
 
-// #region [styles]
-const useStyles = createStyles((theme) => ({
-  generateButtonQuantityInput: {
-    marginTop: -16,
-    input: {
-      background: 'transparent',
-      border: 'none',
-      borderTopRightRadius: 0,
-      borderBottomRightRadius: 0,
-      borderTopLeftRadius: 0,
-      textAlign: 'center',
-      paddingRight: 25 + 12,
-      paddingTop: 22,
-      paddingBottom: 6,
-      lineHeight: 1,
-      fontWeight: 500,
-      height: 'auto',
-    },
-  },
-
-  promptInputLabel: {
-    display: 'inline-flex',
-    gap: 4,
-    marginBottom: 5,
-    alignItems: 'center',
-  },
-  accordionItem: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff',
-
-    '&:first-of-type': {
-      borderTopLeftRadius: theme.radius.sm,
-      borderTopRightRadius: theme.radius.sm,
-    },
-
-    '&:last-of-type': {
-      borderBottomLeftRadius: theme.radius.sm,
-      borderBottomRightRadius: theme.radius.sm,
-    },
-
-    '&[data-active]': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : `#fff`,
-    },
-  },
-  accordionControl: {
-    padding: '8px 8px 8px 12px',
-
-    '&:hover': {
-      background: 'transparent',
-    },
-
-    '&[data-active]': {
-      borderRadius: '0 !important',
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-      }`,
-    },
-  },
-  accordionContent: {
-    padding: '8px 12px 12px 12px',
-  },
-  formError: {
-    borderColor: theme.colors.red[theme.fn.primaryShade()],
-    color: theme.colors.red[theme.fn.primaryShade()],
-  },
-}));
-// #endregion
-
 // #region [misc]
 const sharedSliderProps: SliderProps = {
   size: 'sm',
@@ -1605,16 +1536,16 @@ const getAspectRatioControls = (
 ) => {
   return aspectRatios.map(({ label, width, height }, index) => ({
     label: (
-      <Stack spacing={2}>
+      <Stack gap={2}>
         <Center>
           <Paper
             withBorder
-            sx={{ borderWidth: 2, aspectRatio: `${width}/${height}`, height: 20 }}
+            style={{ borderWidth: 2, aspectRatio: `${width}/${height}`, height: 20 }}
           />
         </Center>
-        <Stack spacing={0}>
+        <Stack gap={0}>
           <Text size="xs">{label}</Text>
-          <Text size={10} color="dimmed">{`${width}x${height}`}</Text>
+          <Text fz={10} c="dimmed">{`${width}x${height}`}</Text>
         </Stack>
       </Stack>
     ),

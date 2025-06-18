@@ -39,7 +39,7 @@ export function Playing() {
   return (
     <ChoppedLayout
       title={
-        <Title align="center">
+        <Title className="text-center">
           Round {roundNumber}: {theme.name}
         </Title>
       }
@@ -73,13 +73,13 @@ function RoundPending({ theme, roundNumber }: RoundProps) {
     <Stack>
       {roundNumber === 1 && (
         <Alert className="self-center">
-          <Group position="apart">
-            <Text size={40}>🎉</Text>
-            <Stack align="center" spacing={0}>
+          <Group justify="space-between">
+            <Text fz={40}>🎉</Text>
+            <Stack align="center" gap={0}>
               <Text>Invite others to join!</Text>
               <Text className="text-xl font-bold uppercase">{gameCode}</Text>
             </Stack>
-            <Text size={40}>🎉</Text>
+            <Text fz={40}>🎉</Text>
           </Group>
         </Alert>
       )}
@@ -89,8 +89,8 @@ function RoundPending({ theme, roundNumber }: RoundProps) {
       >
         <Text
           className="absolute top-1/2 -ml-2 -mt-2 -translate-y-1/2 text-center text-8xl font-extrabold uppercase tracking-widest text-white opacity-0 transition-opacity duration-500 ease-in-out"
-          size={48}
-          weight="bold"
+          fz={48}
+          fw="bold"
           style={{
             opacity: imageLoaded ? 1 : 0,
             textShadow:
@@ -154,9 +154,9 @@ function RoundSubmissions({ theme }: RoundProps) {
 
   if (spectating)
     return (
-      <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-        <Group spacing="xs" noWrap position="center">
-          <Text size="md" weight={500}>
+      <Alert radius="sm" color="green" style={{ zIndex: 10 }}>
+        <Group gap="xs" wrap="nowrap" justify="center">
+          <Text size="md" fw={500}>
             Spectating
           </Text>
         </Group>
@@ -170,14 +170,14 @@ function RoundSubmissions({ theme }: RoundProps) {
         <img src={submittedImage} className="w-80 rounded-md shadow-lg shadow-black" />
       )}
       {submittedImage && !submitted && (
-        <Button size="md" onClick={submit} leftIcon={<IconSend />}>
+        <Button size="md" onClick={submit} leftSection={<IconSend />}>
           Submit Image
         </Button>
       )}
       {submitted && (
-        <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-          <Group spacing="xs" noWrap position="center">
-            <Text size="md" weight={500}>{`✅ We've got your submission`}</Text>
+        <Alert radius="sm" color="green" style={{ zIndex: 10 }}>
+          <Group gap="xs" wrap="nowrap" justify="center">
+            <Text size="md" fw={500}>{`✅ We've got your submission`}</Text>
           </Group>
         </Alert>
       )}
@@ -221,7 +221,7 @@ function SubmissionCountdown(props: BoxProps) {
       <Progress
         className="w-full"
         value={(timeRemaining / duration) * 100}
-        animate
+        animated
         color={endingSoon ? 'red' : 'blue'}
         h={24}
       />
@@ -293,12 +293,11 @@ function SubmissionCreateButton({ theme, minimized }: { theme: Theme; minimized?
 
   return (
     <Button
-      size={minimized ? 'sm' : 'lg'}
-      compact
+      size={minimized ? 'compact-sm' : 'compact-lg'}
       onClick={createSubmission}
       className="self-center"
     >
-      <Group spacing={4}>
+      <Group gap={4}>
         <IconBrush size={minimized ? 16 : 20} /> Create
       </Group>
     </Button>

@@ -1,0 +1,9 @@
+export declare const chip: string;
+export declare const content: string;
+export declare const footer: string;
+export declare const gradient: string;
+export declare const header: string;
+export declare const image: string;
+export declare const inView: string;
+export declare const linkOrClick: string;
+export declare const top: string;

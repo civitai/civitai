@@ -158,7 +158,7 @@ export function SourceImageUpload({
             <IconHistory />
           </ActionIcon> */}
         {!_value ? (
-          <div className="flex aspect-video size-full flex-col rounded-md">
+          <div className="flex aspect-video size-full max-h-72 flex-col rounded-md">
             <ImageDropzone
               allowExternalImageDrop
               onDrop={handleDrop}
@@ -178,7 +178,7 @@ export function SourceImageUpload({
         ) : (
           <div
             className={clsx(
-              'relative flex aspect-video size-full items-stretch justify-center overflow-hidden rounded-md bg-gray-2 dark:bg-dark-6'
+              'relative flex aspect-video size-full max-h-72 items-stretch justify-center overflow-hidden rounded-md bg-gray-2 dark:bg-dark-6'
             )}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
