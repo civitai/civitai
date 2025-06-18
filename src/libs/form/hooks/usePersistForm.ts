@@ -88,7 +88,8 @@ export function usePersistForm<
     if (!_storageSchema.current) return defaults;
 
     const prompt = localStorage.getItem('generation:prompt') ?? '';
-    const negativePrompt = localStorage.getItem('generation:negativePrompt') ?? '';
+    let negativePrompt = localStorage.getItem('generation:negativePrompt') ?? '';
+    if (negativePrompt === 'undefined') negativePrompt = '';
     // const sourceImage = localStorage.getItem('generation:sourceImage') ?? undefined;
 
     const obj = JSON.parse(value);
@@ -146,12 +147,17 @@ export function usePersistForm<
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
       if (name === 'prompt') localStorage.setItem('generation:prompt', watchedValues[name]);
-      if (name === 'negativePrompt')
-        localStorage.setItem('generation:negativePrompt', watchedValues[name]);
+      if (
+        name === 'negativePrompt' &&
+        (watchedValues.negativePrompt || watchedValues.negativePrompt === '')
+      )
+        localStorage.setItem('generation:negativePrompt', watchedValues.negativePrompt);
 
       if (!name) {
-        localStorage.setItem('generation:prompt', watchedValues.prompt);
-        localStorage.setItem('generation:negativePrompt', watchedValues.negativePrompt);
+        if (watchedValues.prompt || watchedValues.prompt === '')
+          localStorage.setItem('generation:prompt', watchedValues.prompt);
+        if (watchedValues.negativePrompt || watchedValues.negativePrompt === '')
+          localStorage.setItem('generation:negativePrompt', watchedValues.negativePrompt);
       }
       updateStorage(watchedValues);
     });
