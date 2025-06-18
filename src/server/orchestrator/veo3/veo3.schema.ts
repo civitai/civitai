@@ -27,7 +27,7 @@ const schema = baseVideoGenerationSchema.extend({
 
 export const veo3GenerationConfig = VideoGenerationConfig2({
   label: 'Google VEO 3',
-  whatIfProps: ['sourceImage', 'duration', 'aspectRatio'],
+  whatIfProps: ['sourceImage', 'duration', 'aspectRatio', 'generateAudio'],
   metadataDisplayProps: ['process', 'aspectRatio', 'duration', 'seed'],
   schema,
   defaultValues: { aspectRatio: '16:9', generateAudio: false },
