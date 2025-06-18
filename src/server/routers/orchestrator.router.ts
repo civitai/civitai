@@ -58,7 +58,6 @@ import { guardedProcedure, middleware, protectedProcedure, router } from '~/serv
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { imageGenConfig } from '~/shared/orchestrator/ImageGen/imageGen.config';
 
 const TOKEN_STORE: 'redis' | 'cookie' = false ? 'cookie' : 'redis';
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {

@@ -36,7 +36,7 @@ const schema = z.object({
   prompt: z.string(),
   images: z.string().array(),
   aspectRatio: z.enum(flux1KontextAspectRatios).optional(),
-  numImages: z.number().optional(),
+  quantity: z.number().optional(),
   guidanceScale: z.number().optional(),
   seed: z.number().nullish(),
 });
