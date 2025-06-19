@@ -201,7 +201,7 @@ export function GeneratedImageActions({
 
   return (
     <div className="flex items-center justify-end gap-2">
-      <SortFilter type="generation" />
+      <SortFilter type="generation" ignoreNsfwLevel />
       {!selectedCount && <MarkerFiltersDropdown />}
       {hasSelected && (
         <div className="flex gap-2">
