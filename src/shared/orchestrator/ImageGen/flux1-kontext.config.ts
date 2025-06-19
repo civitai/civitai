@@ -15,6 +15,7 @@ export const flux1KontextAspectRatios = [
 ] as const;
 type Flux1Model = (typeof flux1KontextModels)[number];
 export const flux1KontextModels = ['pro', 'max'] as const;
+const engine = 'flux1-kontext';
 
 export const fluxKontextModelVersionToModelMap = new Map<number, Flux1Model>([
   [1892509, 'pro'],
@@ -25,13 +26,17 @@ export function getIsFluxKontext(modelVersionId?: number) {
   return modelVersionId ? !!fluxKontextModelVersionToModelMap.get(modelVersionId) : false;
 }
 
+export function getIsFluxContextFromEngine(value?: string) {
+  return value === engine;
+}
+
 export const flux1ModelModeOptions = [
   { label: 'Pro', value: '1892509' },
   { label: 'Max', value: '1892523' },
 ];
 
 const schema = z.object({
-  engine: z.literal('flux1-kontext').catch('flux1-kontext'),
+  engine: z.literal(engine).catch(engine),
   model: z.enum(flux1KontextModels),
   prompt: z.string(),
   images: z.string().array(),
@@ -50,7 +55,7 @@ export const flux1KontextConfig = ImageGenConfig({
     }
 
     return {
-      engine: 'flux1-kontext',
+      engine,
       process: 'img2img',
       baseModel: params.baseModel,
       prompt: params.prompt,

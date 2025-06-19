@@ -81,6 +81,7 @@ import { capitalize } from '~/utils/string-helpers';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { getIsFluxContextFromEngine } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -559,7 +560,7 @@ function GeneratedImageWorkflowMenuItems({
 
   const isVideo = step.$type === 'videoGen';
   const isOpenAI = !isVideo && step.params.engine === 'openai';
-  const isFluxKontext = !isVideo && step.params.engine === 'flux1';
+  const isFluxKontext = !isVideo && getIsFluxContextFromEngine(step.params.engine);
   const isImageGen = step.resources.find(
     (x) => x.model.type === 'Checkpoint' && getModelVersionUsesImageGen(x.id)
   );
