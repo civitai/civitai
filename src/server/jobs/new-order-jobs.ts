@@ -164,7 +164,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       SUM(
         -- Make it so we ignore elements before a reset.
         -- Exclude 'AcolyteCorrect' and 'AcolyteFailed' statuses from total judgments as they represent auxiliary actions not directly tied to the primary judgment process.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" NOT IN ('${NewOrderImageRatingStatus.AcolyteCorrect}', '${NewOrderImageRatingStatus.AcolyteFailed}'), 1, 0)
+        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}'), 1, 0)
       ) as totalJudgments
     FROM knights_new_order_image_rating knoir
     JOIN u ON knoir."userId" = CAST(u.userId as Int32)

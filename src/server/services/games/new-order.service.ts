@@ -728,7 +728,10 @@ export async function updatePlayerStats({
   let stats = { exp: newExp, fervor: 0, blessedBuzz: 0 };
 
   if (updateAll) {
-    const allJudgments = await allJudgmentsCounter.increment({ id: playerId });
+    const allJudgments =
+      status !== NewOrderImageRatingStatus.Pending
+        ? await allJudgmentsCounter.increment({ id: playerId })
+        : await allJudgmentsCounter.getCount(playerId);
     const correctJudgments =
       status === NewOrderImageRatingStatus.Correct
         ? await correctJudgmentsCounter.increment({ id: playerId })
