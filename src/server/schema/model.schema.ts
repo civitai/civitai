@@ -175,7 +175,7 @@ export const modelGallerySettingsInput = z.object({
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
 export const modelUpsertSchema = licensingSchema.extend({
-  id: z.number().optional(),
+  id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema().nullish(),
   type: z.nativeEnum(ModelType),
@@ -185,15 +185,15 @@ export const modelUpsertSchema = licensingSchema.extend({
   tagsOnModels: z.array(tagSchema).nullish(),
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
-  templateId: z.number().optional(),
-  bountyId: z.number().optional(),
+  templateId: z.coerce.number().optional(),
+  bountyId: z.coerce.number().optional(),
   nsfw: z.boolean().optional(),
   lockedProperties: z.string().array().optional(),
   minor: z.boolean().default(false).optional(),
   sfwOnly: z.boolean().default(false).optional(),
   meta: z
     .object({
-      showcaseCollectionId: z.number().nullish(),
+      showcaseCollectionId: z.coerce.number().nullish(),
       commentsLocked: z.boolean().default(false),
     })
     .passthrough()

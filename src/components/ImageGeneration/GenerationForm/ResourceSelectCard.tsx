@@ -105,7 +105,6 @@ function CheckpointInfo({
             style={{ overflowWrap: 'anywhere' }}
             href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
             rel="nofollow noindex"
-            c="initial"
             lineClamp={1}
             fw={590}
             data-testid="selected-gen-resource-name"

@@ -31,7 +31,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputCreatableMultiSelect,
-  InputMultiSelect,
   InputNumber,
   InputRTE,
   InputSelect,
@@ -196,6 +195,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     description: version?.description ?? null,
     epochs: version?.epochs ?? null,
     steps: version?.steps ?? null,
+    clipSkip: version?.clipSkip ?? null,
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
     requireAuth: version?.requireAuth ?? true,
@@ -315,7 +315,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const earlyAccessUnlockedDays = EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock
     // TODO: Update to model scores.
     .map((data) => {
-      const [_, days] = data;
+      const [, days] = data;
       return currentUser?.isModerator ||
         days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta, features })
         ? days

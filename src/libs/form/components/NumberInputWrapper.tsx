@@ -4,11 +4,12 @@ import { useMergedRef } from '@mantine/hooks';
 import { forwardRef, useEffect, useRef } from 'react';
 import { constants } from '~/server/common/constants';
 
-type Props = NumberInputProps & {
+type Props = Omit<NumberInputProps, 'onChange'> & {
   format?: 'default' | 'delimited' | 'currency';
   clearable?: boolean;
   onClear?: () => void;
   currency?: string;
+  onChange?: (value: number | undefined) => void;
 };
 
 export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
@@ -45,7 +46,8 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
     }, [value]); //eslint-disable-line
 
     const handleChange = (value: number | string) => {
-      onChange?.(value);
+      // If value is empty string, treat as null for form state
+      onChange?.(typeof value === 'number' ? value : undefined);
     };
 
     const showCloseButton = clearable && (typeof value === 'number' || !!value);
@@ -59,13 +61,20 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         onClick={() => {
           handleClearInput();
           onClear?.();
-          onChange?.('');
+          onChange?.(undefined);
         }}
       />
     );
 
     const isCurrency = format === 'currency';
-    const parsedValue = typeof value === 'number' ? (isCurrency ? value / 100 : value) : 0;
+    // If value is empty string, treat as null for rendering
+    const normalizedValue = value === '' ? null : value;
+    const parsedValue =
+      typeof normalizedValue === 'number'
+        ? isCurrency
+          ? normalizedValue / 100
+          : normalizedValue
+        : undefined;
 
     return (
       <NumberInput
@@ -78,7 +87,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         decimalScale={isCurrency ? 2 : undefined}
         fixedDecimalScale={isCurrency}
         onChange={handleChange}
-        value={isCurrency ? (parsedValue ?? 0) / 100 : parsedValue}
+        value={parsedValue}
         {...props}
       />
     );
