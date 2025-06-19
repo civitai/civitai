@@ -549,7 +549,7 @@ export function GenerationFormContent() {
                       <Card
                         className={clsx(
                           { [classes.formError]: form.formState.errors.resources },
-                          'flex gap-3 overflow-visible'
+                          'flex overflow-visible'
                         )}
                         p={0}
                         radius="sm"
@@ -559,7 +559,7 @@ export function GenerationFormContent() {
                           name="model"
                           buttonLabel="Add Model"
                           allowRemove={false}
-                          className="px-3 pt-3"
+                          className="p-3"
                           options={{
                             canGenerate: true,
                             resources: resourceTypes
@@ -1399,7 +1399,7 @@ export function GenerationFormContent() {
                         )}
                         <WhatIfAlert />
                         <div className="flex gap-2">
-                          <Card withBorder className="flex max-w-24 flex-1 flex-col p-0">
+                          <Card withBorder className="flex max-w-[88px] flex-col p-0">
                             <Text className="pr-6 text-center text-xs font-semibold" c="dimmed">
                               Quantity
                             </Text>

@@ -1099,8 +1099,9 @@ function ResourceSelectCard({
           <Text size="sm" fw={700} lineClamp={1} lh={1} data-testid="resource-select-name">
             {data.name}
           </Text>
-          <Group wrap="nowrap" justify="space-between">
+          <div className="flex justify-between gap-2">
             <Select
+              className="flex-1"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -1124,7 +1125,7 @@ function ResourceSelectCard({
             >
               Select
             </Button>
-          </Group>
+          </div>
         </div>
       </>
       {/* )} */}
