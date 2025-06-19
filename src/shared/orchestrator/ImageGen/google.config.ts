@@ -13,6 +13,10 @@ export function getIsImagen4(modelVersionId?: number) {
   return modelVersionId ? !!googleModelVersionToModelMap.get(modelVersionId) : false;
 }
 
+export function getIsImagen4FromResources(resources: { id: number }[]) {
+  return resources.some((x) => !!googleModelVersionToModelMap.get(x.id));
+}
+
 const schema = z.object({
   engine: z.literal('google').catch('google'),
   model: z.enum(googleModels),

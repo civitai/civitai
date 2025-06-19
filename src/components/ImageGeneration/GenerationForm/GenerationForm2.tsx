@@ -1667,7 +1667,7 @@ const getAspectRatioControls = (
           <Stack gap={0}>
             <Text size="xs">{label}</Text>
             {label !== subLabel.replace('x', ':') && (
-              <Text  fz={10} c="dimmed">
+              <Text fz={10} c="dimmed">
                 {subLabel}
               </Text>
             )}

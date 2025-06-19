@@ -82,6 +82,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { getIsFluxContextFromEngine } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import { getIsImagen4FromResources } from '~/shared/orchestrator/ImageGen/google.config';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -561,6 +562,7 @@ function GeneratedImageWorkflowMenuItems({
   const isVideo = step.$type === 'videoGen';
   const isOpenAI = !isVideo && step.params.engine === 'openai';
   const isFluxKontext = !isVideo && getIsFluxContextFromEngine(step.params.engine);
+  const isImagen4 = !isVideo && getIsImagen4FromResources(step.resources);
   const isImageGen = step.resources.find(
     (x) => x.model.type === 'Checkpoint' && getModelVersionUsesImageGen(x.id)
   );
@@ -766,7 +768,7 @@ function GeneratedImageWorkflowMenuItems({
             </WithMemberMenuItem>
           );
         })}
-      {!isBlocked && (isOpenAI || isFluxKontext) && (
+      {!isBlocked && (isOpenAI || isFluxKontext || isImagen4) && (
         <WithMemberMenuItem onClick={handleImg2ImgNoWorkflow}>Image To Image</WithMemberMenuItem>
       )}
       {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
