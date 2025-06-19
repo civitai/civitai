@@ -16,10 +16,6 @@ type Props = {
 function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: Props) {
   const [control, setControl] = useState(value ? 'custom' : 'random');
 
-  function handleChange(value?: number) {
-    onChange?.(value ?? null);
-  }
-
   const previousControl = usePrevious(control);
   useEffect(() => {
     if (!value && previousControl !== 'random') setControl('random');
@@ -27,8 +23,8 @@ function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: Props) {
   }, [value]); //eslint-disable-line
 
   useEffect(() => {
-    if (!!value && control === 'random') onChange?.(null);
-    else if (!value && control === 'custom') onChange?.(Math.floor(Math.random() * maxRandomSeed));
+    if (control === 'random') onChange?.(null);
+    else if (control === 'custom' && !value) onChange?.(Math.floor(Math.random() * maxRandomSeed));
   }, [control]); //eslint-disable-line
 
   return (
@@ -45,10 +41,10 @@ function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: Props) {
         />
         <NumberInputWrapper
           value={value ?? undefined}
-          onChange={onChange ? (v) => onChange(v ? Number(v) : undefined) : undefined}
+          onChange={onChange ? (v) => onChange(!!v ? Number(v) : null) : undefined}
           placeholder="Random"
           clearable
-          min={1}
+          min={0}
           max={generation.maxValues.seed}
           style={{ flex: 1 }}
           hideControls
