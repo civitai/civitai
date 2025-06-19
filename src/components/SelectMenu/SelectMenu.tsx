@@ -86,6 +86,19 @@ export function SelectMenuV2<T extends string | number>({
     </FilterButton>
   );
 
+  if (options.length === 0) {
+    return (
+      <FilterButton
+        disabled={disabled}
+        icon={icon || IconSortDescending}
+        className={clsx('w-full', className)}
+        {...buttonProps}
+      >
+        {label}
+      </FilterButton>
+    );
+  }
+
   if (mobile)
     return (
       <>
@@ -102,6 +115,7 @@ export function SelectMenuV2<T extends string | number>({
             close: classes.close,
           }}
           closeButtonProps={{ 'aria-label': 'Close sort menu' }}
+          zIndex={400}
         >
           <div className="flex flex-col gap-2">
             {options.map((option) => {

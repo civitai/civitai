@@ -10,6 +10,7 @@ import {
   Table,
   Text,
   Tooltip,
+  NumberInput,
 } from '@mantine/core';
 import {
   IconBuildingBank,
@@ -657,7 +658,7 @@ const WithdrawCashCard = () => {
   const { userPaymentConfiguration, isLoading: isLoadingPaymentConfiguration } =
     useUserPaymentConfiguration();
 
-  const [toWithdraw, setToWithdraw] = React.useState<number>(MIN_WITHDRAWAL_AMOUNT);
+  const [toWithdraw, setToWithdraw] = React.useState<number>(MIN_WITHDRAWAL_AMOUNT / 100);
 
   const isLoading = isLoadingCash || isLoadingPaymentConfiguration;
   const withdrawalMethodSetup = userPaymentConfiguration?.tipaltiWithdrawalMethod;
@@ -670,13 +671,13 @@ const WithdrawCashCard = () => {
 
   useEffect(() => {
     if (userCash && userCash.ready) {
-      setToWithdraw(Math.max(userCash.ready, MIN_WITHDRAWAL_AMOUNT));
+      setToWithdraw(Math.max(userCash.ready, MIN_WITHDRAWAL_AMOUNT) / 100);
     }
   }, [userCash]);
 
   const handleWithdrawal = async () => {
     try {
-      await withdrawCash({ amount: toWithdraw });
+      await withdrawCash({ amount: Math.round(toWithdraw * 100) });
       showSuccessNotification({
         title: 'Success!',
         message: 'You have successfully created a cash transaction.',
@@ -811,13 +812,16 @@ const WithdrawCashCard = () => {
         {canWithdraw && userPaymentConfiguration?.tipaltiPaymentsEnabled && (
           <div className="flex flex-col gap-2">
             <div className="flex">
-              <NumberInputWrapper
+              <NumberInput
                 label="Cash to Withdraw"
                 labelProps={{ className: 'hidden' }}
                 leftSection={<CurrencyIcon currency={Currency.USD} size={18} />}
-                value={toWithdraw ? toWithdraw : undefined}
-                min={MIN_WITHDRAWAL_AMOUNT}
-                max={userCash?.ready ?? MIN_WITHDRAWAL_AMOUNT}
+                value={toWithdraw}
+                min={MIN_WITHDRAWAL_AMOUNT / 100}
+                max={(userCash?.ready ?? MIN_WITHDRAWAL_AMOUNT) / 100}
+                decimalScale={2}
+                fixedDecimalScale
+                thousandSeparator=","
                 onChange={(value: number | string) => {
                   setToWithdraw(Number(value ?? MIN_WITHDRAWAL_AMOUNT));
                 }}
@@ -828,9 +832,7 @@ const WithdrawCashCard = () => {
                     border: 0,
                   },
                 }}
-                step={1}
-                currency={Currency.USD}
-                format="currency"
+                step={10}
               />
               <Tooltip label="Withdraw" position="top">
                 <LegacyActionIcon
@@ -841,8 +843,8 @@ const WithdrawCashCard = () => {
                   h="100%"
                   loading={withdrawingCash}
                   disabled={
-                    toWithdraw < MIN_WITHDRAWAL_AMOUNT ||
-                    toWithdraw > (userCash?.ready ?? 0) ||
+                    toWithdraw < MIN_WITHDRAWAL_AMOUNT / 100 ||
+                    toWithdraw > (userCash?.ready ?? 0) / 100 ||
                     unsupportedWithdrawalMethod ||
                     !withdrawalMethodSetup
                   }
@@ -855,7 +857,7 @@ const WithdrawCashCard = () => {
                           <div className="flex flex-col gap-2">
                             <p>
                               You are about to request a withdrawal of $
-                              {formatCurrencyForDisplay(toWithdraw)}{' '}
+                              {formatCurrencyForDisplay(Math.round(toWithdraw * 100))}{' '}
                             </p>
                             <p> Are you sure?</p>
                           </div>

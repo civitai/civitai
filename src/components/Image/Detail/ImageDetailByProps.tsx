@@ -4,6 +4,7 @@ import {
   Card,
   Center,
   CloseButton,
+  ColorSchemeScript,
   Divider,
   Group,
   Loader,
@@ -99,195 +100,188 @@ export function ImageDetailByProps({
         deIndex={nsfw || (image ? !!image.needsReview : false)}
       />
       {image && <TrackView entityId={image.id} entityType="Image" type="ImageView" />}
-      <MantineProvider>
-        <Notifications />
-        <Paper className={classes.root}>
-          <CloseButton
-            style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
-            size="lg"
-            variant="default"
-            onClick={onClose}
-            className={classes.mobileOnly}
-          />
-          <ImageDetailCarousel
-            image={image}
-            className={classes.carousel}
-            onSetImage={onSetImage}
-            nextImageId={nextImageId}
-            prevImageId={prevImageId}
-            isLoading={isLoading}
-            connectId={connectId}
-            connectType={connectType}
-            onClose={onClose}
-          />
-          <Card className={clsx(classes.sidebar)}>
-            {!image ? (
-              <Center>
-                <Loader type="bars" />
-              </Center>
-            ) : (
-              <>
-                <Card.Section py="xs" withBorder inheritPadding>
-                  {!user ? (
-                    <Center>
-                      <Loader type="bars" />
-                    </Center>
-                  ) : (
-                    <Group justify="space-between" gap={8} wrap="nowrap">
-                      <UserAvatar
-                        user={user}
-                        avatarProps={{ size: 32 }}
-                        size="sm"
-                        subText={
-                          <>
-                            {image.publishedAt || image.createdAt ? (
-                              <Text size="xs" c="dimmed">
-                                Uploaded{' '}
-                                <DaysFromNow
-                                  date={Math.max(
-                                    image.publishedAt?.getTime() ?? 0,
-                                    image.createdAt?.getTime() ?? 0
-                                  )}
-                                />
-                              </Text>
-                            ) : (
-                              'Not Published'
-                            )}
-                          </>
-                        }
-                        subTextForce
-                        withUsername
-                        linkToProfile
+      <Notifications />
+      <Paper className={classes.root}>
+        <CloseButton
+          style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
+          size="lg"
+          variant="default"
+          onClick={onClose}
+          className={classes.mobileOnly}
+        />
+        <ImageDetailCarousel
+          image={image}
+          className={classes.carousel}
+          onSetImage={onSetImage}
+          nextImageId={nextImageId}
+          prevImageId={prevImageId}
+          isLoading={isLoading}
+          connectId={connectId}
+          connectType={connectType}
+          onClose={onClose}
+        />
+        <Card className={clsx(classes.sidebar)}>
+          {!image ? (
+            <Center>
+              <Loader type="bars" />
+            </Center>
+          ) : (
+            <>
+              <Card.Section py="xs" withBorder inheritPadding>
+                {!user ? (
+                  <Center>
+                    <Loader type="bars" />
+                  </Center>
+                ) : (
+                  <Group justify="space-between" gap={8} wrap="nowrap">
+                    <UserAvatar
+                      user={user}
+                      avatarProps={{ size: 32 }}
+                      size="sm"
+                      subText={
+                        <>
+                          {image.publishedAt || image.createdAt ? (
+                            <Text size="xs" c="dimmed">
+                              Uploaded{' '}
+                              <DaysFromNow
+                                date={Math.max(
+                                  image.publishedAt?.getTime() ?? 0,
+                                  image.createdAt?.getTime() ?? 0
+                                )}
+                              />
+                            </Text>
+                          ) : (
+                            'Not Published'
+                          )}
+                        </>
+                      }
+                      subTextForce
+                      withUsername
+                      linkToProfile
+                    />
+                    <Group gap="md">
+                      <FollowUserButton userId={user.id} size="compact-sm" />
+                      <CloseButton
+                        size="md"
+                        radius="xl"
+                        variant="transparent"
+                        className={classes.desktopOnly}
+                        iconSize={20}
+                        onClick={onClose}
                       />
-                      <Group gap="md">
-                        <FollowUserButton userId={user.id} size="compact-sm" />
-                        <CloseButton
-                          size="md"
-                          radius="xl"
-                          variant="transparent"
-                          className={classes.desktopOnly}
-                          iconSize={20}
-                          onClick={onClose}
-                        />
-                      </Group>
                     </Group>
-                  )}
-                </Card.Section>
-                <Card.Section
-                  py="xs"
-                  style={{ backgroundColor: theme.colors.dark[7] }}
-                  withBorder
-                  inheritPadding
-                >
-                  <Group justify="space-between" gap={8}>
-                    <Group gap={8}>
-                      {image.postId && (
-                        <Button
-                          component={NextLink}
-                          href={`/posts/${image.postId}`}
-                          radius="xl"
-                          color="gray"
-                          variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                          size="compact-sm"
-                        >
-                          <Group gap={4}>
-                            <IconEye size={14} />
-                            <Text size="xs">View post</Text>
-                          </Group>
-                        </Button>
-                      )}
+                  </Group>
+                )}
+              </Card.Section>
+              <Card.Section py="xs" className="bg-gray-1 dark:bg-dark-7" withBorder inheritPadding>
+                <Group justify="space-between" gap={8}>
+                  <Group gap={8}>
+                    {image.postId && (
                       <Button
+                        component={NextLink}
+                        href={`/posts/${image.postId}`}
                         radius="xl"
                         color="gray"
                         variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                        onClick={() =>
-                          openAddToCollectionModal({
-                            props: {
-                              imageId: image.id,
-                              type: CollectionType.Image,
-                            },
-                          })
-                        }
                         size="compact-sm"
                       >
                         <Group gap={4}>
-                          <IconBookmark size={14} />
-                          <Text size="xs">Save</Text>
+                          <IconEye size={14} />
+                          <Text size="xs">View post</Text>
                         </Group>
                       </Button>
-                    </Group>
-                  </Group>
-                </Card.Section>
-                <Card.Section
-                  component={ScrollArea}
-                  style={{ flex: 1, position: 'relative' }}
-                  className={classes.scrollViewport}
-                >
-                  <Stack gap="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
-                    {image.needsReview && (
-                      <AlertWithIcon
-                        icon={<IconAlertTriangle />}
-                        color="yellow"
-                        iconColor="yellow"
-                        title="Flagged for review"
-                        radius={0}
-                        px="md"
-                      >
-                        {`This image won't be visible to other users until it's reviewed by our moderators.`}
-                      </AlertWithIcon>
                     )}
-                    <VotableTags
-                      entityType="image"
-                      entityId={image.id}
-                      nsfwLevel={image.nsfwLevel}
-                      canAdd
-                      collapsible
-                      px="sm"
-                    />
-                    <div>
-                      <Divider
-                        label="Discussion"
-                        labelPosition="center"
-                        styles={{
-                          label: {
-                            marginTop: '-9px !important',
-                            marginBottom: -9,
+                    <Button
+                      radius="xl"
+                      color="gray"
+                      variant={colorScheme === 'dark' ? 'filled' : 'light'}
+                      onClick={() =>
+                        openAddToCollectionModal({
+                          props: {
+                            imageId: image.id,
+                            type: CollectionType.Image,
                           },
-                        }}
-                      />
-                      <Paper p="sm" radius={0}>
-                        <Stack gap={8}>
-                          <Reactions
-                            entityId={image.id}
-                            entityType="image"
-                            reactions={reactions}
-                            metrics={{
-                              likeCount: stats?.likeCountAllTime,
-                              dislikeCount: stats?.dislikeCountAllTime,
-                              heartCount: stats?.heartCountAllTime,
-                              laughCount: stats?.laughCountAllTime,
-                              cryCount: stats?.cryCountAllTime,
-                            }}
-                            targetUserId={user?.id}
-                          />
-                          {user?.id && <ImageDetailComments imageId={image.id} userId={user.id} />}
-                        </Stack>
-                      </Paper>
-                    </div>
-                    <Stack gap="md" mt="auto">
-                      <Divider label="Resources Used" labelPosition="center" />
+                        })
+                      }
+                      size="compact-sm"
+                    >
+                      <Group gap={4}>
+                        <IconBookmark size={14} />
+                        <Text size="xs">Save</Text>
+                      </Group>
+                    </Button>
+                  </Group>
+                </Group>
+              </Card.Section>
+              <Card.Section
+                component={ScrollArea}
+                style={{ flex: 1, position: 'relative' }}
+                className={classes.scrollViewport}
+              >
+                <Stack gap="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
+                  {image.needsReview && (
+                    <AlertWithIcon
+                      icon={<IconAlertTriangle />}
+                      color="yellow"
+                      iconColor="yellow"
+                      title="Flagged for review"
+                      radius={0}
+                      px="md"
+                    >
+                      {`This image won't be visible to other users until it's reviewed by our moderators.`}
+                    </AlertWithIcon>
+                  )}
+                  <VotableTags
+                    entityType="image"
+                    entityId={image.id}
+                    nsfwLevel={image.nsfwLevel}
+                    canAdd
+                    collapsible
+                    px="sm"
+                  />
+                  <div>
+                    <Divider
+                      label="Discussion"
+                      labelPosition="center"
+                      styles={{
+                        label: {
+                          marginTop: '-9px !important',
+                          marginBottom: -9,
+                        },
+                      }}
+                    />
+                    <Paper p="sm" radius={0}>
+                      <Stack gap={8}>
+                        <Reactions
+                          entityId={image.id}
+                          entityType="image"
+                          reactions={reactions}
+                          metrics={{
+                            likeCount: stats?.likeCountAllTime,
+                            dislikeCount: stats?.dislikeCountAllTime,
+                            heartCount: stats?.heartCountAllTime,
+                            laughCount: stats?.laughCountAllTime,
+                            cryCount: stats?.cryCountAllTime,
+                          }}
+                          targetUserId={user?.id}
+                        />
+                        {user?.id && <ImageDetailComments imageId={image.id} userId={user.id} />}
+                      </Stack>
+                    </Paper>
+                  </div>
+                  <Stack gap="md" mt="auto">
+                    <Divider label="Resources Used" labelPosition="center" />
 
-                      <Box px="md">
-                        <ImageResources imageId={image.id} />
-                      </Box>
-                    </Stack>
+                    <Box px="md">
+                      <ImageResources imageId={image.id} />
+                    </Box>
                   </Stack>
-                </Card.Section>
-              </>
-            )}
-          </Card>
-        </Paper>
-      </MantineProvider>
+                </Stack>
+              </Card.Section>
+            </>
+          )}
+        </Card>
+      </Paper>
     </>
   );
 }

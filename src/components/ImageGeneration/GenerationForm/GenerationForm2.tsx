@@ -1044,7 +1044,13 @@ export function GenerationFormContent() {
                                   <TrainedWords
                                     type="LORA"
                                     trainedWords={trainedWords}
-                                    badgeProps={{ style: { textTransform: 'none' } }}
+                                    badgeProps={{
+                                      style: {
+                                        textTransform: 'none',
+                                        height: 'auto',
+                                        cursor: 'pointer',
+                                      },
+                                    }}
                                   />
                                   <CopyButton value={trainedWords.join(', ')}>
                                     {({ copied, copy, Icon, color }) => (

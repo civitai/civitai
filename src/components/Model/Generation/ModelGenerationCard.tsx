@@ -139,8 +139,8 @@ export function ModelGenerationCard({
       >
         <Card
           ref={cardRef}
+          className="bg-gray-1 dark:bg-dark-7"
           style={{
-            backgroundColor: theme.colors.dark[7],
             boxShadow: `0 0 8px 0 ${theme.colors.yellow[7]}`,
           }}
           withBorder

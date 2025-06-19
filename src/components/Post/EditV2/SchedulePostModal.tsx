@@ -5,10 +5,15 @@ import { useMemo } from 'react';
 import { z } from 'zod';
 import { Form, InputDatePicker, InputTime, useForm } from '~/libs/form';
 
-const schema = z.object({ date: z.date(), time: z.date() }).refine(
+const schema = z.object({ date: z.date(), time: z.string() }).refine(
   (data) => {
-    const time = dayjs(data.time);
-    const date = dayjs(data.date).set('hour', time.hour()).set('minute', time.minute());
+    const [hour, minute] = data.time.split(':');
+
+    if (!hour || !minute) {
+      return false;
+    }
+
+    const date = dayjs(data.date).set('hour', Number(hour)).set('minute', Number(minute));
     return date.toDate() > new Date();
   },
   {
@@ -30,7 +35,12 @@ export function SchedulePostModal({
 
   const form = useForm({
     schema,
-    defaultValues: publishedAt ? { date: publishedAt, time: publishedAt } : undefined,
+    defaultValues: publishedAt
+      ? { date: publishedAt, time: dayjs(publishedAt).format('HH:mm') }
+      : {
+          date: new Date(),
+          time: dayjs().add(1, 'hour').startOf('hour').format('HH:mm'),
+        },
   });
   const { minDate, maxDate } = useMemo(
     () => ({ minDate: new Date(), maxDate: dayjs().add(3, 'month').toDate() }),
@@ -40,11 +50,12 @@ export function SchedulePostModal({
   const handleSubmit = async (data: z.infer<typeof schema>) => {
     const { date } = schema
       .transform((data) => {
-        const time = dayjs(data.time);
-        const date = dayjs(data.date).set('hour', time.hour()).set('minute', time.minute());
+        const [hour, minute] = data.time.split(':');
+        const date = dayjs(data.date).set('hour', Number(hour)).set('minute', Number(minute));
         return { date: date.toDate() };
       })
       .parse(data);
+
     onSubmit(date);
     dialog.onClose();
   };
@@ -77,6 +88,9 @@ export function SchedulePostModal({
                   withAsterisk
                   minDate={minDate}
                   maxDate={maxDate}
+                  popoverProps={{
+                    withinPortal: true,
+                  }}
                 />
                 <InputTime name="time" label="Publish Time" withAsterisk />
               </Group>
