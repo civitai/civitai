@@ -27,9 +27,11 @@ export function KlingFormInput() {
     <>
       <InputVideoProcess name="process" />
       <InputRadioGroup name="model" label="Version">
-        {klingModels.map((value) => (
-          <Radio key={value} value={value} label={value.toLowerCase().replace('_', '.')} />
-        ))}
+        <div className="flex flex-wrap gap-3">
+          {klingModels.map((value) => (
+            <Radio key={value} value={value} label={value.toLowerCase().replace('_', '.')} />
+          ))}
+        </div>
       </InputRadioGroup>
       {process === 'img2vid' && (
         <InputSourceImageUpload name="sourceImage" warnOnMissingAiMetadata />
