@@ -185,20 +185,21 @@ export function CreatableMultiSelect({
   const handleValueSelect = (val: string) => {
     if (value.length >= maxValues) return;
 
-    setSearch('');
-    combobox.closeDropdown();
-
     if (val === '$create') {
-      const cleanedSearch = search
-        .split(',')
-        .slice(0, maxValues)
-        .map((x) => x.trim())
-        .filter(Boolean);
-      const newValue = new Set([...value, ...cleanedSearch]);
+      const cleanedSearch = search.trim();
+      if (!cleanedSearch) return;
+
+      const newValue = new Set([...value, cleanedSearch]);
       onChange?.([...newValue]);
     } else {
+      const cleanedVal = val.trim();
+      if (!cleanedVal) return;
+
       onChange?.(value.includes(val) ? value.filter((v) => v !== val) : [...value, val]);
     }
+
+    setSearch('');
+    combobox.closeDropdown();
   };
 
   const handleValueRemove = (val: string) => onChange?.(value.filter((item) => item !== val));
