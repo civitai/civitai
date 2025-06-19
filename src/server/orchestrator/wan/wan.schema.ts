@@ -79,9 +79,14 @@ export const wanGenerationConfig = VideoGenerationConfig2({
   },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
-    if (!data.sourceImage) {
-      data.process = 'txt2vid';
+    if (!data.process) {
+      if (data.baseModel?.includes('i2v')) {
+        data.process = 'img2vid';
+      } else if (data.baseModel?.includes('t2v')) {
+        data.process = 'txt2vid';
+      }
     }
+
     if (data.process === 'txt2vid') {
       delete data.sourceImage;
     } else if (data.process === 'img2vid') {
@@ -90,6 +95,14 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     return data;
   },
   superRefine: (data, ctx) => {
+    if (data.process === 'img2vid' && !data.sourceImage) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Image is required',
+        path: ['sourceImage'],
+      });
+    }
+
     if (!data.sourceImage && !data.prompt?.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
