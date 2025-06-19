@@ -84,7 +84,7 @@ export function BuzzTransactionButton({
       color={error ? 'red.9' : hasCost || loading ? buttonColor : 'blue'}
       {...buttonProps}
       onClick={loading ? undefined : onPerformTransaction ? onClick : undefined}
-      pr={hasCost && !priceReplacement ? 8 : undefined}
+      px={8}
       styles={{
         label: { width: '100%' },
       }}
@@ -96,7 +96,7 @@ export function BuzzTransactionButton({
       )}
       classNames={{
         inner: 'flex gap-8 justify-between items-center',
-        label: 'flex items-center justify-center w-full gap-2',
+        label: 'flex items-center justify-center w-full gap-1',
       }}
     >
       <Text
@@ -104,6 +104,7 @@ export function BuzzTransactionButton({
         ta={!hasCost || !priceReplacement ? 'center' : 'start'}
         fw={600}
         style={{ flex: 1 }}
+        className="@max-xs:!text-sm"
       >
         {label}
       </Text>
