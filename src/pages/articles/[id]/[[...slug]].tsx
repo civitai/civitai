@@ -290,11 +290,13 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             </Group>
             {article.status === ArticleStatus.Unpublished && isOwner && (
               <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="yellow" iconColor="yellow">
-                This article has been unpublished.{' '}
-                <Anchor component="button" onClick={handlePublishArticle}>
-                  Click here
-                </Anchor>{' '}
-                to publish it again or make changes to it before publishing.
+                <div>
+                  This article has been unpublished.{' '}
+                  <Anchor component="button" className="inline-flex" onClick={handlePublishArticle}>
+                    Click here
+                  </Anchor>{' '}
+                  to publish it again or make changes to it before publishing.
+                </div>
               </AlertWithIcon>
             )}
           </Stack>
