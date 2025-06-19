@@ -809,7 +809,7 @@ const WithdrawCashCard = () => {
           </Button>
         )}
 
-        {canWithdraw /* && userPaymentConfiguration?.tipaltiPaymentsEnabled */ && (
+        {canWithdraw && userPaymentConfiguration?.tipaltiPaymentsEnabled && (
           <div className="flex flex-col gap-2">
             <div className="flex">
               <NumberInput
