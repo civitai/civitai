@@ -237,6 +237,7 @@ const JoinCreatorProgramCard = () => {
                     onClick={() => {
                       openCreatorScoreModal();
                     }}
+                    inherit
                   >
                     Creator Score
                   </Anchor>{' '}
@@ -263,7 +264,7 @@ const JoinCreatorProgramCard = () => {
                     current membership does not apply to join the Creator Program. Consider
                     upgrading to one our supported memberships.
                     <br />
-                    <Anchor component={NextLink} href="/pricing">
+                    <Anchor component={NextLink} href="/pricing" inherit>
                       Upgrade Membership
                     </Anchor>
                   </p>
@@ -413,7 +414,7 @@ const BankBuzzCard = () => {
             value={toBank ? toBank : undefined}
             min={10000}
             max={maxBankable}
-            onChange={(value: string | number) => {
+            onChange={(value) => {
               setToBank(Math.min(Number(value ?? 10000), maxBankable));
             }}
             styles={{
@@ -612,7 +613,10 @@ const EstimatedEarningsCard = () => {
             <p className="text-sm font-bold"> Not happy with your estimated earnings?</p>
             <p className="text-sm">
               You can extract Buzz during the{' '}
-              <Anchor onClick={openPhasesModal}>Extraction Phase</Anchor>:
+              <Anchor onClick={openPhasesModal} inherit>
+                Extraction Phase
+              </Anchor>
+              :
             </p>
             <p className="text-sm">
               {formatDate(roundMinutes(compensationPool.phases.extraction[0]), DATE_FORMAT, false)}{' '}
@@ -724,7 +728,7 @@ const WithdrawCashCard = () => {
         <div className="flex items-center gap-2">
           <h3 className="text-xl font-bold">Withdraw Cash</h3>
           {userPaymentConfiguration?.tipaltiPaymentsEnabled && (
-            <Anchor href="/tipalti/setup" color="white">
+            <Anchor href="/tipalti/setup" c="white">
               <IconSettings size={18} color="white" />
             </Anchor>
           )}
@@ -884,8 +888,10 @@ const WithdrawCashCard = () => {
               <Alert color="red" className="mt-auto p-2">
                 <p>
                   Your currently selected withdrawal method is not supported. Please{' '}
-                  <Anchor href="/tipalti/setup">update your withdrawal method</Anchor> to one of our
-                  supported methods: {supportedWithdrawalMethods.join(', ')}.
+                  <Anchor href="/tipalti/setup" inherit>
+                    update your withdrawal method
+                  </Anchor>{' '}
+                  to one of our supported methods: {supportedWithdrawalMethods.join(', ')}.
                 </p>
               </Alert>
             )}

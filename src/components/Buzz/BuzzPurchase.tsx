@@ -456,7 +456,7 @@ export const BuzzPurchase = ({
                           value={customAmount ? customAmount * 10 : undefined}
                           min={1000}
                           max={constants.buzz.maxChargeAmount * 10}
-                          onChange={(value: string | number) => {
+                          onChange={(value) => {
                             setError('');
                             setCustomAmount(Math.ceil(Number(value ?? 0) / 10));
                           }}
@@ -483,7 +483,7 @@ export const BuzzPurchase = ({
                           rightSectionWidth="auto"
                           format="currency"
                           currency="USD"
-                          onChange={(value: string | number) => {
+                          onChange={(value) => {
                             setError('');
                             setCustomAmount(Number(value ?? 0));
                           }}
