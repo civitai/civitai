@@ -2,6 +2,7 @@ import { toJson } from '~/utils/json-helpers';
 import { clickhouse } from '../clickhouse/client';
 import { REDIS_SYS_KEYS, sysRedis } from '../redis/client';
 import { createJob } from './job';
+import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 
 export const resourceGenerationAvailability = createJob(
   'resource-gen-availability',
@@ -41,7 +42,7 @@ export const resourceGenerationAvailability = createJob(
       )
         .map(({ modelVersionId }) => modelVersionId)
         // ensure OpenAi id not included in list of affected resources
-        .filter((id) => id !== 1733399);
+        .filter((id) => !getModelVersionUsesImageGen(id));
 
       // Store new data
       await sysRedis.hSet(

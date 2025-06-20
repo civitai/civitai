@@ -69,6 +69,7 @@ export const constants = {
     'Pony',
     'Flux.1 S',
     'Flux.1 D',
+    'Flux.1 Kontext',
     'AuraFlow',
     'SDXL 1.0 LCM',
     'SDXL Distilled',
@@ -97,6 +98,7 @@ export const constants = {
     'Wan Video 14B i2v 720p',
     'HiDream',
     'OpenAI',
+    'Imagen4',
     'Other',
   ],
   hiddenBaseModels: [
@@ -112,7 +114,9 @@ export const constants = {
     'Stable Cascade',
     'SDXL 1.0 LCM',
     'OpenAI',
+    'Imagen4',
     'Wan Video',
+    'Flux.1 Kontext',
   ] as string[],
   modelFileTypes: [
     'Model',
@@ -495,6 +499,11 @@ export const baseModelSets = {
     generation: true,
   }),
   Flux1: new BaseModelSet({ name: 'Flux', baseModels: ['Flux.1 S', 'Flux.1 D'], generation: true }),
+  Flux1Kontext: new BaseModelSet({
+    name: 'Flux Kontext',
+    baseModels: ['Flux.1 Kontext'],
+    generation: true,
+  }),
   SDXL: new BaseModelSet({
     name: 'Stable Diffusion XL',
     baseModels: [
@@ -535,6 +544,7 @@ export const baseModelSets = {
   WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
   HiDream: new BaseModelSet({ name: 'HiDream', baseModels: ['HiDream'] }),
   OpenAI: new BaseModelSet({ name: 'OpenAI', baseModels: ['OpenAI'] }),
+  Imagen4: new BaseModelSet({ name: 'Imagen4', baseModels: ['Imagen4'] }),
   WanVideo1_3B_T2V: new BaseModelSet({
     name: 'Wan Video 1.3B t2v',
     baseModels: ['Wan Video 1.3B t2v'],
@@ -701,6 +711,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://openai.com/policies/',
     name: 'OpenAI',
   },
+  imagen4: {
+    url: 'https://deepmind.google/about/responsibility-safety/',
+    name: 'Imagen4',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -739,6 +753,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   AuraFlow: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
   'Flux.1 D': baseLicenses['flux1D'],
+  'Flux.1 Kontext': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
   Illustrious: baseLicenses['illustrious license'],
@@ -748,6 +763,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],
   OpenAI: baseLicenses['openai'],
+  Imagen4: baseLicenses['imagen4'],
   'Wan Video': baseLicenses['apache 2.0'],
   'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
   'Wan Video 14B t2v': baseLicenses['apache 2.0'],
@@ -796,6 +812,12 @@ export const samplerOffsets = {
   undefined: 4,
 } as const;
 
+const commonAspectRatios = [
+  { label: 'Square', width: 1024, height: 1024 },
+  { label: 'Landscape', width: 1216, height: 832 },
+  { label: 'Portrait', width: 832, height: 1216 },
+];
+
 export const generationConfig = {
   SD1: {
     aspectRatios: [
@@ -821,11 +843,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   SDXL: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 128078,
       name: 'v1.0 VAE fix',
@@ -844,11 +862,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Pony: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 290640,
       name: 'V6 (start with this one)',
@@ -867,11 +881,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Illustrious: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     // doesn't work for all illustrios models
     // aspectRatios: [
     //   { label: 'Square', width: 1536, height: 1536 },
@@ -896,11 +906,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   NoobAI: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 1190596,
       name: 'V-Pred-1.0-Version',
@@ -919,11 +925,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Flux1: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 691639,
       name: '',
@@ -941,12 +943,57 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
-  SD3: {
+  HiDream: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 1771369,
+      name: '',
+      trainedWords: [],
+      baseModel: 'HiDream',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      covered: true,
+      model: {
+        id: 1562709,
+        name: 'HiDream',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux1Kontext: {
     aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
+      { label: '21:9', width: 21, height: 9 },
+      { label: '16:9', width: 16, height: 9 },
+      { label: '4:3', width: 4, height: 3 },
+      { label: '3:2', width: 3, height: 2 },
+      { label: '1:1', width: 1, height: 1 },
+      { label: '2:3', width: 2, height: 3 },
+      { label: '3:4', width: 3, height: 4 },
+      { label: '9:16', width: 9, height: 16 },
+      { label: '9:21', width: 9, height: 21 },
     ],
+    checkpoint: {
+      id: 1892509,
+      name: 'Flux.1 Kontext [Pro]',
+      trainedWords: [],
+      baseModel: 'Flux.1 Kontext',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1672021,
+        name: 'FLUX.1 Kontext',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  SD3: {
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 983309,
       name: 'Large',
@@ -965,11 +1012,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   SD3_5M: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1216, height: 832 },
-      { label: 'Portrait', width: 832, height: 1216 },
-    ],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 1003708,
       name: 'Medium',
@@ -1011,6 +1054,32 @@ export const generationConfig = {
     } as GenerationResource,
   },
 
+  Imagen4: {
+    aspectRatios: [
+      { label: '16:9', width: 16, height: 9 },
+      { label: '4:3', width: 4, height: 3 },
+      { label: '1:1', width: 1, height: 1 },
+      { label: '3:4', width: 3, height: 4 },
+      { label: '9:16', width: 9, height: 16 },
+    ],
+    checkpoint: {
+      id: 1889632,
+      name: 'Imagen 4',
+      trainedWords: [],
+      baseModel: 'Imagen4',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1669468,
+        name: `Google Imagen 4`,
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+
   Other: {
     aspectRatios: [] as { label: string; width: number; height: number }[],
     checkpoint: {
@@ -1044,7 +1113,7 @@ export const generation = {
     seed: null,
     clipSkip: 2,
     quantity: 2,
-    aspectRatio: '0',
+    aspectRatio: '1:1',
     prompt: '',
     negativePrompt: '',
     nsfw: false,
@@ -1055,6 +1124,7 @@ export const generation = {
     creatorTip: 0.25,
     fluxUltraAspectRatio: '4',
     fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
+    fluxUltraRaw: false,
     model: generationConfig.Flux1.checkpoint,
     priority: 'low',
     sourceImage: null,

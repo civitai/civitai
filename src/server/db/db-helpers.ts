@@ -320,7 +320,7 @@ export function combineSqlWithParams(sql: string, params: readonly unknown[]) {
   return query;
 }
 
-export function getExplainSql(value: typeof Prisma.sql) {
+export function getExplainSql(value: typeof Prisma.Sql) {
   const obj = Prisma.sql`
     EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON)
     ${value}

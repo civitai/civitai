@@ -10,10 +10,8 @@ import {
   getBaseModelSetType,
   getIsFlux,
   getIsFluxStandard,
-  getIsSD3,
   getSizeFromAspectRatio,
   whatIfQueryOverrides,
-  fluxModelId,
 } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -21,8 +19,8 @@ import type { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
-import { isDefined } from '~/utils/type-guards';
 import { removeEmpty } from '~/utils/object-helpers';
+import { imageGenModelVersionMap } from '~/shared/orchestrator/ImageGen/imageGen.config';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
@@ -50,19 +48,19 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
         ?.checkpoint ?? model;
 
     if (params.aspectRatio) {
-      const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
+      const size = getSizeFromAspectRatio(params.aspectRatio, params.baseModel);
       if (size) {
         params.width = size.width;
         params.height = size.height;
       }
     }
 
-    let modelId = model?.id ?? defaultModel.id;
+    let modelVersionId = model?.id ?? defaultModel.id;
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model?.model?.id ?? defaultModel.model.id);
     if (isFlux && params.fluxMode && isFluxStandard) {
       const { version } = parseAIR(params.fluxMode);
-      modelId = version;
+      modelVersionId = version;
       if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
@@ -73,7 +71,10 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     delete params.engine;
     if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
       params.engine = 'flux-pro-raw';
-    if (model.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+    const imageGenEngine = imageGenModelVersionMap.get(modelVersionId);
+    if (imageGenEngine) {
+      params.engine = imageGenEngine;
+    }
 
     const additionalResources =
       resources?.map((x) => {
@@ -82,11 +83,11 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       }) ?? [];
 
     return {
-      resources: [{ id: modelId }, ...additionalResources],
+      resources: [{ id: modelVersionId }, ...additionalResources],
       params: removeEmpty({
         ...params,
         ...whatIfQueryOverrides,
-      } as TextToImageInput),
+      } satisfies TextToImageInput),
     };
   }, [watched]);
 

@@ -15,7 +15,7 @@ export function GenerationDetails({
     .filter(([, value]) => {
       if (Array.isArray(value) || typeof value === 'object') return false;
       if (typeof value === 'string') return !!value.length;
-      return value !== undefined;
+      return !!value;
     })
     .map(([key, value]) => ({
       label: titleCase(getDisplayName(key)),

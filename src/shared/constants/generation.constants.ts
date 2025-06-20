@@ -1,4 +1,5 @@
 import type { WorkflowStatus } from '@civitai/client';
+import { Scheduler } from '@civitai/client';
 import type { MantineColor } from '@mantine/core';
 import type { BaseModelSetType, Sampler } from '~/server/common/constants';
 import {
@@ -14,8 +15,9 @@ import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { getImageDimensions } from '~/utils/image-utils';
-import { findClosest } from '~/utils/number-helpers';
+import { findClosest, getRatio } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
   GENERATION: 'gen',
@@ -133,35 +135,37 @@ export const whatIfQueryOverrides = {
   remixSimilarity: 1,
 };
 
-export const samplersToSchedulers: Record<Sampler | 'undefined', string> = {
-  'Euler a': 'EulerA',
-  Euler: 'Euler',
-  LMS: 'LMS',
-  Heun: 'Heun',
-  DPM2: 'DPM2',
-  'DPM2 a': 'DPM2A',
-  'DPM++ 2S a': 'DPM2SA',
-  'DPM++ 2M': 'DPM2M',
-  'DPM++ 2M SDE': 'DPM2MSDE',
-  'DPM++ SDE': 'DPMSDE',
-  'DPM fast': 'DPMFast',
-  'DPM adaptive': 'DPMAdaptive',
-  'LMS Karras': 'LMSKarras',
-  'DPM2 Karras': 'DPM2Karras',
-  'DPM2 a Karras': 'DPM2AKarras',
-  'DPM++ 2S a Karras': 'DPM2SAKarras',
-  'DPM++ 2M Karras': 'DPM2MKarras',
-  'DPM++ 2M SDE Karras': 'DPM2MSDEKarras',
-  'DPM++ SDE Karras': 'DPMSDEKarras',
-  'DPM++ 3M SDE': 'DPM3MSDE',
-  'DPM++ 3M SDE Karras': 'DPM3MSDEKarras',
-  'DPM++ 3M SDE Exponential': 'DPM3MSDEExponential',
-  DDIM: 'DDIM',
-  PLMS: 'PLMS',
-  UniPC: 'UniPC',
-  LCM: 'LCM',
-  undefined: 'undefined',
-};
+export const samplersToSchedulers = {
+  'Euler a': Scheduler.EULER_A,
+  Euler: Scheduler.EULER,
+  LMS: Scheduler.LMS,
+  Heun: Scheduler.HEUN,
+  DPM2: Scheduler.DP_M2,
+  'DPM2 a': Scheduler.DP_M2A,
+  'DPM++ 2S a': Scheduler.DP_M2SA,
+  'DPM++ 2M': Scheduler.DP_M2M,
+  // 'DPM++ 2M SDE': 'DPM2MSDE',
+  'DPM++ SDE': Scheduler.DPMSDE,
+  'DPM fast': Scheduler.DPM_FAST,
+  'DPM adaptive': Scheduler.DPM_ADAPTIVE,
+  'LMS Karras': Scheduler.LMS_KARRAS,
+  'DPM2 Karras': Scheduler.DP_M2KARRAS,
+  'DPM2 a Karras': Scheduler.DP_M2AKARRAS,
+  'DPM++ 2S a Karras': Scheduler.DP_M2SAKARRAS,
+  'DPM++ 2M Karras': Scheduler.DP_M2MKARRAS,
+  // 'DPM++ 2M SDE Karras': 'DPM2MSDEKarras',
+  'DPM++ SDE Karras': Scheduler.DPMSDE_KARRAS,
+  'DPM++ 3M SDE': Scheduler.DP_M3MSDE,
+  // 'DPM++ 3M SDE Karras': 'DPM3MSDEKarras',
+  // 'DPM++ 3M SDE Exponential': 'DPM3MSDEExponential',
+  DDIM: Scheduler.DDIM,
+  PLMS: Scheduler.PLMS,
+  UniPC: Scheduler.UNI_PC,
+  LCM: Scheduler.LCM,
+  undefined: Scheduler.UNDEFINED,
+} as const as Record<Sampler | 'undefined', Scheduler>;
+
+export const generationSamplers = Object.keys(samplersToSchedulers) as Sampler[];
 
 // !important - undefined maps to the same values as 'DPM++ 2M Karras'
 export const samplersToComfySamplers: Record<
@@ -225,6 +229,11 @@ export function getIsSdxl(baseModel?: string) {
   );
 }
 
+export function getIsHiDream(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'HiDream';
+}
+
 export function getIsFlux(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
   return baseModelSetType === 'Flux1';
@@ -254,6 +263,9 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3')) return 'SD3';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3_5M')) return 'SD3_5M';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'OpenAI')) return 'OpenAI';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Imagen4')) return 'Imagen4';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1Kontext'))
+    return 'Flux1Kontext';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD1')) return 'SD1';
   // video base models
   for (const baseModelSet of videoBaseModelSetTypes) {
@@ -286,11 +298,11 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   params: T,
   limits?: GenerationLimits
 ) {
-  if (params.sampler) {
-    params.sampler = (generation.samplers as string[]).includes(params.sampler)
-      ? params.sampler
-      : generation.defaultValues.sampler;
-  }
+  // if (params.sampler) {
+  //   params.sampler = (generation.samplers as string[]).includes(params.sampler)
+  //     ? params.sampler
+  //     : generation.defaultValues.sampler;
+  // }
 
   const maxValueKeys = Object.keys(generation.maxValues);
   for (const item of maxValueKeys) {
@@ -298,9 +310,10 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
     if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
   }
 
-  if (!params.aspectRatio && params.width && params.height) {
+  if (!params.aspectRatio) {
     params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
-    params.fluxUltraAspectRatio = getClosestFluxUltraAspectRatio(params.width, params.height);
+    if (getIsFlux(params.baseModel))
+      params.fluxUltraAspectRatio = getClosestFluxUltraAspectRatio(params.width, params.height);
   }
 
   // handle SDXL ClipSkip
@@ -317,21 +330,20 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   return params;
 }
 
-export function getSizeFromAspectRatio(aspectRatio: number | string, baseModel?: string) {
-  const numberAspectRatio = typeof aspectRatio === 'string' ? Number(aspectRatio) : aspectRatio;
-  const config = getGenerationConfig(baseModel);
-  return config.aspectRatios[numberAspectRatio] ?? generationConfig.SD1.aspectRatios[0];
+export function getSizeFromAspectRatio(aspectRatio: string, baseModel?: string) {
+  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+  return (
+    aspectRatios.find((x) => getRatio(x.width, x.height) === aspectRatio) ??
+    generationConfig.SD1.aspectRatios[0]
+  );
 }
 
 export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
   width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
   height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  const ratios = aspectRatios.map((x) => x.width / x.height);
-  if (!ratios.length) return '0';
-  const closest = findClosest(ratios, width / height);
-  const index = ratios.indexOf(closest);
-  return `${index ?? 0}`;
+  const result = findClosestAspectRatio({ width, height }, aspectRatios) ?? aspectRatios[0];
+  return result ? getRatio(result.width, result.height) : '1:1';
 };
 
 export function getWorkflowDefinitionFeatures(workflow?: {
@@ -497,6 +509,7 @@ export const baseModelResourceTypes = {
     { type: ModelType.Checkpoint, baseModels: baseModelSets.Flux1.baseModels },
     { type: ModelType.LORA, baseModels: baseModelSets.Flux1.baseModels },
   ],
+  Flux1Kontext: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.Flux1Kontext.baseModels }],
   SD3: [
     { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3.baseModels },
     { type: ModelType.LORA, baseModels: baseModelSets.SD3.baseModels },
@@ -505,8 +518,13 @@ export const baseModelResourceTypes = {
     { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3_5M.baseModels },
     { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
+  HiDream: [
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.HiDream.baseModels },
+    { type: ModelType.LORA, baseModels: baseModelSets.HiDream.baseModels },
+  ],
   HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
   OpenAI: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.OpenAI.baseModels }],
+  Imagen4: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.Imagen4.baseModels }],
   WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
   WanVideo1_3B_T2V: [
     { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
@@ -605,7 +623,7 @@ export function getSizeFromFluxUltraAspectRatio(value: number) {
   return fluxUltraAspectRatios[value] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex];
 }
 
-export function getClosestFluxUltraAspectRatio(width: number, height: number) {
+export function getClosestFluxUltraAspectRatio(width = 1024, height = 1024) {
   const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
   const closest = findClosest(ratios, width / height);
   const index = ratios.indexOf(closest);

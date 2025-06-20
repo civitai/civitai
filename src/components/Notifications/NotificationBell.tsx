@@ -8,7 +8,10 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
-const NotificationsDrawer = dynamic(() => import('~/components/Notifications/NotificationsDrawer'));
+const NotificationsDrawer = dynamic(
+  () => import('~/components/Notifications/NotificationsDrawer'),
+  { ssr: false }
+);
 
 export function NotificationBell() {
   const router = useRouter();
