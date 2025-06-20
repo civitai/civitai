@@ -15,7 +15,7 @@ export const deliverAnnualSubscriptionBuzz = createJob(
     >`
       SELECT 
         "userId",
-        pr.metadata->>'monthlyBuzz' as buzzAmount,
+        pr.metadata->>'monthlyBuzz' as "buzzAmount",
         pr.id as "productId",
         p.id as "priceId"
       FROM "CustomerSubscription" cs
@@ -31,21 +31,23 @@ export const deliverAnnualSubscriptionBuzz = createJob(
 
     if (!data.length) return;
 
-    const buzzTransactions = data.map((d) => {
-      return {
-        fromAccountId: 0,
-        toAccountId: d.userId,
-        type: TransactionType.Purchase,
-        externalTransactionId: `annual-sub-payment-${date}:${d.userId}:${d.productId}`,
-        amount: Number(d.buzzAmount) ?? 3000, // assume a min of 3000.
-        description: `Membership bonus`,
-        details: {
-          type: 'annual-subscription-payment',
-          date: date,
-          productId: d.productId,
-        },
-      };
-    });
+    const buzzTransactions = data
+      .map((d) => {
+        return {
+          fromAccountId: 0,
+          toAccountId: d.userId,
+          type: TransactionType.Purchase,
+          externalTransactionId: `annual-sub-payment-${date}:${d.userId}:${d.productId}`,
+          amount: Number(d.buzzAmount), // assume a min of 3000.
+          description: `Membership bonus`,
+          details: {
+            type: 'annual-subscription-payment',
+            date: date,
+            productId: d.productId,
+          },
+        };
+      })
+      .filter((d) => d.amount > 0);
 
     const batches = chunk(buzzTransactions, 100);
     for (const batch of batches) {
