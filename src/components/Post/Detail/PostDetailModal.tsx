@@ -1,4 +1,3 @@
-import { Box } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import { PostDetail } from '~/components/Post/Detail/PostDetail';
