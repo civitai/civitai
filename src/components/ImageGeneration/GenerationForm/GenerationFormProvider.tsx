@@ -42,6 +42,7 @@ import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { promptSimilarity } from '~/utils/prompt-similarity';
+import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 
 // #region [schemas]
 
@@ -213,7 +214,12 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
 
   if (checkpoint?.id && getModelVersionUsesImageGen(checkpoint.id)) {
     if (params.sourceImage && params.workflow !== 'img2img') params.workflow = 'img2img';
-    else if (!params.sourceImage && params.workflow !== 'txt2img') params.workflow = 'txt2img';
+    else if (
+      !params.sourceImage &&
+      params.workflow !== 'txt2img' &&
+      !getIsFluxKontext(checkpoint.id)
+    )
+      params.workflow = 'txt2img';
   }
 
   return {
@@ -301,7 +307,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     if (type === 'image' && storeData) {
       const { runType, remixOfId, resources, params } = storeData;
-      if (!params.sourceImage && !params.workflow) form.setValue('workflow', 'txt2img');
+      if (!params.sourceImage && !params.workflow)
+        form.setValue('workflow', params.process ?? 'txt2img');
       switch (runType) {
         case 'replay':
           setValues(formatGenerationData(storeData));
@@ -402,7 +409,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (watchedValues.model?.id && getModelVersionUsesImageGen(watchedValues.model.id)) {
         if (watchedValues.sourceImage && watchedValues.workflow !== 'img2img')
           form.setValue('workflow', 'img2img');
-        else if (!watchedValues.sourceImage && watchedValues.workflow !== 'txt2img')
+        else if (
+          !watchedValues.sourceImage &&
+          watchedValues.workflow !== 'txt2img' &&
+          !getIsFluxKontext(watchedValues.model.id)
+        )
           form.setValue('workflow', 'txt2img');
       }
     });
