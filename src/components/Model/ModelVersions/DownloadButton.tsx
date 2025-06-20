@@ -40,13 +40,19 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
 
     const button = iconOnly ? (
       <Tooltip label={tooltip ?? 'Download options'} withArrow>
-        <Button pos="relative" ref={ref} {...buttonProps} variant="light">
+        <Button
+          pos="relative"
+          className="overflow-visible"
+          ref={ref}
+          {...buttonProps}
+          variant="light"
+        >
           <IconDownload size={24} />
           {downloadPrice && <>{purchaseIcon}</>}
         </Button>
       </Tooltip>
     ) : (
-      <Button pos="relative" ref={ref} {...buttonProps}>
+      <Button pos="relative" className="overflow-visible" ref={ref} {...buttonProps}>
         <Group gap={8} wrap="nowrap">
           <IconDownload size={20} />
           {downloadPrice && <>{purchaseIcon}</>}

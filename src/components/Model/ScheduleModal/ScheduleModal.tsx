@@ -3,20 +3,14 @@ import dayjs from 'dayjs';
 import { useMemo } from 'react';
 import { z } from 'zod';
 
-import { Form, InputDatePicker, InputTime, useForm } from '~/libs/form';
+import { Form, InputDatePicker, InputDateTimePicker, InputTime, useForm } from '~/libs/form';
 
-const schema = z
-  .object({ date: z.date(), time: z.date() })
-  .transform((data) => {
-    const time = dayjs(data.time);
-    const date = dayjs(data.date).set('hour', time.hour()).set('minute', time.minute());
+const schema = z.object({ date: z.date(), time: z.date() }).transform((data) => {
+  const time = dayjs(data.time);
+  const date = dayjs(data.date).set('hour', time.hour()).set('minute', time.minute());
 
-    return { date: date.toDate() };
-  })
-  .refine((data) => data.date > new Date(), {
-    message: 'Must be in the future',
-    path: ['time'],
-  });
+  return { date: date.toDate() };
+});
 
 export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
   const form = useForm({ schema });
@@ -39,18 +33,16 @@ export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
         <Form form={form} onSubmit={handleSubmit}>
           <Stack gap="xl">
             <Stack gap={4}>
-              <Group gap={8} grow>
-                <InputDatePicker
-                  name="date"
-                  label="Publish Date"
-                  placeholder="Select a date"
-                  withAsterisk
-                  minDate={minDate}
-                  maxDate={maxDate}
-                  popoverProps={{ withinPortal: true }}
-                />
-                <InputTime name="time" label="Publish Time" withAsterisk />
-              </Group>
+              <InputDateTimePicker
+                name="date"
+                label="Publish Date"
+                placeholder="Select a date and time"
+                valueFormat="MMM D, YYYY hh:mm A"
+                minDate={minDate}
+                maxDate={maxDate}
+                popoverProps={{ withinPortal: true }}
+                withAsterisk
+              />
               <Text size="xs" c="dimmed">
                 The date and time are in your local timezone.
               </Text>

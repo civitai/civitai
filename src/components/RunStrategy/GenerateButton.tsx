@@ -106,6 +106,7 @@ export function GenerateButton({
   ) : (
     <Button
       variant="filled"
+      className="overflow-visible"
       style={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
       onClick={onClickHandler}
       {...buttonProps}

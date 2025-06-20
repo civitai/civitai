@@ -38,7 +38,7 @@ import type { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
@@ -79,7 +79,6 @@ import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVer
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
-import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
@@ -124,6 +123,7 @@ import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
 import clsx from 'clsx';
+import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 
 export function ModelVersionDetails({
   model,
@@ -141,7 +141,6 @@ export function ModelVersionDetails({
   const features = useFeatureFlags();
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
-  const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
   const [detailAccordions, setDetailAccordions] = useLocalStorage({
     key: 'model-version-details-accordions',
     defaultValue: ['version-details'],
@@ -719,7 +718,16 @@ export function ModelVersionDetails({
                     color="green"
                     variant="outline"
                     loading={publishing}
-                    onClick={() => setScheduleModalOpened((current) => !current)}
+                    onClick={() =>
+                      dialogStore.trigger({
+                        component: SchedulePostModal,
+                        props: {
+                          onSubmit: handlePublishClick,
+                          publishedAt: version.publishedAt,
+                          publishingModel: true,
+                        },
+                      })
+                    }
                   >
                     <IconClock size={20} />
                   </Button>
@@ -1462,11 +1470,6 @@ export function ModelVersionDetails({
           ) : null}
         </Stack>
       </ContainerGrid2.Col>
-      <ScheduleModal
-        opened={scheduleModalOpened}
-        onClose={() => setScheduleModalOpened((current) => !current)}
-        onSubmit={(date: Date) => handlePublishClick(date)}
-      />
     </ContainerGrid2>
   );
 }
