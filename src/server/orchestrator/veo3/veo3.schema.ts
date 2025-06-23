@@ -7,6 +7,7 @@ import {
   promptSchema,
   baseVideoGenerationSchema,
   sourceImageSchema,
+  resourceSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 
@@ -23,14 +24,20 @@ const schema = baseVideoGenerationSchema.extend({
   duration: numberEnum(veo3Duration).default(8).catch(8),
   generateAudio: z.boolean().optional(),
   seed: seedSchema,
+  resources: resourceSchema.array().nullable().default(null),
 });
 
+export const veo3ModelVersionId = 1885367;
 export const veo3GenerationConfig = VideoGenerationConfig2({
   label: 'Google VEO 3',
   whatIfProps: ['sourceImage', 'duration', 'aspectRatio', 'generateAudio'],
   metadataDisplayProps: ['process', 'aspectRatio', 'duration', 'seed'],
   schema,
-  defaultValues: { aspectRatio: '16:9', generateAudio: false },
+  defaultValues: {
+    aspectRatio: '16:9',
+    generateAudio: false,
+    resources: [{ id: 1885367, air: 'urn:air:other:checkpoint:civitai:1665714@1885367' }],
+  },
   processes: ['txt2vid'],
   transformFn: (data) => ({ ...data, process: 'txt2vid' }),
   // transformFn: (data) => {

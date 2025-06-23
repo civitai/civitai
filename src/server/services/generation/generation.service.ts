@@ -8,6 +8,7 @@ import {
   baseModelEngineMap,
   isVideoGenerationEngine,
 } from '~/server/orchestrator/generation/generation.config';
+import { veo3ModelVersionId } from '~/server/orchestrator/veo3/veo3.schema';
 import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -770,10 +771,11 @@ export async function getResourceData(
       });
     });
 
+  // TODO - check if resource id is in "EcosystemCheckpoint" table
   return generation
     ? resources.filter((resource) => {
         const baseModel = getBaseModelSetType(resource.baseModel) as SupportedBaseModel;
-        return !!baseModelResourceTypes[baseModel];
+        return !!baseModelResourceTypes[baseModel] || resource.id === veo3ModelVersionId;
       })
     : resources;
 }

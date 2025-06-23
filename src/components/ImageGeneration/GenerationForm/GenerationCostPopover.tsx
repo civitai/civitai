@@ -27,6 +27,7 @@ export function GenerationCostPopover({
   workflowCost,
   readOnly,
   hideCreatorTip,
+  hideCivitaiTip,
   variant = 'info-circle',
   ...popoverProps
 }: Omit<PopoverProps, 'children'> & Props) {
@@ -61,13 +62,20 @@ export function GenerationCostPopover({
           readOnly={readOnly}
           disabled={disabled}
           hideCreatorTip={hideCreatorTip}
+          hideCivitaiTip={hideCivitaiTip}
         />
       </Popover.Dropdown>
     </Popover>
   );
 }
 
-function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCreatorTip }: Props) {
+function GenerationCostPopoverDetail({
+  workflowCost,
+  readOnly,
+  disabled,
+  hideCreatorTip,
+  hideCivitaiTip,
+}: Props) {
   const { civitaiTip, creatorTip } = useTipStore((state) => ({
     creatorTip: state.creatorTip * 100,
     civitaiTip: state.civitaiTip * 100,
@@ -220,7 +228,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
-      visible: !readOnly,
+      visible: !readOnly && !hideCivitaiTip,
       className: classes.tableCell,
     },
     {
@@ -254,7 +262,7 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
 
 function BreakdownExplanation() {
   return (
-    <ul className="list-none text-sm m-0 pr-4">
+    <ul className="m-0 list-none pr-4 text-sm">
       <li className="mb-2">
         <span className="font-semibold">Base Cost:</span>
         {` The base cost of generating an image is
@@ -297,5 +305,6 @@ type Props = {
   readOnly?: boolean;
   disabled?: boolean;
   hideCreatorTip?: boolean;
+  hideCivitaiTip?: boolean;
   variant?: 'info-circle' | 'badge';
 };

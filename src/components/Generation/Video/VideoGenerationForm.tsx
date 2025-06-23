@@ -222,7 +222,12 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
       >
         Generate
       </GenerateButton>
-      <GenerationCostPopover width={300} workflowCost={data?.cost ?? {}} hideCreatorTip />
+      <GenerationCostPopover
+        width={300}
+        workflowCost={data?.cost ?? {}}
+        hideCreatorTip
+        hideCivitaiTip
+      />
     </div>
   );
 }
