@@ -41,6 +41,7 @@ import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
+import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';
 import {
   isMadeOnSite,
   useGenerationStatus,
@@ -343,6 +344,8 @@ const ResourceHeader = () => {
 
   const cantAdd = image.resourceHelper.length >= status.limits.resources;
 
+  const [updateImage] = usePostEditStore((state) => [state.updateImage]);
+
   return (
     <div className="group flex items-center justify-between">
       <div className="flex items-center gap-2">
@@ -361,57 +364,68 @@ const ResourceHeader = () => {
           create this image.
         </InfoPopover>
       </div>
-      {canAdd ? (
-        <Group gap="xs">
-          <Box className="hidden group-hover:block">
-            <InfoPopover
-              type="hover"
-              hideClick={true}
-              variant="transparent"
-              size="sm"
-              position="top"
-              iconProps={{ size: 20 }}
-              customIcon={IconHelp}
+      <div className="flex gap-2">
+        {canAdd ? (
+          <>
+            <Box className="hidden group-hover:block">
+              <InfoPopover
+                type="hover"
+                hideClick={true}
+                variant="transparent"
+                size="sm"
+                position="top"
+                iconProps={{ size: 20 }}
+                customIcon={IconHelp}
+              >
+                <Stack>
+                  <Text>Manually add a resource.</Text>
+                  <Text size="sm">
+                    If you can&apos;t find the one you&apos;re looking for, it&apos;s either not
+                    uploaded here, or is being filtered out to match your already selected
+                    resources.
+                  </Text>
+                </Stack>
+              </InfoPopover>
+            </Box>
+            <Tooltip
+              label={`Maximum resources reached (${status.limits.resources})`}
+              disabled={!cantAdd}
             >
-              <Stack>
-                <Text>Manually add a resource.</Text>
-                <Text size="sm">
-                  If you can&apos;t find the one you&apos;re looking for, it&apos;s either not
-                  uploaded here, or is being filtered out to match your already selected resources.
-                </Text>
-              </Stack>
-            </InfoPopover>
-          </Box>
-          <Tooltip
-            label={`Maximum resources reached (${status.limits.resources})`}
-            disabled={!cantAdd}
-          >
-            <ResourceSelectMultiple
-              buttonLabel="RESOURCE"
-              modalTitle="Select resource(s)"
-              selectSource="addResource"
-              options={{
-                resources: allowedResources,
-                excludeIds: image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined),
-              }}
-              buttonProps={{
-                size: 'compact-sm',
-                className: 'text-sm',
-                loading: isAddingResource,
-                disabled: cantAdd,
-              }}
-              onChange={(vals) => {
-                if (!vals?.length || cantAdd) return;
-                vals.forEach((val) => {
-                  addResource(val.id);
-                });
-              }}
-            />
-          </Tooltip>
-        </Group>
-      ) : (
-        <Badge color="cyan">Made on-site</Badge>
-      )}
+              <ResourceSelectMultiple
+                buttonLabel="RESOURCE"
+                modalTitle="Select resource(s)"
+                selectSource="addResource"
+                options={{
+                  resources: allowedResources,
+                  excludeIds: image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined),
+                }}
+                buttonProps={{
+                  size: 'compact-sm',
+                  className: 'text-sm',
+                  loading: isAddingResource,
+                  disabled: cantAdd,
+                }}
+                onChange={(vals) => {
+                  if (!vals?.length || cantAdd) return;
+                  vals.forEach((val) => {
+                    addResource(val.id);
+                  });
+                }}
+              />
+            </Tooltip>
+          </>
+        ) : (
+          <Badge color="cyan">Made on-site</Badge>
+        )}
+        <RefreshImageResources
+          imageId={image.id}
+          onSuccess={(imageResources) => {
+            updateImage(image.id, (img) => {
+              img.resourceHelper = imageResources;
+            });
+          }}
+        />
+      </div>
     </div>
   );
 };

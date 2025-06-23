@@ -1,7 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbRead } from '~/server/db/client';
+import { refreshImageResources } from '~/server/services/image.service';
 import { updateCollectionsNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { Limiter } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { TaskBatcher } from '~/utils/taskBatcher';
 
 type Row = {
   userId: number;
@@ -78,10 +82,18 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     // const data = await getGenerationResourceData({ ids: [1703341] });
 
     // await setExperimentalConfig({ userIds: [5] });
-    const data = await updateCollectionsNsfwLevels([24004]);
+    // const data = await updateCollectionsNsfwLevels([24004]);
+
+    const imageResources = await dbRead.$queryRaw<{ imageId: number }[]>`
+      select * from "ImageResourceNew" where "modelVersionId" = 690425 and detected
+    `;
+
+    await Limiter({ batchSize: 1, limit: 10 }).process(imageResources, async ([{ imageId }]) => {
+      await refreshImageResources(imageId);
+    });
 
     // res.status(200).send({ data });
-    res.status(200).send({ data });
+    res.status(200).send({ ok: true });
   } catch (e) {
     console.log(e);
     res.status(400).end();
