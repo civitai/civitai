@@ -188,7 +188,13 @@ export const orchestratorRouter = router({
     .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
       try {
-        const args = { ...input, user: ctx.user, token: ctx.token, experimental: ctx.experimental };
+        const args = {
+          ...input,
+          user: ctx.user,
+          token: ctx.token,
+          experimental: ctx.experimental,
+          batchAll: ctx.batchAll,
+        };
         // if ('sourceImage' in args.params && args.params.sourceImage) {
         //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
         //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
@@ -227,6 +233,7 @@ export const orchestratorRouter = router({
           resources: input.resources.map((x) => ({ ...x, strength: 1 })),
           user: ctx.user,
           token: ctx.token,
+          batchAll: ctx.batchAll,
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;

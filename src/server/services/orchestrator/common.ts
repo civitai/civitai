@@ -115,10 +115,12 @@ export async function parseGenerateImageInput({
   resources: originalResources,
   workflowDefinition,
   whatIf,
+  batchAll,
 }: z.infer<typeof generateImageSchema> & {
   user: SessionUser;
   workflowDefinition: WorkflowDefinition;
   whatIf?: boolean;
+  batchAll?: boolean;
 }) {
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
@@ -325,6 +327,9 @@ export async function parseGenerateImageInput({
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
     params.sampler = 'LCM';
+  } else if (batchAll) {
+    quantity = 1;
+    batchSize = params.quantity;
   }
 
   let upscaleWidth = params.upscaleHeight;
@@ -692,11 +697,6 @@ function formatTextToImageStep({
     metadata?.params?.draft ??
     (injectable.draft ? versionIds.includes(injectable.draft.id) : false);
 
-  let quantity = input.quantity ?? 1;
-  if (isDraft) {
-    quantity *= 4;
-  }
-
   const sampler =
     Object.entries(samplersToSchedulers).find(
       ([sampler, scheduler]) => scheduler.toLowerCase() === input.scheduler?.toLowerCase()
@@ -741,6 +741,12 @@ function formatTextToImageStep({
       : {};
 
   const params = metadata?.params;
+
+  const quantity = params?.quantity ?? 1;
+  // let quantity = input.quantity ?? 1;
+  // if (isDraft) {
+  //   quantity *= 4;
+  // }
 
   const data = {
     baseModel,

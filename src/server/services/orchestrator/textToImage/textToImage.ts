@@ -24,6 +24,7 @@ export async function createTextToImageStep(
   input: z.infer<typeof generateImageSchema> & {
     user: SessionUser;
     whatIf?: boolean;
+    batchAll?: boolean;
   }
 ) {
   const { priority, ...inputParams } = input.params;
@@ -101,6 +102,7 @@ export async function createTextToImage(
     user: SessionUser;
     token: string;
     experimental?: boolean;
+    batchAll?: boolean;
   }
 ) {
   const step = await createTextToImageStep(args);
