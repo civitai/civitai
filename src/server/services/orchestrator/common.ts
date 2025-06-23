@@ -200,10 +200,12 @@ export async function parseGenerateImageInput({
   resources: originalResources,
   workflowDefinition,
   whatIf,
+  batchAll,
 }: z.infer<typeof generateImageSchema> & {
   user: SessionUser;
   workflowDefinition: WorkflowDefinition;
   whatIf?: boolean;
+  batchAll?: boolean;
 }) {
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
@@ -334,6 +336,9 @@ export async function parseGenerateImageInput({
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
     if (!injectableResources.draft) params.sampler = 'LCM';
+  } else if (batchAll) {
+    quantity = 1;
+    batchSize = params.quantity;
   }
 
   let upscaleWidth = params.upscaleHeight;

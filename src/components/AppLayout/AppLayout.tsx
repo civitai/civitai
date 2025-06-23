@@ -60,7 +60,7 @@ export function AppLayout({
 
   return (
     <div className="flex h-full flex-1 flex-col">
-      <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
+      <AppHeader renderSearchComponent={renderSearchComponent} />
       {loading ? (
         <PageLoader />
       ) : notFound ? (

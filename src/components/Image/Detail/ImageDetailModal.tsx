@@ -42,7 +42,14 @@ export default function ImageDetailModal({
   }
 
   return (
-    <PageModal {...dialog} withCloseButton={false} fullScreen padding={0}>
+    <PageModal
+      {...dialog}
+      withCloseButton={false}
+      withinPortal={false}
+      withOverlay={false}
+      padding={0}
+      fullScreen
+    >
       <ImageDetailProvider
         imageId={imageId}
         filters={queryFilters}

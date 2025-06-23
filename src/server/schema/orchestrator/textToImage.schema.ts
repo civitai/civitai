@@ -50,6 +50,7 @@ export const textToImageParamsSchema = z.object({
   disablePoi: z.boolean().default(false),
   openAIQuality: z.enum(['auto', 'high', 'medium', 'low']).optional(),
   openAITransparentBackground: z.boolean().optional(),
+  process: z.string().optional(),
 });
 
 // #endregion

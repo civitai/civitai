@@ -1615,7 +1615,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
     <GenerateButton
       type="submit"
       data-tour="gen:submit"
-      className="h-full flex-1"
+      className="h-full flex-1 px-2"
       loading={isInitialLoading || props.isLoading}
       cost={total}
       disabled={isError}

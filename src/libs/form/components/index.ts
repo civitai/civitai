@@ -22,7 +22,7 @@ import {
   CreatableMultiSelect,
   MultiSelectWrapper,
 } from '~/libs/form/components/MultiSelectWrapper';
-import { DatePickerInput, TimeInput } from '@mantine/dates';
+import { DatePickerInput, DateTimePicker, TimeInput } from '@mantine/dates';
 import { FileInputUpload } from '~/components/FileInputUpload/FileInputUpload';
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
 import { RatingWrapper } from '~/libs/form/components/RatingWrapper';
@@ -79,6 +79,7 @@ export const InputInlineSocialLinkInput = withController(InlineSocialLinkInput);
 export const InputShowcaseItemsInput = withController(ShowcaseItemsInput);
 export const InputClubResourceManagementInput = withController(ClubResourceManagementInput);
 export const InputProfileSectionsSettingsInput = withController(ProfileSectionsSettingsInput);
+export const InputDateTimePicker = withController(DateTimePicker);
 
 export const InputSwitch = withController(Switch, ({ field }) => ({
   value: field.value ?? false,

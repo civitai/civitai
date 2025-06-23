@@ -133,7 +133,7 @@ export const trainingDetailsObj = z.object({
 });
 
 export const modelVersionUpsertSchema = z.object({
-  id: z.number().optional(),
+  id: z.coerce.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
   baseModel: z.enum(constants.baseModels),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
@@ -141,8 +141,8 @@ export const modelVersionUpsertSchema = z.object({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
     stripEmpty: true,
   }).nullish(),
-  steps: z.number().min(0).nullish(),
-  epochs: z.number().min(0).max(100000).nullish(),
+  steps: z.coerce.number().min(0).nullish(),
+  epochs: z.coerce.number().min(0).max(100000).nullish(),
   images: z
     .array(imageSchema)
     .min(1, 'At least one example image must be uploaded')
@@ -156,9 +156,9 @@ export const modelVersionUpsertSchema = z.object({
 
 export type RecommendedSettingsSchema = z.infer<typeof recommendedSettingsSchema>;
 export const recommendedSettingsSchema = z.object({
-  minStrength: z.number().nullish(),
-  maxStrength: z.number().nullish(),
-  strength: z.number().nullish(),
+  minStrength: z.coerce.number().nullish(),
+  maxStrength: z.coerce.number().nullish(),
+  strength: z.coerce.number().nullish(),
 });
 
 export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;

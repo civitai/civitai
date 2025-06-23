@@ -40,10 +40,7 @@ function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSea
   return <AutocompleteSearch />;
 }
 
-export function AppHeader({
-  renderSearchComponent = defaultRenderSearchComponent,
-  fixed = true,
-}: Props) {
+export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const features = useFeatureFlags();
@@ -55,7 +52,6 @@ export function AppHeader({
 
   return (
     <header
-      // fixed={fixed} TODO: Mantine7
       className={clsx('z-[199] border-b border-b-gray-2 dark:border-b-dark-5', {
         ['border-green-8 border-b-[3px]']: features.isGreen,
         ['border-red-8 border-b-[3px]']: features.isRed,
@@ -142,7 +138,6 @@ export function AppHeader({
 
 type Props = {
   renderSearchComponent?: (opts: RenderSearchComponentProps) => ReactElement;
-  fixed?: boolean;
 };
 export type RenderSearchComponentProps = {
   onSearchDone?: () => void;

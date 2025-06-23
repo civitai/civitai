@@ -6,6 +6,7 @@ type ExperimentalConfig = {
   permissions?: ('all' | 'mod' | 'non-member' | 'member')[];
   /** currently used to allow users to make prohibited requests without getting reported */
   testing?: number[];
+  batchAll?: boolean;
 };
 
 export async function getExperimentalConfig(): Promise<ExperimentalConfig> {
@@ -30,7 +31,7 @@ export async function getExperimentalFlags({
   isModerator?: boolean;
   isMember?: boolean;
 }) {
-  const { userIds = [], permissions, testing = [] } = await getExperimentalConfig();
+  const { userIds = [], permissions, testing = [], batchAll } = await getExperimentalConfig();
   let experimental = false;
   if (isModerator && permissions?.includes('mod')) experimental = true;
   if (userIds.indexOf(userId) > -1) experimental = true;
@@ -41,5 +42,6 @@ export async function getExperimentalFlags({
   return {
     experimental,
     testing: testing.indexOf(userId) > -1,
+    batchAll,
   };
 }

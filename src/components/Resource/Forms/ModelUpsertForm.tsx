@@ -68,7 +68,7 @@ import styles from './ModelUpsertForm.module.scss';
 
 const schema = modelUpsertSchema
   .extend({
-    category: z.number().gt(0, 'Required'),
+    category: z.coerce.number().gt(0, 'Required'),
     description: getSanitizedStringSchema().refine((data) => {
       return data && data.length > 0 && data !== '<p></p>';
     }, 'Cannot be empty'),
@@ -94,7 +94,7 @@ const schema = modelUpsertSchema
 type ModelUpsertSchema = z.infer<typeof schema>;
 
 const querySchema = z.object({
-  category: z.preprocess(parseNumericString, z.number().optional()),
+  category: z.preprocess(parseNumericString, z.coerce.number().optional()),
   templateId: z.coerce.number().optional(),
   bountyId: z.coerce.number().optional(),
 });
@@ -173,6 +173,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
     width: '100%',
     variant: 'filled',
     className: clsx(styles.availabilityChip, 'my-2'),
+    classNames: { iconWrapper: 'hidden' },
   };
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({

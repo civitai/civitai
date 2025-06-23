@@ -182,7 +182,7 @@ export const getFileForModelVersion = async ({
   if (!modelVersion) return { status: 'not-found' };
 
   // disablePoi - Disables downloads for POI resources.
-  if (modelVersion.model.poi && modelVersion.model.userId !== user?.id) {
+  if (modelVersion.model.poi && modelVersion.model.userId !== user?.id && !user?.isModerator) {
     return { status: 'not-found' };
   }
 

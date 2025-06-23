@@ -60,7 +60,6 @@ export const useKnightsNewOrderListener = ({
   onReset?: VoidFunction;
 } = {}) => {
   const queryUtils = trpc.useUtils();
-  const currentUser = useCurrentUser();
 
   const { playerData } = useJoinKnightsNewOrder();
 
@@ -116,23 +115,20 @@ export const useKnightsNewOrderListener = ({
   useSignalConnection(SignalMessages.NewOrderQueueUpdate, (data: QueueUpdatePayload) => {
     switch (data.action) {
       case NewOrderSignalActions.AddImage:
-        if (currentUser?.isModerator) {
-          console.log('NewOrderQueueUpdate :: Image added to queue:', data);
-        }
-
         queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
           if (!old) return old;
           return [...old, ...data.images];
         });
         break;
       case NewOrderSignalActions.RemoveImage:
-        if (currentUser?.isModerator) {
-          console.log('NewOrderQueueUpdate :: Image removed from queue:', data);
-        }
-
         queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
           if (!old) return old;
-          return old.filter((image) => image.id !== data.imageId);
+          const imageIndex = old.findIndex((image) => image.id === data.imageId);
+          if (imageIndex <= 0) return old; // Prevents removing the image if the user is rating it
+
+          return produce(old, (draft) => {
+            draft.splice(imageIndex, 1);
+          });
         });
         break;
       default:

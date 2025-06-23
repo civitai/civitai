@@ -5,12 +5,10 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 export function PageModal({ children, ...props }: ModalProps) {
   return (
     <Modal
-      transitionProps={{
-        duration: 0,
-      }}
+      transitionProps={{ duration: 0 }}
       {...props}
       styles={{
-        root: { position: 'absolute' },
+        inner: { position: 'absolute' },
         body: { height: '100%', width: '100%', display: 'flex', flexDirection: 'column' },
       }}
     >

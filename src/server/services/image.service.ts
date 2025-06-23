@@ -4309,15 +4309,15 @@ export async function getImageRatingRequests({
       WITH image_rating_requests AS (
         SELECT
           "imageId",
-          COALESCE(SUM(weight),0) total,
+          COALESCE(SUM(weight), 0) total,
           MIN("createdAt") "createdAt",
           jsonb_build_object(
-                  1, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 1),0),
-                  2, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 2),0),
-                  4, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 4),0),
-                  8, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 8),0),
-                  16, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 16),0)
-                ) "votes"
+            1, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 1),0),
+            2, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 2),0),
+            4, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 4),0),
+            8, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 8),0),
+            16, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 16),0)
+          ) "votes"
         FROM "ImageRatingRequest"
         WHERE status = 'Pending'
         GROUP BY "imageId"
@@ -4335,12 +4335,12 @@ export async function getImageRatingRequests({
         i."createdAt"
       FROM image_rating_requests irr
       JOIN "Image" i ON i.id = irr."imageId"
-      WHERE irr.total >= 3
+      WHERE (irr.total >= 3 OR (irr.total <= -5 AND irr."createdAt" < NOW() - INTERVAL '10 hours'))
         AND i."blockedFor" IS NULL
         AND i."nsfwLevelLocked" = FALSE
         AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
         AND i."nsfwLevel" < ${NsfwLevel.Blocked}
-        ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
+        ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.empty}
       ORDER BY irr."createdAt"
       LIMIT ${limit + 1}
   `;
