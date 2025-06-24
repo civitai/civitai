@@ -56,6 +56,7 @@ import type {
 } from '~/server/services/orchestrator';
 import {
   getIsFlux,
+  getIsHiDream,
   getIsSD3,
   getSourceImageFromUrl,
 } from '~/shared/constants/generation.constants';
@@ -83,6 +84,10 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import {
+  getIsFluxContextFromEngine,
+  getIsFluxKontext,
+} from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -559,10 +564,13 @@ function GeneratedImageWorkflowMenuItems({
 
   const isVideo = step.$type === 'videoGen';
   const isImageGen = step.resources.some((r) => getModelVersionUsesImageGen(r.id));
-  // const isOpenAI = !isVideo && step.params.engine === 'openai';
+  const isOpenAI = !isVideo && step.params.engine === 'openai';
+  const isFluxKontext = getIsFluxContextFromEngine(step.params.engine);
   const isFlux = !isVideo && getIsFlux(step.params.baseModel);
+  const isHiDream = !isVideo && getIsHiDream(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
-  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isImageGen;
+  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream;
+  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext;
   const img2imgWorkflows = !isVideo
     ? workflowDefinitions.filter(
         (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)
@@ -770,7 +778,7 @@ function GeneratedImageWorkflowMenuItems({
             </WithMemberMenuItem>
           );
         })}
-      {!isBlocked && isImageGen && (
+      {!isBlocked && canImg2ImgNoWorkflow && (
         <WithMemberMenuItem onClick={handleImg2ImgNoWorkflow}>Image To Image</WithMemberMenuItem>
       )}
       {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
