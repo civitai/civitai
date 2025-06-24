@@ -21,7 +21,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditorComponent';
+import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { formatDate } from '~/utils/date-helpers';

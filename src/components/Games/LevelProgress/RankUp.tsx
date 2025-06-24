@@ -1,7 +1,12 @@
 import { Card, Text } from '@mantine/core';
 import clsx from 'clsx';
-import { LevelAnimation } from '~/components/Animations/LevelAnimation';
 import styles from './LevelProgress.module.scss';
+import dynamic from 'next/dynamic';
+
+const LevelAnimation = dynamic(
+  () => import('~/components/Animations/LevelAnimation').then((mod) => mod.LevelAnimation),
+  { ssr: false }
+);
 
 export function RankUp({ className }: { className?: string }) {
   return (
