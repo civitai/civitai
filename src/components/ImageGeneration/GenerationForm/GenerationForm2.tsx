@@ -131,6 +131,7 @@ import {
   getHiDreamResourceFromVersionId,
   hiDreamPrecisions,
   hiDreamVariants,
+  hiDreamVariantsPrecisionMap,
 } from '~/shared/orchestrator/hidream.config';
 import classes from './GenerationForm2.module.scss';
 
@@ -816,10 +817,12 @@ export function GenerationFormContent() {
                       <Input.Label>Variant</Input.Label>
                       <SegmentedControl
                         value={hiDreamResource.variant}
-                        data={[...hiDreamVariants].map((value) => ({
-                          label: capitalize(value),
-                          value,
-                        }))}
+                        data={hiDreamVariantsPrecisionMap[hiDreamResource.precision].map(
+                          (value) => ({
+                            label: capitalize(value),
+                            value,
+                          })
+                        )}
                         onChange={(variant) => {
                           const versionId = getHiDreamResourceFromPrecisionAndVariant({
                             ...hiDreamResource,

@@ -213,7 +213,8 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   });
 
   if (checkpoint?.id && getModelVersionUsesImageGen(checkpoint.id)) {
-    if (params.sourceImage && params.workflow !== 'img2img') params.workflow = 'img2img';
+    if ((params.sourceImage && params.workflow !== 'img2img') || getIsFluxKontext(checkpoint.id))
+      params.workflow = 'img2img';
     else if (
       !params.sourceImage &&
       params.workflow !== 'txt2img' &&

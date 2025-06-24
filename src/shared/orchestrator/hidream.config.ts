@@ -13,6 +13,11 @@ type HiDreamResource = { id: number; precision: HiDreamPrecision; variant: HiDre
 export const hiDreamPrecisions = ['fp8', 'fp16'] as const;
 export const hiDreamVariants = ['fast', 'dev', 'full'] as const;
 
+export const hiDreamVariantsPrecisionMap: Record<HiDreamPrecision, HiDreamVariant[]> = {
+  fp8: ['fast', 'dev', 'full'],
+  fp16: ['fast', 'dev'],
+};
+
 export const hiDreamModelId = 1562709;
 const hiDreamResources: HiDreamResource[] = [
   {
