@@ -1,5 +1,6 @@
 import type { VideoGenInput } from '@civitai/client';
-import type { RefinementCtx, z } from 'zod';
+import type { RefinementCtx } from 'zod';
+import { z } from 'zod';
 import { maxRandomSeed } from '~/server/common/constants';
 
 type VideoGenProcesses = 'txt2vid' | 'img2vid';
@@ -11,10 +12,10 @@ export function VideoGenerationConfig2<
   RefinementOutput = SchemaOutput & TDefaults
 >({
   defaultValues,
-  superRefine,
   schema,
   transformFn,
   whatIfFn = (args) => args,
+  superRefine,
   ...args
 }: {
   label: string;
@@ -29,7 +30,29 @@ export function VideoGenerationConfig2<
   transformFn: (args: SchemaOutput) => RefinementOutput;
   inputFn: (args: RefinementOutput & { seed: number }) => TOutput;
 }) {
-  const validationSchema = superRefine ? schema.superRefine(superRefine as any) : schema;
+  const validationSchema = (
+    superRefine ? schema.superRefine(superRefine as any) : schema
+  ).superRefine((data, ctx) => {
+    if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.length > 1500) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt cannot be longer than 1500 characters',
+        path: ['prompt'],
+      });
+    }
+
+    if (
+      'negativePrompt' in data &&
+      typeof data.negativePrompt === 'string' &&
+      data.negativePrompt.length > 1500
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Negative prompt cannot be longer than 1000 characters',
+        path: ['negativePrompt'],
+      });
+    }
+  });
   const _defaultValues = { ...defaultValues, seed: null };
 
   function softValidate(data: any) {

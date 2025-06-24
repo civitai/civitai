@@ -3,12 +3,12 @@ import z from 'zod';
 
 export const promptSchema = z
   .string()
-  .max(1500, 'Prompt cannot be longer than 1500 characters')
+  // .max(1500, 'Prompt cannot be longer than 1500 characters')
   .default('');
 
 export const negativePromptSchema = z
   .string()
-  .max(1000, 'Prompt cannot be longer than 1000 characters')
+  // .max(1000, 'Prompt cannot be longer than 1000 characters')
   .default('');
 
 export type SourceImageProps = z.input<typeof sourceImageSchema>;
