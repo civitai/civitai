@@ -32,6 +32,7 @@ import {
   updateImageTechniques,
   updateImageTools,
   getImageModerationCounts,
+  refreshImageResources,
 } from '~/server/services/image.service';
 import {
   middleware,
@@ -217,4 +218,7 @@ export const imageRouter = router({
   toggleImageFlag: moderatorProcedure
     .input(toggleImageFlagSchema)
     .mutation(({ input, ctx }) => toggleImageFlag({ ...input })),
+  refreshImageResources: protectedProcedure
+    .input(getByIdSchema)
+    .mutation(({ input }) => refreshImageResources(input.id)),
 });

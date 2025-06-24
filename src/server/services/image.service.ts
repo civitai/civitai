@@ -5130,3 +5130,15 @@ export const updateImagesFlag = async ({
 
   return true;
 };
+
+export async function refreshImageResources(imageId: number) {
+  await dbWrite.$queryRaw`
+    DELETE FROM "ImageResourceNew" WHERE "imageId" = ${imageId} AND detected
+  `;
+  await createImageResources({ imageId });
+  // await queueImageSearchIndexUpdate({
+  //   ids: [imageId],
+  //   action: SearchIndexUpdateQueueAction.Update,
+  // });
+  return await dbWrite.imageResourceHelper.findMany({ where: { imageId } });
+}
