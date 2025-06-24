@@ -82,6 +82,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
+import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -557,10 +558,11 @@ function GeneratedImageWorkflowMenuItems({
   const { copied, copy } = useClipboard();
 
   const isVideo = step.$type === 'videoGen';
-  const isOpenAI = !isVideo && step.params.engine === 'openai';
+  const isImageGen = step.resources.some((r) => getModelVersionUsesImageGen(r.id));
+  // const isOpenAI = !isVideo && step.params.engine === 'openai';
   const isFlux = !isVideo && getIsFlux(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
-  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isOpenAI;
+  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isImageGen;
   const img2imgWorkflows = !isVideo
     ? workflowDefinitions.filter(
         (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)
@@ -768,7 +770,7 @@ function GeneratedImageWorkflowMenuItems({
             </WithMemberMenuItem>
           );
         })}
-      {!isBlocked && isOpenAI && (
+      {!isBlocked && isImageGen && (
         <WithMemberMenuItem onClick={handleImg2ImgNoWorkflow}>Image To Image</WithMemberMenuItem>
       )}
       {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
