@@ -35,15 +35,24 @@ export const lightricksGenerationConfig = VideoGenerationConfig2({
   defaultValues: { aspectRatio: '3:2' },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
-    if (!data.sourceImage) {
-      data.process = 'txt2vid';
-    } else {
+    if (data.process === 'txt2vid') {
+      delete data.sourceImage;
+    }
+
+    if (data.sourceImage) {
       data.aspectRatio = findClosestAspectRatio(data.sourceImage, [...lightricksAspectRatios]);
     }
     return data;
   },
   superRefine: (data, ctx) => {
-    if (!data.sourceImage && !data.prompt?.length) {
+    if (data.process === 'img2vid' && !data.sourceImage) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Image is required',
+        path: ['sourceImage'],
+      });
+    }
+    if (data.process === 'txt2vid' && !data.prompt?.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Prompt is required',
