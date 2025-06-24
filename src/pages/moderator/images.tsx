@@ -54,7 +54,6 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { RuleDefinitionPopover } from '~/components/Moderation/RuleDefinitionPopover';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -334,7 +333,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
 
             <ImageGuard2 image={image}>
               {(safe) => (
-                <div className="relative" onClick={() => toggleSelected(image.id)}>
+                <div className="relative h-full" onClick={() => toggleSelected(image.id)}>
                   <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                   {!safe ? (
                     <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
@@ -347,6 +346,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                       alt={image.name ?? undefined}
                       type={image.type}
                       width={450}
+                      style={{ height: '100%' }}
                       placeholder="empty"
                     />
                   )}
@@ -445,24 +445,24 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         </Stack>
       )}
       {image.needsReview === 'minor' && (
-        <Stack>
-          {image.acceptableMinor && (
-            <Badge variant="light" color="pink">
-              Acceptable Minor
-            </Badge>
-          )}
-          <PromptHighlight prompt={image.meta?.prompt} negativePrompt={image.meta?.negativePrompt}>
-            {({ includesInappropriate, html }) =>
-              !includesInappropriate ? (
-                <></>
-              ) : (
+        <PromptHighlight prompt={image.meta?.prompt} negativePrompt={image.meta?.negativePrompt}>
+          {({ includesInappropriate, html }) =>
+            !includesInappropriate ? (
+              <></>
+            ) : (
+              <Stack>
+                {image.acceptableMinor && (
+                  <Badge variant="light" color="pink">
+                    Acceptable Minor
+                  </Badge>
+                )}
                 <Card.Section p="xs" mt={0} style={{ cursor: 'auto', color: 'initial' }}>
                   <RenderHtml className="break-words text-sm leading-[1.2]" html={html} />
                 </Card.Section>
-              )
-            }
-          </PromptHighlight>
-        </Stack>
+              </Stack>
+            )
+          }
+        </PromptHighlight>
       )}
       {image.reviewTags.length > 0 && (
         <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>

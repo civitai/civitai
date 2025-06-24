@@ -28,7 +28,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
-import classes from './index.module.scss';
+import classes from './index.module.css';
 
 export function Home() {
   const { data: homeBlocks = [], isLoading: isLoadingHomeBlocks } =

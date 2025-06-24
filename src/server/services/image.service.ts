@@ -3592,7 +3592,9 @@ const imageReviewQueueJoinMap = {
         LIMIT 1
       ) appeal ON true
       JOIN "User" au ON au.id = appeal."userId"
-      LEFT JOIN "ModActivity" ma ON ma."entityId" = i.id AND ma."entityType" = 'image'
+      LEFT JOIN "ModActivity" ma ON ma."entityId" = i.id
+        AND ma."entityType" = 'image'
+        AND ma.activity = 'review'
       LEFT JOIN "User" mu ON mu.id = ma."userId"
     `,
   },
