@@ -64,6 +64,7 @@ import {
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
+import { hiDreamModelId } from '~/shared/orchestrator/hidream.config';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -336,7 +337,7 @@ export async function parseGenerateImageInput({
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
     if (!injectableResources.draft) params.sampler = 'LCM';
-  } else if (batchAll) {
+  } else if (batchAll && model.id !== hiDreamModelId) {
     quantity = 1;
     batchSize = params.quantity;
   }
