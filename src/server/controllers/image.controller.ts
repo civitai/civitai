@@ -21,6 +21,7 @@ import {
   queueImageSearchIndexUpdate,
   setVideoThumbnail,
   updateImageAcceptableMinor,
+  updateImageNsfwLevel,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -34,7 +35,12 @@ import {
 } from '~/server/utils/errorHandling';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
-import { BlockImageReason, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
+import {
+  BlockImageReason,
+  NewOrderRankType,
+  ReportReason,
+  ReportStatus,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import type {
   GetEntitiesCoverImage,
@@ -44,6 +50,7 @@ import type {
   ImageReviewQueueInput,
   SetVideoThumbnailInput,
   UpdateImageAcceptableMinorInput,
+  UpdateImageNsfwLevelOutput,
 } from './../schema/image.schema';
 import {
   getAllImages,
@@ -56,6 +63,10 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
+import {
+  isImageInQueue,
+  updatePendingImageRatings,
+} from '~/server/services/games/new-order.service';
 
 export const moderateImageHandler = async ({
   input,
@@ -598,6 +609,34 @@ export async function updateImageAcceptableMinorHandler({
 
     const image = await updateImageAcceptableMinor(input);
     return image;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+}
+
+export async function handleUpdateImageNsfwLevel({
+  input,
+  ctx,
+}: {
+  input: UpdateImageNsfwLevelOutput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id: userId, isModerator } = ctx.user;
+    const updatedNsfwLevel = await updateImageNsfwLevel({ ...input, userId, isModerator });
+
+    if (isModerator) {
+      // Update knights of new order pending votes and remove it from new order queue
+      await updatePendingImageRatings({ imageId: input.id, rating: input.nsfwLevel });
+      const valueInQueue = await isImageInQueue({
+        imageId: input.id,
+        rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
+      });
+      if (valueInQueue) valueInQueue.pool.reset({ id: input.id });
+    }
+
+    return updatedNsfwLevel;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
