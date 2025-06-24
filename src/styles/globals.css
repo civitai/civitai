@@ -74,7 +74,7 @@ button, input, optgroup, select, textarea {
   font-family: inherit;
   line-height: inherit;
 }
-  
+
 .mantine-Accordion-label {
   padding: 0 !important;
 }
@@ -548,4 +548,9 @@ div[data-youtube-video] > iframe {
 div[id*='google_ads_iframe'][id$='outstream_0__container__'] {
   height: 0;
   width: 0;
+}
+
+
+.kontext-a {
+  @apply font-medium text-blue-600 dark:text-blue-500 hover:underline
 }

@@ -125,6 +125,7 @@ const featureFlags = createFeatureFlags({
   coinbaseOnramp: ['mod'],
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
+  kontextAds: ['mod', 'granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

@@ -194,7 +194,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       )}
       {adsEnabled && <ImpressionTracker />}
 
-      {currentUser?.isModerator && (
+      {features.kontextAds && (
         <Script
           id="kontext-ad-script"
           async
