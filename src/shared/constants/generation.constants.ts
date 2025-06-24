@@ -10,8 +10,10 @@ import {
   maxUpscaleSize,
   minDownscaleSize,
 } from '~/server/common/constants';
+import { modelIdEngineMap } from '~/server/orchestrator/generation/generation.config';
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -287,10 +289,13 @@ const videoBaseModelSetTypes: BaseModelSetType[] = [
   'WanVideo14B_I2V_720p',
   'WanVideo14B_T2V',
   'WanVideo1_3B_T2V',
+  'LTXV',
 ];
 export function getResourceGenerationType(
-  baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>
+  baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>,
+  resources: GenerationResource[]
 ) {
+  if (resources.some((r) => modelIdEngineMap.get(r.model.id))) return 'video';
   return videoBaseModelSetTypes.includes(baseModel) ? 'video' : ('image' as MediaType);
 }
 

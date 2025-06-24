@@ -19,6 +19,11 @@ export const baseModelEngineMap: Partial<Record<BaseModelSetType, OrchestratorEn
   HyV1: 'hunyuan',
 };
 
+export const modelIdEngineMap = new Map<number, OrchestratorEngine2>([
+  [1665714, 'veo3'],
+  [982559, 'lightricks'],
+]);
+
 export type OrchestratorEngine2 = keyof typeof videoGenerationConfig2;
 type VideoGenerationConfig = (typeof videoGenerationConfig2)[keyof typeof videoGenerationConfig2];
 export type VideoGenerationSchema2 = z.infer<VideoGenerationConfig['schema']>;

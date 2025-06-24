@@ -7,6 +7,7 @@ import { dbRead } from '~/server/db/client';
 import {
   baseModelEngineMap,
   isVideoGenerationEngine,
+  modelIdEngineMap,
 } from '~/server/orchestrator/generation/generation.config';
 import { veo3ModelVersionId } from '~/server/orchestrator/veo3/veo3.schema';
 import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
@@ -431,7 +432,10 @@ const getModelVersionGenerationData = async ({
     deduped.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
 
-  const engine = baseModelEngineMap[baseModel];
+  const engine =
+    baseModelEngineMap[baseModel] ?? resources.length
+      ? modelIdEngineMap.get(resources[0].model.id)
+      : undefined;
 
   let process: string | undefined;
   if (isVideoGenerationEngine(engine)) {
@@ -441,13 +445,15 @@ const getModelVersionGenerationData = async ({
         break;
       case 'hunyuan':
         process = 'txt2vid';
+      case 'veo3':
+        process = 'txt2vid';
     }
   }
 
   // TODO - refactor this elsewhere
 
   return {
-    type: getResourceGenerationType(baseModel),
+    type: getResourceGenerationType(baseModel, deduped),
     resources: deduped,
     params: {
       baseModel,
@@ -775,7 +781,7 @@ export async function getResourceData(
   return generation
     ? resources.filter((resource) => {
         const baseModel = getBaseModelSetType(resource.baseModel) as SupportedBaseModel;
-        return !!baseModelResourceTypes[baseModel] || resource.id === veo3ModelVersionId;
+        return !!baseModelResourceTypes[baseModel] || !!modelIdEngineMap.get(resource.model.id);
       })
     : resources;
 }

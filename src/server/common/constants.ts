@@ -1081,7 +1081,7 @@ export const generationConfig = {
   },
 
   Other: {
-    aspectRatios: [] as { label: string; width: number; height: number }[],
+    aspectRatios: commonAspectRatios,
     checkpoint: {
       id: 164821,
       name: '',
