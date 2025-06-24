@@ -636,7 +636,7 @@ export async function addImageRating({
   return { stats };
 }
 
-async function updatePendingImageRatings({
+export async function updatePendingImageRatings({
   imageId,
   rating,
 }: {
@@ -1065,7 +1065,7 @@ export async function getImageRaters({ imageIds }: { imageIds: number[] }) {
   return raters;
 }
 
-async function isImageInQueue({
+export async function isImageInQueue({
   imageId,
   rankType,
 }: {
