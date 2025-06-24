@@ -337,9 +337,6 @@ export async function parseGenerateImageInput({
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
     if (!injectableResources.draft) params.sampler = 'LCM';
-  } else if (batchAll && model.id !== hiDreamModelId) {
-    quantity = 1;
-    batchSize = params.quantity;
   }
 
   let upscaleWidth = params.upscaleHeight;

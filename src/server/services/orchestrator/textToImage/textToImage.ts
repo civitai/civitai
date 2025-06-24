@@ -73,6 +73,13 @@ export async function createTextToImageStep(
   // add one minute for each additional resource minus the checkpoint
   timeSpan.addMinutes(Object.keys(input.resources).length - 1);
 
+  let quantity = params.quantity;
+  let batchSize = params.batchSize;
+  if (!params.draft && input.batchAll) {
+    quantity = 1;
+    batchSize = params.quantity;
+  }
+
   return {
     $type: 'textToImage',
     priority,
@@ -81,6 +88,8 @@ export async function createTextToImageStep(
       additionalNetworks,
       scheduler,
       ...params,
+      quantity,
+      batchSize,
       imageMetadata,
     },
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
